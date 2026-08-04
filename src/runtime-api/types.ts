@@ -77,6 +77,7 @@ export interface RuntimeAPIs {
     rekey(input?: {
       confirmRunnerInstanceId?: string;
     }, options?: RuntimeCallOptions): Promise<unknown>;
+    restart(input?: Record<string, never>, options?: RuntimeCallOptions): Promise<unknown>;
   };
   runs: {
     get(input: { runId: string }, options?: RuntimeCallOptions): Promise<unknown>;

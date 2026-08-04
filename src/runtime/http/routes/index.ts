@@ -22,6 +22,7 @@ import { handleRuntimeBootstrapRequest } from "./runtime-bootstrap";
 import { handleHealthRequest } from "./health";
 import {
   handleRunnerRekeyRequest,
+  handleRunnerRestartRequest,
   handleRunnerSettingsRequest,
 } from "./runner-settings";
 import { handleNotificationsRequest } from "./notifications";
@@ -65,6 +66,7 @@ export function createOmniRuntimeHttpRegistry() {
     .route("GET", "/api/runtime/bootstrap", handleRuntimeBootstrapRequest)
     .route("PATCH", "/api/runner", handleRunnerSettingsRequest)
     .route("POST", "/api/runner/rekey", handleRunnerRekeyRequest)
+    .route("POST", "/api/runner/restart", handleRunnerRestartRequest)
     .route("GET", "/api/auth/session", handleAuthSessionRequest)
     .route("DELETE", "/api/auth/session", handleAuthSessionRequest)
     .route("POST", "/api/auth/login", handleAuthLoginRequest)
@@ -173,6 +175,7 @@ export { handleCodexAuthStatusRequest } from "./codex-auth-status";
 export { handleRuntimeBootstrapRequest } from "./runtime-bootstrap";
 export {
   handleRunnerRekeyRequest,
+  handleRunnerRestartRequest,
   handleRunnerSettingsRequest,
 } from "./runner-settings";
 export { handleHealthRequest } from "./health";

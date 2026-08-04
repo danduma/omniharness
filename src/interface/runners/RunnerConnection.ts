@@ -266,6 +266,29 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
     return this.runtime?.apis ?? null;
   }
 
+  async authenticateWithPassword(input: { password: string; label: string }) {
+    this.profile = this.persistence.getProfile(this.profile.id) ?? this.profile;
+    const profile = this.profile;
+    const generation = ++this.generation;
+    this.clearRetry();
+    const runtime = this.runtime ?? await this.runtimeFactory(profile);
+    if (
+      generation !== this.generation
+      || (this.persistence.getProfile(profile.id) ?? profile).baseUrl !== profile.baseUrl
+      || !runtime.apis
+    ) {
+      throw { code: "runner.error.generic" };
+    }
+    await runtime.apis.auth.login(input);
+    if (
+      generation !== this.generation
+      || (this.persistence.getProfile(profile.id) ?? profile).baseUrl !== profile.baseUrl
+    ) {
+      throw { code: "runner.error.generic" };
+    }
+    await this.retry();
+  }
+
   updateProfile(nextProfile: RunnerProfile) {
     const authenticationChanged = (
       nextProfile.baseUrl !== this.profile.baseUrl
