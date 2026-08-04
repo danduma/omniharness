@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Check, X } from "lucide-react";
+import { Check, MessageCircleQuestion, X } from "lucide-react";
 import { workerCardManager } from "@/components/component-state-managers";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -107,15 +107,20 @@ export function InlineElicitation({
   return (
     <section
       className={cn(
-        "rounded-2xl border border-sky-500/25 bg-sky-500/[0.055] p-4 shadow-sm dark:border-sky-300/15 dark:bg-sky-300/[0.04]",
+        // Sits on the app's card surface like every other panel, with the sky
+        // accent carried by a single edge rather than a full wash.
+        "relative overflow-hidden rounded-xl bg-card p-4 pl-[1.0625rem] text-card-foreground ring-1 ring-foreground/10",
+        "before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-sky-500/70 dark:before:bg-sky-400/70",
         className,
       )}
       aria-label={t("worker.elicitation.title")}
     >
-      <div className="text-xs font-semibold text-sky-800 dark:text-sky-200">
+      {/* Eyebrow: quietest thing in the card. The question below is the title. */}
+      <div className="flex items-center gap-1.5 text-[0.6875rem] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+        <MessageCircleQuestion className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" aria-hidden="true" />
         {t("worker.elicitation.title")}
       </div>
-      <p className="mt-1 text-sm leading-6 text-foreground">
+      <p className="mt-1.5 text-[0.9375rem] font-semibold leading-6 text-foreground">
         {elicitation.message || t("worker.elicitation.defaultQuestion")}
       </p>
       {safeUrl ? (
@@ -123,7 +128,7 @@ export function InlineElicitation({
           href={safeUrl}
           target="_blank"
           rel="noreferrer noopener"
-          className="mt-3 inline-flex rounded-lg border border-sky-500/30 bg-background px-3 py-2 text-sm font-medium text-sky-700 hover:bg-sky-500/10 dark:text-sky-200"
+          className="mt-3 inline-flex h-9 items-center rounded-lg bg-sky-500/10 px-3 text-sm font-medium text-sky-700 transition-colors hover:bg-sky-500/15 dark:text-sky-300"
         >
           {t("worker.elicitation.openLink")}
         </a>
@@ -132,7 +137,7 @@ export function InlineElicitation({
         <div
           role="tablist"
           aria-label={t("worker.elicitation.title")}
-          className="mt-4 flex flex-wrap gap-x-1 border-b border-border"
+          className="mt-4 flex flex-wrap gap-x-1 border-b border-border/70"
         >
           {questionFields.map((field, index) => {
             const selected = field.name === activeQuestion?.name;
@@ -163,9 +168,9 @@ export function InlineElicitation({
                   document.getElementById(`${prefix}${target.name}:tab`)?.focus();
                 }}
                 className={cn(
-                  "border-b-2 px-3 pb-2 pt-1 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50",
+                  "-mb-px border-b-2 px-2.5 pb-2 pt-1 text-[0.8125rem] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50",
                   selected
-                    ? "border-sky-500 text-foreground"
+                    ? "border-sky-500 text-foreground dark:border-sky-400"
                     : "border-transparent text-muted-foreground hover:border-border hover:text-foreground",
                 )}
               >
@@ -185,21 +190,24 @@ export function InlineElicitation({
           const value = values[field.name];
           const isTabbedQuestion = usesQuestionTabs && /^question_\d+$/.test(field.name);
           return (
-            <fieldset key={field.name} className="space-y-2">
-              <legend className={cn("text-sm font-medium text-foreground", isTabbedQuestion && "sr-only")}>{field.label}</legend>
+            <fieldset key={field.name} className="space-y-1.5">
+              <legend className={cn("text-[0.8125rem] font-medium text-foreground", isTabbedQuestion && "sr-only")}>{field.label}</legend>
               {field.description ? (
                 <p className="text-xs leading-5 text-muted-foreground">{field.description}</p>
               ) : null}
               {field.kind === "single_select" ? (
-                <div className="grid gap-2">
+                // A bordered, shaded box per option turned a short list of words
+                // into a stack of competing cards. The control is the affordance;
+                // the row only needs hover and a selected tint.
+                <div className="-mx-1.5 grid">
                   {field.options.map((option) => (
                     <label
                       key={option.value}
                       className={cn(
-                        "flex cursor-pointer gap-3 rounded-xl border p-3 text-sm transition-colors",
+                        "flex cursor-pointer items-start gap-2.5 rounded-lg px-1.5 py-1.5 text-[0.8125rem] leading-5 transition-colors",
                         value === option.value
-                          ? "border-sky-500/60 bg-sky-500/10"
-                          : "border-border bg-background/70 hover:border-sky-500/35",
+                          ? "bg-sky-500/10 text-foreground dark:bg-sky-400/10"
+                          : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                       )}
                     >
                       <input
@@ -209,14 +217,14 @@ export function InlineElicitation({
                         checked={value === option.value}
                         disabled={disabled}
                         onChange={() => workerCardManager.setElicitationDraft(draftKey, option.value)}
-                        className="mt-0.5 h-4 w-4 accent-sky-600"
+                        className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-sky-600 dark:accent-sky-400"
                       />
-                      <span className="leading-5">{option.label}</span>
+                      <span>{option.label}</span>
                     </label>
                   ))}
                 </div>
               ) : field.kind === "multi_select" ? (
-                <div className="grid gap-2">
+                <div className="-mx-1.5 grid">
                   {field.options.map((option) => {
                     const optionKey = optionDraftKey(prefix, field.name, option.value);
                     const stored = workerCardManager.readElicitationDraft(optionKey);
@@ -225,10 +233,10 @@ export function InlineElicitation({
                       <label
                         key={option.value}
                         className={cn(
-                          "flex cursor-pointer gap-3 rounded-xl border p-3 text-sm transition-colors",
+                          "flex cursor-pointer items-start gap-2.5 rounded-lg px-1.5 py-1.5 text-[0.8125rem] leading-5 transition-colors",
                           checked
-                            ? "border-sky-500/60 bg-sky-500/10"
-                            : "border-border bg-background/70 hover:border-sky-500/35",
+                            ? "bg-sky-500/10 text-foreground dark:bg-sky-400/10"
+                            : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                         )}
                       >
                         <input
@@ -237,9 +245,9 @@ export function InlineElicitation({
                           checked={checked}
                           disabled={disabled}
                           onChange={(event) => workerCardManager.setElicitationDraft(optionKey, String(event.target.checked))}
-                          className="mt-0.5 h-4 w-4 rounded accent-sky-600"
+                          className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded accent-sky-600 dark:accent-sky-400"
                         />
-                        <span className="leading-5">{option.label}</span>
+                        <span>{option.label}</span>
                       </label>
                     );
                   })}
@@ -257,7 +265,7 @@ export function InlineElicitation({
                   disabled={disabled}
                   placeholder={t("worker.elicitation.inputPlaceholder")}
                   onChange={(event) => workerCardManager.setElicitationDraft(draftKey, event.target.value)}
-                  className="min-h-20 resize-y bg-background/80"
+                  className="min-h-20 resize-y text-[0.8125rem]"
                 />
               ) : (
                 <Input
@@ -266,17 +274,17 @@ export function InlineElicitation({
                   disabled={disabled}
                   placeholder={t("worker.elicitation.inputPlaceholder")}
                   onChange={(event) => workerCardManager.setElicitationDraft(draftKey, event.target.value)}
-                  className="bg-background/80"
+                  className="text-[0.8125rem]"
                 />
               )}
             </fieldset>
           );
         })}
       </div>
-      <div className="mt-4 flex flex-wrap justify-end gap-2">
+      <div className="mt-4 flex flex-wrap items-center justify-end gap-1.5">
         <button
           type="button"
-          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[0.8125rem] font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           disabled={disabled || !onRespond}
           onClick={() => { void submit("decline"); }}
         >
@@ -285,7 +293,7 @@ export function InlineElicitation({
         </button>
         <button
           type="button"
-          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[0.8125rem] font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           disabled={disabled || !onRespond || missingRequired || invalid}
           onClick={() => { void submit("accept"); }}
         >

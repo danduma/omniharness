@@ -97,6 +97,40 @@ describe("prepareStaticInterface", () => {
     expect(asset?.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
   });
 
+  it("serves the current interface entry point after an in-place rebuild", async () => {
+    const root = await makeStaticRoot();
+    const staticInterface = await prepareStaticInterface({
+      staticDir: root,
+      explicit: true,
+      mode: "web",
+      buildBootstrap: async () => ({ ok: true }),
+    });
+
+    const rebuiltAsset = "window.omniRebuilt = true;";
+    const rebuiltThemeScript = "document.documentElement.dataset.theme = 'rebuilt';";
+    const rebuiltIndexHtml = `<!doctype html><div id="root"></div><script id="omni-theme-bootstrap">${rebuiltThemeScript}</script><script src="/assets/app-rebuilt.js"></script>`;
+    await fs.writeFile(path.join(root, "assets/app-rebuilt.js"), rebuiltAsset);
+    await fs.writeFile(path.join(root, "index.html"), rebuiltIndexHtml);
+    await fs.writeFile(path.join(root, "csp-manifest.json"), JSON.stringify({
+      schemaVersion: 1,
+      themeScriptSha256: crypto.createHash("sha256").update(rebuiltThemeScript).digest("base64"),
+      assets: [{
+        path: "assets/app-rebuilt.js",
+        sha256: crypto.createHash("sha256").update(rebuiltAsset).digest("base64"),
+      }],
+    }));
+    await fs.rm(path.join(root, "assets/app-abc123.js"));
+
+    const page = await staticInterface.handle(new Request("http://runner.test/"));
+    expect(await page?.text()).toContain("/assets/app-rebuilt.js");
+    expect(page?.headers.get("content-security-policy")).toContain(
+      `'sha256-${crypto.createHash("sha256").update(rebuiltThemeScript).digest("base64")}'`,
+    );
+    expect(
+      (await staticInterface.handle(new Request("http://runner.test/assets/app-rebuilt.js")))?.status,
+    ).toBe(200);
+  });
+
   it("rejects traversal and symlinks that escape the static root", async () => {
     const root = await makeStaticRoot();
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), "omni-static-outside-"));

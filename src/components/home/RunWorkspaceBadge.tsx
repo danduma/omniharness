@@ -29,7 +29,11 @@ function lastPathSegment(value: string | null | undefined) {
   return value?.split(/[\\/]/).filter(Boolean).pop() || value || "";
 }
 
-export function RunWorkspaceBadge({ run, fallbackPath, className }: RunWorkspaceBadgeProps) {
+/**
+ * Resolves what the badge would render, so callers can decide whether a
+ * workspace is worth showing before laying out a menu row around it.
+ */
+export function resolveRunWorkspace(run: RunRecord | null, fallbackPath?: string | null) {
   const snapshot = parseRunWorkspaceSnapshot(run?.gitWorkspaceJson);
   const checkoutPath = snapshot?.target.checkoutPath ?? fallbackPath ?? run?.projectPath ?? null;
   if (!run || !checkoutPath) {
@@ -37,13 +41,23 @@ export function RunWorkspaceBadge({ run, fallbackPath, className }: RunWorkspace
   }
 
   const branchLabel = snapshot?.branchName ?? snapshot?.detachedLabel ?? null;
-  const label = branchLabel
-    ? branchLabel
-    : lastPathSegment(checkoutPath) || t("git.workspace.runBadge.fallback");
-  const title = branchLabel
-    ? t("git.workspace.runBadge.titleWithBranch", { branch: branchLabel, path: checkoutPath })
-    : t("git.workspace.runBadge.titleWithPath", { path: checkoutPath });
-  const isWorktree = snapshot?.target.kind === "worktree";
+
+  return {
+    label: branchLabel || lastPathSegment(checkoutPath) || t("git.workspace.runBadge.fallback"),
+    title: branchLabel
+      ? t("git.workspace.runBadge.titleWithBranch", { branch: branchLabel, path: checkoutPath })
+      : t("git.workspace.runBadge.titleWithPath", { path: checkoutPath }),
+    isWorktree: snapshot?.target.kind === "worktree",
+  };
+}
+
+export function RunWorkspaceBadge({ run, fallbackPath, className }: RunWorkspaceBadgeProps) {
+  const workspace = resolveRunWorkspace(run, fallbackPath);
+  if (!workspace) {
+    return null;
+  }
+
+  const { label, title, isWorktree } = workspace;
 
   return (
     <span

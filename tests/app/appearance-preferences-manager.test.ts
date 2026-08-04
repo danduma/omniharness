@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ALWAYS_EXPAND_THOUGHTS_STORAGE_KEY,
   AppearancePreferencesManager,
   CONVERSATION_TEXT_SIZE_STORAGE_KEY,
   LEGACY_DIRECT_TEXT_SIZE_STORAGE_KEY,
@@ -39,12 +40,24 @@ describe("AppearancePreferencesManager", () => {
     expect(getUiTextSizeStyle("default")).toMatchObject({
       "--omni-ui-font-size": "calc(14px + var(--omni-mobile-ui-font-boost, 0px))",
       "--omni-ui-sm-size": "calc(14px + var(--omni-mobile-ui-font-boost, 0px))",
-      "--omni-ui-control-xs-size": "calc(26px + var(--omni-mobile-ui-control-boost, 0px))",
-      "--omni-ui-icon-sm-size": "calc(15px + var(--omni-mobile-ui-icon-boost, 0px))",
+      "--omni-ui-scale": 1,
+      "--spacing": "calc(0.25rem * 1)",
     });
     expect(getConversationTextSizeStyle("default")).toMatchObject({
       "--omni-conversation-font-size": "calc(14px + var(--omni-mobile-conversation-font-boost, 0px))",
       "--omni-conversation-line-height": "calc(24px + var(--omni-mobile-conversation-line-boost, 0px))",
+      "--omni-composer-font-size": "calc(15px + var(--omni-mobile-conversation-font-boost, 0px))",
+    });
+  });
+
+  it("grows controls, not just text, as the UI text size increases", () => {
+    expect(getUiTextSizeStyle("huge")).toMatchObject({
+      "--omni-ui-scale": 1.3,
+      "--spacing": "calc(0.25rem * 1.3)",
+    });
+    expect(getUiTextSizeStyle("tiny")).toMatchObject({
+      "--omni-ui-scale": 0.92,
+      "--spacing": "calc(0.25rem * 0.92)",
     });
   });
 
@@ -136,6 +149,46 @@ describe("AppearancePreferencesManager", () => {
     });
     expect(manager.getSnapshot().dirtyKeys).toEqual(new Set());
     expect(storage.get(CONVERSATION_TEXT_SIZE_STORAGE_KEY)).toBe("large");
+  });
+
+  it("keeps thoughts collapsed by default and saves the always-expand preference as a draft", () => {
+    const storage = installLocalStorage();
+    const manager = new AppearancePreferencesManager();
+
+    manager.hydrateFromLocalStorage();
+
+    expect(manager.getSnapshot().alwaysExpandThoughts).toBe(false);
+
+    manager.setAlwaysExpandThoughts(true);
+
+    expect(manager.getSnapshot().dirtyKeys).toEqual(new Set(["alwaysExpandThoughts"]));
+    expect(storage.get(ALWAYS_EXPAND_THOUGHTS_STORAGE_KEY)).toBeUndefined();
+
+    manager.saveDraft();
+
+    expect(manager.getSnapshot()).toMatchObject({
+      alwaysExpandThoughts: true,
+      savedAlwaysExpandThoughts: true,
+    });
+    expect(manager.getSnapshot().dirtyKeys).toEqual(new Set());
+    expect(storage.get(ALWAYS_EXPAND_THOUGHTS_STORAGE_KEY)).toBe("true");
+  });
+
+  it("hydrates and discards the always-expand thoughts preference", () => {
+    const storage = installLocalStorage();
+    storage.set(ALWAYS_EXPAND_THOUGHTS_STORAGE_KEY, "true");
+    const manager = new AppearancePreferencesManager();
+
+    manager.hydrateFromLocalStorage();
+
+    expect(manager.getSnapshot().alwaysExpandThoughts).toBe(true);
+
+    manager.setAlwaysExpandThoughts(false);
+    manager.discardDraft();
+
+    expect(manager.getSnapshot().alwaysExpandThoughts).toBe(true);
+    expect(manager.getSnapshot().dirtyKeys).toEqual(new Set());
+    expect(storage.get(ALWAYS_EXPAND_THOUGHTS_STORAGE_KEY)).toBe("true");
   });
 
   it("migrates the old direct-control text-size value into the conversation font", () => {

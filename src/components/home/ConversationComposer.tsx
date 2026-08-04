@@ -383,7 +383,7 @@ function ConversationComposerInner({
           disabled={isComposerSubmitting}
           rows={1}
           className={cn(
-            "omni-composer-input w-full resize-none bg-transparent text-[15px] outline-none",
+            "omni-composer-input w-full resize-none bg-transparent outline-none",
             hasAttachments ? "min-h-[152px] sm:min-h-[112px]" : "min-h-[112px] sm:min-h-[72px]",
             themeMode === "night"
               ? "text-foreground placeholder:text-muted-foreground/80"

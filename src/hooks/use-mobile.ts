@@ -2,22 +2,23 @@ import { StateManager, type StateListener } from "@/lib/state-manager"
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot"
 
 const MOBILE_BREAKPOINT = 768
+const COMPACT_LAYOUT_BREAKPOINT = 1024
 
-class ViewportManager extends StateManager<{ isMobile: boolean }> {
+class ViewportManager extends StateManager<{ isBelowBreakpoint: boolean }> {
   private mediaQuery: MediaQueryList | null = null
   private listenerCount = 0
 
-  constructor() {
-    super({ isMobile: false })
+  constructor(private readonly breakpoint: number) {
+    super({ isBelowBreakpoint: false })
   }
 
   private readonly handleChange = () => {
-    this.setKey("isMobile", window.innerWidth < MOBILE_BREAKPOINT)
+    this.setKey("isBelowBreakpoint", window.innerWidth < this.breakpoint)
   }
 
   override subscribe(listener: StateListener) {
     if (typeof window !== "undefined" && this.listenerCount === 0) {
-      this.mediaQuery = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
+      this.mediaQuery = window.matchMedia(`(max-width: ${this.breakpoint - 1}px)`)
       this.mediaQuery.addEventListener("change", this.handleChange)
       this.handleChange()
     }
@@ -34,8 +35,15 @@ class ViewportManager extends StateManager<{ isMobile: boolean }> {
   }
 }
 
-export const viewportManager = new ViewportManager()
+export const viewportManager = new ViewportManager(MOBILE_BREAKPOINT)
+
+/** Matches the `lg:` breakpoint the app uses to switch to its phone/tablet chrome. */
+export const compactLayoutManager = new ViewportManager(COMPACT_LAYOUT_BREAKPOINT)
 
 export function useIsMobile() {
-  return useManagerSnapshot(viewportManager).isMobile
+  return useManagerSnapshot(viewportManager).isBelowBreakpoint
+}
+
+export function useIsCompactLayout() {
+  return useManagerSnapshot(compactLayoutManager).isBelowBreakpoint
 }

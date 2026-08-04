@@ -5,6 +5,7 @@ import {
   UI_TEXT_SIZE_LEVELS,
   type AppearanceTextSizeLevel,
 } from "@/interface/home/AppearancePreferencesManager";
+import { Switch } from "@/components/ui/switch";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { cn } from "@/lib/utils";
@@ -90,7 +91,7 @@ function TextSizeSlider({ id, labelKey, descriptionKey, value, levels, onChange 
 }
 
 export function AppearanceSettingsPanel() {
-  const { uiTextSize, conversationTextSize, terminalTextSize } = useManagerSnapshot(appearancePreferencesManager);
+  const { uiTextSize, conversationTextSize, terminalTextSize, alwaysExpandThoughts } = useManagerSnapshot(appearancePreferencesManager);
   useI18nSnapshot();
 
   return (
@@ -123,6 +124,22 @@ export function AppearanceSettingsPanel() {
           levels={TERMINAL_TEXT_SIZE_LEVELS}
           onChange={(nextValue) => appearancePreferencesManager.setTerminalTextSize(nextValue)}
         />
+        <div className="flex items-center gap-3 py-3">
+          <Switch
+            id="OMNI_ALWAYS_EXPAND_THOUGHTS"
+            aria-label={t("settings.appearance.alwaysExpandThoughts")}
+            checked={alwaysExpandThoughts}
+            onCheckedChange={(checked) => appearancePreferencesManager.setAlwaysExpandThoughts(checked)}
+          />
+          <div className="min-w-0">
+            <label className="block text-sm font-semibold text-foreground" htmlFor="OMNI_ALWAYS_EXPAND_THOUGHTS">
+              {t("settings.appearance.alwaysExpandThoughts")}
+            </label>
+            <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+              {t("settings.appearance.alwaysExpandThoughtsDescription")}
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );

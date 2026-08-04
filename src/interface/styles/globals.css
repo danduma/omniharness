@@ -330,8 +330,6 @@
 @layer utilities {
   .omni-app-text-scale {
     --omni-mobile-ui-font-boost: 0px;
-    --omni-mobile-ui-control-boost: 0px;
-    --omni-mobile-ui-icon-boost: 0px;
     --omni-mobile-conversation-font-boost: 0px;
     --omni-mobile-conversation-line-boost: 0px;
     font-size: var(--omni-ui-font-size);
@@ -340,8 +338,6 @@
   @media (max-width: 640px) {
     .omni-app-text-scale {
       --omni-mobile-ui-font-boost: 1px;
-      --omni-mobile-ui-control-boost: 2px;
-      --omni-mobile-ui-icon-boost: 1px;
       --omni-mobile-conversation-font-boost: 1px;
       --omni-mobile-conversation-line-boost: 1px;
     }
@@ -366,45 +362,13 @@
     font-size: var(--omni-ui-base-size);
   }
 
-  .omni-app-text-scale .h-6.w-6,
-  .omni-app-text-scale .size-6 {
-    width: var(--omni-ui-control-xs-size);
-    height: var(--omni-ui-control-xs-size);
-  }
-
-  .omni-app-text-scale .h-7.w-7,
-  .omni-app-text-scale .size-7 {
-    width: var(--omni-ui-control-sm-size);
-    height: var(--omni-ui-control-sm-size);
-  }
-
-  .omni-app-text-scale .h-8.w-8,
-  .omni-app-text-scale .size-8 {
-    width: var(--omni-ui-control-md-size);
-    height: var(--omni-ui-control-md-size);
-  }
-
-  .omni-app-text-scale .h-9.w-9,
-  .omni-app-text-scale .size-9 {
-    width: var(--omni-ui-control-lg-size);
-    height: var(--omni-ui-control-lg-size);
-  }
-
-  .omni-app-text-scale .h-6.w-6 > svg,
-  .omni-app-text-scale .size-6 > svg,
-  .omni-app-text-scale .h-7.w-7 > svg,
-  .omni-app-text-scale .size-7 > svg {
-    width: var(--omni-ui-icon-sm-size);
-    height: var(--omni-ui-icon-sm-size);
-  }
-
-  .omni-app-text-scale .h-8.w-8 > svg,
-  .omni-app-text-scale .size-8 > svg,
-  .omni-app-text-scale .h-9.w-9 > svg,
-  .omni-app-text-scale .size-9 > svg {
-    width: var(--omni-ui-icon-md-size);
-    height: var(--omni-ui-icon-md-size);
-  }
+  /*
+   * Control and icon sizing is handled by the `--spacing` override that
+   * AppearancePreferencesManager writes onto the scale root: Tailwind v4 emits
+   * `h-8`, `size-9`, `px-3`, `gap-2` … as `calc(var(--spacing) * n)`, so every
+   * button, icon, and gutter grows with the UI text size instead of only the
+   * hand-listed square icon buttons.
+   */
 
   .omni-app-text-scale .omni-conversation-text-scale {
     font-size: var(--omni-conversation-font-size);
@@ -433,12 +397,13 @@
   }
 
   .omni-composer-input {
-    line-height: 20px;
+    font-size: var(--omni-composer-font-size, 15px);
+    line-height: var(--omni-composer-line-height, 20px);
   }
 
   @media (min-width: 640px) {
     .omni-composer-input {
-      line-height: 24px;
+      line-height: var(--omni-composer-line-height, 24px);
     }
   }
 }

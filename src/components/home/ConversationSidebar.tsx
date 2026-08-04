@@ -22,6 +22,7 @@ import { t, useI18nSnapshot } from "@/lib/i18n";
 import { isArchivableRunStatus, isTerminalRunStatus, normalizeRunStatus } from "@/lib/run-status";
 import { cn } from "@/lib/utils";
 import { StateManager } from "@/lib/state-manager";
+import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { SidebarGroup, SidebarRun } from "@/interface/home/types";
 
 class ConversationSidebarHydrationManager extends StateManager<boolean> {
@@ -35,6 +36,51 @@ class ConversationSidebarHydrationManager extends StateManager<boolean> {
 }
 
 const conversationSidebarHydrationManager = new ConversationSidebarHydrationManager();
+
+type ProjectDragState = {
+  /**
+   * `dataTransfer` payloads are unreadable during dragover, so the dragged path
+   * is tracked here — without it the row being dragged would draw an insertion
+   * line against itself.
+   */
+  draggingPath: string | null;
+  dropPath: string | null;
+  dropPlacement: ProjectDropPlacement | null;
+};
+
+const PROJECT_DRAG_IDLE: ProjectDragState = { draggingPath: null, dropPath: null, dropPlacement: null };
+
+class ProjectDragManager extends StateManager<ProjectDragState> {
+  constructor() {
+    super(PROJECT_DRAG_IDLE);
+  }
+
+  beginDrag(path: string) {
+    this.update({ ...PROJECT_DRAG_IDLE, draggingPath: path });
+  }
+
+  setDropTarget(path: string, placement: ProjectDropPlacement) {
+    this.update((current) => (
+      current.dropPath === path && current.dropPlacement === placement
+        ? current
+        : { ...current, dropPath: path, dropPlacement: placement }
+    ));
+  }
+
+  clearDropTarget(path?: string) {
+    this.update((current) => (
+      path !== undefined && current.dropPath !== path
+        ? current
+        : { ...current, dropPath: null, dropPlacement: null }
+    ));
+  }
+
+  reset() {
+    this.update(PROJECT_DRAG_IDLE);
+  }
+}
+
+const projectDragManager = new ProjectDragManager();
 const PROJECT_DRAG_DATA_TYPE = "application/x-omniharness-project-path";
 
 type ConversationVisualIconProps = {
@@ -143,21 +189,49 @@ function ConversationProjectGroupList({
   deleteRun,
   emptyState,
 }: ConversationProjectGroupListProps) {
+  const projectDrag = useManagerSnapshot(projectDragManager);
+
   if (groups.length === 0) {
     return <>{emptyState}</>;
   }
+
+  const resolveDropPlacement = (event: React.DragEvent<HTMLElement>): ProjectDropPlacement => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return event.clientY > rect.top + rect.height / 2 ? "after" : "before";
+  };
+
+  const handleProjectDragOver = (event: React.DragEvent<HTMLElement>, targetPath: string) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    if (projectDrag.draggingPath === targetPath) {
+      projectDragManager.clearDropTarget();
+      return;
+    }
+    projectDragManager.setDropTarget(targetPath, resolveDropPlacement(event));
+  };
+
+  const handleProjectDragLeave = (event: React.DragEvent<HTMLElement>, targetPath: string) => {
+    // dragleave also fires when crossing into a child element; only clear when
+    // the pointer has genuinely left the row, or the line flickers.
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+    projectDragManager.clearDropTarget(targetPath);
+  };
 
   const handleProjectDrop = (event: React.DragEvent<HTMLElement>, targetPath: string) => {
     const draggedPath = event.dataTransfer.getData(PROJECT_DRAG_DATA_TYPE)
       || event.dataTransfer.getData("text/plain");
     if (!draggedPath || draggedPath === targetPath) {
+      projectDragManager.reset();
       return;
     }
 
     event.preventDefault();
     event.stopPropagation();
-    const rect = event.currentTarget.getBoundingClientRect();
-    const placement: ProjectDropPlacement = event.clientY > rect.top + rect.height / 2 ? "after" : "before";
+    const placement = resolveDropPlacement(event);
+    projectDragManager.reset();
     onReorderProjects(draggedPath, targetPath, placement);
   };
 
@@ -170,6 +244,7 @@ function ConversationProjectGroupList({
         const visibleRuns = group.runs.slice(0, visibleSessionCount);
         const hiddenSessionCount = Math.max(0, group.runs.length - visibleRuns.length);
         const nextSessionBatchCount = Math.min(PROJECT_SESSION_DISPLAY_BATCH_SIZE, hiddenSessionCount);
+        const dropIndicatorPlacement = projectDrag.dropPath === group.path ? projectDrag.dropPlacement : null;
 
         return (
           <Collapsible
@@ -180,14 +255,30 @@ function ConversationProjectGroupList({
             <div
               data-project-drag-row="true"
               data-project-path={group.path}
-              className="group mb-1 flex items-center justify-between gap-0.5 rounded px-2 hover:bg-muted/30"
+              className={cn(
+                "group relative mb-1 flex items-center justify-between gap-0.5 rounded px-2 hover:bg-muted/30",
+                projectDrag.draggingPath === group.path && "opacity-40",
+              )}
               onDragOver={(event) => {
                 if (!canDragProject) return;
-                event.preventDefault();
-                event.dataTransfer.dropEffect = "move";
+                handleProjectDragOver(event, group.path);
               }}
+              onDragLeave={(event) => handleProjectDragLeave(event, group.path)}
               onDrop={(event) => handleProjectDrop(event, group.path)}
             >
+              {dropIndicatorPlacement ? (
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-sky-500 dark:bg-sky-400",
+                    // Straddle the gap between rows so the line reads as "here",
+                    // not as an underline belonging to one row.
+                    dropIndicatorPlacement === "before" ? "-top-px" : "-bottom-px",
+                  )}
+                >
+                  <span className="absolute -left-1 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-sky-500 dark:bg-sky-400" />
+                </span>
+              ) : null}
               {canDragProject ? (
                 <span
                   draggable={canDragProject}
@@ -199,11 +290,15 @@ function ConversationProjectGroupList({
                     event.dataTransfer.effectAllowed = "move";
                     event.dataTransfer.setData(PROJECT_DRAG_DATA_TYPE, group.path);
                     event.dataTransfer.setData("text/plain", group.path);
+                    projectDragManager.beginDrag(group.path);
                     const projectDragRow = event.currentTarget.closest<HTMLElement>('[data-project-drag-row="true"]');
                     if (projectDragRow) {
                       event.dataTransfer.setDragImage(projectDragRow, 16, projectDragRow.offsetHeight / 2);
                     }
                   }}
+                  // Covers the cancelled drag (Esc, or a drop outside any row),
+                  // which fires dragend without ever firing drop.
+                  onDragEnd={() => projectDragManager.reset()}
                 >
                   <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
                 </span>

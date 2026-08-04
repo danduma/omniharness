@@ -38,10 +38,10 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('rounded-[2rem] border border-[#dededd] bg-[#fdfdfc]');
   expect(pageSource).toContain('focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc]');
   expect(pageSource).toContain("px-4 pb-0 pt-3");
-  expect(pageSource).toContain('"omni-composer-input w-full resize-none bg-transparent text-[15px] outline-none"');
+  expect(pageSource).toContain('"omni-composer-input w-full resize-none bg-transparent outline-none"');
   expect(pageSource).toContain('hasAttachments ? "min-h-[152px] sm:min-h-[112px]" : "min-h-[112px] sm:min-h-[72px]"');
   expect(globalsSource).toContain(".omni-composer-input");
-  expect(globalsSource).toContain("line-height: 20px;");
+  expect(globalsSource).toContain("line-height: var(--omni-composer-line-height, 20px);");
   expect(pageSource).toContain("rows={1}");
   expect(composerSelectSource).toContain("<select");
   expect(composerSelectSource).toContain("<ChevronDownIcon");
@@ -219,7 +219,7 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain("stopSupervisorMutate({ runId: selectedRunId })");
   expect(pageSource).toContain("stopWorkerMutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId })");
   expect(pageSource).toContain("if (selectedRunId) {");
-  expect(pageSource).toContain("sendConversationMessageMutate({ runId: selectedRunId, content, attachments, busyAction })");
+  expect(pageSource).toContain("sendConversationMessageMutate({ runId: selectedRunId, content, clientMessageId: createSentConversationMessageId(), attachments, busyAction })");
   expect(pageSource).toContain("resolveBusyMessageActionForSubmitAction(composerBehavior.submitAction");
   expect(pageSource).toContain("composerBehavior.allowAlternateBusyAction && useAlternateBusyAction");
   expect(pageSource).toContain("shouldUseAlternateComposerSubmitKeyDown({");

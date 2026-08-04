@@ -3,6 +3,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { Providers } from "@/interface/providers";
+import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { BugDropBootstrap } from "@/components/BugDropBootstrap";
 import { PwaBootstrap } from "@/components/PwaBootstrap";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -74,16 +75,18 @@ async function mount() {
     if (window.location.pathname === "/authorize-interface") {
       const params = new URLSearchParams(window.location.search);
       createRoot(root).render(
-        <Providers>
-          <RuntimeApiProvider apis={runtimeApis}>
-            <InterfaceAuthorizationScreen request={{
-              origin: params.get("origin") ?? "",
-              state: params.get("state") ?? "",
-              challenge: params.get("challenge") ?? "",
-              method: params.get("method") ?? "",
-            }} />
-          </RuntimeApiProvider>
-        </Providers>,
+        <AppErrorBoundary>
+          <Providers>
+            <RuntimeApiProvider apis={runtimeApis}>
+              <InterfaceAuthorizationScreen request={{
+                origin: params.get("origin") ?? "",
+                state: params.get("state") ?? "",
+                challenge: params.get("challenge") ?? "",
+                method: params.get("method") ?? "",
+              }} />
+            </RuntimeApiProvider>
+          </Providers>
+        </AppErrorBoundary>,
       );
       return;
     }
@@ -107,11 +110,13 @@ async function mount() {
       <>
         <BugDropBootstrap />
         <PwaBootstrap />
-        <Providers>
-          <TooltipProvider>
-            <OmniApp bootstrap={bootstrap} runtimeApis={runtimeApis} />
-          </TooltipProvider>
-        </Providers>
+        <AppErrorBoundary>
+          <Providers>
+            <TooltipProvider>
+              <OmniApp bootstrap={bootstrap} runtimeApis={runtimeApis} />
+            </TooltipProvider>
+          </Providers>
+        </AppErrorBoundary>
       </>,
     );
   } catch (error) {
