@@ -26,7 +26,9 @@ export type AutoCommitResult =
     }
   | {
       status: "skipped";
-      reason: "disabled" | "not_git" | "no_changes";
+      // `unhealthy_conversation` is decided by the run-level caller, not by the
+      // git layer: committing requires a live, healthy conversation behind it.
+      reason: "disabled" | "not_git" | "no_changes" | "unhealthy_conversation";
       details?: string;
     }
   | {
