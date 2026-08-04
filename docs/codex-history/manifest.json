@@ -1,8 +1,370 @@
 {
   "version": 2,
   "projectRoot": "/Users/masterman/NLP/omniharness",
-  "generatedAt": "2026-08-02T22:00:20.163Z",
+  "generatedAt": "2026-08-04T10:00:17.228Z",
   "conversations": [
+    {
+      "provider": "claude",
+      "id": "9951b149-2404-416f-adbe-40d592278c48",
+      "title": "Fix auto-scroll on new messages in conversation",
+      "startedAt": "2026-08-04T08:46:53.205Z",
+      "updatedAt": "2026-08-04T09:21:40.362Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "65df0cb906a6efc12976e9afac057535efb8e5b23bb7a395b43d9f8b9e08416b",
+      "parts": [
+        "conversations/2026/08/2026-08-04-claude-fix-auto-scroll-on-new-messages-in-conversation-9951b149-2404-416f-adbe-40d592278c48-part-001.md"
+      ],
+      "attachmentCount": 1,
+      "eventCount": 741,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "provider": "codex",
+      "id": "019fcbfc-9a1f-7070-aa0d-2d98d5917b6c",
+      "title": "Investigate stuck session",
+      "startedAt": "2026-08-04T08:55:57.235Z",
+      "updatedAt": "2026-08-04T09:12:11.830Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "ad5157c1a7d53bcd717defa50771ba78027fc6a51028d9756662294d6e8f2bbd",
+      "parts": [
+        "conversations/2026/08/2026-08-04-investigate-stuck-session-019fcbfc-9a1f-7070-aa0d-2d98d5917b6c-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 227,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "codex",
+      "id": "019fcc05-d27d-7280-8c8f-4229ea6fe85c",
+      "title": "Assess persistent monitor readiness",
+      "startedAt": "2026-08-04T09:06:01.506Z",
+      "updatedAt": "2026-08-04T09:09:34.714Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "3a0a6afdf73d6742219f791880d4d6a926a710dbbe70cc3294f3bb2b346344db",
+      "parts": [
+        "conversations/2026/08/2026-08-04-assess-persistent-monitor-readiness-019fcc05-d27d-7280-8c8f-4229ea6fe85c-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 48,
+      "malformedLines": 0,
+      "redactions": 3,
+      "warnings": []
+    },
+    {
+      "provider": "codex",
+      "id": "019fc9fc-7935-78d0-b258-25ce76b0b407",
+      "title": "Fix Fable output truncation",
+      "startedAt": "2026-08-03T23:36:34.382Z",
+      "updatedAt": "2026-08-04T09:04:25.047Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "cfcef34afed3087d9f42b961312fdfe1b645aa0a063fb02d916901a9eda66716",
+      "parts": [
+        "conversations/2026/08/2026-08-03-fix-fable-output-truncation-019fc9fc-7935-78d0-b258-25ce76b0b407-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 233,
+      "malformedLines": 0,
+      "redactions": 4,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "ed6391be-8d2c-4875-9067-416cefe3f219",
+      "title": "Investigate stuck session 8d81f64ca066",
+      "startedAt": "2026-08-04T08:55:30.122Z",
+      "updatedAt": "2026-08-04T08:57:58.061Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "5958a0c697fc1c4f0fc3ace130082c282925ce1afaf61fa25dc4afbcac5193e7",
+      "parts": [
+        "conversations/2026/08/2026-08-04-claude-investigate-stuck-session-8d81f64ca066-ed6391be-8d2c-4875-9067-416cefe3f219-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 72,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "ad806212-ad4e-477f-a4cb-f732a66b38c6",
+      "title": "Fix navbar menu crash on click",
+      "startedAt": "2026-08-03T23:35:07.717Z",
+      "updatedAt": "2026-08-04T08:49:49.729Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "5e25d8752b6542b2bb37cfee76c762e7e5efd498cb5d4dcbb481acd788ea426c",
+      "parts": [
+        "conversations/2026/08/2026-08-03-claude-fix-navbar-menu-crash-on-click-ad806212-ad4e-477f-a4cb-f732a66b38c6-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 159,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "4f94faa1-d854-43f3-a8fd-12182fe18fe5",
+      "title": "Investigate missing session output and conversation",
+      "startedAt": "2026-08-03T17:44:14.193Z",
+      "updatedAt": "2026-08-03T23:45:00.773Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "31c429fdd48ef42854f13d0861af02e59925404a1915e808fe496e1aa344f0d0",
+      "parts": [
+        "conversations/2026/08/2026-08-03-claude-investigate-missing-session-output-and-conversation-4f94faa1-d854-43f3-a8fd-12182fe18fe5-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 958,
+      "malformedLines": 0,
+      "redactions": 6,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "69a19762-24a8-4f8f-90be-8f53c6e6158b",
+      "title": "Improve mobile UI with session name modal and font scaling",
+      "startedAt": "2026-08-03T17:40:23.219Z",
+      "updatedAt": "2026-08-03T23:40:55.775Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "e764b06ec1ff23b16af2d9550c1f633638eed8eb0700b25d5d84a6fe881b2f71",
+      "parts": [
+        "conversations/2026/08/2026-08-03-claude-improve-mobile-ui-with-session-name-modal-and-font-scaling-69a19762-24a8-4f8f-90be-8f53c6e6158b-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 556,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "0582febf-762e-4a6b-ad31-f8955a84e025",
+      "title": "Fix Auto account subscription selection failures",
+      "startedAt": "2026-08-03T23:23:25.027Z",
+      "updatedAt": "2026-08-03T23:36:43.566Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "1346f40bc957f749249486ea649d81508fc54e063ff4e7a5df333360b0f32538",
+      "parts": [
+        "conversations/2026/08/2026-08-03-claude-fix-auto-account-subscription-selection-failures-0582febf-762e-4a6b-ad31-f8955a84e025-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 91,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "codex",
+      "id": "019fc9b5-ce27-7af3-8b74-dd538c85e97c",
+      "title": "Fix duplicate worker questions",
+      "startedAt": "2026-08-03T22:19:23.068Z",
+      "updatedAt": "2026-08-03T22:29:54.816Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "99a52e67002ff349be61fde5aec963504b713a2c325c8a377eefeeafe071e3d6",
+      "parts": [
+        "conversations/2026/08/2026-08-03-fix-duplicate-worker-questions-019fc9b5-ce27-7af3-8b74-dd538c85e97c-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 157,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "codex",
+      "id": "019fc9b7-6d5c-7f01-bcf7-833c287347f3",
+      "title": "Fix page loading failure",
+      "startedAt": "2026-08-03T22:21:09.378Z",
+      "updatedAt": "2026-08-03T22:26:49.881Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "b3a194e97d13aee7f4cf2440c952c18719d4411982185f12cc81a46cb2e62936",
+      "parts": [
+        "conversations/2026/08/2026-08-03-fix-page-loading-failure-019fc9b7-6d5c-7f01-bcf7-833c287347f3-part-001.md"
+      ],
+      "attachmentCount": 1,
+      "eventCount": 95,
+      "malformedLines": 0,
+      "redactions": 2,
+      "warnings": [
+        "attachment_unavailable:wdhglw9-3c4ywaaaabjru5erkjggg:ENAMETOOLONG"
+      ]
+    },
+    {
+      "provider": "claude",
+      "id": "18f8f00d-86bd-474d-a6c2-d629a7864b20",
+      "title": "Fix flickering working message in visual selector UI",
+      "startedAt": "2026-08-03T20:53:53.816Z",
+      "updatedAt": "2026-08-03T21:53:28.577Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "0e87326356d6b3b686bc85930082e9ce8addffdc20f03ee7ca8de0466c02c164",
+      "parts": [
+        "conversations/2026/08/2026-08-03-claude-fix-flickering-working-message-in-visual-selector-ui-18f8f00d-86bd-474d-a6c2-d629a7864b20-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 325,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "e3cd2d4d-0c07-4661-abc5-8238eb1ed722",
+      "title": "Fix form flickering bug on mobile PWA",
+      "startedAt": "2026-08-03T17:11:40.005Z",
+      "updatedAt": "2026-08-03T17:47:35.780Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "07f3a011850b93292c6bbaa5775b8c090705f9e9c251c37ee3c071315d50cfa9",
+      "parts": [
+        "conversations/2026/08/2026-08-03-claude-fix-form-flickering-bug-on-mobile-pwa-e3cd2d4d-0c07-4661-abc5-8238eb1ed722-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 779,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "codex",
+      "id": "019fc786-4e12-7bb1-b234-6b48b408a7de",
+      "title": "OH chrome mobile fail",
+      "startedAt": "2026-08-03T12:08:15.678Z",
+      "updatedAt": "2026-08-03T13:00:02.859Z",
+      "status": "interrupted",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "1cbb6f7353aef72cc3e177ad8ae716d29e401e90b6cff80d8e98f160bde5d39f",
+      "parts": [
+        "conversations/2026/08/2026-08-03-oh-chrome-mobile-fail-019fc786-4e12-7bb1-b234-6b48b408a7de-part-001.md"
+      ],
+      "attachmentCount": 1,
+      "eventCount": 398,
+      "malformedLines": 0,
+      "redactions": 47,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "2de57847-cbf5-4d73-b59c-90f2e544d885",
+      "title": "Investigate stuck worker recovery session",
+      "startedAt": "2026-08-03T06:53:42.970Z",
+      "updatedAt": "2026-08-03T08:40:07.654Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "8766fa876a761347472ae23b0e0f3f3301016358dd75634547c5e33dae76d17c",
+      "parts": [
+        "conversations/2026/08/2026-08-03-claude-investigate-stuck-worker-recovery-session-2de57847-cbf5-4d73-b59c-90f2e544d885-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 1213,
+      "malformedLines": 0,
+      "redactions": 3,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "0a06ed3f-1757-408c-aceb-cacca4ac9fdb",
+      "title": "Add setting to always expand thoughts",
+      "startedAt": "2026-08-03T08:08:07.206Z",
+      "updatedAt": "2026-08-03T08:13:59.616Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "cbb199c79dd3536dcf8d0e9d0514eead442479050ee06213fdff9a95d70d5825",
+      "parts": [
+        "conversations/2026/08/2026-08-03-claude-add-setting-to-always-expand-thoughts-0a06ed3f-1757-408c-aceb-cacca4ac9fdb-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 269,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "f30012cf-3e76-4da1-aa0a-23d96801a2f2",
+      "title": "Fix error message appearing across sessions",
+      "startedAt": "2026-08-03T06:49:06.636Z",
+      "updatedAt": "2026-08-03T07:32:07.824Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "8379bdd07216699ff85efb7d713fa8f33fbb88594bc38426086a91d0b18f1f35",
+      "parts": [
+        "conversations/2026/08/2026-08-03-claude-fix-error-message-appearing-across-sessions-f30012cf-3e76-4da1-aa0a-23d96801a2f2-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 414,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "0395fd77-9d70-4553-818e-f0b4f90dec42",
+      "title": "Fix message ordering regression in session display",
+      "startedAt": "2026-08-03T06:50:39.283Z",
+      "updatedAt": "2026-08-03T07:04:36.375Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "03066222d0d62903c603a9426299c540476b0bdefdfd01836a0fd1a44dcac13c",
+      "parts": [
+        "conversations/2026/08/2026-08-03-claude-fix-message-ordering-regression-in-session-display-0395fd77-9d70-4553-818e-f0b4f90dec42-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 204,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
     {
       "provider": "codex",
       "id": "019fc41b-b7e6-7150-8b12-cfd45b64feff",

@@ -1,0 +1,1377 @@
+1274	function ToolActivity({
+1275	  activity,
+1276	  variant,
+1277	  projectRoot,
+1278	  onOpenProjectFile,
+1279	}: {
+1280	  activity: Extract<AgentActivityItem, { kind: "tool" }>;
+1281	  variant: "terminal" | "native";
+1282	  projectRoot?: string | null;
+1283	  onOpenProjectFile?: (file: ProjectFileReference) => void;
+1284	}) {
+1285	  const isDone = isTerminalToolStatus(activity.status);
+1286	  const showToolLabel = activity.label !== "Tool";
+1287	  const { toolDetailsOpenById, toolOutputExpandedById } = useManagerSnapshot(terminalUiManager);
+1288	  const detailsOpen = toolDetailsOpenById[activity.id] ?? !isDone;
+1289	  const outputIsDiff = activity.outputPane?.kind === "diff";
+1290	  const outputExpanded = toolOutputExpandedById[activity.id] ?? outputIsDiff;
+1291	  const hasToolPanes = Boolean(activity.inputPane || activity.outputPane);
+1292	
+1293	  return (
+1294	    <div className="space-y-1.5">
+1295	      <button
+1296	        type="button"
+1297	        className="group/tool flex w-full flex-wrap items-center gap-1.5 text-left"
+1298	        onClick={() => {
+1299	          const nextDetailsOpen = !detailsOpen;
+1300	          if (nextDetailsOpen && outputIsDiff) {
+1301	            terminalUiManager.setToolOutputExpanded(activity.id, true);
+1302	          } else if (detailsOpen) {
+1303	            terminalUiManager.setToolOutputExpanded(activity.id, false);
+1304	          }
+1305	          terminalUiManager.setToolDetailsOpen(activity.id, nextDetailsOpen);
+1306	        }}
+1307	        aria-expanded={detailsOpen}
+1308	      >
+1309	        {showToolLabel ? (
+1310	          <span className={cn("text-[length:var(--terminal-tool-label-size)] font-semibold tracking-tight", variant === "native" ? "text-foreground" : "text-foreground dark:text-zinc-100")}>{activity.label}</span>
+1311	        ) : null}
+1312	        <span
+1313	          className={cn(
+1314	            "font-mono leading-[1.45]",
+1315	            showToolLabel ? "text-[length:var(--terminal-tool-title-size)]" : "text-[length:var(--terminal-tool-label-size)]",
+1316	            variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-300/95",
+1317	          )}
+1318	        >
+1319	          {activity.title}
+1320	        </span>
+1321	        {shouldShowToolSpinner(activity.status) ? (
+1322	          <LoaderCircle
+1323	            className={cn(
+1324	              "h-3 w-3 shrink-0 animate-spin",
+1325	              variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-400",
+1326	            )}
+1327	            aria-label={formatActivityStatus(activity.status)}
+1328	          />
+1329	        ) : null}
+1330	        {shouldShowToolStatusBadge(activity.status) ? (
+1331	          <span
+1332	            className={cn(
+1333	              "rounded-full border px-1.5 py-0.5 font-mono text-[length:var(--terminal-badge-size)] font-semibold uppercase tracking-[0.1em]",
+1334	              statusBadgeClass(activity.status, variant),
+1335	            )}
+1336	          >
+1337	            {formatActivityStatus(activity.status)}
+1338	          </span>
+1339	        ) : null}
+1340	        <ChevronDown
+1341	          className={cn(
+1342	            "h-3 w-3 shrink-0 transition-transform duration-200 ease-out",
+1343	            detailsOpen && "rotate-180",
+1344	            variant === "native" ? "text-muted-foreground group-hover/tool:text-foreground" : "text-muted-foreground group-hover/tool:text-foreground dark:text-zinc-500 dark:group-hover/tool:text-zinc-200",
+1345	          )}
+1346	          aria-hidden="true"
+1347	        />
+1348	      </button>
+1349	      {hasToolPanes ? (
+1350	        <div
+1351	          className={cn(
+1352	            TERMINAL_REVEAL_CLASS,
+1353	            detailsOpen ? TERMINAL_REVEAL_OPEN_CLASS : TERMINAL_REVEAL_CLOSED_CLASS,
+1354	          )}
+1355	          aria-hidden={!detailsOpen}
+1356	        >
+1357	          <div className="min-h-0 overflow-hidden">
+1358	            <div className="space-y-1.5 pb-0.5 pt-0.5">
+1359	              {activity.inputPane ? (
+1360	                <ActivityPane
+1361	                  label={activity.inputPane.label}
+1362	                  text={activity.inputPane.text}
+1363	                  variant={variant}
+1364	                  projectRoot={projectRoot}
+1365	                  onOpenProjectFile={onOpenProjectFile}
+1366	                />
+1367	              ) : null}
+1368	              {activity.outputPane?.kind === "diff" ? (
+1369	                <DiffPane
+1370	                  text={activity.outputPane.text}
+1371	                  variant={variant}
+1372	                  preview
+1373	                  expanded={outputExpanded}
+1374	                  interactive={detailsOpen}
+1375	                  onClick={() => terminalUiManager.setToolOutputExpanded(activity.id, !outputExpanded)}
+1376	                />
+1377	              ) : activity.outputPane ? (
+1378	                <ActivityPane
+1379	                  label={activity.outputPane.label}
+1380	                  text={activity.outputPane.text}
+1381	                  variant={variant}
+1382	                  projectRoot={projectRoot}
+1383	                  onOpenProjectFile={onOpenProjectFile}
+1384	                  preview
+1385	                  expanded={outputExpanded}
+1386	                  interactive={detailsOpen}
+1387	                  onClick={() => terminalUiManager.setToolOutputExpanded(activity.id, !outputExpanded)}
+1388	                />
+1389	              ) : null}
+1390	            </div>
+1391	          </div>
+1392	        </div>
+1393	      ) : null}
+1394	    </div>
+1395	  );
+1396	}
+1397	
+1398	function NestedToolActivityRow({
+1399	  tool,
+1400	  isFirst,
+1401	  isLast,
+1402	  variant,
+1403	  projectRoot,
+1404	  onOpenProjectFile,
+1405	}: {
+1406	  tool: Extract<AgentActivityItem, { kind: "tool" }>;
+1407	  isFirst: boolean;
+1408	  isLast: boolean;
+1409	  variant: "terminal" | "native";
+1410	  projectRoot?: string | null;
+1411	  onOpenProjectFile?: (file: ProjectFileReference) => void;
+1412	}) {
+1413	  const running = isRunningActivityStatus(tool.status);
+1414	  const markerTone = isErrorActivityStatus(tool.status) ? "error" : "tool";
+1415	
+1416	  return (
+1417	    <div className="relative flex items-start gap-2.5">
+1418	      {!isFirst ? (
+1419	        <div className={cn(
+1420	          "absolute left-1.5 top-0 h-[0.61rem] w-px",
+1421	          variant === "native" ? "bg-border/70" : "bg-border/70 dark:bg-white/12",
+1422	        )} />
+1423	      ) : null}
+1424	      {!isLast ? (
+1425	        <div className={cn(
+1426	          "absolute -bottom-2 left-1.5 top-[0.61rem] w-px",
+1427	          variant === "native" ? "bg-border/70" : "bg-border/70 dark:bg-white/12",
+1428	        )} />
+1429	      ) : null}
+1430	      <div className="relative z-10 flex w-3 shrink-0 justify-center">
+1431	        <div
+1432	          className={cn(
+1433	            "mt-[0.42rem] h-1.5 w-1.5 rounded-full border",
+1434	            running
+1435	              ? markerTone === "error"
+1436	                ? variant === "native" ? "border-destructive/80 bg-transparent" : "border-red-500/80 bg-transparent dark:border-red-400/80"
+1437	                : variant === "native" ? "border-emerald-500/75 bg-transparent" : "border-emerald-500/75 bg-transparent dark:border-emerald-400/75"
+1438	              : markerTone === "error"
+1439	                ? variant === "native" ? "border-destructive/80 bg-destructive" : "border-red-500/80 bg-red-500 dark:border-red-400/80 dark:bg-red-400"
+1440	                : variant === "native" ? "border-emerald-500/75 bg-emerald-500" : "border-emerald-500/75 bg-emerald-500 dark:border-emerald-400/75 dark:bg-emerald-400",
+1441	          )}
+1442	        />
+1443	      </div>
+1444	      <div className="min-w-0 flex-1 pb-0.5">
+1445	        <ToolActivity
+1446	          activity={tool}
+1447	          variant={variant}
+1448	          projectRoot={projectRoot}
+1449	          onOpenProjectFile={onOpenProjectFile}
+1450	        />
+1451	      </div>
+1452	    </div>
+1453	  );
+1454	}
+1455	
+1456	function ToolGroupActivity({
+1457	  activity,
+1458	  variant,
+1459	  toolGroupsDefaultOpen,
+1460	  projectRoot,
+1461	  onOpenProjectFile,
+1462	}: {
+1463	  activity: Extract<AgentActivityItem, { kind: "tool_group" }>;
+1464	  variant: "terminal" | "native";
+1465	  toolGroupsDefaultOpen: boolean;
+1466	  projectRoot?: string | null;
+1467	  onOpenProjectFile?: (file: ProjectFileReference) => void;
+1468	}) {
+1469	  useI18nSnapshot();
+1470	  const { toolGroupOpenById } = useManagerSnapshot(terminalUiManager);
+1471	  const open = toolGroupOpenById[activity.id] ?? toolGroupsDefaultOpen;
+1472	  const summary = formatToolGroupSummary(activity.counts);
+1473	
+1474	  return (
+1475	    <div className="space-y-1.5">
+1476	      <button
+1477	        type="button"
+1478	        className="group/tool-group flex w-full flex-wrap items-center gap-1.5 text-left"
+1479	        onClick={() => terminalUiManager.setToolGroupOpen(activity.id, !open)}
+1480	        aria-expanded={open}
+1481	        aria-label={t("conversation.toolGroup.toggleAriaLabel", { summary })}
+1482	        title={open ? t("conversation.toolGroup.collapseTitle") : t("conversation.toolGroup.expandTitle")}
+1483	      >
+1484	        <span
+1485	          className={cn(
+1486	            "font-mono font-semibold leading-[1.45] text-[length:var(--terminal-tool-title-size)]",
+1487	            variant === "native" ? "text-foreground" : "text-foreground dark:text-zinc-100",
+1488	          )}
+1489	        >
+1490	          {summary}
+1491	        </span>
+1492	        {shouldShowToolSpinner(activity.status) ? (
+1493	          <LoaderCircle
+1494	            className={cn(
+1495	              "h-3 w-3 shrink-0 animate-spin",
+1496	              variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-400",
+1497	            )}
+1498	            aria-label={formatActivityStatus(activity.status)}
+1499	          />
+1500	        ) : null}
+1501	        <ChevronDown
+1502	          className={cn(
+1503	            "h-3 w-3 shrink-0 transition-transform duration-200 ease-out",
+1504	            open && "rotate-180",
+1505	            variant === "native" ? "text-muted-foreground group-hover/tool-group:text-foreground" : "text-muted-foreground group-hover/tool-group:text-foreground dark:text-zinc-500 dark:group-hover/tool-group:text-zinc-200",
+1506	          )}
+1507	          aria-hidden="true"
+1508	        />
+1509	      </button>
+1510	      <div
+1511	        className={cn(
+1512	          TERMINAL_REVEAL_CLASS,
+1513	          open ? TERMINAL_REVEAL_OPEN_CLASS : TERMINAL_REVEAL_CLOSED_CLASS,
+1514	        )}
+1515	        aria-hidden={!open}
+1516	      >
+1517	        <div className="min-h-0 overflow-hidden">
+1518	          <div className="space-y-2 pb-0.5 pt-0.5">
+1519	            {activity.tools.map((tool, index) => (
+1520	              <NestedToolActivityRow
+1521	                key={tool.id}
+1522	                tool={tool}
+1523	                isFirst={index === 0}
+1524	                isLast={index === activity.tools.length - 1}
+1525	                variant={variant}
+1526	                projectRoot={projectRoot}
+1527	                onOpenProjectFile={onOpenProjectFile}
+1528	              />
+1529	            ))}
+1530	          </div>
+1531	        </div>
+1532	      </div>
+1533	    </div>
+1534	  );
+1535	}
+1536	
+1537	function ThoughtActivity({
+1538	  activity,
+1539	  variant,
+1540	  thoughtsDefaultOpen,
+1541	  projectRoot,
+1542	  onOpenProjectFile,
+1543	}: {
+1544	  activity: Extract<AgentActivityItem, { kind: "thinking" }>;
+1545	  variant: "terminal" | "native";
+1546	  thoughtsDefaultOpen: boolean;
+1547	  projectRoot?: string | null;
+1548	  onOpenProjectFile?: (file: ProjectFileReference) => void;
+1549	}) {
+1550	  const { thoughtOpenById } = useManagerSnapshot(terminalUiManager);
+1551	  const open = (thoughtOpenById[activity.id] ?? thoughtsDefaultOpen) || activity.inProgress;
+1552	
+1553	  return (
+1554	    <div className="space-y-1">
+1555	      <button
+1556	        type="button"
+1557	        className="group/thought flex w-full items-center gap-1.5 text-left"
+1558	        onClick={() => terminalUiManager.setThoughtOpen(activity.id, !open)}
+1559	        aria-expanded={open}
+1560	      >
+1561	        <span className={cn("shrink-0 text-[length:var(--terminal-thought-label-size)] font-semibold tracking-tight", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-400")}>
+1562	          {formatThoughtLabel(activity)}
+1563	        </span>
+1564	        {activity.thoughts.length > 0 && (
+1565	          <span className="truncate text-[length:var(--terminal-thought-size)] font-normal text-muted-foreground/60 dark:text-zinc-500/60">
+1566	            {activity.thoughts.join(" ").replace(/\s+/g, " ").trim()}
+1567	          </span>
+1568	        )}
+1569	        {activity.inProgress ? <ThinkingDots variant={variant} /> : null}
+1570	        <ChevronDown
+1571	          className={cn(
+1572	            "h-3 w-3 shrink-0 transition-transform duration-200 ease-out",
+1573	            open && "rotate-180",
+1574	            variant === "native" ? "text-muted-foreground group-hover/thought:text-foreground" : "text-muted-foreground group-hover/thought:text-foreground dark:text-zinc-500 dark:group-hover/thought:text-zinc-300",
+1575	          )}
+1576	          aria-hidden="true"
+1577	        />
+1578	      </button>
+1579	      <div
+1580	        className={cn(
+1581	          TERMINAL_REVEAL_CLASS,
+1582	          open ? TERMINAL_REVEAL_OPEN_CLASS : TERMINAL_REVEAL_CLOSED_CLASS,
+1583	        )}
+1584	        aria-hidden={!open}
+1585	      >
+1586	        <div className="min-h-0 overflow-hidden">
+1587	          <div className="space-y-1 pb-0.5 pt-0.5">
+1588	            {activity.thoughts.map((thought, index) => (
+1589	              <MarkdownContent
+1590	                key={`${activity.id}:${index}`}
+1591	                content={thought}
+1592	                inheritTextColor
+1593	                projectRoot={projectRoot}
+1594	                onOpenProjectFile={onOpenProjectFile}
+1595	                className={cn(
+1596	                  "space-y-1 text-[length:var(--terminal-thought-size)] leading-[1.5]",
+1597	                  variant === "native"
+1598	                    ? "text-muted-foreground [&_code]:bg-muted/70 [&_pre]:bg-muted/35"
+1599	                    : "text-muted-foreground [&_blockquote]:border-border/70 [&_blockquote]:bg-muted/30 [&_code]:bg-muted/70 [&_pre]:border-border/70 [&_pre]:bg-muted/30 dark:text-zinc-500 dark:[&_blockquote]:border-white/10 dark:[&_blockquote]:bg-white/5 dark:[&_code]:bg-white/10 dark:[&_pre]:border-white/10 dark:[&_pre]:bg-white/5",
+1600	                )}
+1601	              />
+1602	            ))}
+1603	          </div>
+1604	        </div>
+1605	      </div>
+1606	    </div>
+1607	  );
+1608	}
+1609	
+1610	function WorkSummaryNestedItem({
+1611	  item,
+1612	  isFirst,
+1613	  isLast,
+1614	  variant,
+1615	  thoughtsDefaultOpen,
+1616	  toolGroupsDefaultOpen,
+1617	  projectRoot,
+1618	  onOpenProjectFile,
+1619	}: {
+1620	  item: Extract<AgentActivityItem, { kind: "thinking" | "tool" | "tool_group" | "permission" }>;
+1621	  isFirst: boolean;
+1622	  isLast: boolean;
+1623	  variant: "terminal" | "native";
+1624	  thoughtsDefaultOpen: boolean;
+1625	  toolGroupsDefaultOpen: boolean;
+1626	  projectRoot?: string | null;
+1627	  onOpenProjectFile?: (file: ProjectFileReference) => void;
+1628	}) {
+1629	  const running = item.kind === "thinking"
+1630	    ? item.inProgress
+1631	    : item.kind === "permission"
+1632	      ? item.status === "pending"
+1633	      : isRunningActivityStatus(item.status);
+1634	  const isError = (item.kind === "tool" || item.kind === "tool_group") && isErrorActivityStatus(item.status);
+1635	  const markerTone = item.kind === "thinking" ? "thought" : item.kind === "permission" ? "permission" : isError ? "error" : "tool";
+1636	  const markerColorClass = {
+1637	    thought: variant === "native"
+1638	      ? (running ? "border-muted-foreground/55 bg-transparent" : "border-muted-foreground/55 bg-muted-foreground/75")
+1639	      : (running ? "border-muted-foreground/55 bg-transparent dark:border-zinc-400/60" : "border-muted-foreground/55 bg-muted-foreground/75 dark:border-zinc-400/60 dark:bg-zinc-400/80"),
+1640	    tool: variant === "native"
+1641	      ? (running ? "border-emerald-500/75 bg-transparent" : "border-emerald-500/75 bg-emerald-500")
+1642	      : (running ? "border-emerald-500/75 bg-transparent dark:border-emerald-400/75" : "border-emerald-500/75 bg-emerald-500 dark:border-emerald-400/75 dark:bg-emerald-400"),
+1643	    error: variant === "native"
+1644	      ? "border-destructive/80 bg-destructive"
+1645	      : "border-red-500/80 bg-red-500 dark:border-red-400/80 dark:bg-red-400",
+1646	    permission: variant === "native"
+1647	      ? (running ? "border-amber-500/75 bg-transparent" : "border-amber-500/75 bg-amber-500")
+1648	      : (running ? "border-amber-500/75 bg-transparent dark:border-amber-400/75" : "border-amber-500/75 bg-amber-500 dark:border-amber-400/75 dark:bg-amber-400"),
+1649	  }[markerTone];
+1650	
+1651	  return (
+1652	    <div className="relative flex items-start gap-2.5">
+1653	      {!isFirst ? (
+1654	        <div className={cn(
+1655	          "absolute left-1.5 top-0 h-[0.61rem] w-px",
+1656	          variant === "native" ? "bg-border/70" : "bg-border/70 dark:bg-white/12",
+1657	        )} />
+1658	      ) : null}
+1659	      {!isLast ? (
+1660	        <div className={cn(
+1661	          "absolute -bottom-2 left-1.5 top-[0.61rem] w-px",
+1662	          variant === "native" ? "bg-border/70" : "bg-border/70 dark:bg-white/12",
+1663	        )} />
+1664	      ) : null}
+1665	      <div className="relative z-10 flex w-3 shrink-0 justify-center">
+1666	        <div className={cn("mt-[0.42rem] h-1.5 w-1.5 rounded-full border", markerColorClass)} />
+1667	      </div>
+1668	      <div className="min-w-0 flex-1 pb-0.5">
+1669	        {item.kind === "thinking" ? (
+1670	          <ThoughtActivity
+1671	            activity={item}
+1672	            variant={variant}
+1673	            thoughtsDefaultOpen={thoughtsDefaultOpen}
+1674	            projectRoot={projectRoot}
+1675	            onOpenProjectFile={onOpenProjectFile}
+1676	          />
+1677	        ) : null}
+1678	        {item.kind === "tool" ? (
+1679	          <ToolActivity
+1680	            activity={item}
+1681	            variant={variant}
+1682	            projectRoot={projectRoot}
+1683	            onOpenProjectFile={onOpenProjectFile}
+1684	          />
+1685	        ) : null}
+1686	        {item.kind === "tool_group" ? (
+1687	          <ToolGroupActivity
+1688	            activity={item}
+1689	            variant={variant}
+1690	            toolGroupsDefaultOpen={toolGroupsDefaultOpen}
+1691	            projectRoot={projectRoot}
+1692	            onOpenProjectFile={onOpenProjectFile}
+1693	          />
+1694	        ) : null}
+1695	        {item.kind === "permission" ? (
+1696	          item.status === "pending" ? (
+1697	            <div className={cn(
+1698	              "rounded border px-2 py-1.5",
+1699	              variant === "native"
+1700	                ? "border-amber-500/35 bg-amber-500/10"
+1701	                : "border-amber-500/25 bg-amber-500/10 dark:border-amber-400/20 dark:bg-[rgba(96,67,22,0.34)]",
+1702	            )}>
+1703	              <div className={cn("text-[length:var(--terminal-permission-title-size)] font-semibold tracking-tight", variant === "native" ? "text-amber-800 dark:text-amber-300" : "text-amber-800 dark:text-amber-100")}>{item.title}</div>
+1704	              {item.detail ? (
+1705	                <p className={cn("mt-0.5 break-words font-mono text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/85 dark:text-amber-100/85" : "text-amber-900/85 dark:text-amber-50/85")}>{item.detail}</p>
+1706	              ) : null}
+1707	              {item.text ? (
+1708	                <p className={cn("mt-0.5 whitespace-pre-wrap text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/75 dark:text-amber-100/75" : "text-amber-900/75 dark:text-amber-50/75")}>{item.text}</p>
+1709	              ) : null}
+1710	            </div>
+1711	          ) : (
+1712	            <div className="py-0.5">
+1713	              <div className={cn("text-[length:var(--terminal-permission-title-size)] font-medium", variant === "native" ? "text-foreground/80 dark:text-zinc-300" : "text-foreground/80 dark:text-zinc-300")}>{item.title}</div>
+1714	              {item.detail ? (
+1715	                <p className={cn("mt-0.5 break-words font-mono text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-500")}>{item.detail}</p>
+1716	              ) : null}
+1717	              {item.text ? (
+1718	                <p className={cn("mt-0.5 whitespace-pre-wrap text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-500")}>{item.text}</p>
+1719	              ) : null}
+1720	            </div>
+1721	          )
+1722	        ) : null}
+1723	      </div>
+1724	    </div>
+1725	  );
+1726	}
+1727	
+1728	function WorkSummaryActivity({
+1729	  activity,
+1730	  variant,
+1731	  thoughtsDefaultOpen,
+1732	  toolGroupsDefaultOpen,
+1733	  projectRoot,
+1734	  onOpenProjectFile,
+1735	}: {
+1736	  activity: Extract<AgentActivityItem, { kind: "work_summary" }>;
+1737	  variant: "terminal" | "native";
+1738	  thoughtsDefaultOpen: boolean;
+1739	  toolGroupsDefaultOpen: boolean;
+1740	  projectRoot?: string | null;
+1741	  onOpenProjectFile?: (file: ProjectFileReference) => void;
+1742	}) {
+1743	  const { workSummaryOpenById } = useManagerSnapshot(terminalUiManager);
+1744	  const open = workSummaryOpenById[activity.id] ?? false;
+1745	  const nestedItems = activity.items.filter(
+1746	    (item): item is Extract<AgentActivityItem, { kind: "thinking" | "tool" | "tool_group" | "permission" }> =>
+1747	      item.kind === "thinking" || item.kind === "tool" || item.kind === "tool_group" || item.kind === "permission",
+1748	  );
+1749	
+1750	  return (
+1751	    // No `space-y` here: the reveal panel below collapses to zero height when
+1752	    // closed, but a sibling margin would still be paid, leaving a sliver of
+1753	    // dead space under every collapsed "Worked for …" row. The gap belongs
+1754	    // inside the panel (see `pt-2`), where the clip removes it too.
+1755	    <div>
+1756	      <button
+1757	        type="button"
+1758	        className="group/work-summary flex w-full items-center gap-1.5 text-left"
+1759	        onClick={() => terminalUiManager.setWorkSummaryOpen(activity.id, !open)}
+1760	        aria-expanded={open}
+1761	      >
+1762	        <span className={cn(
+1763	          "shrink-0 text-[length:var(--terminal-thought-label-size)] font-semibold tracking-tight",
+1764	          variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-400",
+1765	        )}>
+1766	          {activity.inProgress ? "Working" : `Worked for ${formatWorkDuration(activity.durationMs)}`}
+1767	        </span>
+1768	        {activity.inProgress ? <ThinkingDots variant={variant} /> : null}
+1769	        <ChevronDown
+1770	          className={cn(
+1771	            "h-3 w-3 shrink-0 transition-transform duration-200 ease-out",
+1772	            open && "rotate-180",
+1773	            variant === "native"
+1774	              ? "text-muted-foreground group-hover/work-summary:text-foreground"
+1775	              : "text-muted-foreground group-hover/work-summary:text-foreground dark:text-zinc-500 dark:group-hover/work-summary:text-zinc-300",
+1776	          )}
+1777	          aria-hidden="true"
+1778	        />
+1779	      </button>
+1780	      <div
+1781	        className={cn(TERMINAL_REVEAL_CLASS, open ? TERMINAL_REVEAL_OPEN_CLASS : TERMINAL_REVEAL_CLOSED_CLASS)}
+1782	        aria-hidden={!open}
+1783	      >
+1784	        <div className="min-h-0 overflow-hidden">
+1785	          <div className="space-y-2 pb-0.5 pt-2">
+1786	            {nestedItems.map((item, index) => (
+1787	              <WorkSummaryNestedItem
+1788	                key={item.id}
+1789	                item={item}
+1790	                isFirst={index === 0}
+1791	                isLast={index === nestedItems.length - 1}
+1792	                variant={variant}
+1793	                thoughtsDefaultOpen={thoughtsDefaultOpen}
+1794	                toolGroupsDefaultOpen={toolGroupsDefaultOpen}
+1795	                projectRoot={projectRoot}
+1796	                onOpenProjectFile={onOpenProjectFile}
+1797	              />
+1798	            ))}
+1799	          </div>
+1800	        </div>
+1801	      </div>
+1802	    </div>
+1803	  );
+1804	}
+1805	
+1806	function ProtocolActivityContent({
+1807	  activity,
+1808	  projectRoot,
+1809	  onOpenProjectFile,
+1810	}: {
+1811	  activity: Extract<AgentActivityItem, { kind: "protocol" }>;
+1812	  projectRoot?: string | null;
+1813	  onOpenProjectFile?: (file: ProjectFileReference) => void;
+1814	}) {
+1815	  const raw = typeof activity.raw === "object" && activity.raw !== null
+1816	    ? activity.raw as Record<string, unknown>
+1817	    : null;
+1818	  const content = raw && typeof raw.content === "object" && raw.content !== null
+1819	    ? raw.content as Record<string, unknown>
+1820	    : null;
+1821	
+1822	  if (activity.protocolType === "content" && content?.type === "image" && typeof content.data === "string") {
+1823	    const mimeType = typeof content.mimeType === "string" ? content.mimeType : "image/png";
+1824	    return (
+1825	      <img
+1826	        src={`data:${mimeType};base64,${content.data}`}
+1827	        alt={t("terminal.protocol.content")}
+1828	        width={960}
+1829	        height={640}
+1830	        className="mt-2 max-h-[32rem] w-auto max-w-full rounded-lg border border-border object-contain"
+1831	      />
+1832	    );
+1833	  }
+1834	  if (activity.protocolType === "content" && content?.type === "audio" && typeof content.data === "string") {
+1835	    const mimeType = typeof content.mimeType === "string" ? content.mimeType : "audio/mpeg";
+1836	    return <audio aria-label={t("terminal.protocol.content")} className="mt-2 w-full" controls src={`data:${mimeType};base64,${content.data}`} />;
+1837	  }
+1838	  if (activity.protocolType === "content" && content?.type === "terminal") {
+1839	    const output = typeof content.output === "string" ? content.output : activity.text;
+1840	    return <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-background p-3 font-mono text-xs">{output}</pre>;
+1841	  }
+1842	  if (activity.protocolType === "content" && content?.type === "resource_link") {
+1843	    const uri = typeof content.uri === "string" ? content.uri : activity.text;
+1844	    const name = typeof content.name === "string" ? content.name : uri;
+1845	    return /^https?:\/\//i.test(uri)
+1846	      ? <a href={uri} target="_blank" rel="noreferrer noopener" className="mt-1 block break-all font-mono text-xs text-sky-700 underline dark:text-sky-300">{name}</a>
+1847	      : <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{name}{name !== uri ? ` — ${uri}` : ""}</p>;
+1848	  }
+1849	  if (activity.protocolType === "content" && content?.type === "resource") {
+1850	    const resource = typeof content.resource === "object" && content.resource !== null
+1851	      ? content.resource as Record<string, unknown>
+1852	      : null;
+1853	    const resourceText = typeof resource?.text === "string" ? resource.text : activity.text;
+1854	    return <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted/30 p-3 text-xs">{resourceText}</pre>;
+1855	  }
+1856	  if (activity.protocolType === "plan" || activity.protocolType === "plan_update") {
+1857	    return (
+1858	      <MarkdownContent
+1859	        content={activity.text}
+1860	        projectRoot={projectRoot}
+1861	        onOpenProjectFile={onOpenProjectFile}
+1862	        className="mt-1 text-sm leading-6 text-foreground"
+1863	      />
+1864	    );
+1865	  }
+1866	  return activity.text ? <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{activity.text}</p> : null;
+1867	}
+1868	
+1869	function ActivityRow({
+1870	  activity,
+1871	  connectorExtendsAfter = false,
+1872	  connectorExtendsBefore = false,
+1873	  variant,
+1874	  editingUserMessageId = null,
+1875	  editingUserMessageValue = "",
+1876	  isEditingUserMessageSaving = false,
+1877	  conversationMessageTextSize = false,
+1878	  onEditingUserMessageValueChange,
+1879	  onCancelEditingUserMessage,
+1880	  onSaveEditedUserMessage,
+1881	  thoughtsDefaultOpen,
+1882	  toolGroupsDefaultOpen,
+1883	  projectRoot,
+1884	  onOpenProjectFile,
+1885	}: {
+1886	  activity: TerminalActivityItem;
+1887	  connectorExtendsAfter?: boolean;
+1888	  connectorExtendsBefore?: boolean;
+1889	  variant: "terminal" | "native";
+1890	  editingUserMessageId?: string | null;
+1891	  editingUserMessageValue?: string;
+1892	  isEditingUserMessageSaving?: boolean;
+1893	  conversationMessageTextSize?: boolean;
+1894	  onEditingUserMessageValueChange?: (value: string) => void;
+1895	  onCancelEditingUserMessage?: () => void;
+1896	  onSaveEditedUserMessage?: (messageId: string) => void;
+1897	  thoughtsDefaultOpen: boolean;
+1898	  toolGroupsDefaultOpen: boolean;
+1899	  projectRoot?: string | null;
+1900	  onOpenProjectFile?: (file: ProjectFileReference) => void;
+1901	}) {
+1902	  useI18nSnapshot();
+1903	  const { copiedMessageId } = useManagerSnapshot(conversationCopyNoticeManager);
+1904	
+1905	  const copyAgentMessage = async (content: string, messageId: string) => {
+1906	    try {
+1907	      await navigator.clipboard.writeText(content);
+1908	      conversationCopyNoticeManager.showCopiedMessage(messageId);
+1909	    } catch (error) {
+1910	      console.error("Copy message failed:", error);
+1911	    }
+1912	  };
+1913	
+1914	  if (activity.kind === "user_message") {
+1915	    const isEditing = activity.messageId === editingUserMessageId
+1916	      && onEditingUserMessageValueChange
+1917	      && onCancelEditingUserMessage
+1918	      && onSaveEditedUserMessage;
+1919	
+1920	    return (
+1921	      <div className="relative z-10 flex w-full flex-col items-end">
+1922	        {isEditing ? (
+1923	          <UserMessageEditForm
+1924	            messageId={activity.messageId}
+1925	            value={editingUserMessageValue}
+1926	            isSaving={isEditingUserMessageSaving}
+1927	            conversationMessageTextSize={conversationMessageTextSize}
+1928	            onValueChange={onEditingUserMessageValueChange}
+1929	            onCancel={onCancelEditingUserMessage}
+1930	            onSave={onSaveEditedUserMessage}
+1931	          />
+1932	        ) : (
+1933	          <div data-sending={activity.sending ? "true" : undefined} className={cn(
+1934	            "max-w-[min(72ch,calc(100%-1rem))] rounded-[1.55rem] bg-[#f3f3f3] px-5 py-3.5 text-[#202124] dark:bg-[#3a3a3a] dark:text-[#d8d8d8] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:max-w-[min(78ch,calc(100%-1.5rem))]",
+1935	            conversationMessageTextSize
+1936	              ? "text-sm leading-6"
+1937	              : "text-[length:var(--terminal-message-size)] leading-[1.55]",
+1938	            activity.sending && "opacity-70",
+1939	          )}>
+1940	            {activity.text ? <p className="max-w-none whitespace-pre-wrap">{activity.text}</p> : null}
+1941	            {activity.attachments.length > 0 ? <UserMessageAttachments attachments={activity.attachments} /> : null}
+1942	          </div>
+1943	        )}
+1944	        {!isEditing && activity.actions.length > 0 ? (
+1945	          <div className="mt-1 flex items-center justify-end gap-1 pr-1 text-muted-foreground/70">
+1946	            {activity.actions.map((action) => {
+1947	              const showCopiedNotice = action.feedback === "copy-message" && copiedMessageId === activity.messageId;
+1948	
+1949	              return action.menuItems?.length ? (
+1950	                <DropdownMenu key={action.label}>
+1951	                  <DropdownMenuTrigger
+1952	                    aria-label={action.label}
+1953	                    title={action.title ?? action.label}
+1954	                    disabled={action.disabled}
+1955	                    className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+1956	                  >
+1957	                    {action.icon}
+1958	                  </DropdownMenuTrigger>
+1959	                  <DropdownMenuContent align="end">
+1960	                    {action.menuItems.map((item) => (
+1961	                      <DropdownMenuItem
+1962	                        key={item.label}
+1963	                        className="cursor-pointer whitespace-nowrap"
+1964	                        disabled={item.disabled}
+1965	                        onClick={item.onClick}
+1966	                      >
+1967	                        <span className="mr-2 inline-flex h-4 w-4 items-center justify-center">{item.icon}</span>
+1968	                        {item.label}
+1969	                      </DropdownMenuItem>
+1970	                    ))}
+1971	                  </DropdownMenuContent>
+1972	                </DropdownMenu>
+1973	              ) : (
+1974	                <span key={action.label} className="relative inline-flex flex-col items-center">
+1975	                  <button
+1976	                    type="button"
+1977	                    aria-label={action.label}
+1978	                    title={action.title ?? action.label}
+1979	                    disabled={action.disabled}
+1980	                    onClick={action.onClick}
+1981	                    className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+1982	                  >
+1983	                    {action.icon}
+1984	                  </button>
+1985	                  {showCopiedNotice ? (
+1986	                    <span
+1987	                      role="status"
+1988	                      aria-live="polite"
+1989	                      className="pointer-events-none absolute top-full z-20 mt-1 whitespace-nowrap rounded-md border border-border/70 bg-popover px-2 py-1 text-[11px] font-medium leading-none text-popover-foreground shadow-sm"
+1990	                    >
+1991	                      {t("conversation.message.copiedNotice")}
+1992	                    </span>
+1993	                  ) : null}
+1994	                </span>
+1995	              );
+1996	            })}
+1997	          </div>
+1998	        ) : null}
+1999	      </div>
+2000	    );
+2001	  }
+2002	
+2003	  if (activity.kind === "pending_assistant") {
+2004	    return (
+2005	      <div className="relative z-10 mt-3 flex w-full justify-start px-1" aria-live="polite">
+2006	        <PendingAssistantActivity status={activity.status} />
+2007	      </div>
+2008	    );
+2009	  }
+2010	
+2011	  const running = activity.kind === "thinking" || activity.kind === "work_summary"
+2012	    ? activity.inProgress
+2013	    : (activity.kind === "tool" || activity.kind === "tool_group") && isRunningActivityStatus(activity.status);
+2014	  const markerTone = activity.kind === "tool" || activity.kind === "tool_group"
+2015	    ? isErrorActivityStatus(activity.status) ? "error" : "tool"
+2016	    : activity.kind === "permission"
+2017	      ? "permission"
+2018	    : "thought";
+2019	
+2020	  return (
+2021	    <div className="relative flex items-start gap-3">
+2022	      {connectorExtendsBefore ? (
+2023	        <div className={cn(
+2024	          "absolute left-2 top-0 h-[0.68rem] w-px",
+2025	          variant === "native" ? "bg-border/80" : "bg-border/80 dark:bg-white/14",
+2026	        )} />
+2027	      ) : null}
+2028	      {connectorExtendsAfter ? (
+2029	        <div className={cn(
+2030	          "absolute -bottom-2 left-2 top-[0.68rem] w-px",
+2031	          variant === "native" ? "bg-border/80" : "bg-border/80 dark:bg-white/14",
+2032	        )} />
+2033	      ) : null}
+2034	      <TimelineMarker running={running} tone={markerTone} variant={variant} />
+2035	      <div className="min-w-0 flex-1">
+2036	        {activity.kind === "message" ? (
+2037	          <div className="relative group/agent-message">
+2038	            <MarkdownContent
+2039	              content={activity.text}
+2040	              projectRoot={projectRoot}
+2041	              onOpenProjectFile={onOpenProjectFile}
+2042	              className={cn(
+2043	                conversationMessageTextSize
+2044	                  ? "text-sm leading-6"
+2045	                  : "text-[length:var(--terminal-message-size)] leading-[1.55]",
+2046	                variant === "native"
+2047	                  ? "text-foreground"
+2048	                  : "text-foreground [&_blockquote]:border-border/70 [&_blockquote]:bg-muted/30 [&_blockquote]:text-muted-foreground [&_code]:bg-muted/70 [&_code]:text-inherit [&_h3]:text-inherit [&_h4]:text-inherit [&_pre]:border-border/70 [&_pre]:bg-muted/30 [&_pre]:text-inherit [&_strong]:text-inherit dark:text-zinc-100/95 dark:[&_blockquote]:border-white/10 dark:[&_blockquote]:bg-white/5 dark:[&_blockquote]:text-zinc-300 dark:[&_code]:bg-white/10 dark:[&_pre]:border-white/10 dark:[&_pre]:bg-white/5",
+2049	              )}
+2050	            />
+2051	            {activity.text.trim() ? (
+2052	              // Overlaid, not stacked. As an in-flow row this reserved
+2053	              // mt-1 + h-6 = 28px of blank, non-interactive space under every
+2054	              // single assistant message — `opacity-0` hides a control but
+2055	              // never takes it out of layout — which read as unexplained gaps
+2056	              // between the transcript's rows. Absolute positioning keeps the
+2057	              // button exactly where it was on hover while costing no height,
+2058	              // and `pointer-events` stay off until it is actually revealed so
+2059	              // the corner never eats a click or a text selection.
+2060	              <div className="pointer-events-none absolute bottom-0 right-0 z-10 flex items-center text-muted-foreground/70">
+2061	                <span className="pointer-events-none relative inline-flex flex-col items-center rounded-md bg-background/80 opacity-0 shadow-sm backdrop-blur-[2px] transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-hover/agent-message:pointer-events-auto group-hover/agent-message:opacity-100">
+2062	                  <button
+2063	                    type="button"
+2064	                    aria-label={t("conversation.message.copyAria")}
+2065	                    title={t("conversation.message.copyAria")}
+2066	                    onClick={() => void copyAgentMessage(activity.text, activity.id)}
+2067	                    className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+2068	                  >
+2069	                    <Copy className="h-4 w-4" />
+2070	                  </button>
+2071	                  {copiedMessageId === activity.id ? (
+2072	                    <span
+2073	                      role="status"
+2074	                      aria-live="polite"
+2075	                      className="pointer-events-none absolute top-full z-20 mt-1 whitespace-nowrap rounded-md border border-border/70 bg-popover px-2 py-1 text-[11px] font-medium leading-none text-popover-foreground shadow-sm"
+2076	                    >
+2077	                      {t("conversation.message.copiedNotice")}
+2078	                    </span>
+2079	                  ) : null}
+2080	                </span>
+2081	              </div>
+2082	            ) : null}
+2083	          </div>
+2084	        ) : null}
+2085	        {activity.kind === "thinking" ? (
+2086	          <ThoughtActivity
+2087	            activity={activity}
+2088	            variant={variant}
+2089	            thoughtsDefaultOpen={thoughtsDefaultOpen}
+2090	            projectRoot={projectRoot}
+2091	            onOpenProjectFile={onOpenProjectFile}
+2092	          />
+2093	        ) : null}
+2094	        {activity.kind === "tool" ? (
+2095	          <ToolActivity
+2096	            activity={activity}
+2097	            variant={variant}
+2098	            projectRoot={projectRoot}
+2099	            onOpenProjectFile={onOpenProjectFile}
+2100	          />
+2101	        ) : null}
+2102	        {activity.kind === "tool_group" ? (
+2103	          <ToolGroupActivity
+2104	            activity={activity}
+2105	            variant={variant}
+2106	            toolGroupsDefaultOpen={toolGroupsDefaultOpen}
+2107	            projectRoot={projectRoot}
+2108	            onOpenProjectFile={onOpenProjectFile}
+2109	          />
+2110	        ) : null}
+2111	        {activity.kind === "work_summary" ? (
+2112	          <WorkSummaryActivity
+2113	            activity={activity}
+2114	            variant={variant}
+2115	            thoughtsDefaultOpen={thoughtsDefaultOpen}
+2116	            toolGroupsDefaultOpen={toolGroupsDefaultOpen}
+2117	            projectRoot={projectRoot}
+2118	            onOpenProjectFile={onOpenProjectFile}
+2119	          />
+2120	        ) : null}
+2121	        {activity.kind === "permission" ? (
+2122	          activity.status === "pending" ? (
+2123	            <div className={cn(
+2124	              "rounded-[0.85rem] border px-2.5 py-2",
+2125	              variant === "native"
+2126	                ? "border-amber-500/25 bg-amber-500/8"
+2127	                : "border-amber-500/25 bg-amber-500/10 dark:border-amber-400/20 dark:bg-[rgba(96,67,22,0.34)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
+2128	            )}>
+2129	              <div className={cn("text-[length:var(--terminal-permission-title-size)] font-semibold tracking-tight", variant === "native" ? "text-amber-800 dark:text-amber-300" : "text-amber-800 dark:text-amber-100")}>{t(activity.title)}</div>
+2130	              {activity.detail ? (
+2131	                <p className={cn("mt-0.5 break-words font-mono text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/85 dark:text-amber-100/85" : "text-amber-900/85 dark:text-amber-50/85")}>{t("terminal.permission.for", { detail: activity.detail })}</p>
+2132	              ) : null}
+2133	              {activity.text ? (
+2134	                <p className={cn("mt-0.5 whitespace-pre-wrap text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/75 dark:text-amber-100/75" : "text-amber-900/75 dark:text-amber-50/75")}>{activity.text}</p>
+2135	              ) : null}
+2136	            </div>
+2137	          ) : (
+2138	            <div className="py-0.5">
+2139	              <div className={cn("text-[length:var(--terminal-permission-title-size)] font-medium", variant === "native" ? "text-foreground/80 dark:text-zinc-300" : "text-foreground/80 dark:text-zinc-300")}>{t(activity.title)}</div>
+2140	              {activity.detail ? (
+2141	                <p className={cn("mt-0.5 break-words font-mono text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-500")}>{t("terminal.permission.for", { detail: activity.detail })}</p>
+2142	              ) : null}
+2143	              {activity.text ? (
+2144	                <p className={cn("mt-0.5 whitespace-pre-wrap text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-500")}>{activity.text}</p>
+2145	              ) : null}
+2146	            </div>
+2147	          )
+2148	        ) : null}
+2149	        {activity.kind === "protocol" ? (
+2150	          <div className="rounded-xl border border-border bg-muted/20 px-3 py-2.5">
+2151	            <div className="text-xs font-semibold text-foreground">{t(activity.title)}</div>
+2152	            <ProtocolActivityContent
+2153	              activity={activity}
+2154	              projectRoot={projectRoot}
+2155	              onOpenProjectFile={onOpenProjectFile}
+2156	            />
+2157	          </div>
+2158	        ) : null}
+2159	      </div>
+2160	    </div>
+2161	  );
+2162	}
+2163	
+2164	export function Terminal({
+2165	  agent,
+2166	  userMessages = [],
+2167	  entries,
+2168	  multiWorkerOrdering,
+2169	  allowUserMessageFallback = false,
+2170	  ungatedUserMessageIds,
+2171	  sendingUserMessageIds,
+2172	  getUserMessageActions,
+2173	  editingUserMessageId = null,
+2174	  editingUserMessageValue = "",
+2175	  isEditingUserMessageSaving = false,
+2176	  onEditingUserMessageValueChange,
+2177	  onCancelEditingUserMessage,
+2178	  onSaveEditedUserMessage,
+2179	  hasMoreHistory = false,
+2180	  onRequestMoreHistory,
+2181	  variant = "terminal",
+2182	  textSizeScope = "terminal",
+2183	  conversationMessageTextSize = false,
+2184	  className,
+2185	  showTextSizeControl = true,
+2186	  showPendingAssistantIndicator = false,
+2187	  pendingAssistantStatus = "thinking",
+2188	  activityFilter,
+2189	  thoughtsDefaultOpen: thoughtsDefaultOpenProp = false,
+2190	  toolGroupsDefaultOpen = false,
+2191	  emptyState,
+2192	  isLoading = false,
+2193	  projectRoot,
+2194	  onOpenProjectFile,
+2195	  scrollAnchorKey = null,
+2196	  summarizeWorkBlocks = false,
+2197	}: TerminalProps) {
+2198	  useI18nSnapshot();
+2199	  const scrollRef = useRef<HTMLDivElement>(null);
+2200	  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+2201	  const shouldFollowLatestRef = useRef(true);
+2202	  const previousScrollTopRef = useRef(0);
+2203	  const previousActivityVersionRef = useRef<string | null>(null);
+2204	  const previousScrollAnchorKeyRef = useRef<string | null>(null);
+2205	  const hasPositionedFirstActivityRef = useRef(false);
+2206	  const firstActivityIdRef = useRef<string | null>(null);
+2207	  const { conversationTextSize, terminalTextSize, alwaysExpandThoughts } = useManagerSnapshot(appearancePreferencesManager);
+2208	  const thoughtsDefaultOpen = thoughtsDefaultOpenProp || alwaysExpandThoughts;
+2209	
+2210	  const activity = useMemo(() => {
+2211	    // When the unified worker stream provides actual `entries`, the legacy
+2212	    // `agent` / `userMessages` props are ignored. Split the entries by
+2213	    // type and route them through the same renderers — bridge-typed
+2214	    // entries feed `buildAgentOutputActivity`, server-produced
+2215	    // user_input/supervisor_input entries become user-message
+2216	    // activity items, and visible lifecycle/system entries fall
+2217	    // through to the agent activity builder as plain messages.
+2218	    const usingUnifiedStream = Array.isArray(entries) && entries.length > 0;
+2219	    const visibleEntries = usingUnifiedStream
+2220	      ? (entries ?? []).filter(shouldRenderUnifiedStreamEntry)
+2221	      : undefined;
+2222	    const bridgeEntries = usingUnifiedStream
+2223	      ? (visibleEntries ?? [])
+2224	        .flatMap((entry) => {
+2225	          if (
+2226	            entry.type === "message"
+2227	            || entry.type === "thought"
+2228	            || entry.type === "tool_call"
+2229	            || entry.type === "tool_call_update"
+2230	            || entry.type === "permission"
+2231	          ) {
+2232	            return [entry as unknown as AgentOutputEntry];
+2233	          }
+2234	          if (entry.type === "system_note" || entry.type === "lifecycle") {
+2235	            return [{
+2236	              id: entry.id,
+2237	              type: "message",
+2238	              text: entry.text,
+2239	              timestamp: entry.timestamp,
+2240	              raw: entry.raw,
+2241	            } satisfies AgentOutputEntry];
+2242	          }
+2243	          return [];
+2244	        })
+2245	      : agent?.outputEntries;
+2246	    const seqByActivityId = new Map<string, number>();
+2247	    if (usingUnifiedStream) {
+2248	      for (const entry of visibleEntries ?? []) {
+2249	        if (typeof entry.seq !== "number") {
+2250	          continue;
+2251	        }
+2252	        if (!seqByActivityId.has(entry.id)) {
+2253	          seqByActivityId.set(entry.id, entry.seq);
+2254	        }
+2255	        if (entry.toolCallId) {
+2256	          const previousSeq = seqByActivityId.get(entry.toolCallId) ?? entry.seq;
+2257	          seqByActivityId.set(entry.toolCallId, Math.min(previousSeq, entry.seq));
+2258	        }
+2259	      }
+2260	    }
+2261	    const agentActivity: TerminalActivityItemWithOrder[] = buildAgentOutputActivity({
+2262	      outputEntries: bridgeEntries,
+2263	      state: usingUnifiedStream ? "idle" : agent?.state,
+2264	      currentText: usingUnifiedStream ? "" : agent?.currentText,
+2265	      lastText: usingUnifiedStream ? "" : agent?.lastText,
+2266	      displayText: usingUnifiedStream ? "" : agent?.displayText,
+2267	    }).map((item) => (
+2268	      usingUnifiedStream
+2269	        ? { ...item, streamSeq: activityStreamSeq(item, seqByActivityId) ?? undefined }
+2270	        : item
+2271	    ));
+2272	    // `seq` is per-worker, so it only orders a conversation that ran on a
+2273	    // single worker; across workers we have to fall back to timestamps.
+2274	    //
+2275	    // Which rule applies must NOT be read off the entries that happen to be
+2276	    // loaded. Only transcript entries carry `workerId`, so a cold conversation
+2277	    // looked single-worker (seq order) until the transcript page landed and
+2278	    // flipped it to timestamp order, visibly re-shuffling the list under the
+2279	    // reader. `multiWorkerOrdering` comes from the run's worker list, which is
+2280	    // known before any page is fetched; the entry scan is only a fallback for
+2281	    // callers that render a stream without one.
+2282	    const entriesArr = (entries ?? []) as unknown as Array<{ workerId?: unknown }>;
+2283	    const workerIdsInEntries = new Set<string>();
+2284	    for (const entry of entriesArr) {
+2285	      if (typeof entry.workerId === "string" && entry.workerId.length > 0) {
+2286	        workerIdsInEntries.add(entry.workerId);
+2287	      }
+2288	    }
+2289	    const isMultiWorkerOrdering = multiWorkerOrdering ?? workerIdsInEntries.size > 1;
+2290	    const canPlaceFallbackUserMessages = usingUnifiedStream && allowUserMessageFallback;
+2291	    // The loaded window is a bounded tail page whenever `hasMoreHistory` is
+2292	    // set, and the "already in the stream?" test below can only see the page
+2293	    // we hold. A row older than the oldest loaded entry already exists as a
+2294	    // `user_input` entry in a page nobody has fetched, so that test says
+2295	    // "missing" and the row gets re-injected here with no seq of its own —
+2296	    // landing next to whatever entry the window happens to start with. Every
+2297	    // such row anchors to that same entry, which is how a whole conversation's
+2298	    // user messages ended up stacked above the agent output instead of
+2299	    // interleaved with it. They stay hidden until their page loads and brings
+2300	    // the real entry, carrying the real seq, with it.
+2301	    const oldestLoadedEntryMs = (entries ?? []).reduce((oldest, entry) => {
+2302	      const value = activityTimestampMs(entry.timestamp);
+2303	      if (value <= 0) {
+2304	        return oldest;
+2305	      }
+2306	      return oldest === 0 ? value : Math.min(oldest, value);
+2307	    }, 0);
+2308	    const isPlaceableFallbackMessage = (message: TerminalUserMessage) => {
+2309	      // A message this client just sent cannot be hiding in an older page.
+2310	      if (ungatedUserMessageIds?.has(message.id)) {
+2311	        return true;
+2312	      }
+2313	      if (!canPlaceFallbackUserMessages) {
+2314	        return false;
+2315	      }
+2316	      if (!hasMoreHistory || oldestLoadedEntryMs === 0) {
+2317	        return true;
+2318	      }
+2319	      return activityTimestampMs(message.createdAt) >= oldestLoadedEntryMs;
+2320	    };
+2321	    const fallbackUserMessages = userMessages
+2322	      .filter(isPlaceableFallbackMessage)
+2323	      .filter((message) => !(entries ?? []).some((entry) => workerEntryMatchesUserMessage(entry, message)));
+2324	    // Across workers the seqs come from different counters, so a borrowed one
+2325	    // would sort this message against an unrelated sequence. Leave it out and
+2326	    // let the timestamp place it.
+2327	    const fallbackUserMessageSeqs = isMultiWorkerOrdering
+2328	      ? new Map<string, number>()
+2329	      : assignFallbackUserMessageSeqs(fallbackUserMessages, entries ?? []);
+2330	    const userActivity: TerminalActivityItemWithOrder[] = usingUnifiedStream
+2331	      ? [
+2332	        ...(visibleEntries ?? [])
+2333	          .filter((entry) => entry.type === "user_input" || entry.type === "supervisor_input" || entry.type === "user_message_chunk")
+2334	          .map((entry) => ({ source: "stream" as const, entry })),
+2335	        ...fallbackUserMessages.map((message) => ({ source: "fallback" as const, message })),
+2336	      ]
+2337	        .map((entry) => {
+2338	          if (entry.source === "fallback") {
+2339	            const messageSeq = fallbackUserMessageSeqs.get(entry.message.id);
+2340	            return {
+2341	              id: `user:${entry.message.id}`,
+2342	              kind: "user_message" as const,
+2343	              messageId: entry.message.id,
+2344	              text: entry.message.content,
+2345	              timestamp: entry.message.createdAt,
+2346	              attachments: entry.message.attachments ?? [],
+2347	              streamSeq: messageSeq,
+2348	              actions: getUserMessageActions?.(entry.message) ?? [],
+2349	              sending: sendingUserMessageIds?.has(entry.message.id) ?? false,
+2350	            };
+2351	          }
+2352	
+2353	          const attachments = (entry.entry.attachments ?? []).map((attachment) => ({
+2354	            id: attachment.id,
+2355	            kind: attachment.mimeType.startsWith("image/") ? "image" as const : "file" as const,
+2356	            name: attachment.filename,
+2357	            mimeType: attachment.mimeType,
+2358	            size: attachment.sizeBytes,
+2359	          }));
+2360	
+2361	          // Two different questions, two different answers:
+2362	          //
+2363	          //  - Where does this message belong in the thread? The stream entry
+2364	          //    knows: it is the delivery that produced the output around it.
+2365	          //    A rewind re-delivers a message with its original `createdAt`
+2366	          //    intact, so preferring the database row used to drag the message
+2367	          //    back above output it had already been rewound past.
+2368	          //  - When did the user send it? The database row, which is what
+2369	          //    retry/edit/fork act on.
+2370	          //
+2371	          // History backfilled into a newer worker's stream is appended with
+2372	          // the original `createdAt` as its timestamp, so the two agree there.
+2373	          const matchingUserMessage = entry.entry.type === "user_input"
+2374	            ? userMessages.find((m) => m.id === entry.entry.id)
+2375	            : null;
+2376	          const authoritativeTimestamp = matchingUserMessage?.createdAt ?? entry.entry.timestamp;
+2377	
+2378	          return {
+2379	            id: `user:${entry.entry.id}`,
+2380	            kind: "user_message" as const,
+2381	            messageId: entry.entry.id,
+2382	            text: entry.entry.text,
+2383	            timestamp: entry.entry.timestamp || authoritativeTimestamp,
+2384	            attachments,
+2385	            streamSeq: entry.entry.seq,
+2386	            actions: entry.entry.type === "user_input" ? getUserMessageActions?.({
+2387	              id: entry.entry.id,
+2388	              content: entry.entry.text,
+2389	              createdAt: authoritativeTimestamp,
+2390	              attachments,
+2391	            }) ?? [] : [],
+2392	          };
+2393	        })
+2394	      : userMessages.map((message) => ({
+2395	        id: `user:${message.id}`,
+2396	        kind: "user_message",
+2397	        messageId: message.id,
+2398	        text: message.content,
+2399	        timestamp: message.createdAt,
+2400	        attachments: message.attachments ?? [],
+2401	        actions: getUserMessageActions?.(message) ?? [],
+2402	        sending: sendingUserMessageIds?.has(message.id) ?? false,
+2403	      }));
+2404	    // One message id must render exactly once. A rewind (retry / edit)
+2405	    // re-delivers the same message on a new worker, so the same id can exist on
+2406	    // two streams — and a transcript recorded before superseded ranges existed
+2407	    // still carries both. Two items sharing a React key made the list thrash
+2408	    // (rows appearing, disappearing, and jumping position as the two copies
+2409	    // sorted apart), so keep the newest delivery and drop the rewound copy.
+2410	    const dedupedUserActivity = dedupeUserActivityByMessageId(userActivity);
+2411	    const latestActivityTimestamp = [...dedupedUserActivity, ...agentActivity]
+2412	      .map((item) => activityTimestampMs(item.timestamp))
+2413	      .reduce((latest, timestamp) => Math.max(latest, timestamp), 0);
+2414	    const shouldShowPendingAssistantActivity = showPendingAssistantIndicator;
+2415	    const pendingAssistantActivity: TerminalActivityItem[] = shouldShowPendingAssistantActivity
+2416	      ? [{
+2417	          id: "pending-assistant",
+2418	          kind: "pending_assistant",
+2419	          status: pendingAssistantStatus,
+2420	          timestamp: new Date((latestActivityTimestamp || Date.now()) + 1).toISOString(),
+2421	        }]
+2422	      : [];
+2423	
+2424	    const renderable = [...dedupedUserActivity, ...agentActivity, ...pendingAssistantActivity];
+2425	    // Every item is reduced to fixed scalars before a single comparison runs,
+2426	    // so the ordering is a total order and cannot depend on the pairs `sort`
+2427	    // visits. `seq` is the authority for a conversation that ran on one
+2428	    // worker; across workers the counters are unrelated, so timestamps lead
+2429	    // and the borrowed seq only separates items that share one.
+2430	    const orderKeys = usingUnifiedStream
+2431	      ? assignActivityOrderKeys(renderable, seqByActivityId)
+2432	      : new Map<string, number>();
+2433	    const sorted = renderable.sort((a, b) => {
+2434	      if (isMultiWorkerOrdering || !usingUnifiedStream) {
+2435	        const timeDelta = activityTimestampMs(a.timestamp) - activityTimestampMs(b.timestamp);
+2436	        if (timeDelta !== 0) {
+2437	          return timeDelta;
+2438	        }
+2439	      }
+2440	      const seqDelta = (orderKeys.get(a.id) ?? 0) - (orderKeys.get(b.id) ?? 0);
+2441	      if (seqDelta !== 0) {
+2442	        return seqDelta;
+2443	      }
+2444	      const timeDelta = activityTimestampMs(a.timestamp) - activityTimestampMs(b.timestamp);
+2445	      if (timeDelta !== 0) {
+2446	        return timeDelta;
+2447	      }
+2448	      return activityKindOrder(a) - activityKindOrder(b) || a.id.localeCompare(b.id);
+2449	    });
+2450	    return summarizeWorkBlocks ? summarizeWorkIntervals(sorted) : sorted;
+2451	  }, [agent, allowUserMessageFallback, entries, getUserMessageActions, hasMoreHistory, multiWorkerOrdering, pendingAssistantStatus, sendingUserMessageIds, showPendingAssistantIndicator, summarizeWorkBlocks, ungatedUserMessageIds, userMessages]);
+2452	  const filteredActivity = useMemo(
+2453	    () => activityFilter ? activity.filter(activityFilter) : activity,
+2454	    [activity, activityFilter],
+2455	  );
+2456	  const effectiveToolGroupsDefaultOpen = useMemo(() => {
+2457	    if (toolGroupsDefaultOpen) return true;
+2458	    const lastMeaningful = filteredActivity.filter((a) => a.kind !== "pending_assistant").at(-1);
+2459	    return lastMeaningful?.kind === "tool_group" && isRunningActivityStatus(lastMeaningful.status);
+2460	  }, [filteredActivity, toolGroupsDefaultOpen]);
+2461	  const terminalZoomStyle = useMemo(() => (
+2462	    textSizeScope === "conversation"
+2463	      ? getConversationTerminalTextSizeStyle(conversationTextSize)
+2464	      : getTerminalTextSizeStyle(terminalTextSize)
+2465	  ), [conversationTextSize, terminalTextSize, textSizeScope]);
+2466	  const handleProjectFileReferenceClick = useMemo(() => (
+2467	    projectRoot && onOpenProjectFile
+2468	      ? (file: ProjectFileReference) => onOpenProjectFile(file)
+2469	      : undefined
+2470	  ), [onOpenProjectFile, projectRoot]);
+2471	
+2472	  useLayoutEffect(() => {
+2473	    const container = scrollRef.current;
+2474	    if (!container) {
+2475	      return;
+2476	    }
+2477	
+2478	    const scrollContainer = getTerminalScrollElement(container, variant);
+2479	    scrollContainerRef.current = scrollContainer;
+2480	    previousScrollTopRef.current = scrollContainer.scrollTop;
+2481	
+2482	    const updateFollowState = () => {
+2483	      shouldFollowLatestRef.current = shouldTerminalKeepFollowingLatest(scrollContainer, previousScrollTopRef.current);
+2484	      previousScrollTopRef.current = scrollContainer.scrollTop;
+2485	    };
+2486	
+2487	    const handleScroll = () => {
+2488	      updateFollowState();
+2489	      if (
+2490	        variant === "native"
+2491	        && hasMoreHistory
+2492	        && shouldTerminalRequestMoreHistory(scrollContainer)
+2493	      ) {
+2494	        onRequestMoreHistory?.();
+2495	      }
+2496	    };
+2497	
+2498	    updateFollowState();
+2499	    scrollContainer.addEventListener("scroll", handleScroll, { passive: true });
+2500	    return () => scrollContainer.removeEventListener("scroll", handleScroll);
+2501	  }, [hasMoreHistory, onRequestMoreHistory, variant]);
+2502	
+2503	  useLayoutEffect(() => {
+2504	    const container = scrollContainerRef.current;
+2505	    const activityVersion = getTerminalActivityVersion(filteredActivity);
+2506	    const scrollAnchorChanged = previousScrollAnchorKeyRef.current !== scrollAnchorKey;
+2507	    previousScrollAnchorKeyRef.current = scrollAnchorKey;
+2508	    if (scrollAnchorChanged) {
+2509	      hasPositionedFirstActivityRef.current = false;
+2510	    }
+2511	    const previousActivityVersion = previousActivityVersionRef.current;
+2512	    const activityChanged = previousActivityVersionRef.current !== activityVersion;
+2513	    previousActivityVersionRef.current = activityVersion;
+2514	    const previousFirstActivityId = firstActivityIdRef.current;
+2515	    const firstActivityId = filteredActivity[0]?.id ?? null;
+2516	    if (shouldTerminalResetInitialPosition({
+2517	      previousFirstActivityId,
+2518	      nextFirstActivityId: firstActivityId,
+2519	      scrollAnchorChanged,
+2520	    })) {
+2521	      hasPositionedFirstActivityRef.current = false;
+2522	    }
+2523	    firstActivityIdRef.current = firstActivityId;
+2524	
+2525	    const isFirstRenderedActivity = filteredActivity.length > 0 && !hasPositionedFirstActivityRef.current;
+2526	    if (
+2527	      !container
+2528	      || (!activityChanged && !scrollAnchorChanged)
+2529	      || (!shouldFollowLatestRef.current && !isFirstRenderedActivity)
+2530	    ) {
+2531	      return;
+2532	    }
+2533	
+2534	    const latestActivityKind = filteredActivity.at(-1)?.kind;
+2535	    if (!shouldTerminalScrollToLatest({ variant, isFirstRenderedActivity, latestActivityKind })) {
+2536	      previousScrollTopRef.current = container.scrollTop;
+2537	      return;
+2538	    }
+2539	
+2540	    const scrollBehavior: ScrollBehavior = isFirstRenderedActivity ? "auto" : "smooth";
+2541	
+2542	    if (isFirstRenderedActivity) {
+2543	      const didScroll = scrollTerminalToBottom(container, "auto");
+2544	      if (didScroll) {
+2545	        shouldFollowLatestRef.current = true;
+2546	        hasPositionedFirstActivityRef.current = true;
+2547	      }
+2548	      previousScrollTopRef.current = container.scrollTop;
+2549	      return;
+2550	    }
+2551	
+2552	    shouldFollowLatestRef.current = true;
+2553	    if (filteredActivity.length > 0) {
+2554	      hasPositionedFirstActivityRef.current = true;
+2555	    }
+2556	    requestAnimationFrame(() => {
+2557	      if (previousActivityVersion === null) {
+2558	        scrollTerminalToBottom(container, "auto");
+2559	      } else {
+2560	        scrollTerminalToBottom(container, scrollBehavior);
+2561	      }
+2562	      previousScrollTopRef.current = container.scrollTop;
+2563	    });
+2564	  }, [filteredActivity, scrollAnchorKey, variant]);
+2565	
+2566	  return (
+2567	    <div className={cn(
+2568	      "relative w-full",
+2569	      textSizeScope === "conversation" && "omni-conversation-text-scale",
+2570	      variant === "native"
+2571	        ? "flex flex-col bg-transparent text-foreground"
+2572	        : "h-full overflow-hidden rounded-[1.05rem] border border-border/70 bg-card text-foreground shadow-sm dark:border-transparent dark:bg-[#0b0d10] dark:text-zinc-100 dark:shadow-none",
+2573	      className,
+2574	    )}
+2575	      style={terminalZoomStyle}
+2576	    >
+2577	      {variant === "terminal" && showTextSizeControl ? (
+2578	        <TerminalTextSizeControl className="absolute right-2 top-2 z-20" />
+2579	      ) : null}
+2580	      <div
+2581	        ref={scrollRef}
+2582	        onScroll={(event) => {
+2583	          if (variant === "terminal") {
+2584	            shouldFollowLatestRef.current = shouldTerminalKeepFollowingLatest(event.currentTarget, previousScrollTopRef.current);
+2585	            previousScrollTopRef.current = event.currentTarget.scrollTop;
+2586	          }
+2587	          if (hasMoreHistory && shouldTerminalRequestMoreHistory(event.currentTarget)) {
+2588	            onRequestMoreHistory?.();
+2589	          }
+2590	        }}
+2591	        className={cn(
+2592	          variant === "native"
+2593	            ? "flex flex-1 flex-col overflow-visible px-1 py-2"
+2594	            : "h-full overflow-y-auto px-3 pb-2.5 pt-9 [scrollbar-color:rgba(113,113,122,0.28)_transparent] [scrollbar-width:thin] dark:[scrollbar-color:rgba(255,255,255,0.16)_transparent]",
+2595	        )}
+2596	      >
+2597	        {filteredActivity.length > 0 ? (
+2598	          <div className="relative flex flex-col gap-2">
+2599	            {filteredActivity.map((entry, index) => {
+2600	              const previousEntry = filteredActivity[index - 1];
+2601	              const nextEntry = filteredActivity[index + 1];
+2602	
+2603	              return (
+2604	                <ActivityRow
+2605	                  key={entry.id}
+2606	                  activity={entry}
+2607	                  connectorExtendsBefore={shouldTerminalConnectorExtend(entry.kind, previousEntry?.kind)}
+2608	                  connectorExtendsAfter={shouldTerminalConnectorExtend(entry.kind, nextEntry?.kind)}
+2609	                  variant={variant}
+2610	                  editingUserMessageId={editingUserMessageId}
+2611	                  editingUserMessageValue={editingUserMessageValue}
+2612	                  isEditingUserMessageSaving={isEditingUserMessageSaving}
+2613	                  conversationMessageTextSize={conversationMessageTextSize}
+2614	                  onEditingUserMessageValueChange={onEditingUserMessageValueChange}
+2615	                  onCancelEditingUserMessage={onCancelEditingUserMessage}
+2616	                  onSaveEditedUserMessage={onSaveEditedUserMessage}
+2617	                  thoughtsDefaultOpen={thoughtsDefaultOpen}
+2618	                  toolGroupsDefaultOpen={effectiveToolGroupsDefaultOpen}
+2619	                  projectRoot={projectRoot}
+2620	                  onOpenProjectFile={handleProjectFileReferenceClick}
+2621	                />
+2622	              );
+2623	            })}
+2624	          </div>
+2625	        ) : emptyState !== undefined ? (
+2626	          <>{emptyState}</>
+2627	        ) : (
+2628	          <div className={cn(
+2629	            "flex h-full min-h-full flex-1 items-center justify-center gap-2 rounded-xl border border-dashed px-4 text-center text-sm",
+2630	            variant === "native"
+2631	              ? "border-border bg-muted/20 text-muted-foreground"
+2632	              : "border-border/70 bg-muted/25 text-muted-foreground dark:border-white/10 dark:bg-black/10 dark:text-zinc-500",
+2633	          )}>
+2634	            {isLoading ? (
+2635	              <>
+2636	                <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+2637	                <span>{t("terminal.empty.loadingSession")}</span>
+2638	              </>
+2639	            ) : (
+2640	              <span>{t("terminal.empty.noActivity")}</span>
+2641	            )}
+2642	          </div>
+2643	        )}
+2644	      </div>
+2645	    </div>
+2646	  );
+2647	}
+
+uuid: ee575ea8-99f6-4718-98f1-9757e7680d26
+parent: 16d86892-58bf-4fbf-a6da-0a483710ad8d
