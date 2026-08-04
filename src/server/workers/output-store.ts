@@ -419,7 +419,7 @@ type CompactableEntry = {
   [key: string]: unknown;
 };
 
-function compactEntryForHistory<T extends CompactableEntry>(entry: T): T {
+export function compactEntryForHistory<T extends CompactableEntry>(entry: T): T {
   const text = (entry.type === "tool_call" || entry.type === "tool_call_update") && typeof entry.text === "string"
     ? truncateHistoryString(entry.text)
     : entry.text;
@@ -811,6 +811,199 @@ async function readAllPersistedEntries(runId: string, workerId: string): Promise
 }
 
 /**
+ * Guard against resuming a transcript mid-stream.
+ *
+ * `refreshChainCaches` seeds the seq cursor from
+ * `max(fileMaxSeq, artifact_streams.latest_seq) + 1`. That `max()` exists for
+ * cross-process safety, but it has a failure mode: when the plaintext stream
+ * file is missing or empty while the DB cursor is already advanced, the writer
+ * happily starts numbering at `latest_seq + 1` and appends forward forever. The
+ * entries below that seq are never written, so the transcript silently loses its
+ * head — the UI then renders the survivors as if the conversation began there.
+ * This is what destroyed the head of runs e51514929b72 / e74cf7a81b7f /
+ * ef23fac96fdb / 1795ba24270e.
+ *
+ * The fallback chain in `readAllPersistedEntries` can usually still see that
+ * history (compacted `.gz`, the legacy path, or the raw runtime archive), but it
+ * is only consulted while the plaintext is empty — the moment one entry lands,
+ * the partial file shadows every fallback permanently. So the only safe moment
+ * to repair is right here, before the first append.
+ *
+ * Must be called with the worker file lock held.
+ */
+async function healStrandedStreamHead(
+  runId: string,
+  workerId: string,
+  paths: WorkerStreamPaths,
+): Promise<void> {
+  // Fast path: a non-empty file means the head (if any) is already
+  // materialized. Normal streaming appends pay one stat and nothing else.
+  // Stat `paths.filePath` (the write target) rather than going through
+  // `readWorkerFileState`, whose read-mode resolution can point at the legacy
+  // flat path and hide an empty live stream.
+  const size = await fs.stat(paths.filePath).then((stat) => stat.size).catch(() => 0);
+  if (size > 0) {
+    return;
+  }
+
+  let dbLatestSeq = 0;
+  try {
+    const { readArtifactStreamMetadata } = await import("@/server/artifacts/stream-metadata");
+    const metadata = await readArtifactStreamMetadata({ runId, kind: "worker_entries", ownerId: workerId });
+    if (metadata && typeof metadata.latestSeq === "number" && metadata.latestSeq > 0) {
+      dbLatestSeq = metadata.latestSeq;
+    }
+  } catch {
+    // Metadata unavailable — nothing to reconcile against, so nothing to heal.
+    return;
+  }
+  if (dbLatestSeq <= 0) {
+    // Genuinely a brand-new stream. Numbering starts at 1 as usual.
+    return;
+  }
+
+  // Empty file + advanced cursor = the head is stranded. Recover whatever the
+  // fallback chain can still reach and write it back before numbering resumes.
+  let recovered = await readAllPersistedEntries(runId, workerId);
+  if (recovered.length === 0) {
+    // Last resort: the agent runtime's raw output archive. It is the only
+    // source that survived the outage this guard exists to prevent, and it is
+    // deliberately NOT in readAllPersistedEntries's chain — `readFromArchive`
+    // there reads the run `.zip`, a different artifact entirely.
+    recovered = await readFromRuntimeOutputArchive(workerId);
+  }
+  if (recovered.length === 0) {
+    emitNamedEvent({
+      kind: "worker.stream_head_unrecoverable",
+      runId,
+      workerId,
+      expectedLatestSeq: dbLatestSeq,
+    });
+    console.error(
+      `[worker-output] ${workerId}: stream file is empty but artifact_streams.latest_seq=${dbLatestSeq}`
+      + ` and no fallback source (gz/legacy/archive) holds the missing head.`
+      + ` Resuming would strand ${dbLatestSeq} entries; resetting the cursor to 0 so numbering restarts at 1.`,
+    );
+    // Better to renumber from 1 than to leave a permanent unfillable hole.
+    await setStreamCursor(runId, workerId, 0, null);
+    return;
+  }
+
+  const renumbered = recovered.map((entry, index) => {
+    const { seq: _dropped, ...rest } = entry as WorkerEntry & { seq?: number };
+    return compactEntryForHistory({ ...rest, seq: index + 1 } as unknown as CompactableEntry) as unknown as WorkerEntry;
+  });
+
+  const body = renumbered.map((entry) => JSON.stringify(entry)).join("\n") + "\n";
+  const tmpPath = `${paths.filePath}.heal-${process.pid}-${(tmpCounter += 1)}.tmp`;
+  const handle = await fs.open(tmpPath, "w");
+  try {
+    await handle.writeFile(body, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await fs.rename(tmpPath, paths.filePath);
+
+  // Set the cursor directly: the recovered transcript is authoritative, and it
+  // is usually SHORTER than the stale cursor (streaming chunks collapse into
+  // assembled entries). `commitArtifactAppend` never moves a cursor backward,
+  // so using it here would leave the writer numbering above the file again.
+  const last = renumbered.at(-1);
+  await setStreamCursor(runId, workerId, renumbered.length, last?.id ?? `seq-${renumbered.length}`);
+
+  // Force the next refreshChainCaches to re-read from the healed file.
+  const key = chainKey(runId, workerId);
+  nextSeqByKey.delete(key);
+  seenIdsByKey.delete(key);
+  fingerprintsByKey.delete(key);
+  fileStateByKey.delete(key);
+
+  emitNamedEvent({
+    kind: "worker.stream_head_healed",
+    runId,
+    workerId,
+    expectedLatestSeq: dbLatestSeq,
+    recoveredEntries: renumbered.length,
+  });
+  console.warn(
+    `[worker-output] ${workerId}: recovered ${renumbered.length} stranded entries into an empty stream file`
+    + ` (cursor was at ${dbLatestSeq}); transcript head preserved.`,
+  );
+}
+
+/**
+ * Read the agent runtime's raw output archive for a worker and reassemble it
+ * into worker-stream shape.
+ *
+ * The runtime writes every bridge record here as it streams, so this file
+ * outlives stream-file damage. Its records are per-chunk, so streaming deltas
+ * must be re-joined (see `reassembleArchivedEntries`) or the transcript comes
+ * back shredded mid-word.
+ */
+async function readFromRuntimeOutputArchive(workerId: string): Promise<WorkerEntry[]> {
+  const archivePath = path.join(
+    process.cwd(),
+    ".omniharness",
+    "agent-runtime-output",
+    `${workerId}.jsonl`,
+  );
+  let body: string;
+  try {
+    body = await fs.readFile(archivePath, "utf8");
+  } catch {
+    return [];
+  }
+  const parsed = parseWorkerEntryLines(body).filter((entry) => entry.id !== "output-archive-marker");
+  if (parsed.length === 0) {
+    return [];
+  }
+  const { reassembleArchivedEntries } = await import("@/server/agent-runtime/output-store");
+  return reassembleArchivedEntries(parsed);
+}
+
+/**
+ * Force `artifact_streams.latest_seq` to match what is actually on disk.
+ *
+ * `commitArtifactAppend` deliberately never moves a cursor backward, which is
+ * right for the append path but wrong for repair — after healing, the file is
+ * authoritative and may legitimately be shorter than the stale cursor. This
+ * writes the row directly and drops the chain caches so the next write re-reads
+ * from the healed file.
+ */
+async function setStreamCursor(
+  runId: string,
+  workerId: string,
+  latestSeq: number,
+  latestRecordId: string | null,
+): Promise<void> {
+  try {
+    const [{ db }, { artifactStreams }, { and: andOp, eq: eqOp }] = await Promise.all([
+      import("@/server/db"),
+      import("@/server/db/schema"),
+      import("drizzle-orm"),
+    ]);
+    await db
+      .update(artifactStreams)
+      .set({ latestSeq, latestRecordId, updatedAt: new Date() })
+      .where(
+        andOp(
+          eqOp(artifactStreams.runId, runId),
+          eqOp(artifactStreams.kind, "worker_entries"),
+          eqOp(artifactStreams.ownerId, workerId),
+        ),
+      );
+  } catch {
+    // Non-fatal: the append still proceeds, just at the stale cursor.
+  }
+  const key = chainKey(runId, workerId);
+  nextSeqByKey.delete(key);
+  seenIdsByKey.delete(key);
+  fingerprintsByKey.delete(key);
+  fileStateByKey.delete(key);
+}
+
+/**
  * Append a single worker entry to the JSONL file. The writer assigns
  * `seq` from the in-memory cursor (seeded from the file tail on first
  * use). Acquires the per-worker chain so it cannot interleave with
@@ -836,6 +1029,8 @@ export async function appendWorkerEntryWithResult(
       // expand it first so cache refresh sees the live transcript rather
       // than the lock-created empty placeholder.
       await expandWorkerOutputFileInternal(paths);
+      // Never resume numbering above a head that isn't on disk.
+      await healStrandedStreamHead(runId, workerId, paths);
 
       const { nextSeq, seen, fingerprints } = await refreshChainCaches(runId, workerId);
       if (entry.id && seen.has(entry.id)) {
@@ -937,6 +1132,8 @@ export async function writeWorkerOutputEntries(
   await runOnChain(runId, workerId, async () => {
     await withWorkerFileLock(runId, workerId, async (paths) => {
       await expandWorkerOutputFileInternal(paths);
+      // Never resume numbering above a head that isn't on disk.
+      await healStrandedStreamHead(runId, workerId, paths);
 
       const { fingerprints } = await refreshChainCaches(runId, workerId);
       const newEntries: AgentOutputEntry[] = [];

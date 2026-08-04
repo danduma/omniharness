@@ -4,6 +4,8 @@ import type { AgentOutputEntry } from "@/lib/agent-output";
 import { prepareClaudeGatewayLaunch, type ClaudeGatewayCredentialSource } from "@/server/integrations/claude-model-gateway/worker-env";
 import {
   captureWorkerTurnGeneration,
+  currentWorkerTurnSignal,
+  isWorkerTurnAbortedError,
   isWorkerTurnSupersededError,
   isWorkerTurnGenerationCurrent,
 } from "@/server/conversations/worker-turn-gate";
@@ -429,10 +431,25 @@ function parseServerSentEventBlock(block: string): AskStreamEvent | null {
   };
 }
 
-async function readAskStream(response: Response): Promise<{ response: string; state: string; stopReason?: string | null }> {
+async function readAskStream(
+  response: Response,
+  signal?: AbortSignal,
+): Promise<{ response: string; state: string; stopReason?: string | null }> {
   const reader = response.body?.getReader();
   if (!reader) {
     throw new Error("Ask stream response did not include a readable body.");
+  }
+  // An abort mid-stream must end the read now, not at the next chunk boundary —
+  // a wedged agent may never send another chunk.
+  const onAbort = () => {
+    void reader.cancel().catch(() => undefined);
+  };
+  if (signal) {
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
   }
 
   const decoder = new TextDecoder();
@@ -491,7 +508,11 @@ async function readAskStream(response: Response): Promise<{ response: string; st
     }
   };
 
+  try {
   while (true) {
+    if (signal?.aborted) {
+      throw signal.reason ?? new Error("Worker turn aborted");
+    }
     const { done, value } = await reader.read();
     if (value) {
       buffer += decoder.decode(value, { stream: !done });
@@ -518,11 +539,18 @@ async function readAskStream(response: Response): Promise<{ response: string; st
     handleEvent(trailingEvent);
   }
 
+  if (signal?.aborted) {
+    throw signal.reason ?? new Error("Worker turn aborted");
+  }
+
   if (!completed) {
     throw new Error("Ask stream ended before the agent returned a result.");
   }
 
   return completed;
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+  }
 }
 
 export type PrewarmWorkerResult = {
@@ -615,7 +643,15 @@ export async function spawnAgent(params: {
   );
 }
 
-export async function askAgent(name: string, prompt: string, imageAttachments?: Array<{ path: string; mimeType: string }>) {
+export async function askAgent(
+  name: string,
+  prompt: string,
+  imageAttachments?: Array<{ path: string; mimeType: string }>,
+  options: { signal?: AbortSignal } = {},
+) {
+  // Ambient by default: `runWorkerTurn` publishes the turn's signal, so stop and
+  // steer reach this fetch without every intermediate caller threading it.
+  const signal = options.signal ?? currentWorkerTurnSignal();
   const capturedTurnGeneration = await captureWorkerTurnGeneration(name);
   const assertTurnIsCurrent = async () => {
     if (
@@ -641,6 +677,7 @@ export async function askAgent(name: string, prompt: string, imageAttachments?: 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        ...(signal ? { signal } : {}),
       });
       if (!res.ok) {
         let detail = `${res.status} ${res.statusText}`;
@@ -657,7 +694,7 @@ export async function askAgent(name: string, prompt: string, imageAttachments?: 
           retryable: isAgentBusyError(detail) ? false : undefined,
         });
       }
-      const result = await readAskStream(res);
+      const result = await readAskStream(res, signal);
       // Some runtimes acknowledge cancellation with a normal terminal frame
       // instead of a connection error. Fence that late success as well.
       await assertTurnIsCurrent();
@@ -665,11 +702,16 @@ export async function askAgent(name: string, prompt: string, imageAttachments?: 
     }, {
       maxDelayMs: BRIDGE_CONNECTION_RESET_MAX_BACKOFF_MS,
       operationLabel: `Ask /agents/${name}/ask`,
+      // An aborted turn must die on the spot. Without this, an abort mid-stream
+      // reads as a connection failure and the "retry indefinitely" path revives
+      // the very turn the user just stopped.
       retryIndefinitelyWhen: (error) =>
-        isRecoverableConnectionSupervisorError(error) && !isBridgeConnectionRefused(error),
+        !isWorkerTurnAbortedError(error)
+        && isRecoverableConnectionSupervisorError(error)
+        && !isBridgeConnectionRefused(error),
     });
   } catch (error) {
-    if (isWorkerTurnSupersededError(error)) {
+    if (isWorkerTurnSupersededError(error) || isWorkerTurnAbortedError(error)) {
       throw error;
     }
     if (isBridgeConnectionRefused(error)) {

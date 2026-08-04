@@ -26,6 +26,10 @@ vi.mock("@/server/conversations/worker-turn-gate", () => ({
   isWorkerTurnSupersededError: (error: unknown) => /newer worker turn/i.test(
     error instanceof Error ? error.message : String(error),
   ),
+  currentWorkerTurnSignal: () => undefined,
+  isWorkerTurnAbortedError: (error: unknown) => /\bworker turn aborted\b|\bthis operation was aborted\b/i.test(
+    error instanceof Error ? error.message : String(error),
+  ),
 }));
 
 describe("bridge client", () => {
