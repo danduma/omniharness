@@ -1,4 +1,4 @@
-import { lazy, useCallback, type Dispatch, type SetStateAction } from "react";
+import { lazy, useCallback, type Dispatch, type KeyboardEvent, type SetStateAction } from "react";
 import { Bug, ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, Menu, MoreHorizontal, PanelLeft, PanelRight, Pencil, RotateCw, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
@@ -6,9 +6,17 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
@@ -21,8 +29,9 @@ import type { ManualCommitAction } from "@/lib/commit-workflow";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { t, useI18nSnapshot } from "@/lib/i18n";
+import { useIsCompactLayout } from "@/hooks/use-mobile";
 import { ConversationSidebar } from "./ConversationSidebar";
-import { RunWorkspaceBadge } from "./RunWorkspaceBadge";
+import { RunWorkspaceBadge, resolveRunWorkspace } from "./RunWorkspaceBadge";
 import { ThemeModeToggle } from "./ThemeModeToggle";
 
 const SideWindow = lazy(
@@ -223,12 +232,19 @@ export function HomeHeader({
   onOpenExternalSessions,
 }: HomeHeaderProps) {
   useI18nSnapshot();
+  const isCompactLayout = useIsCompactLayout();
   const conversationTitle = selectedRun?.title?.trim() || "New conversation";
   const titleLabel = selectedRun ? conversationTitle : "";
   const isEditingTitle = Boolean(selectedRun && renamingRunId === selectedRun.id && renameSource === "topbar");
+  // Below `lg` the inline input is too cramped to read what you type, so the
+  // rename happens in a dialog instead.
+  const isEditingTitleInline = isEditingTitle && !isCompactLayout;
+  const isEditingTitleInDialog = isEditingTitle && isCompactLayout;
   const rootFolderLabel = activeConversationCwd
     ? activeConversationCwd.split(/[\\/]/).filter(Boolean).pop() || activeConversationCwd
     : "";
+  // The branch/worktree lives in the commit menus rather than the top bar.
+  const runWorkspace = resolveRunWorkspace(selectedRun, activeConversationCwd);
   const commitButtonLabel = pushOnCommitEnabled ? t("commit.menu.commitAndPushNow") : t("commit.menu.commitNow");
 
   const beginTopBarTitleEdit = () => {
@@ -283,6 +299,21 @@ export function HomeHeader({
     node.focus();
     node.select();
   }, [isEditingTitle]);
+
+  const handleTitleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (!selectedRun) {
+      return;
+    }
+
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitRenamingRun(selectedRun.id);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      cancelRenamingRun();
+    }
+  };
 
   return (
   <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border/50 px-3 sm:px-4">
@@ -370,23 +401,14 @@ export function HomeHeader({
         {titleLabel || rootFolderLabel ? (
           <div className="flex min-w-0 items-baseline gap-2">
             {titleLabel && selectedRun ? (
-              isEditingTitle ? (
+              isEditingTitleInline ? (
                 <Input
                   ref={focusTitleInput}
                   aria-label="Edit conversation title"
                   value={renameValue}
                   onChange={(event) => setRenameValue(event.target.value)}
-                  onKeyDown={(event) => {
-                    event.stopPropagation();
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      commitRenamingRun(selectedRun.id);
-                    } else if (event.key === "Escape") {
-                      event.preventDefault();
-                      cancelRenamingRun();
-                    }
-                  }}
-                  className="h-8 w-[18rem] max-w-[calc(100vw-10rem)] rounded-md border-border/70 bg-background px-2 text-sm font-semibold sm:w-[26rem]"
+                  onKeyDown={handleTitleInputKeyDown}
+                  className="h-8 w-[26rem] max-w-[calc(100vw-10rem)] rounded-md border-border/70 bg-background px-2 text-sm font-semibold"
                 />
               ) : (
                 <div className="group/title flex min-w-0 items-center gap-1.5">
@@ -394,7 +416,7 @@ export function HomeHeader({
                     type="button"
                     aria-label="Conversation title"
                     title={`${titleLabel} — tap to rename`}
-                    className="min-w-0 truncate rounded-sm px-1 text-left text-sm font-semibold text-foreground lg:hidden"
+                    className="min-w-0 truncate rounded-sm px-1 py-1.5 text-left text-sm font-semibold text-foreground lg:hidden"
                     onClick={beginTopBarTitleEdit}
                   >
                     {titleLabel}
@@ -423,13 +445,12 @@ export function HomeHeader({
             {rootFolderLabel ? (
               <span
                 aria-label="Root repository folder"
-                className="max-w-[10rem] shrink-0 truncate font-mono text-[10px] text-muted-foreground"
+                className="hidden max-w-[10rem] shrink-0 truncate font-mono text-[10px] text-muted-foreground lg:inline"
                 title={activeConversationCwd || rootFolderLabel}
               >
                 {rootFolderLabel}
               </span>
             ) : null}
-            <RunWorkspaceBadge run={selectedRun} fallbackPath={activeConversationCwd} />
             {selectedRun ? (
               <DropdownMenu>
                 <DropdownMenuTrigger
@@ -470,6 +491,11 @@ export function HomeHeader({
                     <span>{t("session.menu.reload")}</span>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator className="sm:hidden" />
+                  {runWorkspace ? (
+                    <DropdownMenuLabel className="font-normal sm:hidden">
+                      <RunWorkspaceBadge run={selectedRun} fallbackPath={activeConversationCwd} />
+                    </DropdownMenuLabel>
+                  ) : null}
                   <DropdownMenuItem onClick={onCommitNow} disabled={isAutoCommitChatPending} className="sm:hidden">
                     <GitCommitHorizontal className="h-4 w-4" />
                     <span>{t("commit.menu.commitNow")}</span>
@@ -487,6 +513,40 @@ export function HomeHeader({
           <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
             Cancelling
           </span>
+        ) : null}
+        {selectedRun ? (
+          <Dialog
+            open={isEditingTitleInDialog}
+            onOpenChange={(open) => {
+              if (!open) {
+                cancelRenamingRun();
+              }
+            }}
+          >
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>{t("session.rename.title")}</DialogTitle>
+              </DialogHeader>
+              <label className="grid gap-1.5 text-sm">
+                <span className="font-medium">{t("session.rename.field")}</span>
+                <Input
+                  ref={focusTitleInput}
+                  aria-label={t("session.rename.field")}
+                  value={renameValue}
+                  onChange={(event) => setRenameValue(event.target.value)}
+                  onKeyDown={handleTitleInputKeyDown}
+                />
+              </label>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={cancelRenamingRun}>
+                  {t("common.cancel")}
+                </Button>
+                <Button type="button" onClick={() => commitRenamingRun(selectedRun.id)}>
+                  {t("common.save")}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         ) : null}
       </div>
     </div>
@@ -521,6 +581,14 @@ export function HomeHeader({
               )}
             />
             <DropdownMenuContent align="end" className="w-64">
+              {runWorkspace ? (
+                <>
+                  <DropdownMenuLabel className="font-normal">
+                    <RunWorkspaceBadge run={selectedRun} fallbackPath={activeConversationCwd} />
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                </>
+              ) : null}
               <DropdownMenuItem
                 onClick={(event) => {
                   event.preventDefault();

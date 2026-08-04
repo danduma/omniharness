@@ -198,15 +198,54 @@ export async function prepareStaticInterface({
     throw new Error("Static interface index.html is missing.");
   }
   const manifest = await validateManifest(rootReal, indexHtml);
-  const securityHeaders = buildInterfaceSecurityHeaders({
+  let themeScriptSha256 = manifest.themeScriptSha256;
+  let securityHeaders = buildInterfaceSecurityHeaders({
     mode,
-    themeScriptSha256: manifest.themeScriptSha256,
+    themeScriptSha256,
   });
+  let refreshPromise: Promise<void> | null = null;
+
+  async function refreshIndexSnapshot() {
+    if (!refreshPromise) {
+      refreshPromise = (async () => {
+        const nextIndexHtml = await fs.readFile(path.join(rootReal, "index.html"), "utf8");
+        if (nextIndexHtml === indexHtml) {
+          return;
+        }
+        const nextManifest = await validateManifest(rootReal, nextIndexHtml);
+        indexHtml = nextIndexHtml;
+        themeScriptSha256 = nextManifest.themeScriptSha256;
+        securityHeaders = buildInterfaceSecurityHeaders({
+          mode,
+          themeScriptSha256,
+        });
+      })();
+    }
+    try {
+      await refreshPromise;
+    } finally {
+      refreshPromise = null;
+    }
+  }
+
+  function securityHeadersFor(url: URL) {
+    const headers = new Headers(securityHeaders);
+    if (url.pathname === "/authorize-interface") {
+      // The approval page is the cross-origin popup itself. `unsafe-none`
+      // keeps its opener available long enough to post the one-time PKCE
+      // result back; the main interface remains isolated with
+      // `same-origin-allow-popups`.
+      headers.set("cross-origin-opener-policy", "unsafe-none");
+    }
+    return headers;
+  }
 
   return {
     enabled: true,
     root: rootReal,
-    themeScriptSha256: manifest.themeScriptSha256,
+    get themeScriptSha256() {
+      return themeScriptSha256;
+    },
     async handle(request) {
       if (request.method !== "GET") {
         return null;
@@ -215,14 +254,7 @@ export async function prepareStaticInterface({
       if (url.pathname.startsWith("/api/")) {
         return null;
       }
-      const responseSecurityHeaders = new Headers(securityHeaders);
-      if (url.pathname === "/authorize-interface") {
-        // The approval page is the cross-origin popup itself. `unsafe-none`
-        // keeps its opener available long enough to post the one-time PKCE
-        // result back; the main interface remains isolated with
-        // `same-origin-allow-popups`.
-        responseSecurityHeaders.set("cross-origin-opener-policy", "unsafe-none");
-      }
+      let responseSecurityHeaders = securityHeadersFor(url);
       let decodedPath: string;
       try {
         decodedPath = decodeURIComponent(url.pathname);
@@ -264,6 +296,8 @@ export async function prepareStaticInterface({
 
       const extension = path.extname(filePath);
       if (extension === ".html" && path.basename(filePath) === "index.html") {
+        await refreshIndexSnapshot();
+        responseSecurityHeaders = securityHeadersFor(url);
         const bootstrap = await buildBootstrap({
           request,
           selectedRunId: selectedRunIdForUrl(url),
