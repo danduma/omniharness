@@ -7,9 +7,16 @@ describe("macOS clean installation release check", () => {
   it("runs the real launcher and verifies health, HTML, an asset, and the build marker", () => {
     const workflowPath = path.resolve(process.cwd(), ".github/workflows/install-smoke.yml");
     const source = fs.readFileSync(workflowPath, "utf8");
-    const workflow = yaml.load(source) as { jobs?: Record<string, { "runs-on"?: string }> };
+    const workflow = yaml.load(source) as {
+      jobs?: Record<string, { "runs-on"?: string; env?: Record<string, string> }>;
+    };
 
     expect(workflow.jobs?.["macos-install"]?.["runs-on"]).toBe("macos-15");
+    expect(Object.values(workflow.jobs?.["macos-install"]?.env ?? {})).not.toContain(
+      "${{ runner.temp }}/omniharness-install-smoke",
+    );
+    expect(source).toContain("Configure isolated install paths");
+    expect(source).toContain("$GITHUB_ENV");
     expect(source).toContain("./omniharness");
     expect(source).toContain("OMNIHARNESS_AUTH_PASSWORD");
     expect(source).toContain("OMNIHARNESS_RUNNER_PORT: 3059");
