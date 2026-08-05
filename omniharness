@@ -160,22 +160,52 @@ else
   echo "[omniharness] Using pnpm ${CURRENT_PNPM_VERSION:-unknown} (minimum supported major: $MIN_PNPM_MAJOR; known-good default: $PNPM_VERSION)."
 fi
 
-if [ ! -d "$ROOT_DIR/node_modules" ] || [ ! -f "$ROOT_DIR/node_modules/.modules.yaml" ] || [ ! -d "$ROOT_DIR/node_modules/.pnpm" ]; then
+DEPENDENCY_FINGERPRINT_FILE="$ROOT_DIR/node_modules/.omniharness-dependencies.sha256"
+CURRENT_DEPENDENCY_FINGERPRINT="$(node --input-type=module -e '
+  import { createHash } from "node:crypto";
+  import { readFileSync } from "node:fs";
+  const hash = createHash("sha256");
+  hash.update(readFileSync(process.argv[1]));
+  hash.update(`\0${process.versions.modules}\0${process.platform}\0${process.arch}`);
+  process.stdout.write(hash.digest("hex"));
+' "$ROOT_DIR/pnpm-lock.yaml")"
+INSTALLED_DEPENDENCY_FINGERPRINT=""
+if [ -f "$DEPENDENCY_FINGERPRINT_FILE" ]; then
+  INSTALLED_DEPENDENCY_FINGERPRINT="$(tr -d ' \t\r\n' < "$DEPENDENCY_FINGERPRINT_FILE")"
+fi
+
+if [ ! -d "$ROOT_DIR/node_modules" ] \
+  || [ ! -f "$ROOT_DIR/node_modules/.modules.yaml" ] \
+  || [ ! -d "$ROOT_DIR/node_modules/.pnpm" ] \
+  || [ "$INSTALLED_DEPENDENCY_FINGERPRINT" != "$CURRENT_DEPENDENCY_FINGERPRINT" ]; then
   echo "[omniharness] Installing dependencies with $PACKAGE_MANAGER..."
   env pnpm_config_dangerously_allow_all_builds=true "${PNPM_CMD[@]}" install
+  node --input-type=module - "$DEPENDENCY_FINGERPRINT_FILE" "$CURRENT_DEPENDENCY_FINGERPRINT" <<'NODE'
+import { renameSync, writeFileSync } from "node:fs";
+const markerPath = process.argv[2];
+const temporaryPath = `${markerPath}.tmp-${process.pid}`;
+writeFileSync(temporaryPath, `${process.argv[3]}\n`, { mode: 0o600 });
+renameSync(temporaryPath, markerPath);
+NODE
 fi
 
 ./scripts/ensure-recommended-tools.sh
 
 AUTH_PASSWORD_NOTICE_FILE="$(mktemp "${TMPDIR:-/tmp}/omniharness-auth-password.XXXXXX")"
-rm -f "$AUTH_PASSWORD_NOTICE_FILE"
 OMNIHARNESS_AUTH_PASSWORD_NOTICE_FILE="$AUTH_PASSWORD_NOTICE_FILE" node ./scripts/setup-auth.mjs
 
 if [ "${OMNIHARNESS_SKIP_AGENT_ACP_SETUP:-0}" != "1" ]; then
   ./scripts/install-agent-acp.sh --ensure-only || echo "[omniharness] Agent ACP adapter setup reported issues; continuing." >&2
 fi
 
-WEB_PORT="${PORT:-3050}"
+WEB_PORT="$(node --env-file-if-exists="$ROOT_DIR/.env" --input-type=module -e '
+  const value = process.env.OMNIHARNESS_RUNNER_PORT || process.env.PORT || "3050";
+  if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 65535) {
+    console.error(`Invalid OmniHarness web port: ${value}`);
+    process.exit(1);
+  }
+  process.stdout.write(value);
+')"
 LOCAL_URL="http://localhost:${WEB_PORT}"
 
 local_omniharness_status() {
@@ -262,12 +292,10 @@ NODE
 }
 
 print_tunnel_guidance() {
-  echo "[omniharness] Remote/tunnel setup:"
-  echo "  1. Expose only the web UI port, for example:"
-  echo "     cloudflared tunnel --url http://localhost:${WEB_PORT}"
-  echo "  2. Copy the generated https://... URL into .env:"
-  echo "     OMNIHARNESS_PUBLIC_ORIGIN=https://your-tunnel-url"
-  echo "  3. Restart ./omniharness so pairing links and public URLs use the tunnel."
+  echo "[omniharness] Private remote access (recommended):"
+  echo "  pnpm setup:tailscale"
+  echo "  This exposes only the web/API port to devices allowed by your tailnet."
+  echo "[omniharness] Public internet access (optional): see the Cloudflare section in README.md."
 }
 
 print_start_guidance() {
@@ -308,27 +336,23 @@ if [ "$CURRENT_STATUS" = "configuration_error" ]; then
   exit 1
 fi
 
-# A production `next start` needs a complete production build in .next. Running
-# `pnpm dev` (next dev --turbo) writes dev-shaped manifests into the same .next
-# directory, leaving BUILD_ID intact but clobbering routes-manifest.json so it
-# lacks `dataRoutes` -> `next start` then crashes with
-# "routesManifest.dataRoutes is not iterable". So validate the manifest, not just
-# the presence of BUILD_ID, before deciding whether to skip the build.
-needs_production_build() {
-  [ -f "$ROOT_DIR/.next/BUILD_ID" ] || return 0
-  node --input-type=module -e '
-    import { readFileSync } from "node:fs";
-    try {
-      const m = JSON.parse(readFileSync(process.argv[1], "utf8"));
-      process.exit(Array.isArray(m.dataRoutes) ? 0 : 1);
-    } catch { process.exit(1); }
-  ' "$ROOT_DIR/.next/routes-manifest.json" || return 0
-  return 1
-}
+BUILD_INTERFACE=0
+if node ./scripts/interface-build-state.mjs --check; then
+  :
+else
+  BUILD_STATE_EXIT=$?
+  BUILD_INTERFACE=1
+  if [ "$BUILD_STATE_EXIT" -ne 10 ]; then
+    echo "[omniharness] Interface build inspection failed; rebuilding to recover." >&2
+  fi
+fi
 
-if needs_production_build; then
-  echo "[omniharness] Building production server..."
+if [ "$BUILD_INTERFACE" -eq 1 ]; then
+  echo "[omniharness] Building production interface..."
   "${PNPM_CMD[@]}" build
+  if ! node ./scripts/interface-build-state.mjs --write; then
+    echo "[omniharness] Could not record interface build state; future launches may rebuild it." >&2
+  fi
 fi
 
 print_start_guidance

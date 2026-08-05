@@ -1,0 +1,10 @@
+# Web Stack Migrations Must Preserve Launcher Bootstrap
+
+**Date:** 2026-08-05
+**Context:** OmniHarness macOS installation and the Next-to-Vite runner migration
+**Symptom:** The public launcher still inspected `.next` files even though the production interface had moved to `dist/interface`, and it created password settings in `.env` without loading that file into the new Node runner.
+**Root Cause:** The interface migration replaced the web server/build system but did not explicitly carry forward the launcher's build-freshness and environment-loading responsibilities. The old framework had provided part of that bootstrap behavior implicitly.
+**Fix:** The runner commands and launcher port check now load `.env` through Node before resolving configuration. A Vite-specific content fingerprint validates the production interface and writes its marker only after a complete build. The launcher records the repository lockfile hash together with the Node native-module ABI, OS, and CPU after a successful dependency install instead of relying on pnpm's internal lockfile layout.
+**Verification:** Focused red/green coverage lives in `tests/scripts/omniharness-launcher.test.ts`, `tests/scripts/interface-build-state.test.ts`, and `tests/scripts/runner-help.test.ts`. The macOS installation workflow additionally starts the real launcher from a fresh checkout and verifies API health, HTML, a referenced asset, and the build marker.
+**Prevention:** Treat environment loading, dependency freshness, authentication bootstrap, build output, readiness URLs, and process startup as one installer contract whenever the web stack changes. A framework migration is incomplete until the real clean-checkout launcher proves that contract.
+**Skill/Doc Updates:** No general skill update was needed because the existing planning and verification skills already require boundary tracing and real end-to-end proof. The project README, deployment guide, tests, and release workflow now make this repository-specific contract explicit.

@@ -85,6 +85,18 @@ Browser/PWA clients rely on browser/OS certificate trust and cannot override a
 certificate warning from JavaScript. VS Code relies on the extension host's
 standard TLS trust.
 
+## Tailscale trust boundary
+
+Tailscale Serve is the preferred private HTTPS path for a Mac runner. Tailscale
+owns device identity, tailnet membership, access rules, MagicDNS, certificates,
+and Serve configuration. OmniHarness owns its password, sessions, public-origin
+setting, and loopback runner bind address.
+
+Tailnet access is defense in depth, not authentication for OmniHarness. Keep the
+OmniHarness password enabled, grant tailnet access narrowly, and never expose the
+ACP bridge on port `7800`. `pnpm setup:tailscale` uses Serve only; it never enables
+the public Tailscale Funnel feature.
+
 ## Trusted proxies and CORS
 
 Forwarded client/protocol headers are accepted only from

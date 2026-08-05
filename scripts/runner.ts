@@ -2,9 +2,27 @@
 import fs from "node:fs";
 import { resolveRunnerConfig } from "../src/server/runner/config";
 
+const RUNNER_HELP = `Usage: pnpm runner -- [options]
+
+Options:
+  --host <address>               API and interface bind address (default: 0.0.0.0)
+  --port <0-65535>               API and interface port (default: 3050)
+  --bridge-url <url>             Loopback ACP bridge URL (default: http://127.0.0.1:7800)
+  --static-dir <directory>       Serve an explicit built interface directory
+  --no-static                    Start the API without a production interface
+  --interface-dev-url <url>      Proxy interface requests to a Vite development server
+  -h, --help                     Show this help
+`;
+
 async function main() {
+  const rawArgv = process.argv.slice(2);
+  const argv = rawArgv[0] === "--" ? rawArgv.slice(1) : rawArgv;
+  if (argv.some((arg) => ["--help", "-h"].includes(arg))) {
+    process.stdout.write(RUNNER_HELP);
+    return;
+  }
   const config = resolveRunnerConfig({
-    argv: process.argv.slice(2),
+    argv,
     cwd: process.cwd(),
     env: process.env,
   });
