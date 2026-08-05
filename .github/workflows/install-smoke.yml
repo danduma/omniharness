@@ -20,15 +20,12 @@ jobs:
     timeout-minutes: 20
     env:
       OMNIHARNESS_AUTH_PASSWORD: macos-release-smoke-password
-      OMNIHARNESS_ROOT: ${{ runner.temp }}/omniharness-install-smoke
       OMNIHARNESS_RUNNER_HOST: 127.0.0.1
       OMNIHARNESS_RUNNER_PORT: 3059
       OMNIHARNESS_BRIDGE_URL: http://127.0.0.1:17809
       OMNIHARNESS_OPEN_BROWSER: 0
       OMNIHARNESS_SKIP_RECOMMENDED_TOOLS: 1
       OMNIHARNESS_CODEX_ACP_INSTALL: npm
-      OMNIHARNESS_CODEX_ACP_NPM_ROOT: ${{ runner.temp }}/omniharness-codex-acp
-      OMNIHARNESS_CODEX_ACP_INSTALL_DIR: ${{ runner.temp }}/omniharness-bin
 
     steps:
       - name: Checkout
@@ -38,6 +35,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+
+      - name: Configure isolated install paths
+        run: |
+          echo "OMNIHARNESS_ROOT=$RUNNER_TEMP/omniharness-install-smoke" >> "$GITHUB_ENV"
+          echo "OMNIHARNESS_CODEX_ACP_NPM_ROOT=$RUNNER_TEMP/omniharness-codex-acp" >> "$GITHUB_ENV"
+          echo "OMNIHARNESS_CODEX_ACP_INSTALL_DIR=$RUNNER_TEMP/omniharness-bin" >> "$GITHUB_ENV"
 
       - name: Confirm this is a fresh interface install
         run: test ! -e dist/interface/.build-state.json
