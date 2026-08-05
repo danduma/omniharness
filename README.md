@@ -23,50 +23,64 @@ Use it when you want one durable place to start coding-agent runs, watch worker 
 
 OmniHarness is early open-source software under active development. Expect sharp edges, fast-moving internals, and occasional database or workflow changes. The core local loop is the priority: reliable worker launch, observable agent activity, durable recovery, and straightforward developer setup.
 
-## Requirements
+## Install On macOS
 
-- macOS, Linux, or Windows with a normal developer shell. On Windows, use PowerShell for the setup commands below.
-- Node.js 22.13 or newer, up to but not including Node.js 26. If you use `nvm`, run `nvm use` from the repo root to select the recommended local version.
-- pnpm 9 or newer. The `packageManager` field in `package.json` is a known-good Corepack default, not an exact-version requirement.
-- `ripgrep` (`rg`) is recommended for fast agent repository search. The `./omniharness` launcher installs it automatically when a supported system package manager is available. Set `OMNIHARNESS_SKIP_RECOMMENDED_TOOLS=1` to skip recommended tool setup.
-- At least one supported coding agent when you want to run real workers:
-  - Codex CLI plus `codex-acp`
-  - Claude CLI plus `claude-agent-acp`
-  - Gemini CLI with native ACP mode
-  - OpenCode with native ACP mode
-- Docker, if you want OmniHarness to run `codex-acp` from a container instead
-  of compiling the Rust adapter on the host.
-
-## Quick Start
-
-Clone the repo, enter it, and select the recommended Node version:
+The supported release path is a Mac with `git`, `curl`, and Terminal. Clone the
+repository and run the launcher:
 
 ```bash
-git clone <repo-url> omniharness
+git clone https://github.com/danduma/omniharness.git
 cd omniharness
-nvm use
-```
-
-Start OmniHarness normally:
-
-```bash
 ./omniharness
 ```
 
-On first start, `./omniharness` asks you to create a web login password. Press
-Enter to have it generate one for you. Generated passwords are printed once in
-the terminal; save that password before continuing. The launcher stores only an
-Argon2 hash in `.env`.
+That one command installs and starts the server and production UI together. It:
 
-The launcher opens [http://localhost:3050](http://localhost:3050) when the local
-server is ready. Set `OMNIHARNESS_OPEN_BROWSER=0` if you do not want it to open a
+1. selects a supported Node version (`>=22.13 <26`);
+2. installs the repository's pnpm version and dependencies;
+3. installs the maintained Codex ACP adapter and Codex CLI from published npm
+   packages, with no ACP source build;
+4. builds the production Vite interface when its inputs change; and
+5. starts OmniHarness and opens [http://localhost:3050](http://localhost:3050).
+
+On first start, choose a web login password or press Enter to generate one. A
+generated password is printed once; save it before continuing. OmniHarness
+stores only its Argon2 hash in `.env`.
+
+Set `OMNIHARNESS_OPEN_BROWSER=0` if you do not want the launcher to open a
 browser automatically.
 
-`./omniharness` installs dependencies when needed, builds the static interface
-when needed, then starts the two processes in one logical runner deployment:
+The running deployment contains:
 
-- the API/SSE server and static interface on `http://localhost:3050`
+- the API/SSE server and production web interface together on `http://localhost:3050`
 - the co-located ACP bridge on `http://127.0.0.1:7800`
+
+There is no separate production UI server to install or expose. The separate
+Vite process is only for development.
+
+To update an installation later:
+
+```bash
+git pull --ff-only
+./omniharness
+```
+
+The launcher refreshes its managed published Codex ACP and Codex packages when
+new versions are available and rebuilds the UI only when needed. Rolling release
+automation separately checks new Codex/model metadata against OmniHarness.
+
+### Requirements and supported agents
+
+- macOS with `git`, `curl`, and a normal Terminal shell. Linux uses the same
+  shell launcher but is not release-gated yet.
+- `ripgrep` (`rg`) is recommended for fast repository search. The launcher
+  installs it when a supported system package manager is available. Set
+  `OMNIHARNESS_SKIP_RECOMMENDED_TOOLS=1` to skip that step.
+- At least one coding agent for real worker runs:
+  - Codex (published ACP adapter and Codex CLI installed by the launcher)
+  - Claude CLI plus `claude-agent-acp`
+  - Gemini CLI with native ACP mode
+  - OpenCode with native ACP mode
 
 Start the runner directly with `pnpm runner`. Use `--no-static` for a supported
 API-only deployment, or `--static-dir <path>` for an explicit interface
@@ -90,47 +104,6 @@ Operational and security details:
 - [Runner deployment, data roots, proxies, backup, and smoke checks](docs/deployment/runner-operations.md)
 - [Authentication, sessions, credential storage, identity, and TLS](docs/security/authentication-and-tls.md)
 - [Desktop/editor migration, mobile/PWA limits, and v1 non-goals](docs/platforms/client-migration-and-limits.md)
-
-### Windows Quick Start
-
-Use PowerShell from the repo root. If Corepack can write to your Node.js
-installation, enable the repo's package manager normally:
-
-```powershell
-corepack enable
-corepack prepare pnpm@11.2.2 --activate
-```
-
-If Corepack fails with an `EPERM` error under `C:\Program Files\nodejs`, install
-pnpm into the user npm prefix instead:
-
-```powershell
-$prefix = Join-Path $env:APPDATA "npm"
-New-Item -ItemType Directory -Force -Path $prefix | Out-Null
-npm config set prefix $prefix
-$env:Path = "$prefix;$env:Path"
-[Environment]::SetEnvironmentVariable("Path", "$prefix;$([Environment]::GetEnvironmentVariable("Path", "User"))", "User")
-npm install -g pnpm@11.2.2
-```
-
-Then clone, install, build, and start:
-
-```powershell
-git clone <repo-url> omniharness
-cd omniharness
-pnpm install
-Copy-Item .env.example .env
-# Set OMNIHARNESS_AUTH_PASSWORD or OMNIHARNESS_AUTH_PASSWORD_HASH in .env.
-pnpm build
-$env:OMNIHARNESS_OPEN_BROWSER = "0"
-pnpm start
-```
-
-The web UI listens on `http://localhost:3050` and the runtime listens on
-`http://127.0.0.1:7800`. For browser access from another machine, allow inbound
-TCP traffic to the web port in Windows Firewall and in any provider firewall, or
-put OmniHarness behind a tunnel or reverse proxy. Do not expose the runtime port
-directly to the public internet.
 
 Run the separate restart control app if you want a small remote escape hatch
 with its own password-gated interface:
@@ -166,8 +139,8 @@ curl -X POST "http://HOST:3099/restart?mode=dev" \
 
 Use `mode=prod` to launch `./omniharness` instead of `pnpm run dev`.
 
-For phone access through Cloudflare Tunnel, expose the restart app as a second
-hostname that points to `http://localhost:3099`, for example:
+For public access through Cloudflare Tunnel, expose the restart app as a second
+hostname only if you intentionally want that public-tunnel deployment:
 
 ```yaml
 ingress:
@@ -227,24 +200,61 @@ pnpm auth:password verify "new-password"
 Hash-only passwords cannot be printed back out. If `status` says the password is
 hash-only and you do not know it, run `pnpm auth:password set` to replace it.
 
-## Remote Tunnel
+## Private Access With Tailscale
 
-For phone or remote-browser access, expose only the web UI port through your
-tunnel provider. With Cloudflare Tunnel quick tunnels:
+Tailscale Serve is the recommended way to reach OmniHarness from another Mac,
+phone, or tablet. It keeps the service inside your tailnet, applies your
+Tailscale access rules, and provides a private HTTPS URL. Install the recommended
+standalone [Tailscale app for macOS](https://tailscale.com/download/mac), sign in,
+and run:
+
+```bash
+pnpm setup:tailscale
+./omniharness
+```
+
+The command verifies the tailnet connection, refuses to overwrite an existing
+LAN or tunnel configuration, configures:
+
+```bash
+tailscale serve --bg http://127.0.0.1:3050
+```
+
+It writes the private `https://...ts.net` origin and loopback bind address to the
+ignored local `.env`; the second command restarts OmniHarness with those values.
+
+Check the real private route with `tailscale serve status`, then open the printed
+URL from another device on the tailnet. Password authentication remains required;
+tailnet membership is an additional security boundary, not a replacement.
+
+Useful safe operations:
+
+```bash
+pnpm setup:tailscale -- --dry-run  # inspect without changing Tailscale or .env
+pnpm setup:tailscale -- --force    # preserve conflicting values as comments, then replace them
+pnpm setup:tailscale -- --reset    # disable OmniHarness HTTPS Serve and remove managed settings
+```
+
+`--force` applies only to conflicting OmniHarness values in `.env`. The command
+never replaces an unrelated existing Tailscale Serve route; move or remove that
+route explicitly first.
+
+If Serve reports an operator, administrator, MagicDNS, or HTTPS-certificate
+problem, follow the exact Tailscale error and retry. The setup command leaves
+`.env` unchanged when Serve fails.
+
+### Optional Public Access With Cloudflare
+
+Use a public tunnel only when tailnet-only access is not sufficient. Expose port
+`3050`, never the ACP bridge on `7800`:
 
 ```bash
 cloudflared tunnel --url http://localhost:3050
 ```
 
-Copy the generated `https://...` URL into `.env` and restart OmniHarness:
-
-```bash
-printf 'OMNIHARNESS_PUBLIC_ORIGIN=%s\n' 'https://your-tunnel-url' >> .env
-./omniharness
-```
-
-Keep OmniHarness password auth enabled even when your tunnel provider also has
-its own access controls.
+Set `OMNIHARNESS_PUBLIC_ORIGIN` in `.env` to the generated HTTPS URL and restart
+OmniHarness. Keep OmniHarness password authentication enabled even when the
+tunnel provider has separate access controls.
 
 The launcher does not require a global `omniharness` install. Run the app from
 the checkout with `./omniharness`, and run CLI conversations from the checkout
@@ -264,47 +274,33 @@ scripts/install-agent-acp.sh
 ```
 
 The setup script detects supported local coding agents and installs or refreshes
-the ACP adapters they need. Codex uses a prebuilt `codex-acp` binary by default
-for macOS/Linux on arm64/x64 and Windows x64. Claude's adapter is installed from npm, while
-Gemini and OpenCode expose native ACP commands and do not need separate adapter
-installs. The setup script also checks common agent tools including `rg`, `git`,
-`node`, shell/file utilities, package managers, Python, `jq`, `gh`, `cargo`,
-`uv`, `fd`, and `make`.
+the ACP adapters they need. Codex uses the maintained
+`@agentclientprotocol/codex-acp` package plus the current `@openai/codex`
+package. The Codex package selects its published macOS binary for the current
+CPU; the user does not compile an ACP adapter. Claude's adapter is installed from
+npm, while Gemini and OpenCode expose native ACP commands and need no separate
+adapter. The setup script also checks common agent tools.
 
-### Prebuilt Codex ACP
+### Codex ACP Updates
 
-OmniHarness avoids compiling `codex-acp` with host Rust by default. In `auto`
-mode, the installer downloads the matching release asset:
+Normal `./omniharness` startup checks the managed Codex ACP and Codex CLI package
+versions and rolls both forward when npm publishes an update. Force an immediate
+refresh with:
 
-```text
-codex-acp-darwin-arm64
-codex-acp-darwin-x64
-codex-acp-linux-arm64
-codex-acp-linux-x64
-codex-acp-windows-x64.exe
+```bash
+scripts/install-agent-acp.sh --codex-acp=npm
 ```
 
 Useful overrides:
 
 ```bash
-OMNIHARNESS_CODEX_ACP_INSTALL=binary
-OMNIHARNESS_CODEX_ACP_RELEASE_REPO=danduma/omniharness
-OMNIHARNESS_CODEX_ACP_RELEASE_TAG=codex-acp-latest
-OMNIHARNESS_CODEX_ACP_DOWNLOAD_BASE_URL=https://github.com/danduma/omniharness/releases/download/codex-acp-latest
+OMNIHARNESS_CODEX_ACP_INSTALL=npm
+OMNIHARNESS_CODEX_ACP_NPM_ROOT=/custom/package/root
 OMNIHARNESS_CODEX_ACP_INSTALL_DIR=/custom/bin
 ```
 
-On Windows, use the PowerShell installer to download `codex-acp.exe` into
-`%LOCALAPPDATA%\OmniHarness\bin`:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install-agent-acp.ps1 -AddToPath
-```
-
-Git Bash/MSYS users can also run `scripts/install-agent-acp.sh`; it installs
-the Windows release asset as `codex-acp.exe`.
-
-For local development against the Rust source, force Cargo mode:
+Cargo mode remains an explicit adapter-development override and is never used by
+normal installation:
 
 ```bash
 scripts/install-agent-acp.sh --codex-acp=cargo
@@ -312,8 +308,7 @@ scripts/install-agent-acp.sh --codex-acp=cargo
 
 ### Docker-backed Codex ACP
 
-If the prebuilt binary cannot run on a machine, install a Docker-backed wrapper
-instead:
+If you deliberately want ACP isolation, install a Docker-backed wrapper instead:
 
 ```bash
 OMNIHARNESS_CODEX_ACP_INSTALL=docker ./omniharness
@@ -499,13 +494,10 @@ The command must print JSON:
 - **Unsupported pnpm version:** install pnpm 9 or newer, or run `./omniharness` from the repo root so the launcher can use Corepack's known-good default when available.
 - **Unsupported Node version:** use Node.js 22.13 or newer, but below Node.js 26. If you already installed dependencies with a different Node version, run `pnpm rebuild better-sqlite3 @node-rs/argon2 sharp`.
 - **Native SQLite binding errors:** run `pnpm rebuild better-sqlite3` under your current supported Node version.
-- **Windows Corepack `EPERM` under `C:\Program Files\nodejs`:** install pnpm into the user npm prefix with the PowerShell commands in Windows Quick Start, then open a new shell or update `$env:Path` for the current one.
-- **Windows install fails with `'cp' is not recognized` while building `@danduma/i18n`:** update to a checkout that pins `@danduma/i18n` to the Windows-compatible commit in `package.json`, then rerun `pnpm install`.
 - **`ERR_PNPM_IGNORED_BUILDS` mentions `node-pty`:** current checkouts allow the `node-pty` build in `pnpm-workspace.yaml`. If you are upgrading an older checkout, make sure `allowBuilds.node-pty` is `true`, then rerun `pnpm install`; use `pnpm approve-builds node-pty` only if pnpm still reports the build as pending approval.
-- **Windows startup fails with `spawn pnpm ENOENT` or `spawn EINVAL`:** update to a checkout that runs pnpm through the Windows command shell from the start scripts. As a temporary workaround, start `pnpm runner` and `pnpm dev:interface` from separate PowerShell windows.
 - **No supported worker appears:** install or log into at least one supported agent CLI, then run `scripts/install-agent-acp.sh --dry-run` and inspect `curl http://127.0.0.1:7800/doctor`.
-- **Port already in use:** stop the previous OmniHarness process, or set `PORT` and `OMNIHARNESS_AGENT_RUNTIME_PORT` before starting.
-- **`http://HOST:3050` times out from another machine:** confirm OmniHarness is listening on `0.0.0.0`, then allow inbound TCP traffic to that port in Windows Firewall and any hosting-provider firewall. Local `http://localhost:3050` can work even when external access is blocked.
+- **Port already in use:** stop the previous OmniHarness process, or set `OMNIHARNESS_RUNNER_PORT` and `OMNIHARNESS_BRIDGE_URL` to unused addresses before starting.
+- **The private Tailscale URL times out:** run `tailscale status` and `tailscale serve status`, confirm the client device is in the same tailnet and permitted by its access rules, then restart `./omniharness` after setup.
 - **Phone pairing asks for auth:** set `OMNIHARNESS_AUTH_PASSWORD` or `OMNIHARNESS_AUTH_PASSWORD_HASH` in `.env` and restart.
 
 ## Repository Layout

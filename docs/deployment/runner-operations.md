@@ -80,6 +80,31 @@ The SQLite database and worker JSONL files are one consistency domain. Do not
 point two live runners at the same instance root. A second process refuses an
 owned runner lock. Separate instances need separate API ports and bridge URLs.
 
+## Private access with Tailscale
+
+Tailscale Serve is the preferred remote-access boundary for a Mac runner. From
+the repository root, run:
+
+```bash
+pnpm setup:tailscale
+```
+
+The setup command validates the connected tailnet, configures persistent private
+HTTPS proxying to `http://127.0.0.1:3050`, and manages only these ignored `.env`
+settings:
+
+```text
+OMNIHARNESS_PUBLIC_ORIGIN=https://device.tailnet.ts.net
+OMNIHARNESS_RUNNER_HOST=127.0.0.1
+```
+
+Restart `./omniharness`, check `tailscale serve status`, and open the printed URL
+from an allowed tailnet device. Use `pnpm setup:tailscale -- --dry-run` to inspect
+the operation, `--force` to preserve and replace conflicting origin/host values,
+or `--reset` to disable the owned HTTPS listener and remove its managed settings.
+`--force` never replaces unrelated Tailscale Serve routes. The command never
+enables Funnel and never proxies port `7800`.
+
 ## TLS and reverse proxies
 
 The Node runner currently terminates HTTP. For any non-loopback deployment,
