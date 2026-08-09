@@ -25,8 +25,9 @@ test("development starts the runner and Vite interface", () => {
   expect(packageJson.scripts?.["dev:interface"]).toContain("vite");
   expect(packageJson.scripts).not.toHaveProperty("dev:web");
   expect(packageJson.scripts).not.toHaveProperty("dev:proxy");
-  expect(devSource).toContain('["run", "runner", "--no-static"]');
-  expect(devSource).not.toContain('["run", "runner", "--", "--no-static"]');
+  expect(devSource).toMatch(
+    /start\("runner", \[[\s\S]*"runner",[\s\S]*"--no-static",[\s\S]*"--interface-dev-url",[\s\S]*"http:\/\/127\.0\.0\.1:5173"/,
+  );
 });
 
 test("development child exits have a stable diagnostic", () => {

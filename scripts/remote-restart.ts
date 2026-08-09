@@ -11,6 +11,7 @@ import {
   createSessionCookie,
   resolveRestartControlConfig,
   type RestartMode,
+  restartCurrentWithEarlyAck,
   restartSessionCookieName,
   verifyRestartControlPassword,
 } from "../src/server/restart-control";
@@ -816,20 +817,38 @@ const server = createServer((request, response) => {
         return;
       }
 
-      activeRestart = controller.restartCurrent("remote request")
-        .then((entry) => {
-          if (request.headers.accept?.includes("text/html")) {
+      // The JSON caller is the runner itself, which this restart is about to
+      // kill, so it only gets an answer if one is sent before anything stops.
+      // The HTML form comes from a browser that outlives the restart, so that
+      // path still waits for the real outcome and reports failures.
+      if (request.headers.accept?.includes("text/html")) {
+        activeRestart = controller.restartCurrent("remote request")
+          .then((entry) => {
             redirect(response, `/?restarted=1&mode=${entry.mode}`);
-            return;
-          }
-          sendJson(response, 202, { ok: true, pid: entry.pid, mode: entry.mode, startedAt: entry.startedAt });
-        })
-        .catch((error) => {
-          sendJson(response, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
-        })
-        .finally(() => {
-          activeRestart = null;
-        });
+          })
+          .catch((error) => {
+            sendJson(response, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+          })
+          .finally(() => {
+            activeRestart = null;
+          });
+        return;
+      }
+
+      activeRestart = restartCurrentWithEarlyAck({
+        controller,
+        reason: "remote request",
+        // No pid yet: the replacement process does not exist at this point, and
+        // waiting for it is exactly what broke the reply.
+        acknowledge: () => sendJson(response, 202, { ok: true, accepted: true }),
+        onFailure: (error) => {
+          // The caller was already told the job was accepted, so the log is the
+          // only place left to record that it did not happen.
+          console.error("[remote-restart] restart-current failed after acknowledgement:", error);
+        },
+      }).finally(() => {
+        activeRestart = null;
+      });
       return;
     }
 

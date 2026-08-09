@@ -27,6 +27,7 @@
     "build": "pnpm build:interface:web",
     "build:interface:web": "vite build --config apps/interface/vite.config.ts --mode web",
     "build:interface:packaged": "vite build --config apps/interface/vite.config.ts --mode packaged",
+    "prestart": "node ./scripts/ensure-interface-build.mjs",
     "start": "node --env-file-if-exists=.env --import tsx scripts/runner.ts",
     "lint": "eslint",
     "typecheck": "tsc -p tsconfig.shared.json --noEmit && tsc -p tsconfig.runner.json --noEmit && tsc -p tsconfig.interface.json --noEmit && tsc --noEmit",

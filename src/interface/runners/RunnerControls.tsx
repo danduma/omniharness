@@ -36,6 +36,7 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { t, useI18nSnapshot } from "@/lib/i18n";
+import { isRuntimeTransportFailure } from "@/runtime-api/request";
 import { createWebRuntimeAPIs } from "@/runtime-api/web";
 import { BrowserAuthorizationManager } from "@/interface/auth/BrowserAuthorizationManager";
 import {
@@ -249,9 +250,18 @@ function ConnectedRunnerControls({
         await context.profileStore.forgetProfile(draft.profileId);
       } else if (draft.dialog === "restart") {
         // The runner cannot restart itself, so this asks the restart-control
-        // service to do it. The response lands before the process dies; the
-        // connection then drops and the registry reconnects on its own.
-        await runtime?.runner.restart();
+        // service to do it. That service kills the process serving this very
+        // request, so losing the connection before the reply arrives is the
+        // ordinary shape of success, not a failure — the registry reconnects on
+        // its own. Only an answer the server actually sent means the restart was
+        // refused, and that is the one worth surfacing.
+        try {
+          await runtime?.runner.restart();
+        } catch (error) {
+          if (!isRuntimeTransportFailure(error)) {
+            throw error;
+          }
+        }
       } else if (draft.dialog === "rename") {
         await runtime?.runner.rename({ name: draft.label });
         await context.profileStore.editProfile(draft.profileId, {

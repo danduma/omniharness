@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createFetchRuntimeRequest } from "@/runtime-api/request";
+import {
+  createFetchRuntimeRequest,
+  isRuntimeTransportFailure,
+  normalizeRuntimeHttpError,
+} from "@/runtime-api/request";
 
 describe("createFetchRuntimeRequest", () => {
   it("passes abort signals through to fetch", async () => {
@@ -59,5 +63,70 @@ describe("createFetchRuntimeRequest", () => {
     });
     expect(result).toBeInstanceOf(Blob);
     expect(Array.from(new Uint8Array(await (result as Blob).arrayBuffer()))).toEqual([1, 2, 3]);
+  });
+});
+
+describe("isRuntimeTransportFailure", () => {
+  it("separates a server that answered from one that never replied", async () => {
+    // Anything the server answered carries a code, whatever the status.
+    const fetchImpl: typeof fetch = vi.fn(async () => new Response(
+      JSON.stringify({ error: { code: "runner.restart.control_unavailable" } }),
+      { status: 503 },
+    ));
+    const answered = await createFetchRuntimeRequest({ fetchImpl, surface: "web" })("POST", "/api/runner/restart")
+      .then(() => null, (error: unknown) => error);
+    expect(isRuntimeTransportFailure(answered)).toBe(false);
+
+    // A status with no error body still gets a synthesised code.
+    const bare: typeof fetch = vi.fn(async () => new Response("", { status: 502 }));
+    const bareError = await createFetchRuntimeRequest({ fetchImpl: bare, surface: "web" })("POST", "/api/runner/restart")
+      .then(() => null, (error: unknown) => error);
+    expect(isRuntimeTransportFailure(bareError)).toBe(false);
+
+    // The connection dying mid-request is what a restart actually looks like.
+    const dropped: typeof fetch = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    const droppedError = await createFetchRuntimeRequest({ fetchImpl: dropped, surface: "web" })("POST", "/api/runner/restart")
+      .then(() => null, (error: unknown) => error);
+    expect(isRuntimeTransportFailure(droppedError)).toBe(true);
+  });
+
+  it("treats missing and malformed rejections as transport failures", () => {
+    expect(isRuntimeTransportFailure(undefined)).toBe(true);
+    expect(isRuntimeTransportFailure(null)).toBe(true);
+    expect(isRuntimeTransportFailure(new Error("boom"))).toBe(true);
+    expect(isRuntimeTransportFailure({ code: 500 })).toBe(true);
+  });
+});
+
+describe("normalizeRuntimeHttpError", () => {
+  it("describes a bare 502 response as a disconnected server that is reconnecting", () => {
+    const error = normalizeRuntimeHttpError({
+      status: 502,
+      body: "<html><body>502 Bad Gateway</body></html>",
+      surface: "web",
+    });
+
+    expect(error).toMatchObject({
+      code: "runtime.http_502",
+      message: "Cannot connect to server. Reconnecting…",
+      surface: "web",
+    });
+    expect(error.message).not.toContain("502");
+  });
+
+  it("preserves a structured 502 error returned by the server", () => {
+    const error = normalizeRuntimeHttpError({
+      status: 502,
+      body: { error: { code: "runner.upstream_failed", message: "The runner failed." } },
+      surface: "web",
+    });
+
+    expect(error).toMatchObject({
+      code: "runner.upstream_failed",
+      message: "The runner failed.",
+      surface: "web",
+    });
   });
 });

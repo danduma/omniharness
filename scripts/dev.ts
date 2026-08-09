@@ -78,5 +78,11 @@ process.once("SIGTERM", () => {
   void stopAll(0);
 });
 
-start("runner", ["run", "runner", "--no-static"]);
+start("runner", [
+  "run",
+  "runner",
+  "--no-static",
+  "--interface-dev-url",
+  "http://127.0.0.1:5173",
+]);
 start("interface", ["run", "dev:interface"]);

@@ -9,6 +9,7 @@ import {
   prepareStaticInterface,
   type StaticBootstrapBuilder,
 } from "./static-files";
+import { createDevInterfaceProxy } from "./dev-proxy";
 import type { InterfaceSecurityMode } from "./security-headers";
 import {
   associateRequestNetworkIdentity,
@@ -24,6 +25,8 @@ export interface StartOmniHttpServerOptions {
   staticDirExplicit?: boolean;
   staticMode?: InterfaceSecurityMode;
   buildStaticBootstrap?: StaticBootstrapBuilder;
+  /** When set, interface requests are proxied to this Vite dev server for HMR. */
+  interfaceDevUrl?: string | null;
 }
 
 export interface OmniHttpServerHandle {
@@ -104,8 +107,19 @@ export async function startOmniHttpServer(options: StartOmniHttpServerOptions): 
     buildBootstrap: options.buildStaticBootstrap,
   });
 
+  const devProxy = createDevInterfaceProxy(options.interfaceDevUrl);
+
   let activePort = requestedPort;
   const server = createServer((request, response) => {
+    if (devProxy) {
+      // Ahead of everything else: the fetch conversion below drains the request
+      // body, which would leave nothing to forward upstream.
+      const pathname = new URL(request.url || "/", "http://localhost").pathname;
+      if (devProxy.shouldProxy(pathname)) {
+        devProxy.handleRequest(request, response);
+        return;
+      }
+    }
     const requestAbort = new AbortController();
     const abortRequest = () => requestAbort.abort();
     request.once("aborted", abortRequest);
@@ -150,6 +164,19 @@ export async function startOmniHttpServer(options: StartOmniHttpServerOptions): 
       response.off("close", abortRequest);
     });
   });
+
+  if (devProxy) {
+    // Vite's HMR client opens a websocket against the page origin, which is the
+    // runner (and, remotely, the tunnel in front of it).
+    server.on("upgrade", (request, socket, head) => {
+      const pathname = new URL(request.url || "/", "http://localhost").pathname;
+      if (devProxy.shouldProxy(pathname)) {
+        devProxy.handleUpgrade(request, socket, head);
+        return;
+      }
+      socket.destroy();
+    });
+  }
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
