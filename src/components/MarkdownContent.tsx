@@ -1,4 +1,4 @@
-import React from "react";
+import React, { memo, useMemo } from "react";
 import { ProjectFileContextMenu } from "@/components/ProjectFileContextMenu";
 import { parseProjectFileReference, type ProjectFileReference } from "@/lib/project-file-links";
 import { cn } from "@/lib/utils";
@@ -411,7 +411,20 @@ function renderMarkdownList(
   );
 }
 
-export function MarkdownContent({ content, className, inheritTextColor = false, projectRoot, onOpenProjectFile }: MarkdownContentProps) {
+/**
+ * Pure block parser. Kept separate from the component so the result can be
+ * memoized: this walks every line running 6-8 regexes per line, recurses for
+ * inline emphasis, and re-tokenizes tables and lists. It used to run in the
+ * component body with no cache, so a single streamed entry re-parsed every
+ * message in the transcript — hundreds of KB of text re-tokenized
+ * synchronously on the main thread per render pass.
+ */
+function parseMarkdownBlocks({ content, inheritTextColor, projectRoot, onOpenProjectFile }: {
+  content: string;
+  inheritTextColor: boolean;
+  projectRoot?: MarkdownContentProps["projectRoot"];
+  onOpenProjectFile?: MarkdownContentProps["onOpenProjectFile"];
+}): React.ReactNode[] {
   const lines = content.replace(/\r\n/g, "\n").split("\n");
   const blocks: React.ReactNode[] = [];
   let index = 0;
@@ -638,9 +651,43 @@ export function MarkdownContent({ content, className, inheritTextColor = false, 
     }
   }
 
+  return blocks;
+}
+
+/**
+ * Hook-free renderer. Kept exported and directly callable so the block-structure
+ * tests can inspect the tree without a DOM renderer.
+ */
+export function renderMarkdownContent({
+  content,
+  className,
+  inheritTextColor = false,
+  projectRoot,
+  onOpenProjectFile,
+}: MarkdownContentProps) {
+  return (
+    <div className={cn("max-w-none space-y-2 break-words text-sm leading-6", className)}>
+      {parseMarkdownBlocks({ content, inheritTextColor, projectRoot, onOpenProjectFile })}
+    </div>
+  );
+}
+
+/**
+ * Memoized on both axes: `React.memo` stops a sibling entry's update from
+ * re-entering this subtree at all, and `useMemo` stops an unavoidable re-render
+ * from re-parsing text that has not changed. Streaming transcripts re-render
+ * constantly, and this component sits under every assistant message.
+ */
+export const MarkdownContent = memo(function MarkdownContent(props: MarkdownContentProps) {
+  const { content, className, inheritTextColor = false, projectRoot, onOpenProjectFile } = props;
+  const blocks = useMemo(
+    () => parseMarkdownBlocks({ content, inheritTextColor, projectRoot, onOpenProjectFile }),
+    [content, inheritTextColor, projectRoot, onOpenProjectFile],
+  );
+
   return (
     <div className={cn("max-w-none space-y-2 break-words text-sm leading-6", className)}>
       {blocks}
     </div>
   );
-}
+});

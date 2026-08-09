@@ -50,7 +50,7 @@ export function cancelInactiveAutoResumeTimers<TEntry extends { timerId: ReturnT
 // permanently-dead session re-fired auto-resume against an account that can
 // never answer.
 export function isPermanentAutoResumeFailure(failureKey: string | null | undefined) {
-  return /\b(?:api key|authentication required|auth(?:entication)? failed|failed to auth(?:enticate)?|authentication_failed|account suspended|account (?:is )?(?:disabled|banned)|(?:access |refresh )?token (?:has been |was )?revoked|billing required|api billing|cap_exceeded|insufficient quota|resource exhausted|system resources are low|worker\.spawn\.resource_exhausted)\b/i.test(failureKey ?? "");
+  return /\b(?:api key|authentication required|auth(?:entication)? failed|failed to auth(?:enticate)?|authentication_failed|account suspended|account (?:is )?(?:disabled|banned)|(?:access |refresh )?token (?:has been |was )?revoked|billing required|api billing|cap_exceeded|insufficient quota|resource exhausted|system resources are low|worker\.spawn\.resource_exhausted|ede_diagnostic)\b/i.test(failureKey ?? "");
 }
 
 export function shouldFireAutoResumeTimer<TEntry extends {

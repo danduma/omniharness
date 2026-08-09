@@ -192,4 +192,51 @@ describe("BusyMessageQueueManager optimistic queue sends", () => {
     manager.setQueuedMessages([], true);
     expect(manager.getQueuedMessagesForRun("run-a")).toEqual([]);
   });
+
+  // The composer predicts busy-ness from event-stream state, so it can render a
+  // message as a transcript bubble while the server decides to queue it. The
+  // queue row then arrives on the event stream before the POST returns and the
+  // same text is on screen twice — once in the transcript, once in the drawer.
+  // Neither surface's dedup can see the other, so visibility has to be resolved
+  // where both are known.
+  it("hides a queued row while the same message is in flight as a transcript bubble", () => {
+    const manager = new BusyMessageQueueManager();
+    manager.setQueuedMessages([buildQueuedMessage({ id: "message-1", runId: "run-a" })], false);
+
+    expect(manager.getVisibleQueuedMessagesForRun("run-a", new Set(["message-1"]))).toEqual([]);
+  });
+
+  it("shows the queued row once the transcript send is no longer in flight", () => {
+    const manager = new BusyMessageQueueManager();
+    manager.setQueuedMessages([buildQueuedMessage({ id: "message-1", runId: "run-a" })], false);
+
+    expect(
+      manager.getVisibleQueuedMessagesForRun("run-a", new Set()).map((message) => message.id),
+    ).toEqual(["message-1"]);
+  });
+
+  it("leaves queued rows from other sends visible while one is in flight", () => {
+    const manager = new BusyMessageQueueManager();
+    manager.setQueuedMessages([
+      buildQueuedMessage({ id: "message-1", runId: "run-a" }),
+      buildQueuedMessage({ id: "message-2", runId: "run-a" }),
+    ], false);
+
+    expect(
+      manager.getVisibleQueuedMessagesForRun("run-a", new Set(["message-1"])).map((message) => message.id),
+    ).toEqual(["message-2"]);
+  });
+
+  it("scopes visible queued rows to the selected run", () => {
+    const manager = new BusyMessageQueueManager();
+    manager.setQueuedMessages([
+      buildQueuedMessage({ id: "run-a-queued", runId: "run-a" }),
+      buildQueuedMessage({ id: "run-b-queued", runId: "run-b" }),
+    ], false);
+
+    expect(
+      manager.getVisibleQueuedMessagesForRun("run-a", new Set()).map((message) => message.id),
+    ).toEqual(["run-a-queued"]);
+    expect(manager.getVisibleQueuedMessagesForRun(null, new Set())).toEqual([]);
+  });
 });

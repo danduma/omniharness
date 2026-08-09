@@ -99,6 +99,29 @@ export function ownsConversationSideEffects(args: {
   return args.currentSelectedRunId === args.runId;
 }
 
+/**
+ * Which surface owns a message once its send settles.
+ *
+ * The server can answer with both a delivered message row and the queue row it
+ * was released from. The transcript renders the message row and the drawer
+ * renders the queue row, so leaving both in place shows the user their message
+ * twice with nothing to reconcile them — the two lists dedup independently.
+ *
+ * This used to be keyed on `busyAction === "steer"`, which only covered a
+ * client that had correctly predicted a busy conversation. A stale idle
+ * prediction sends no `busyAction` at all, and that path kept both rows. The
+ * presence of a delivered message row is the fact that actually decides it.
+ */
+export function resolveQueuedMessageRowAfterSend(result: {
+  message?: { id: string } | null;
+  queuedMessage?: { id: string } | null;
+}): "hide" | "upsert" | "none" {
+  if (!result.queuedMessage) {
+    return "none";
+  }
+  return result.message ? "hide" : "upsert";
+}
+
 export function shouldClearSubmittedComposer(args: {
   submittedContent: string;
   commandAtStart: string;

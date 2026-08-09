@@ -1223,15 +1223,25 @@ export async function writeWorkerOutputEntries(
           recordId: latestEntry.id ?? `seq-${latestEntry.seq}`,
         });
       }
+      // One wake-up per append batch, not per entry. The frame only carries a
+      // cursor — the client responds by pulling everything after its own last
+      // seq — so the highest seq in the batch describes the batch completely.
+      // Emitting per entry multiplied the wake-up rate (and, before snapshot
+      // pacing, the full-rebuild rate) by the batch size for no added
+      // information.
+      let highestAppendedSeq = 0;
       for (const entry of appendedEntries) {
-        if (typeof entry.seq === "number" && Number.isFinite(entry.seq) && entry.seq > 0) {
-          emitNamedEvent({
-            kind: "worker.entry_appended",
-            runId,
-            workerId,
-            seq: entry.seq,
-          });
+        if (typeof entry.seq === "number" && Number.isFinite(entry.seq) && entry.seq > highestAppendedSeq) {
+          highestAppendedSeq = entry.seq;
         }
+      }
+      if (highestAppendedSeq > 0) {
+        emitNamedEvent({
+          kind: "worker.entry_appended",
+          runId,
+          workerId,
+          seq: highestAppendedSeq,
+        });
       }
     });
   });

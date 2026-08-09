@@ -4,7 +4,7 @@ import * as schema from './schema';
 import { getAppDataPath } from '@/server/app-root';
 
 const dbPath = getAppDataPath('sqlite.db');
-const DB_SCHEMA_VERSION = 5;
+const DB_SCHEMA_VERSION = 6;
 export type DbClient = ReturnType<typeof createClient>;
 
 async function tableColumns(client: DbClient, table: string): Promise<Set<string>> {
@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS runs (
   memory_metadata_revision integer NOT NULL DEFAULT 0,
   last_memory_consolidation_at integer,
   created_at integer NOT NULL,
+  last_activity_at integer,
   updated_at integer NOT NULL,
   FOREIGN KEY (plan_id) REFERENCES plans(id) ON UPDATE no action ON DELETE no action
 );
@@ -595,6 +596,10 @@ if (!runColumnNames.has("last_memory_consolidation_at")) {
   await client.execute("ALTER TABLE runs ADD COLUMN last_memory_consolidation_at integer;");
 }
 
+if (!runColumnNames.has("last_activity_at")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN last_activity_at integer;");
+}
+
 const messageColumnNames = await tableColumns(client, "messages");
 
 const workerColumnNames = await tableColumns(client, "workers");
@@ -733,6 +738,72 @@ if (!messageColumnNames.has("edited_from_message_id")) {
 if (!messageColumnNames.has("attachments_json")) {
   await client.execute("ALTER TABLE messages ADD COLUMN attachments_json text;");
 }
+
+// ── runs.last_activity_at ──────────────────────────────────────────
+// Sidebar ordering needs "when did this conversation last do something a human
+// would recognise" — the last user message, or the last agent turn that
+// finished. `runs.updated_at` cannot answer that: ~70 call sites bump it,
+// including memory consolidation, the runtime watchdog, git auto-commit, quota
+// recovery and agent-generated titles, all of which would float dormant
+// sessions to the top.
+//
+// Maintained by triggers rather than by a `touchRunActivity()` helper on purpose:
+// user rows enter `messages` from 18 different call sites and turn ends come out
+// of the worker sync loop, so a TS helper is one forgotten call away from
+// silently wrong ordering. Both triggers only ever move the timestamp forward.
+// Must run after the `messages.kind` migration above — the triggers read it.
+await client.executeMultiple(`
+CREATE TRIGGER IF NOT EXISTS runs_activity_seed
+AFTER INSERT ON runs
+WHEN NEW.last_activity_at IS NULL
+BEGIN
+  UPDATE runs SET last_activity_at = NEW.created_at WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS runs_activity_on_user_message
+AFTER INSERT ON messages
+WHEN lower(NEW.role) = 'user'
+  AND lower(COALESCE(NEW.kind, '')) NOT IN ('internal', 'intervention')
+BEGIN
+  UPDATE runs
+  SET last_activity_at = NEW.created_at
+  WHERE id = NEW.run_id
+    AND COALESCE(last_activity_at, 0) < NEW.created_at;
+END;
+
+CREATE TRIGGER IF NOT EXISTS runs_activity_on_worker_turn_end
+AFTER UPDATE OF status ON workers
+WHEN lower(substr(OLD.status, 1, instr(OLD.status || ':', ':') - 1)) = 'working'
+  AND lower(substr(NEW.status, 1, instr(NEW.status || ':', ':') - 1)) != 'working'
+BEGIN
+  UPDATE runs
+  SET last_activity_at = NEW.updated_at
+  WHERE id = NEW.run_id
+    AND COALESCE(last_activity_at, 0) < NEW.updated_at;
+END;
+`);
+
+// Backfill rows that predate the triggers. `created_at` is the floor so a forked
+// run — whose copied messages carry the *original* timestamps — can never sort
+// behind its own creation. Historical agent turns aren't in `messages` (worker
+// output lives in the artifact stream), so the stream's `updated_at` stands in.
+await client.execute(`
+  UPDATE runs
+  SET last_activity_at = MAX(
+    created_at,
+    COALESCE((
+      SELECT MAX(m.created_at) FROM messages m
+      WHERE m.run_id = runs.id
+        AND lower(m.role) = 'user'
+        AND lower(COALESCE(m.kind, '')) NOT IN ('internal', 'intervention')
+    ), 0),
+    COALESCE((
+      SELECT MAX(a.updated_at) FROM artifact_streams a
+      WHERE a.run_id = runs.id AND a.kind = 'worker_entries'
+    ), 0)
+  )
+  WHERE last_activity_at IS NULL;
+`);
 
 const accountColumnNames = await tableColumns(client, "accounts");
 
@@ -873,6 +944,7 @@ CREATE INDEX IF NOT EXISTS worker_token_usage_worker_idx ON worker_token_usage(w
 CREATE INDEX IF NOT EXISTS account_usage_snapshots_account_window_idx ON account_usage_snapshots(account_id, window_key);
 CREATE INDEX IF NOT EXISTS runs_created_idx ON runs(created_at);
 CREATE INDEX IF NOT EXISTS runs_archived_created_id_desc_idx ON runs(archived_at, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS runs_archived_activity_id_desc_idx ON runs(archived_at, last_activity_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS plans_created_idx ON plans(created_at);
 CREATE INDEX IF NOT EXISTS plans_created_id_desc_idx ON plans(created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS notification_subscriptions_revoked_idx ON notification_subscriptions(revoked_at);

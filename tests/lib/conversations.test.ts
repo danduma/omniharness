@@ -204,4 +204,84 @@ describe("buildConversationGroups", () => {
       "run-opencut-1",
     ]);
   });
+
+  it("orders sessions inside a project by last activity, not creation date", () => {
+    const result = buildConversationGroups({
+      explicitProjects: ["/workspace/app"],
+      plans: [],
+      runs: [
+        {
+          id: "newest-created",
+          planId: "plan-1",
+          status: "done",
+          createdAt: "2026-04-24T10:00:00.000Z",
+          lastActivityAt: "2026-04-24T10:00:00.000Z",
+          projectPath: "/workspace/app",
+          title: "Created last, never touched again",
+        },
+        {
+          id: "oldest-created",
+          planId: "plan-2",
+          status: "running",
+          createdAt: "2026-04-20T10:00:00.000Z",
+          lastActivityAt: "2026-04-25T09:00:00.000Z",
+          projectPath: "/workspace/app",
+          title: "Created first, replied to today",
+        },
+        {
+          id: "no-activity-stamp",
+          planId: "plan-3",
+          status: "done",
+          createdAt: "2026-04-22T10:00:00.000Z",
+          projectPath: "/workspace/app",
+          title: "Legacy row without a stamp",
+        },
+      ],
+    });
+
+    expect(result[0]?.runs.map((run) => run.id)).toEqual([
+      "oldest-created",
+      "newest-created",
+      "no-activity-stamp",
+    ]);
+  });
+
+  it("breaks ties on creation date and then id so ordering is stable", () => {
+    const sameActivity = "2026-04-25T09:00:00.000Z";
+    const result = buildConversationGroups({
+      explicitProjects: ["/workspace/app"],
+      plans: [],
+      runs: [
+        {
+          id: "run-b",
+          planId: "plan-1",
+          status: "done",
+          createdAt: "2026-04-20T10:00:00.000Z",
+          lastActivityAt: sameActivity,
+          projectPath: "/workspace/app",
+          title: "B",
+        },
+        {
+          id: "run-a",
+          planId: "plan-2",
+          status: "done",
+          createdAt: "2026-04-20T10:00:00.000Z",
+          lastActivityAt: sameActivity,
+          projectPath: "/workspace/app",
+          title: "A",
+        },
+        {
+          id: "run-c",
+          planId: "plan-3",
+          status: "done",
+          createdAt: "2026-04-21T10:00:00.000Z",
+          lastActivityAt: sameActivity,
+          projectPath: "/workspace/app",
+          title: "C",
+        },
+      ],
+    });
+
+    expect(result[0]?.runs.map((run) => run.id)).toEqual(["run-c", "run-a", "run-b"]);
+  });
 });

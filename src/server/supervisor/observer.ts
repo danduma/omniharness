@@ -1284,8 +1284,11 @@ export async function pollRunWorkers(
             raw: { eventType: "worker.terminal", status: nextStatus },
           });
         }
+        // `emitNamedEvent` above already woke the streams. This used to call
+        // `notifyEventStreamSubscribers()` unconditionally, outside this
+        // branch, so every observer poll for every run forced a global
+        // snapshot rebuild every 5s even when nothing had changed.
       }
-      notifyEventStreamSubscribers();
 
       for (const event of filteredEvents) {
         const eventText = (snapshot.currentText || snapshot.lastText || "").slice(-500);

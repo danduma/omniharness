@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import React from "react";
-import { MarkdownContent } from "@/components/MarkdownContent";
+// The block-structure assertions below inspect the returned tree directly, so
+// they target the hook-free renderer rather than the memoized component.
+import { renderMarkdownContent } from "@/components/MarkdownContent";
 
 type InspectableReactElement = React.ReactElement<{ children?: React.ReactNode }>;
 
@@ -24,9 +26,9 @@ function findReactNodes(node: any, predicate: (n: any) => boolean): any[] {
 
 describe("MarkdownContent - Horizontal Rule rendering", () => {
   it("renders a horizontal rule for three or more dashes, asterisks, or underscores", () => {
-    const hrDashes = MarkdownContent({ content: "---" });
-    const hrAsterisks = MarkdownContent({ content: "***" });
-    const hrUnderscores = MarkdownContent({ content: "___" });
+    const hrDashes = renderMarkdownContent({ content: "---" });
+    const hrAsterisks = renderMarkdownContent({ content: "***" });
+    const hrUnderscores = renderMarkdownContent({ content: "___" });
 
     const hrNodesDashes = findReactNodes(hrDashes, (n) => n.type === "hr");
     const hrNodesAsterisks = findReactNodes(hrAsterisks, (n) => n.type === "hr");
@@ -41,7 +43,7 @@ describe("MarkdownContent - Horizontal Rule rendering", () => {
 
   it("horizontal rule breaks paragraphs correctly", () => {
     const content = "Paragraph before\n---\nParagraph after";
-    const tree = MarkdownContent({ content });
+    const tree = renderMarkdownContent({ content });
 
     const pNodes = findReactNodes(tree, (n) => n.type === "p");
     const hrNodes = findReactNodes(tree, (n) => n.type === "hr");
@@ -66,7 +68,7 @@ describe("MarkdownContent - List rendering", () => {
       "1. Fourth step",
     ].join("\n");
 
-    const tree = MarkdownContent({ content });
+    const tree = renderMarkdownContent({ content });
     const topLevelChildren = React.Children.toArray(tree.props.children) as InspectableReactElement[];
     const orderedLists = topLevelChildren.filter((node) => node.type === "ol");
 
@@ -86,7 +88,7 @@ describe("MarkdownContent - Project file links", () => {
   const projectRoot = "/Users/masterman/NLP/omniharness";
 
   it("renders code containing a literal percent sign without crashing", () => {
-    expect(() => MarkdownContent({
+    expect(() => renderMarkdownContent({
       content: "Progress is `100%`",
       projectRoot,
       onOpenProjectFile: () => {},
@@ -94,7 +96,7 @@ describe("MarkdownContent - Project file links", () => {
   });
 
   it("links backticked relative project paths to the project file opener", () => {
-    const tree = MarkdownContent({
+    const tree = renderMarkdownContent({
       content: "- `docs/strategy/2026-07-09-conversion-funnel-audit.md` - full findings",
       projectRoot,
       onOpenProjectFile: () => {},
@@ -105,7 +107,7 @@ describe("MarkdownContent - Project file links", () => {
     expect(buttonNodes[0].props.children).toBe("docs/strategy/2026-07-09-conversion-funnel-audit.md");
 
     const opened: unknown[] = [];
-    const callbackTree = MarkdownContent({
+    const callbackTree = renderMarkdownContent({
       content: "`docs/plans/launch-conversion-readiness.md:12`",
       projectRoot,
       onOpenProjectFile: (file) => opened.push(file),
@@ -122,7 +124,7 @@ describe("MarkdownContent - Project file links", () => {
 
   it("links relative project paths nested inside bold code formatting", () => {
     const opened: unknown[] = [];
-    const tree = MarkdownContent({
+    const tree = renderMarkdownContent({
       content: "- **`docs/strategy/2026-07-09-conversion-funnel-audit.md`** - full findings",
       projectRoot,
       onOpenProjectFile: (file) => opened.push(file),
@@ -148,7 +150,7 @@ describe("MarkdownContent - Table rendering", () => {
       "| Value 3 | Value 4 |",
     ].join("\n");
 
-    const tree = MarkdownContent({ content });
+    const tree = renderMarkdownContent({ content });
     const tableNodes = findReactNodes(tree, (n) => n.type === "table");
     expect(tableNodes.length).toBe(1);
 
@@ -166,7 +168,7 @@ describe("MarkdownContent - Table rendering", () => {
       "| L1 | C1 | R1 |",
     ].join("\n");
 
-    const tree = MarkdownContent({ content });
+    const tree = renderMarkdownContent({ content });
 
     const thNodes = findReactNodes(tree, (n) => n.type === "th");
     expect(thNodes[0].props.className).toContain("text-left");
@@ -186,7 +188,7 @@ describe("MarkdownContent - Table rendering", () => {
       "| **Bold** cell with `code` |",
     ].join("\n");
 
-    const tree = MarkdownContent({ content });
+    const tree = renderMarkdownContent({ content });
 
     const codeNodes = findReactNodes(tree, (n) => n.type === "code");
     const strongNodes = findReactNodes(tree, (n) => n.type === "strong");
@@ -202,7 +204,7 @@ describe("MarkdownContent - Table rendering", () => {
       "| Value 1 |", // missing second cell
     ].join("\n");
 
-    const tree = MarkdownContent({ content });
+    const tree = renderMarkdownContent({ content });
     const tdNodes = findReactNodes(tree, (n) => n.type === "td");
     expect(tdNodes.length).toBe(2); // should still render 2 columns corresponding to the 2 headers
   });
@@ -216,7 +218,7 @@ describe("MarkdownContent - Table rendering", () => {
       "Continuing normal writing",
     ].join("\n");
 
-    const tree = MarkdownContent({ content });
+    const tree = renderMarkdownContent({ content });
     const pNodes = findReactNodes(tree, (n) => n.type === "p");
     const tableNodes = findReactNodes(tree, (n) => n.type === "table");
 
@@ -444,7 +446,7 @@ describe("MarkdownContent - Table rendering", () => {
       "By transitioning the Supervisor Omni from a **passive manager** to a **playing coach** that can make surgical adjustments and run tests directly, we dramatically compress task completion times, eliminate massive token overhead, and make the overall OmniHarness platform more resilient and autonomous.",
     ].join("\n");
 
-    const tree = MarkdownContent({ content });
+    const tree = renderMarkdownContent({ content });
     expect(tree).toBeDefined();
 
     const tableNodes = findReactNodes(tree, (n) => n.type === "table");

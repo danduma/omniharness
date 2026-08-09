@@ -203,10 +203,11 @@ function initialState(
 }
 
 function defaultStorage(): WorkerEntryStorage | null {
-  if (typeof window === "undefined" || typeof window.localStorage === "undefined") {
-    return null;
-  }
-  return window.localStorage;
+  // Worker transcript bodies are server-owned and fetched through the
+  // unified worker stream. Persisting them in localStorage can crowd out
+  // preferences and credentials, so browser storage is opt-in for tests or
+  // explicitly bounded consumers only.
+  return null;
 }
 
 function emptyEnvelope(): WorkerEntriesCacheEnvelope {

@@ -1,6 +1,6 @@
 import type React from "react";
-import { useCallback, useEffect, useSyncExternalStore } from "react";
-import { Archive, Bug, ChevronDown, Folder, FolderInput, FolderPlus, GitCommitHorizontal, GripVertical, ListChevronsDownUp, LoaderCircle, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Sun, Trash2, TriangleAlert, Wand2 } from "lucide-react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { Archive, Bug, ChevronDown, Folder, FolderInput, FolderPlus, GitCommitHorizontal, GripVertical, ListChevronsDownUp, LoaderCircle, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Sun, Trash2, TriangleAlert, Wand2, X } from "lucide-react";
 import type { ConversationSidebarTab } from "@/interface/home/types";
 import type { ProjectDropPlacement } from "@/interface/home/utils";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import { OmniHarnessMark } from "@/components/OmniHarnessMark";
 import { CliBrandIcon } from "@/components/cli-brand-icons";
 import { PRODUCT_NAME, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "@/interface/home/constants";
 import { RunnerControls } from "@/interface/runners/RunnerControls";
-import { getRunLatestUnreadTimestamp, isRunUnread } from "@/lib/conversation-state";
+import { isRunUnread, resolveRunLatestUnreadTimestamp } from "@/lib/conversation-state";
 import { getConversationVisualKind, type ConversationVisualKind } from "@/lib/conversation-visuals";
 import type { ManualCommitAction } from "@/lib/commit-workflow";
 import { t, useI18nSnapshot } from "@/lib/i18n";
@@ -36,6 +36,30 @@ class ConversationSidebarHydrationManager extends StateManager<boolean> {
 }
 
 const conversationSidebarHydrationManager = new ConversationSidebarHydrationManager();
+
+type ConversationSidebarSurface = "desktop" | "mobile";
+
+class ConversationSidebarScrollManager extends StateManager<{
+  scrollTopBySurface: Partial<Record<ConversationSidebarSurface, number>>;
+}> {
+  constructor() {
+    super({ scrollTopBySurface: {} });
+  }
+
+  getScrollTop(surface: ConversationSidebarSurface) {
+    return this.getSnapshot().scrollTopBySurface[surface];
+  }
+
+  setScrollTop(surface: ConversationSidebarSurface, scrollTop: number) {
+    this.setKey("scrollTopBySurface", (current) => (
+      current[surface] === scrollTop
+        ? current
+        : { ...current, [surface]: scrollTop }
+    ));
+  }
+}
+
+const conversationSidebarScrollManager = new ConversationSidebarScrollManager();
 
 type ProjectDragState = {
   /**
@@ -190,6 +214,21 @@ function ConversationProjectGroupList({
   emptyState,
 }: ConversationProjectGroupListProps) {
   const projectDrag = useManagerSnapshot(projectDragManager);
+
+  // Roll the message list up per run once. The unread check below runs inside
+  // `visibleRuns.map`, and it used to scan the entire cross-run message array
+  // for every row — including rows inside collapsed projects, which are still
+  // mounted because the collapse is CSS-only.
+  const latestMessageAtByRunId = useMemo(() => {
+    const latest = new Map<string, string>();
+    for (const message of messages ?? []) {
+      const existing = latest.get(message.runId);
+      if (!existing || new Date(message.createdAt).getTime() > new Date(existing).getTime()) {
+        latest.set(message.runId, message.createdAt);
+      }
+    }
+    return latest;
+  }, [messages]);
 
   if (groups.length === 0) {
     return <>{emptyState}</>;
@@ -378,7 +417,10 @@ function ConversationProjectGroupList({
                   const canMoveConversation = isTerminalRunStatus(run.status);
                   const normalizedRunStatus = normalizeRunStatus(run.status);
                   const runIsUnread = isRunUnread({
-                    latestMessageAt: getRunLatestUnreadTimestamp(run, messages || []),
+                    latestMessageAt: resolveRunLatestUnreadTimestamp(
+                      run,
+                      latestMessageAtByRunId.get(run.id) ?? null,
+                    ),
                     lastReadAt: readMarkers[run.id] ?? null,
                   });
                   const showCompletedAttentionIndicator = normalizedRunStatus === "done" && runIsUnread;
@@ -705,7 +747,13 @@ export interface ConversationSidebarProps {
   runnerControlsMode?: "desktop" | "mobile";
 }
 
-export function ConversationSidebar({
+/**
+ * Memoized. Every SSE frame gave the shell a new state identity and re-rendered
+ * this entire subtree, even when nothing it renders had changed. Its props are
+ * spread from `sharedSidebarProps`, whose callbacks are now stable, so the
+ * shallow comparison is meaningful.
+ */
+const ConversationSidebar = memo(function ConversationSidebar({
   filteredProjects,
   activeProjects,
   conversationSidebarTab,
@@ -766,6 +814,65 @@ export function ConversationSidebar({
     useCallback(() => conversationSidebarHydrationManager.getSnapshot(), []),
     () => conversationSidebarHydrationManager.getSnapshot(),
   );
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const scrollRestoreAttemptedRef = useRef(false);
+  const sidebarContentKey = useMemo(
+    () => visibleProjectGroups
+      .map((group) => `${group.path}:${group.runs.map((run) => run.id).join(",")}`)
+      .join("|"),
+    [visibleProjectGroups],
+  );
+  const getScrollViewport = useCallback(
+    () => scrollAreaRef.current?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]') ?? null,
+    [],
+  );
+
+  useEffect(() => {
+    if (!mounted) {
+      return;
+    }
+    const viewport = getScrollViewport();
+    if (!viewport) {
+      return;
+    }
+    const saveScrollPosition = () => {
+      conversationSidebarScrollManager.setScrollTop(runnerControlsMode, viewport.scrollTop);
+    };
+    viewport.addEventListener("scroll", saveScrollPosition, { passive: true });
+    return () => {
+      saveScrollPosition();
+      viewport.removeEventListener("scroll", saveScrollPosition);
+    };
+  }, [getScrollViewport, mounted, runnerControlsMode]);
+
+  useLayoutEffect(() => {
+    if (!mounted || scrollRestoreAttemptedRef.current) {
+      return;
+    }
+    const viewport = getScrollViewport();
+    if (!viewport) {
+      return;
+    }
+    const savedScrollTop = conversationSidebarScrollManager.getScrollTop(runnerControlsMode);
+    if (savedScrollTop !== undefined) {
+      const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+      viewport.scrollTop = Math.min(savedScrollTop, maxScrollTop);
+      scrollRestoreAttemptedRef.current = true;
+      return;
+    }
+    if (runnerControlsMode !== "mobile" || !selectedRunId) {
+      scrollRestoreAttemptedRef.current = true;
+      return;
+    }
+    const selectedRow = Array.from(viewport.querySelectorAll<HTMLElement>("[data-conversation-run-id]"))
+      .find((row) => row.dataset.conversationRunId === selectedRunId);
+    if (!selectedRow) {
+      return;
+    }
+    selectedRow.scrollIntoView({ block: "center" });
+    scrollRestoreAttemptedRef.current = true;
+  }, [getScrollViewport, mounted, runnerControlsMode, selectedRunId, sidebarContentKey]);
+
   useEffect(() => {
     conversationSidebarHydrationManager.markMounted();
   }, []);
@@ -839,13 +946,27 @@ export function ConversationSidebar({
             placeholder={t("conversation.sidebar.searchPlaceholder")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-9 w-full border-transparent bg-[#e4e3e1] pl-8 text-sm text-[#333333] transition-all placeholder:text-[#333333]/75 hover:bg-[#deddda] focus-visible:border-[#c8c7c5] focus-visible:bg-[#e4e3e1] focus-visible:ring-1 dark:bg-white/[0.08] dark:text-zinc-100 dark:placeholder:text-zinc-400 dark:hover:bg-white/[0.095] dark:focus-visible:bg-white/[0.08]"
+            className="h-9 w-full border-transparent bg-[#e4e3e1] pl-8 pr-9 text-sm text-[#333333] transition-all placeholder:text-[#333333]/75 hover:bg-[#deddda] focus-visible:border-[#c8c7c5] focus-visible:bg-[#e4e3e1] focus-visible:ring-1 dark:bg-white/[0.08] dark:text-zinc-100 dark:placeholder:text-zinc-400 dark:hover:bg-white/[0.095] dark:focus-visible:bg-white/[0.08]"
           />
+          {searchQuery ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="absolute right-1 top-1 text-[#333333]/70 hover:bg-[#d7d6d4] hover:text-[#1f1f1f] dark:text-zinc-300 dark:hover:bg-white/[0.12] dark:hover:text-zinc-100"
+              aria-label={t("common.clear")}
+              title={t("common.clear")}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => setSearchQuery("")}
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          ) : null}
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        <ScrollArea className="h-full px-3">
+        <ScrollArea ref={scrollAreaRef} className="h-full px-3">
           <div className="space-y-3 pb-4 pt-0.5">
           <div className="ml-2 mr-1 flex items-center justify-between">
             <div className="flex items-center gap-1">
@@ -1028,4 +1149,5 @@ export function ConversationSidebar({
       </div>
     </div>
   );
-}
+});
+export { ConversationSidebar };

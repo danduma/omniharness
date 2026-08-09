@@ -38,11 +38,16 @@ function laterTimestamp(left: string | null, right: string | null | undefined) {
   return left;
 }
 
-export function getRunLatestUnreadTimestamp(
-  run: { id: string; status?: string | null; updatedAt?: string | null; createdAt?: string | null },
-  messages: Array<{ runId: string; createdAt: string }>
+/**
+ * The status rule on its own, taking an already-resolved latest message
+ * timestamp. Callers that classify many runs at once should roll the message
+ * list up per run in a single pass and use this, rather than paying a full
+ * message scan per run — see `buildSidebarActivityIndex`.
+ */
+export function resolveRunLatestUnreadTimestamp(
+  run: { status?: string | null; updatedAt?: string | null; createdAt?: string | null },
+  latestMessageAt: string | null,
 ) {
-  const latestMessageAt = getRunLatestMessageTimestamp(run.id, messages);
   const status = run.status?.trim().toLowerCase().split(":")[0]?.trim() ?? "";
 
   if (status === "done" || status === "awaiting_user" || status === "failed" || status === "needs_recovery") {
@@ -50,6 +55,13 @@ export function getRunLatestUnreadTimestamp(
   }
 
   return latestMessageAt;
+}
+
+export function getRunLatestUnreadTimestamp(
+  run: { id: string; status?: string | null; updatedAt?: string | null; createdAt?: string | null },
+  messages: Array<{ runId: string; createdAt: string }>
+) {
+  return resolveRunLatestUnreadTimestamp(run, getRunLatestMessageTimestamp(run.id, messages));
 }
 
 export function isRunUnread(args: {

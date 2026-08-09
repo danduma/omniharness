@@ -33,14 +33,6 @@ interface EventStreamSnapshotCacheManagerOptions {
   flushIntervalMs?: number;
 }
 
-function getDefaultStorage(): SnapshotStorage | null {
-  if (typeof window === "undefined" || typeof window.localStorage === "undefined") {
-    return null;
-  }
-
-  return window.localStorage;
-}
-
 function scopeKey(scope: string | null | undefined) {
   return scope?.trim() || GLOBAL_SCOPE_KEY;
 }
@@ -102,22 +94,15 @@ export class EventStreamSnapshotCacheManager {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: EventStreamSnapshotCacheManagerOptions = {}) {
-    const usesDefaultStorage = options.storage === undefined;
-    this.storage = usesDefaultStorage ? getDefaultStorage() : options.storage ?? null;
+    // Server/SSE state is authoritative. Persistent snapshot bodies can
+    // consume the entire origin quota, so browser storage is opt-in for
+    // isolated tests or explicitly bounded consumers only.
+    this.storage = options.storage ?? null;
     this.storageKey = options.storageKey ?? DEFAULT_STORAGE_KEY;
     this.maxSnapshots = options.maxSnapshots ?? DEFAULT_MAX_SNAPSHOTS;
     this.maxSerializedBytes = options.maxSerializedBytes ?? DEFAULT_MAX_SERIALIZED_BYTES;
     this.now = options.now ?? Date.now;
     this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
-
-    // A coalesced write must not lose the last snapshot when the tab is
-    // backgrounded or killed — on mobile PWAs `pagehide` is frequently the
-    // only teardown signal that fires.
-    if (usesDefaultStorage && this.storage && typeof window !== "undefined") {
-      const flushNow = () => this.flush();
-      window.addEventListener("pagehide", flushNow);
-      window.addEventListener("visibilitychange", flushNow);
-    }
   }
 
   hydrateState(initialState: EventStreamState, scope: string | null | undefined = null) {

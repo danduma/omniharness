@@ -1,4 +1,4 @@
-import { lazy, useCallback, type Dispatch, type KeyboardEvent, type SetStateAction } from "react";
+import { lazy, memo, useCallback, type Dispatch, type KeyboardEvent, type SetStateAction } from "react";
 import { Bug, ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, Menu, MoreHorizontal, PanelLeft, PanelRight, Pencil, RotateCw, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
@@ -30,6 +30,7 @@ import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { useIsCompactLayout } from "@/hooks/use-mobile";
+import { getVisualViewportDialogStyle, useVisualViewportSnapshot } from "@/hooks/use-visual-viewport";
 import { ConversationSidebar } from "./ConversationSidebar";
 import { RunWorkspaceBadge, resolveRunWorkspace } from "./RunWorkspaceBadge";
 import { ThemeModeToggle } from "./ThemeModeToggle";
@@ -142,7 +143,13 @@ interface HomeHeaderProps {
   onOpenExternalSessions?: () => void;
 }
 
-export function HomeHeader({
+/**
+ * Memoized. Every SSE frame gave the shell a new state identity and re-rendered
+ * this whole subtree even when nothing it displays had changed. Its props come
+ * from `sharedSidebarProps`, whose callbacks are now stable, so the shallow
+ * comparison actually holds.
+ */
+const HomeHeader = memo(function HomeHeader({
   mobileNavOpen,
   setMobileNavOpen,
   leftSidebarOpen,
@@ -233,6 +240,7 @@ export function HomeHeader({
 }: HomeHeaderProps) {
   useI18nSnapshot();
   const isCompactLayout = useIsCompactLayout();
+  const visualViewport = useVisualViewportSnapshot();
   const conversationTitle = selectedRun?.title?.trim() || "New conversation";
   const titleLabel = selectedRun ? conversationTitle : "";
   const isEditingTitle = Boolean(selectedRun && renamingRunId === selectedRun.id && renameSource === "topbar");
@@ -246,6 +254,7 @@ export function HomeHeader({
   // The branch/worktree lives in the commit menus rather than the top bar.
   const runWorkspace = resolveRunWorkspace(selectedRun, activeConversationCwd);
   const commitButtonLabel = pushOnCommitEnabled ? t("commit.menu.commitAndPushNow") : t("commit.menu.commitNow");
+  const renameDialogStyle = getVisualViewportDialogStyle(visualViewport);
 
   const beginTopBarTitleEdit = () => {
     if (!selectedRun) {
@@ -335,7 +344,7 @@ export function HomeHeader({
           <Menu className="h-4 w-4" />
         </Button>
         {mobileNavOpen ? (
-          <SheetContent side="left" className="w-[min(22rem,calc(100vw-1rem))] p-0 lg:hidden" showCloseButton={false}>
+          <SheetContent side="left" className="!w-[min(var(--omni-mobile-sidebar-width),calc(100vw-1rem))] p-0 lg:hidden" showCloseButton={false}>
             <SheetHeader className="border-b border-border/60">
               <SheetTitle className="flex items-center gap-2 text-left">
                 <OmniHarnessMark className="h-8 w-8 p-1" />
@@ -523,7 +532,10 @@ export function HomeHeader({
               }
             }}
           >
-            <DialogContent>
+            <DialogContent
+              className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+              style={renameDialogStyle}
+            >
               <DialogHeader>
                 <DialogTitle>{t("session.rename.title")}</DialogTitle>
               </DialogHeader>
@@ -744,4 +756,6 @@ export function HomeHeader({
     </div>
   </header>
   );
-}
+});
+
+export { HomeHeader };

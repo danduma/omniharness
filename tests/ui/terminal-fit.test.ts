@@ -73,7 +73,7 @@ test("terminal renders thoughts behind a collapsible thinking summary", () => {
   expect(terminalSource).toContain('return duration ? `Thought for ${duration}` : "Thought";');
   expect(terminalSource).not.toContain('return "<1s";');
   expect(terminalSource).toContain("animate-pulse");
-  expect(terminalSource).toContain("const open = (thoughtOpenById[activity.id] ?? thoughtsDefaultOpen) || activity.inProgress;");
+  expect(terminalSource).toContain("const open = (openOverride ?? thoughtsDefaultOpen) || activity.inProgress;");
 });
 
 test("terminal renders model thoughts as markdown while preserving thought tone", () => {
@@ -90,12 +90,12 @@ test("terminal renders model thoughts as markdown while preserving thought tone"
 test("terminal keeps tool output compact and expandable", () => {
   expect(terminalSource).toContain("const TOOL_OUTPUT_PREVIEW_LINES = 3");
   expect(terminalSource).toContain("isTerminalToolStatus(activity.status)");
-  expect(terminalSource).toContain("toolDetailsOpenById[activity.id] ?? !isDone");
+  expect(terminalSource).toContain("const detailsOpen = detailsOpenOverride ?? !isDone;");
   expect(terminalSource).toContain('const outputIsDiff = activity.outputPane?.kind === "diff";');
-  expect(terminalSource).toContain("toolOutputExpandedById[activity.id] ?? outputIsDiff");
+  expect(terminalSource).toContain("const outputExpanded = outputExpandedOverride ?? outputIsDiff;");
   expect(terminalSource).toContain("terminalUiManager.setToolOutputExpanded(activity.id, true)");
-  expect(terminalSource).not.toContain("isDone ? false : toolDetailsOpenById[activity.id]");
-  expect(terminalSource).not.toContain("isDone ? false : toolOutputExpandedById[activity.id]");
+  expect(terminalSource).not.toContain("isDone ? false : detailsOpenOverride");
+  expect(terminalSource).not.toContain("isDone ? false : outputExpandedOverride");
   expect(terminalSource).toContain("shouldShowToolStatusBadge(activity.status)");
   expect(terminalSource).toContain("shouldShowToolSpinner(activity.status)");
   expect(terminalSource).toContain('return !["completed", "done", "in_progress", "working"].includes(status);');
@@ -406,5 +406,9 @@ test("prepended history pays for its own height so the top boundary stops re-tri
   // The correction has to land before paint, ahead of the follow-latest pass.
   expect(terminalSource).toContain("resolveTerminalPrependedScrollTop({");
   expect(terminalSource).toContain("container.scrollTop = anchoredScrollTop;");
-  expect(terminalSource).toContain("previousScrollHeightRef.current = container?.scrollHeight ?? 0;");
+  // Single pre-write `scrollHeight` read, reused for the ref. Re-reading it
+  // after writing `scrollTop` forced a second synchronous layout per commit.
+  expect(terminalSource).toContain("const currentScrollHeight = container?.scrollHeight ?? 0;");
+  expect(terminalSource).toContain("previousScrollHeightRef.current = currentScrollHeight;");
+  expect(terminalSource).not.toContain("previousScrollHeightRef.current = container?.scrollHeight ?? 0;");
 });

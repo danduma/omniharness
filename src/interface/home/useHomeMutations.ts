@@ -50,6 +50,7 @@ import {
   ownsConversationSideEffects,
   ownsOptimisticRunSelection,
   replaceBrowserConversationPath,
+  resolveQueuedMessageRowAfterSend,
   shouldClearSubmittedComposer,
   shouldRestoreSelectionAfterOptimisticRemovalError,
   shouldSelectProjectMutationResult,
@@ -61,6 +62,7 @@ export {
   ownsConversationSideEffects,
   ownsOptimisticRunSelection,
   ownsSelectionFromMutationStart,
+  resolveQueuedMessageRowAfterSend,
   shouldClearSubmittedComposer,
   shouldRestoreSelectionAfterOptimisticRemovalError,
   shouldSelectProjectMutationResult,
@@ -641,9 +643,10 @@ export function useHomeMutations({
       if (context?.optimisticQueuedMessageId) {
         busyMessageQueueManager.settleQueueSend(context.optimisticQueuedMessageId, data.queuedMessage);
       } else if (data.queuedMessage) {
-        if (variables.busyAction === "steer" && data.message) {
+        const rowAction = resolveQueuedMessageRowAfterSend(data);
+        if (rowAction === "hide") {
           busyMessageQueueManager.hideQueuedMessage(data.queuedMessage.id);
-        } else {
+        } else if (rowAction === "upsert") {
           busyMessageQueueManager.upsertQueuedMessage(data.queuedMessage);
         }
       }

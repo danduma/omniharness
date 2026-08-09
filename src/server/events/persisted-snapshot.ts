@@ -29,6 +29,7 @@ import { serializeSessionRecord } from "@/server/session-providers/session-recor
 import { reconcileOrphanedProcessSessions } from "@/server/session-providers/process-store";
 import { reconcilePersistedReloadZombies } from "@/server/runs/persisted-zombie-reconciler";
 import { toAccountDto } from "@/server/accounts/dto";
+import { stripUnusedRunSnapshotFields } from "@/server/events/run-snapshot-fields";
 
 const EXECUTION_EVENT_LIMIT = 100;
 const SUPERVISOR_INTERVENTION_LIMIT = 50;
@@ -127,13 +128,14 @@ function compactWorkerRecord(worker: CompactWorkerRecord) {
   };
 }
 
-function serializeRunRecord(run: typeof runs.$inferSelect) {
+function serializeRunRecord(run: typeof runs.$inferSelect, selectedRunId: string | null) {
   return {
-    ...run,
+    ...stripUnusedRunSnapshotFields(run, { selectedRunId }),
     sessionType: run.sessionType === "process" ? "process" as const : "omni" as const,
     mode: run.mode as RunMode | null,
     createdAt: run.createdAt.toISOString(),
     updatedAt: run.updatedAt?.toISOString() ?? null,
+    lastActivityAt: run.lastActivityAt?.toISOString() ?? null,
     failedAt: run.failedAt?.toISOString() ?? null,
     archivedAt: run.archivedAt?.toISOString() ?? null,
   };
@@ -234,7 +236,7 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
   });
   const requestedSelectedRunId = options.selectedRunId?.trim() || null;
   const allPlans = await db.select().from(plans).orderBy(desc(plans.createdAt), desc(plans.id));
-  const allRuns = await db.select().from(runs).where(isNull(runs.archivedAt)).orderBy(desc(runs.createdAt), desc(runs.id));
+  const allRuns = await db.select().from(runs).where(isNull(runs.archivedAt)).orderBy(desc(runs.lastActivityAt), desc(runs.createdAt), desc(runs.id));
   const selectedRun = requestedSelectedRunId ? allRuns.find((run) => run.id === requestedSelectedRunId) ?? null : null;
   const selectedRunId = selectedRun?.id ?? null;
   const selectedPlanId = selectedRun?.planId ?? null;
@@ -339,7 +341,7 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
     messages: msgs.map(serializeMessageRecord).filter((message): message is NonNullable<typeof message> => Boolean(message)),
     readMarkers,
     plans: allPlans,
-    runs: allRuns.map(serializeRunRecord),
+    runs: allRuns.map((run) => serializeRunRecord(run, selectedRunId)),
     sessions,
     accounts: allAccounts.map(toAccountDto),
     agents: [],

@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { ALargeSmall, Check, ChevronDown, Copy, LoaderCircle } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { ProjectFileContextMenu } from "@/components/ProjectFileContextMenu";
@@ -19,7 +19,7 @@ import type { WorkerEntry } from "@/shared/worker-entries";
 import type { ChatAttachment } from "@/lib/chat-attachments";
 import { parseProjectFileReference, type ProjectFileReference } from "@/lib/project-file-links";
 import { cn } from "@/lib/utils";
-import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { UserMessageAttachments } from "@/components/terminal/UserMessageAttachments";
 import {
@@ -1293,10 +1293,22 @@ function ToolActivity({
 }) {
   const isDone = isTerminalToolStatus(activity.status);
   const showToolLabel = activity.label !== "Tool";
-  const { toolDetailsOpenById, toolOutputExpandedById } = useManagerSnapshot(terminalUiManager);
-  const detailsOpen = toolDetailsOpenById[activity.id] ?? !isDone;
+  // Per-id selectors, not a whole-state read. `terminalUiManager` is a single
+  // flat store shared by every tool, thought, group and summary in the
+  // transcript, and its broadcast is unconditional — reading the whole state
+  // meant one disclosure click re-rendered every row on screen, each one
+  // re-parsing its markdown and diffs. That was the click latency.
+  const detailsOpenOverride = useManagerSelector(
+    terminalUiManager,
+    useCallback((state) => state.toolDetailsOpenById[activity.id], [activity.id]),
+  );
+  const outputExpandedOverride = useManagerSelector(
+    terminalUiManager,
+    useCallback((state) => state.toolOutputExpandedById[activity.id], [activity.id]),
+  );
+  const detailsOpen = detailsOpenOverride ?? !isDone;
   const outputIsDiff = activity.outputPane?.kind === "diff";
-  const outputExpanded = toolOutputExpandedById[activity.id] ?? outputIsDiff;
+  const outputExpanded = outputExpandedOverride ?? outputIsDiff;
   const hasToolPanes = Boolean(activity.inputPane || activity.outputPane);
 
   return (
@@ -1476,8 +1488,11 @@ function ToolGroupActivity({
   onOpenProjectFile?: (file: ProjectFileReference) => void;
 }) {
   useI18nSnapshot();
-  const { toolGroupOpenById } = useManagerSnapshot(terminalUiManager);
-  const open = toolGroupOpenById[activity.id] ?? toolGroupsDefaultOpen;
+  const openOverride = useManagerSelector(
+    terminalUiManager,
+    useCallback((state) => state.toolGroupOpenById[activity.id], [activity.id]),
+  );
+  const open = openOverride ?? toolGroupsDefaultOpen;
   const summary = formatToolGroupSummary(activity.counts);
 
   return (
@@ -1556,8 +1571,11 @@ function ThoughtActivity({
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
 }) {
-  const { thoughtOpenById } = useManagerSnapshot(terminalUiManager);
-  const open = (thoughtOpenById[activity.id] ?? thoughtsDefaultOpen) || activity.inProgress;
+  const openOverride = useManagerSelector(
+    terminalUiManager,
+    useCallback((state) => state.thoughtOpenById[activity.id], [activity.id]),
+  );
+  const open = (openOverride ?? thoughtsDefaultOpen) || activity.inProgress;
 
   return (
     <div className="space-y-1">
@@ -1749,8 +1767,11 @@ function WorkSummaryActivity({
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
 }) {
-  const { workSummaryOpenById } = useManagerSnapshot(terminalUiManager);
-  const open = workSummaryOpenById[activity.id] ?? false;
+  const openOverride = useManagerSelector(
+    terminalUiManager,
+    useCallback((state) => state.workSummaryOpenById[activity.id], [activity.id]),
+  );
+  const open = openOverride ?? false;
   const nestedItems = activity.items.filter(
     (item): item is Extract<AgentActivityItem, { kind: "thinking" | "tool" | "tool_group" | "permission" }> =>
       item.kind === "thinking" || item.kind === "tool" || item.kind === "tool_group" || item.kind === "permission",
@@ -1875,7 +1896,17 @@ function ProtocolActivityContent({
   return activity.text ? <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{activity.text}</p> : null;
 }
 
-function ActivityRow({
+/**
+ * Memoized: this is the per-entry component, rendered once for every item in
+ * the transcript. Combined with the per-id `terminalUiManager` selectors above
+ * and the memoized `MarkdownContent`, a single streamed entry now re-renders
+ * only the rows whose own props changed, instead of every row re-running its
+ * markdown and diff parsing.
+ *
+ * The props are all scalars, stable callbacks, or entries from Terminal's
+ * memoized `activity` array, so the shallow comparison is meaningful.
+ */
+const ActivityRow = memo(function ActivityRow({
   activity,
   connectorExtendsAfter = false,
   connectorExtendsBefore = false,
@@ -1909,7 +1940,22 @@ function ActivityRow({
   onOpenProjectFile?: (file: ProjectFileReference) => void;
 }) {
   useI18nSnapshot();
-  const { copiedMessageId } = useManagerSnapshot(conversationCopyNoticeManager);
+  // Narrowed to "the copied id, but only if it is one of THIS row's ids".
+  // Every ActivityRow subscribes here, so selecting the raw id re-rendered the
+  // whole transcript whenever any single message was copied. Non-matching rows
+  // now select a stable `null` and are skipped.
+  const rowAgentMessageId = activity.id;
+  const rowUserMessageId = "messageId" in activity ? activity.messageId : undefined;
+  const copiedIdForThisRow = useManagerSelector(
+    conversationCopyNoticeManager,
+    useCallback((state) => {
+      const copied = state.copiedMessageId;
+      if (copied == null) {
+        return null;
+      }
+      return copied === rowAgentMessageId || copied === rowUserMessageId ? copied : null;
+    }, [rowAgentMessageId, rowUserMessageId]),
+  );
 
   const copyAgentMessage = async (content: string, messageId: string) => {
     try {
@@ -1940,20 +1986,20 @@ function ActivityRow({
           />
         ) : (
           <div data-sending={activity.sending ? "true" : undefined} className={cn(
-            "max-w-[min(72ch,calc(100%-1rem))] rounded-[1.55rem] bg-[#f3f3f3] px-5 py-3.5 text-[#202124] dark:bg-[#3a3a3a] dark:text-[#d8d8d8] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:max-w-[min(78ch,calc(100%-1.5rem))]",
+            "max-w-[min(72ch,calc(100%-1rem))] overflow-hidden rounded-[1.55rem] bg-[#f3f3f3] px-5 py-3.5 text-[#202124] dark:bg-[#3a3a3a] dark:text-[#d8d8d8] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:max-w-[min(78ch,calc(100%-1.5rem))]",
             conversationMessageTextSize
               ? "text-sm leading-6"
               : "text-[length:var(--terminal-message-size)] leading-[1.55]",
             activity.sending && "opacity-70",
           )}>
-            {activity.text ? <p className="max-w-none whitespace-pre-wrap">{activity.text}</p> : null}
+            {activity.text ? <p className="max-w-none whitespace-pre-wrap break-words">{activity.text}</p> : null}
             {activity.attachments.length > 0 ? <UserMessageAttachments attachments={activity.attachments} /> : null}
           </div>
         )}
         {!isEditing && activity.actions.length > 0 ? (
           <div className="mt-1 flex items-center justify-end gap-1 pr-1 text-muted-foreground/70">
             {activity.actions.map((action) => {
-              const showCopiedNotice = action.feedback === "copy-message" && copiedMessageId === activity.messageId;
+              const showCopiedNotice = action.feedback === "copy-message" && copiedIdForThisRow === activity.messageId;
 
               return action.menuItems?.length ? (
                 <DropdownMenu key={action.label}>
@@ -2077,7 +2123,7 @@ function ActivityRow({
                   >
                     <Copy className="h-4 w-4" />
                   </button>
-                  {copiedMessageId === activity.id ? (
+                  {copiedIdForThisRow === activity.id ? (
                     <span
                       role="status"
                       aria-live="polite"
@@ -2168,7 +2214,7 @@ function ActivityRow({
       </div>
     </div>
   );
-}
+});
 
 export function Terminal({
   agent,
@@ -2525,9 +2571,14 @@ export function Terminal({
     };
   }, [hasMoreHistory, onRequestMoreHistory, variant]);
 
+  // Cached: this joins a fingerprint for every item in the transcript (and, for
+  // tool groups, for every nested tool). It runs inside a pre-paint layout
+  // effect, so recomputing it on every commit put a full transcript string scan
+  // on the critical path to paint.
+  const activityVersion = useMemo(() => getTerminalActivityVersion(filteredActivity), [filteredActivity]);
+
   useLayoutEffect(() => {
     const container = scrollContainerRef.current;
-    const activityVersion = getTerminalActivityVersion(filteredActivity);
     const scrollAnchorChanged = previousScrollAnchorKeyRef.current !== scrollAnchorKey;
     previousScrollAnchorKeyRef.current = scrollAnchorKey;
     if (scrollAnchorChanged) {
@@ -2543,13 +2594,20 @@ export function Terminal({
     // arrived above the viewport has to be paid for in `scrollTop`, or the
     // reader stays pinned at the top boundary and the next page is requested
     // immediately — repeating until the whole transcript has loaded.
+    // One `scrollHeight` read for the whole effect, taken before any write.
+    // This used to read `scrollHeight`, write `scrollTop`, then read
+    // `scrollHeight` again — a read/write/read triple that forces two
+    // synchronous layouts per commit, before paint, on every render. Writing
+    // `scrollTop` cannot change `scrollHeight`, so the second read was pure
+    // cost.
+    const currentScrollHeight = container?.scrollHeight ?? 0;
     if (container && !scrollAnchorChanged && previousFirstActivityId !== firstActivityId) {
       const anchoredScrollTop = resolveTerminalPrependedScrollTop({
         previousFirstActivityId,
         nextFirstActivityId: firstActivityId,
         isPreviousFirstActivityStillRendered: filteredActivity.some((item) => item.id === previousFirstActivityId),
         previousScrollHeight: previousScrollHeightRef.current,
-        nextScrollHeight: container.scrollHeight,
+        nextScrollHeight: currentScrollHeight,
         scrollTop: container.scrollTop,
       });
       if (anchoredScrollTop !== null) {
@@ -2557,7 +2615,7 @@ export function Terminal({
         previousScrollTopRef.current = anchoredScrollTop;
       }
     }
-    previousScrollHeightRef.current = container?.scrollHeight ?? 0;
+    previousScrollHeightRef.current = currentScrollHeight;
 
     if (shouldTerminalResetInitialPosition({
       previousFirstActivityId,
