@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyOtherAnswer,
   buildElicitationContent,
   hasInvalidElicitationField,
   parseElicitationFields,
@@ -61,6 +62,26 @@ describe("ACP elicitation schema", () => {
       question_0: ["Agencies / freelancer world", "Property / recruiting"],
       customAnswer: "I know two founders",
     });
+  });
+
+  it("folds a question's Other text into that question's own answer", () => {
+    const [multiSelect] = parseElicitationFields(INCIDENT_SCHEMA);
+    const [singleSelect] = parseElicitationFields({
+      type: "object",
+      properties: {
+        question_0: { type: "string", oneOf: [{ const: "Step" }, { const: "Interpolated" }] },
+      },
+    });
+    if (!multiSelect || !singleSelect) throw new Error("expected parsed fields");
+
+    // Multi-select is joined into one answer agent-side, so text rides along.
+    expect(applyOtherAnswer(multiSelect, ["No special access"], "I know two founders"))
+      .toEqual(["No special access", "I know two founders"]);
+    // A single-value field holds one answer, so the typed one replaces the pick.
+    expect(applyOtherAnswer(singleSelect, "Step", "Neither, really")).toBe("Neither, really");
+    // Whitespace-only text is not an answer.
+    expect(applyOtherAnswer(singleSelect, "Step", "   ")).toBe("Step");
+    expect(applyOtherAnswer(multiSelect, ["No special access"], "")).toEqual(["No special access"]);
   });
 
   it("validates numeric, text, and multi-select constraints", () => {

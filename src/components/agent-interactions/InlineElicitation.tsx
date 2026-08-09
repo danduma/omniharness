@@ -7,10 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  applyOtherAnswer,
   buildElicitationContent,
   hasInvalidElicitationField,
   hasMissingRequiredElicitationField,
   parseElicitationFields,
+  type ElicitationField,
   type ElicitationValue,
 } from "@/lib/acp/elicitation-schema";
 import { t, useI18nSnapshot } from "@/lib/i18n";
@@ -39,6 +41,19 @@ function optionDraftKey(prefix: string, fieldName: string, optionValue: string) 
   return `${prefix}${fieldName}:option:${optionValue}`;
 }
 
+function otherDraftKey(prefix: string, fieldName: string) {
+  return `${prefix}${fieldName}:other`;
+}
+
+const QUESTION_FIELD_PATTERN = /^question_\d+$/;
+const CUSTOM_ANSWER_FIELD = "customAnswer";
+
+/** Only a question that offers a choice needs a free-text escape hatch. */
+function acceptsOtherText(field: ElicitationField) {
+  return QUESTION_FIELD_PATTERN.test(field.name)
+    && (field.kind === "single_select" || field.kind === "multi_select");
+}
+
 export function InlineElicitation({
   workerId,
   elicitation,
@@ -55,7 +70,7 @@ export function InlineElicitation({
   useI18nSnapshot();
   useManagerSnapshot(workerCardManager);
   const fields = parseElicitationFields(elicitation.requestedSchema);
-  const questionFields = fields.filter((field) => /^question_\d+$/.test(field.name));
+  const questionFields = fields.filter((field) => QUESTION_FIELD_PATTERN.test(field.name));
   const usesQuestionTabs = questionFields.length > 1;
   const isUrl = elicitation.mode === "url" && Boolean(elicitation.url);
   const safeUrl = isUrl && /^https?:\/\//i.test(elicitation.url ?? "") ? elicitation.url : null;
@@ -65,10 +80,23 @@ export function InlineElicitation({
   const activeQuestion = questionFields.find((field) => field.name === storedActiveQuestion)
     ?? questionFields[0]
     ?? null;
-  const visibleFields = usesQuestionTabs
-    ? fields.filter((field) => !/^question_\d+$/.test(field.name) || field.name === activeQuestion?.name)
+  // The agent appends a single global `customAnswer` box per request. It is not
+  // a question field, so under tabs it rendered inside every tab off one shared
+  // draft key — one "Other" carrying across sections. Once the questions are
+  // split into tabs each gets its own box folded into its own answer, and the
+  // global field is dropped rather than sent alongside them.
+  const customAnswerField = fields.find((field) => field.name === CUSTOM_ANSWER_FIELD) ?? null;
+  const perQuestionOther = usesQuestionTabs && customAnswerField !== null;
+  const answerFields = perQuestionOther
+    ? fields.filter((field) => field.name !== CUSTOM_ANSWER_FIELD)
     : fields;
-  const values = Object.fromEntries(fields.map((field) => {
+  const visibleFields = usesQuestionTabs
+    ? answerFields.filter((field) => !QUESTION_FIELD_PATTERN.test(field.name) || field.name === activeQuestion?.name)
+    : answerFields;
+  const values = Object.fromEntries(answerFields.map((field) => {
+    const other = perQuestionOther && acceptsOtherText(field)
+      ? workerCardManager.readElicitationDraft(otherDraftKey(prefix, field.name))
+      : "";
     if (field.kind === "multi_select") {
       const defaults = Array.isArray(field.defaultValue) ? field.defaultValue : [];
       const selected = field.options
@@ -77,17 +105,17 @@ export function InlineElicitation({
           return stored === "true" || (stored === "" && defaults.includes(option.value));
         })
         .map((option) => option.value);
-      return [field.name, selected];
+      return [field.name, applyOtherAnswer(field, selected, other)];
     }
     if (field.kind === "boolean") {
       const stored = workerCardManager.readElicitationDraft(`${prefix}${field.name}`);
       return [field.name, stored ? stored === "true" : field.defaultValue === true];
     }
     const stored = workerCardManager.readElicitationDraft(`${prefix}${field.name}`);
-    return [field.name, stored !== "" ? stored : field.defaultValue ?? ""];
+    return [field.name, applyOtherAnswer(field, stored !== "" ? stored : field.defaultValue ?? "", other)];
   })) as Record<string, ElicitationValue>;
-  const missingRequired = hasMissingRequiredElicitationField(fields, values);
-  const invalid = hasInvalidElicitationField(fields, values);
+  const missingRequired = hasMissingRequiredElicitationField(answerFields, values);
+  const invalid = hasInvalidElicitationField(answerFields, values);
 
   const submit = async (action: ElicitationResponseInput["action"]) => {
     try {
@@ -95,7 +123,7 @@ export function InlineElicitation({
         workerId,
         requestId: elicitation.requestId,
         action,
-        ...(action === "accept" ? { content: buildElicitationContent(fields, values) } : {}),
+        ...(action === "accept" ? { content: buildElicitationContent(answerFields, values) } : {}),
       });
       workerCardManager.clearElicitationDrafts(prefix);
     } catch {
@@ -188,7 +216,8 @@ export function InlineElicitation({
         {visibleFields.map((field) => {
           const draftKey = `${prefix}${field.name}`;
           const value = values[field.name];
-          const isTabbedQuestion = usesQuestionTabs && /^question_\d+$/.test(field.name);
+          const isTabbedQuestion = usesQuestionTabs && QUESTION_FIELD_PATTERN.test(field.name);
+          const otherKey = perQuestionOther && acceptsOtherText(field) ? otherDraftKey(prefix, field.name) : null;
           return (
             <fieldset key={field.name} className="space-y-1.5">
               <legend className={cn("text-[0.8125rem] font-medium text-foreground", isTabbedQuestion && "sr-only")}>{field.label}</legend>
@@ -277,6 +306,27 @@ export function InlineElicitation({
                   className="text-[0.8125rem]"
                 />
               )}
+              {otherKey && customAnswerField ? (
+                <div className="space-y-1.5 pt-1">
+                  <label
+                    htmlFor={otherKey}
+                    className="block text-[0.8125rem] font-medium text-foreground"
+                  >
+                    {customAnswerField.label}
+                  </label>
+                  {customAnswerField.description ? (
+                    <p className="text-xs leading-5 text-muted-foreground">{customAnswerField.description}</p>
+                  ) : null}
+                  <Textarea
+                    id={otherKey}
+                    value={workerCardManager.readElicitationDraft(otherKey)}
+                    disabled={disabled}
+                    placeholder={t("worker.elicitation.inputPlaceholder")}
+                    onChange={(event) => workerCardManager.setElicitationDraft(otherKey, event.target.value)}
+                    className="min-h-20 resize-y text-[0.8125rem]"
+                  />
+                </div>
+              ) : null}
             </fieldset>
           );
         })}

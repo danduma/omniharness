@@ -112,6 +112,26 @@ export function parseElicitationFields(schema: unknown): ElicitationField[] {
   });
 }
 
+/**
+ * Fold a question's free-text "Other" answer into the value sent back for that
+ * question. A multi-select is joined into one answer agent-side, so typed text
+ * rides alongside the picked options; a single-value field can hold only one
+ * answer, so typed text replaces the pick.
+ */
+export function applyOtherAnswer(
+  field: ElicitationField,
+  value: ElicitationValue,
+  other: string,
+): ElicitationValue {
+  const text = other.trim();
+  if (!text) return value;
+  if (field.kind === "multi_select") {
+    const selected = Array.isArray(value) ? value : [];
+    return selected.includes(text) ? selected : [...selected, text];
+  }
+  return text;
+}
+
 export function buildElicitationContent(
   fields: readonly ElicitationField[],
   values: Readonly<Record<string, ElicitationValue | undefined>>,
