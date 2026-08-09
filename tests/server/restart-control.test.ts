@@ -6,6 +6,7 @@ import {
   createSessionCookie,
   passwordsMatch,
   resolveRestartControlConfig,
+  restartCurrentWithEarlyAck,
   verifyRestartControlPassword,
 } from "@/server/restart-control";
 import { hashPasswordForTests } from "@/server/auth/password";
@@ -283,5 +284,69 @@ describe("restart controller", () => {
       listenerPids: [303, 404],
       recentLog: "line one\nline two",
     });
+  });
+});
+
+describe("restart current with early acknowledgement", () => {
+  function buildController(actions: string[], options: { failOnSignal?: boolean } = {}) {
+    return createRestartController({
+      config: resolveRestartControlConfig("/repo", {
+        OMNIHARNESS_REMOTE_RESTART_TOKEN: "secret-token",
+      }),
+      system: {
+        appendLog: () => undefined,
+        ensureDir: () => undefined,
+        findListenerPids: async () => [],
+        isProcessAlive: async () => true,
+        readPidFile: async () => ({ pid: 777, startedAt: 1, command: ["pnpm", "run", "start"], mode: "prod" }),
+        readRecentLog: async () => "",
+        removePidFile: async () => undefined,
+        signalProcess: async (pid, signal) => {
+          if (options.failOnSignal) {
+            throw new Error("could not signal the runner");
+          }
+          actions.push(`signal:${pid}:${signal}`);
+        },
+        spawnDetached: async () => 888,
+        waitForExit: async () => undefined,
+        writePidFile: async () => undefined,
+      },
+    });
+  }
+
+  it("acknowledges before stopping the runner that asked for the restart", async () => {
+    const actions: string[] = [];
+    const controller = buildController(actions);
+
+    const entry = await restartCurrentWithEarlyAck({
+      controller,
+      reason: "remote request",
+      acknowledge: () => actions.push("ack"),
+    });
+
+    // The acknowledgement has to come first: once the signal lands, the process
+    // that asked for the restart is gone and can no longer be told anything.
+    expect(actions[0]).toBe("ack");
+    expect(actions).toContain("signal:-777:SIGTERM");
+    expect(entry?.pid).toBe(888);
+  });
+
+  it("routes a post-acknowledgement failure to onFailure instead of throwing", async () => {
+    const actions: string[] = [];
+    const failures: unknown[] = [];
+    const controller = buildController(actions, { failOnSignal: true });
+
+    const entry = await restartCurrentWithEarlyAck({
+      controller,
+      acknowledge: () => actions.push("ack"),
+      onFailure: (error) => failures.push(error),
+    });
+
+    // The caller was already told the job was accepted, so the failure cannot be
+    // returned to it — it has to surface somewhere the operator can still see.
+    expect(entry).toBeNull();
+    expect(actions).toEqual(["ack"]);
+    expect(failures).toHaveLength(1);
+    expect((failures[0] as Error).message).toBe("could not signal the runner");
   });
 });

@@ -84,7 +84,10 @@ automation separately checks new Codex/model metadata against OmniHarness.
 
 Start the runner directly with `pnpm runner`. Use `--no-static` for a supported
 API-only deployment, or `--static-dir <path>` for an explicit interface
-artifact.
+artifact. Production starts, including the in-app **Restart server** action,
+check `dist/interface/.build-state.json` and rebuild the web interface only
+when the artifact is missing, incomplete, or stale. Development mode uses Vite
+and does not run this production rebuild gate.
 
 ## Clients and deployment
 

@@ -158,8 +158,10 @@ export const handleRunnerRestartRequest: OmniHttpHandler = async (request) => {
     message: "Restarting the server. Active worker turns will be interrupted and recovered.",
     surface: "toast",
   });
-  // 202: the control server has accepted the job. This runner is about to be
-  // killed, so the response goes out before the process actually dies.
+  // 202: the control server has accepted the job and has not stopped anything
+  // yet, which is the only window in which this runner is still alive to answer.
+  // The kill lands moments later and can still beat this response out the door,
+  // so the client treats a dropped connection here as success too.
   return Response.json({
     ok: true,
     pid: outcome.pid,

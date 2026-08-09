@@ -15,6 +15,7 @@ export interface RunnerConfig {
   staticDir: string | null;
   staticDirExplicit: boolean;
   staticDisabled: boolean;
+  interfaceDevUrl: string | null;
 }
 
 export interface ResolveRunnerConfigOptions {
@@ -43,7 +44,7 @@ function readArgs(argv: string[]) {
       flags.add(flag);
       continue;
     }
-    if (!["--port", "--host", "--bridge-url", "--static-dir"].includes(flag)) {
+    if (!["--port", "--host", "--bridge-url", "--static-dir", "--interface-dev-url"].includes(flag)) {
       throw new TypeError(`Unknown server option: ${flag}`);
     }
     const value = argv[index + 1];
@@ -99,6 +100,21 @@ export function resolveRunnerConfig({
   if (staticDisabled && explicitStaticDir) {
     throw new TypeError("--no-static cannot be combined with --static-dir.");
   }
+
+  const interfaceDevUrl = args.get("--interface-dev-url")
+    ?? env.OMNIHARNESS_INTERFACE_DEV_URL?.trim()
+    ?? null;
+  if (interfaceDevUrl) {
+    let parsed: URL;
+    try {
+      parsed = new URL(interfaceDevUrl);
+    } catch {
+      throw new TypeError("--interface-dev-url must be a valid URL.");
+    }
+    if (parsed.protocol !== "http:") {
+      throw new TypeError("--interface-dev-url must use http.");
+    }
+  }
   return {
     host: args.get("--host")
       ?? env.OMNIHARNESS_RUNNER_HOST?.trim()
@@ -126,5 +142,6 @@ export function resolveRunnerConfig({
         : path.join(repositoryRoot, "dist", "interface"),
     staticDirExplicit: explicitStaticDir !== null,
     staticDisabled,
+    interfaceDevUrl,
   };
 }

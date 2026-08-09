@@ -127,6 +127,7 @@ export async function startRunnerProcess(
       staticDir: config.staticDir,
       staticDirExplicit: config.staticDirExplicit,
       staticMode: "web",
+      interfaceDevUrl: config.interfaceDevUrl,
       buildStaticBootstrap: ({ request, selectedRunId }) =>
         buildRuntimeBootstrap({
           searchParams: bootstrapSearchParams(request.url, selectedRunId),

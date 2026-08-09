@@ -1,4 +1,5 @@
 import type { RuntimeApiError, RuntimeSurface } from "./types";
+import { t } from "@/lib/i18n";
 
 export function buildRuntimeQuery(
   params: Record<string, string | null | undefined>,
@@ -39,18 +40,32 @@ export function normalizeRuntimeHttpError({
       };
     }).error
     : null;
+  const isBareServerUnavailable = status === 502 && payload === null;
   return {
     code: typeof payload?.code === "string"
       ? payload.code
       : `runtime.http_${status}`,
     message: typeof payload?.message === "string"
       ? payload.message
+      : isBareServerUnavailable
+        ? t("runtime.connection.serverUnavailable")
       : `Runtime request failed with HTTP ${status}.`,
     details: payload?.details,
     surface: typeof payload?.surface === "string"
       ? payload.surface
       : surface,
   };
+}
+
+/**
+ * Did the request fail without the server ever answering?
+ *
+ * Every failure the server reported is thrown as a `RuntimeApiError` carrying a
+ * `code`, so a rejection without one never reached a reply at all — a reset
+ * connection, a DNS failure, or a process that died mid-request.
+ */
+export function isRuntimeTransportFailure(error: unknown) {
+  return typeof (error as { code?: unknown } | null | undefined)?.code !== "string";
 }
 
 export type RuntimeDomainRequest = (

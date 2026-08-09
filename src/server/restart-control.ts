@@ -245,6 +245,42 @@ export function createRestartController({ config, system }: {
   };
 }
 
+type RestartCurrentController = Pick<ReturnType<typeof createRestartController>, "restartCurrent">;
+
+/**
+ * Restart the current runner, acknowledging before anything is stopped.
+ *
+ * The caller here is the runner itself, and the restart kills it partway
+ * through. Replying only once the restart had finished wrote that reply to a
+ * socket whose client died a second earlier, so the browser that asked saw a
+ * failed request for a restart that had in fact worked. Before anything is
+ * stopped is the only moment the caller is still alive to hear an answer.
+ *
+ * The trade is that a restart failing after the acknowledgement can no longer be
+ * reported to that caller, so it goes to `onFailure` instead. The kill can also
+ * still land before the acknowledgement reaches the client, so callers have to
+ * tolerate losing the connection outright as well.
+ */
+export async function restartCurrentWithEarlyAck({
+  controller,
+  acknowledge,
+  onFailure,
+  reason = "manual",
+}: {
+  controller: RestartCurrentController;
+  acknowledge: () => void;
+  onFailure?: (error: unknown) => void;
+  reason?: string;
+}) {
+  acknowledge();
+  try {
+    return await controller.restartCurrent(reason);
+  } catch (error) {
+    onFailure?.(error);
+    return null;
+  }
+}
+
 function formatLocalTimestamp(date = new Date()) {
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
