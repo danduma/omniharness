@@ -3,6 +3,7 @@ import { db } from "@/server/db";
 import { withSqliteBusyRetry } from "@/server/db/retry";
 import { runs, supervisorScheduledWakes } from "@/server/db/schema";
 import { isTerminalRunStatus } from "@/server/runs/status";
+import { persistRunFailure } from "@/server/runs/failures";
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
@@ -25,6 +26,20 @@ let durableWakeExecutor: DurableWakeExecutor = async (runId) => {
 
 const durableTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+export function runDetachedSupervisorWakeTask(runId: string, task: () => Promise<void>) {
+  void Promise.resolve().then(task).catch((error) => {
+    void persistRunFailure(runId, error, {
+      surface: { code: "supervisor.wake.failed" },
+    }).catch((persistenceError) => {
+      console.error("[supervisor-wake] Failed to record a detached wake failure", {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+        persistenceError: persistenceError instanceof Error ? persistenceError.message : String(persistenceError),
+      });
+    });
+  });
+}
+
 function serializeDetails(details: Record<string, unknown> | null | undefined) {
   return details ? JSON.stringify(details) : null;
 }
@@ -44,10 +59,10 @@ function armDurableTimer(runId: string, wakeAt: Date) {
   durableTimers.set(runId, setTimeout(() => {
     durableTimers.delete(runId);
     if (delayMs > MAX_TIMER_DELAY_MS) {
-      void rearmDurableSupervisorWake(runId);
+      runDetachedSupervisorWakeTask(runId, () => rearmDurableSupervisorWake(runId));
       return;
     }
-    void durableWakeExecutor(runId);
+    runDetachedSupervisorWakeTask(runId, () => durableWakeExecutor(runId));
   }, chunkMs));
 }
 

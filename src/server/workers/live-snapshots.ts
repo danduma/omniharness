@@ -2,6 +2,7 @@ import type { AgentRecord } from "@/server/bridge-client";
 import { normalizeAgentRecord } from "@/server/bridge-client";
 import { formatErrorMessage } from "@/server/runs/failures";
 import { parseSupersededSeqRanges, type SupersededSeqRange } from "@/lib/superseded-entries";
+import { userFacingProviderSessionErrorMessage } from "@/server/workers/session-recovery";
 
 type WorkerOutputEntry = NonNullable<AgentRecord["outputEntries"]>[number];
 
@@ -187,7 +188,9 @@ export function buildLiveWorkerSnapshot(args: {
   const persistedLastText = worker?.lastText ?? "";
   const requestedModel = normalizedAgent?.requestedModel ?? run?.preferredWorkerModel ?? null;
   const requestedEffort = normalizedAgent?.requestedEffort ?? run?.preferredWorkerEffort ?? null;
-  const runLastError = run?.lastError ?? null;
+  const runLastError = run?.lastError
+    ? userFacingProviderSessionErrorMessage(run.lastError)
+    : null;
 
   if (normalizedAgent) {
     const terminalRun = isTerminalRun(run);
@@ -206,7 +209,10 @@ export function buildLiveWorkerSnapshot(args: {
     const lastText = normalizedAgent.lastText || persistedLastText || outputLog || structuredEntriesText || emptyStopDiagnostic;
     const displayBase = structuredOutput || outputLog || lastText || structuredEntriesText || "";
     const displayText = liveText && !structuredOutput ? appendLiveText(displayBase, liveText) : displayBase;
-    const visibleLastError = shouldSurfaceBridgeLastError(normalizedAgent) ? normalizedAgent.lastError : null;
+    const bridgeLastError = normalizedAgent.lastError
+      ? userFacingProviderSessionErrorMessage(normalizedAgent.lastError)
+      : null;
+    const visibleLastError = shouldSurfaceBridgeLastError(normalizedAgent) ? bridgeLastError : null;
 
     return {
       ...normalizedAgent,
@@ -225,7 +231,7 @@ export function buildLiveWorkerSnapshot(args: {
       outputEntries,
       currentText: liveText,
       lastText,
-      bridgeLastError: normalizedAgent.lastError ?? null,
+      bridgeLastError,
       runLastError,
       lastError: visibleLastError,
       outputLog,
@@ -235,7 +241,9 @@ export function buildLiveWorkerSnapshot(args: {
     };
   }
 
-  const bridgeLastError = args.bridgeError ? formatErrorMessage(args.bridgeError) : null;
+  const bridgeLastError = args.bridgeError
+    ? userFacingProviderSessionErrorMessage(formatErrorMessage(args.bridgeError))
+    : null;
   const missingBridgeDiagnostic = persistedOutputEntries.length === 0
     ? buildMissingBridgeEmptyDiagnostic(worker)
     : "";

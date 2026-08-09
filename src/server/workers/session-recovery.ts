@@ -10,6 +10,19 @@ import { readWorkerOutputEntries } from "@/server/workers/output-store";
 const MAX_TRANSCRIPT_REPLAY_CHARS = 24_000;
 const execFileAsync = promisify(execFile);
 
+export const PROVIDER_SESSION_DIAGNOSTIC_FALLBACK_MESSAGE =
+  "Claude Code returned an incomplete response after the interrupted session. OmniHarness replaced the session, but the turn did not complete. Try sending the message again.";
+
+export function isProviderSessionDiagnosticErrorMessage(value: string | null | undefined) {
+  return /\[ede_diagnostic\]/i.test(value ?? "");
+}
+
+export function userFacingProviderSessionErrorMessage(value: string | null | undefined) {
+  return isProviderSessionDiagnosticErrorMessage(value)
+    ? PROVIDER_SESSION_DIAGNOSTIC_FALLBACK_MESSAGE
+    : value ?? "Unknown error";
+}
+
 export function isRejectedSavedSessionErrorMessage(value: string | null | undefined) {
   return /\b(invalid session identifier|session not found|no previous sessions found|failed to load resumed session data from file|no conversation found|not found|could not find session|unknown session)\b/i.test(value ?? "");
 }

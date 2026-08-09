@@ -45,7 +45,6 @@ const {
   mockStartSupervisorRun,
   mockStopRunObserver,
   mockCancelSupervisorWake,
-  mockQueueConversationTitleGeneration,
   mockCreateBranchWorktree,
 } = vi.hoisted(() => ({
   mockAskAgent: vi.fn().mockResolvedValue({
@@ -90,7 +89,6 @@ const {
   mockStartSupervisorRun: vi.fn(),
   mockStopRunObserver: vi.fn(),
   mockCancelSupervisorWake: vi.fn(),
-  mockQueueConversationTitleGeneration: vi.fn().mockResolvedValue(undefined),
   mockCreateBranchWorktree: vi.fn(),
 }));
 
@@ -112,10 +110,6 @@ vi.mock("@/server/supervisor/observer", () => ({
 
 vi.mock("@/server/supervisor/wake", () => ({
   cancelSupervisorWake: mockCancelSupervisorWake,
-}));
-
-vi.mock("@/server/conversation-title", () => ({
-  queueConversationTitleGeneration: mockQueueConversationTitleGeneration,
 }));
 
 vi.mock("@/server/git/workspaces", () => ({
@@ -2052,6 +2046,129 @@ describe("POST /api/runs/[id]", () => {
     }));
   });
 
+  it("replaces a poisoned direct saved session after an incomplete ACP diagnostic", async () => {
+    __resetNamedEventsForTests();
+    mockAskAgent.mockClear();
+    mockCancelAgent.mockClear();
+    mockGetAgent.mockClear();
+    mockSpawnAgent.mockClear();
+    mockStartSupervisorRun.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const userMessageId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: path.join("vibes", "ad-hoc", `${randomUUID()}.md`),
+      status: "failed",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Poisoned direct retry",
+      projectPath: "/workspace/app",
+      preferredWorkerType: "claude",
+      preferredWorkerModel: "claude-opus-5",
+      preferredWorkerEffort: "high",
+      allowedWorkerTypes: JSON.stringify(["claude"]),
+      status: "failed",
+      lastError: "Ask failed: Internal error: [ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null",
+      failedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "error",
+      cwd: "/workspace/app",
+      bridgeSessionId: "poisoned-session",
+      bridgeSessionMode: "full-access",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "continue the direct task",
+      createdAt: now,
+    });
+
+    mockSpawnAgent
+      .mockResolvedValueOnce({
+        name: workerId,
+        type: "claude",
+        state: "idle",
+        cwd: "/workspace/app",
+        sessionId: "poisoned-session",
+        sessionMode: "full-access",
+        lastText: "",
+        currentText: "",
+        outputEntries: [],
+        stderrBuffer: [],
+        stopReason: null,
+      })
+      .mockResolvedValueOnce({
+        name: workerId,
+        type: "claude",
+        state: "idle",
+        cwd: "/workspace/app",
+        sessionId: "fresh-session",
+        sessionMode: "full-access",
+        lastText: "",
+        currentText: "",
+        outputEntries: [],
+        stderrBuffer: [],
+        stopReason: null,
+      });
+    mockAskAgent
+      .mockRejectedValueOnce(new Error("Ask failed: Internal error: [ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"))
+      .mockResolvedValueOnce({ response: "Recovered direct turn.", state: "idle" });
+
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
+    }), { params: Promise.resolve({ id: runId }) });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload).toMatchObject({ runId });
+    expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
+    expect(mockSpawnAgent).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      name: workerId,
+      resumeSessionId: "poisoned-session",
+    }));
+    expect(mockSpawnAgent).toHaveBeenNthCalledWith(2, expect.not.objectContaining({
+      resumeSessionId: expect.any(String),
+    }));
+    expect(mockAskAgent).toHaveBeenLastCalledWith(workerId, expect.stringContaining("continue the direct task"));
+
+    const [updatedRun, updatedWorker, events, errorMessages] = await Promise.all([
+      db.select().from(runs).where(eq(runs.id, runId)).get(),
+      db.select().from(workers).where(eq(workers.id, workerId)).get(),
+      db.select().from(executionEvents).where(eq(executionEvents.runId, runId)),
+      db.select().from(messages).where(eq(messages.runId, runId)),
+    ]);
+    expect(updatedRun?.status).toBe("done");
+    expect(updatedRun?.lastError).toBeNull();
+    expect(updatedWorker?.bridgeSessionId).toBe("fresh-session");
+    expect(events.some((event) => event.eventType === "worker_session_recreated_from_transcript")).toBe(true);
+    expect(events.some((event) => event.eventType === "run_failed")).toBe(false);
+    expect(errorMessages.some((message) => message.kind === "error")).toBe(false);
+  });
+
   it("does not fail direct recovery when the saved worker is already active", async () => {
     mockAskAgent.mockClear();
     mockGetAgent.mockClear();
@@ -2767,7 +2884,6 @@ describe("POST /api/runs/[id]", () => {
     mockGetAgent.mockClear();
     mockSpawnAgent.mockClear();
     mockStartSupervisorRun.mockClear();
-    mockQueueConversationTitleGeneration.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const userMessageId = randomUUID();

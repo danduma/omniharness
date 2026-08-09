@@ -1124,6 +1124,180 @@ describe("syncConversationSessions", () => {
     ]));
   });
 
+  it("clears stale recovery incidents when a worker starts working again", async () => {
+    // Safety net for the whole bug family: recovery bookkeeping is otherwise
+    // only written when a turn *ends*, so any path that opens an incident and
+    // then awaits a full turn leaves the banner up for the turn's duration —
+    // or forever. A worker that begins a new working period has disproved
+    // anything recorded before it.
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/stale-incident-sweep.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Stale incident sweep",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "idle",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "Previous turn.",
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(recoveryIncidents).values({
+      id: "stale-quota-incident",
+      runId,
+      workerId,
+      kind: "quota_exhausted",
+      status: "open",
+      autoAttemptCount: 0,
+      details: JSON.stringify({ recoveryState: "quota_waiting" }),
+      detectedAt: now,
+      updatedAt: now,
+    });
+
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "claude",
+        cwd: process.cwd(),
+        state: "working",
+        sessionId: "sweep-session",
+        sessionMode: "full-access",
+        currentText: "Back at it.",
+        lastText: "Previous turn.",
+        renderedOutput: "Back at it.",
+        outputEntries: [
+          {
+            id: "resumed-work",
+            type: "message",
+            text: "Back at it.",
+            status: "pending",
+            timestamp: new Date(now.getTime() + 1).toISOString(),
+          },
+        ],
+        pendingElicitations: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ], { selectedRunId: runId });
+
+    const incident = await db
+      .select()
+      .from(recoveryIncidents)
+      .where(eq(recoveryIncidents.id, "stale-quota-incident"))
+      .get();
+    expect(incident?.status).toBe("resolved");
+    expect(incident?.resolvedAt).not.toBeNull();
+  });
+
+  it("keeps an incident raised during the current working period", async () => {
+    // The fence that stops the sweep from flapping: it only fires on the
+    // transition into `working`, so an incident opened while the worker is
+    // already working survives and its banner stays up.
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/incident-during-work.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Incident during work",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "Working.",
+      lastText: "",
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(recoveryIncidents).values({
+      id: "live-incident",
+      runId,
+      workerId,
+      kind: "queue_blocked",
+      status: "needs_user",
+      autoAttemptCount: 0,
+      details: JSON.stringify({ recoveryState: "needs_recovery" }),
+      detectedAt: new Date(now.getTime() + 5),
+      updatedAt: new Date(now.getTime() + 5),
+    });
+
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "claude",
+        cwd: process.cwd(),
+        state: "working",
+        sessionId: "live-session",
+        sessionMode: "full-access",
+        currentText: "Still working.",
+        lastText: "",
+        renderedOutput: "Still working.",
+        outputEntries: [
+          {
+            id: "ongoing",
+            type: "message",
+            text: "Still working.",
+            status: "pending",
+            timestamp: new Date(now.getTime() + 6).toISOString(),
+          },
+        ],
+        pendingElicitations: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ], { selectedRunId: runId });
+
+    const incident = await db
+      .select()
+      .from(recoveryIncidents)
+      .where(eq(recoveryIncidents.id, "live-incident"))
+      .get();
+    expect(incident?.status).toBe("needs_user");
+    expect(incident?.resolvedAt).toBeNull();
+  });
+
   it("does not park the sync pass on a queued turn that blocks mid-delivery", async () => {
     // Regression: the drain was awaited inline, so a delivered turn held the
     // serialized sync chain for its whole duration. When the agent raised an

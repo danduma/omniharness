@@ -27,15 +27,16 @@ import { startLifecycleHarness, type LifecycleServer } from "../harness/server";
 import { LifecycleClient } from "../harness/client";
 import { Chaos, NO_CHAOS } from "../harness/chaos";
 
-const { mockAskAgent, mockGetAgent, mockSpawnAgent } = vi.hoisted(() => ({
+const { mockAskAgent, mockCancelAgent, mockGetAgent, mockSpawnAgent } = vi.hoisted(() => ({
   mockAskAgent: vi.fn(),
+  mockCancelAgent: vi.fn(),
   mockGetAgent: vi.fn(),
   mockSpawnAgent: vi.fn(),
 }));
 
 vi.mock("@/server/bridge-client", () => ({
   askAgent: mockAskAgent,
-  cancelAgent: vi.fn().mockResolvedValue(undefined),
+  cancelAgent: mockCancelAgent,
   cancelAgentTurn: vi.fn().mockResolvedValue({ ok: true, cancelledPermissions: 0 }),
   getAgent: mockGetAgent,
   spawnAgent: mockSpawnAgent,
@@ -54,14 +55,14 @@ vi.mock("@/server/git/auto-commit", async (importOriginal) => {
 let server: LifecycleServer;
 let client: LifecycleClient;
 
-function agent(workerId: string, state: string) {
+function agent(workerId: string, state: string, sessionId = "initial-steer-session") {
   return {
     name: workerId,
     type: "claude",
     state,
     currentText: "",
     lastText: "",
-    sessionId: "initial-steer-session",
+    sessionId,
     sessionMode: "full-access",
     pendingPermissions: [],
     pendingElicitations: [],
@@ -86,6 +87,7 @@ async function waitUntil(predicate: () => boolean | Promise<boolean>, timeoutMs 
 beforeEach(async () => {
   __resetNamedEventsForTests();
   mockAskAgent.mockReset();
+  mockCancelAgent.mockReset();
   mockGetAgent.mockReset();
   mockSpawnAgent.mockReset();
   await db.delete(executionEvents);
@@ -97,6 +99,7 @@ beforeEach(async () => {
   await db.delete(plans);
 
   mockSpawnAgent.mockImplementation(async ({ name }: { name: string }) => agent(name, "working"));
+  mockCancelAgent.mockResolvedValue(undefined);
   mockGetAgent.mockImplementation(async (workerId: string) => agent(workerId, "idle"));
   mockAskAgent
     .mockImplementationOnce(() => {
@@ -193,5 +196,120 @@ describe("lifecycle harness — steer during the initial direct turn", () => {
     expect(run?.lastError).toBeNull();
     expect(events.some((event) => event.eventType === "run_failed")).toBe(false);
     expect(events.some((event) => event.eventType === "queued_message_interrupt_delivered")).toBe(true);
+  });
+
+  it("replaces a Claude session when steer exposes an incomplete ACP diagnostic", async () => {
+    mockAskAgent.mockReset();
+    mockAskAgent
+      .mockImplementationOnce(() => {
+        const signal = currentWorkerTurnSignal();
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      })
+      .mockRejectedValueOnce(new Error("Ask failed: Internal error: [ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"))
+      .mockResolvedValueOnce({ response: "The steer was applied.", state: "idle" });
+    mockSpawnAgent.mockImplementation(async ({ name, resumeSessionId }: { name: string; resumeSessionId?: string }) => (
+      agent(name, "working", resumeSessionId ? "resumed-session" : "fresh-session")
+    ));
+
+    await client.bootstrapSnapshot();
+    await client.subscribe({});
+
+    const createResponse = await client.fetch("/api/conversations", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        mode: "direct",
+        command: "Find the bug, then ask before fixing.",
+        preferredWorkerType: "claude",
+        allowedWorkerTypes: ["claude"],
+      }),
+    });
+    expect(createResponse.status).toBe(200);
+    const { runId } = await createResponse.json() as { runId: string };
+    await waitUntil(() => mockAskAgent.mock.calls.length === 1);
+
+    const steerResponse = await client.fetch(
+      `/api/conversations/${runId}/queued-messages/interrupt-next`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "yes fix" }),
+      },
+    );
+    expect(steerResponse.status).toBe(200);
+
+    await waitUntil(async () => {
+      const queued = await db
+        .select()
+        .from(queuedConversationMessages)
+        .where(eq(queuedConversationMessages.runId, runId));
+      return queued.length === 1 && queued[0]?.status === "delivered";
+    });
+
+    const [run, events, errorMessages] = await Promise.all([
+      db.select().from(runs).where(eq(runs.id, runId)).get(),
+      db.select().from(executionEvents).where(eq(executionEvents.runId, runId)),
+      db.select().from(messages).where(eq(messages.runId, runId)),
+    ]);
+    expect(run?.status).not.toBe("failed");
+    expect(run?.lastError).toBeNull();
+    expect(mockCancelAgent).toHaveBeenCalledWith(`${runId}-worker-1`);
+    expect(mockSpawnAgent.mock.calls.some(([params]) => !params.resumeSessionId)).toBe(true);
+    expect(events.some((event) => event.eventType === "worker_session_recreated_from_transcript")).toBe(true);
+    expect(events.some((event) => event.eventType === "run_failed")).toBe(false);
+    expect(errorMessages.some((message) => message.kind === "error")).toBe(false);
+  });
+
+  it("replaces a Claude session when a direct follow-up exposes an incomplete ACP diagnostic", async () => {
+    mockAskAgent.mockReset();
+    mockAskAgent
+      .mockResolvedValueOnce({ response: "The first turn finished.", state: "idle" })
+      .mockRejectedValueOnce(new Error("Ask failed: Internal error: [ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"))
+      .mockResolvedValueOnce({ response: "The follow-up was applied.", state: "idle" });
+    mockSpawnAgent.mockImplementation(async ({ name, resumeSessionId }: { name: string; resumeSessionId?: string }) => (
+      agent(name, "working", resumeSessionId ? "resumed-session" : "fresh-session")
+    ));
+
+    await client.bootstrapSnapshot();
+    await client.subscribe({});
+
+    const createResponse = await client.fetch("/api/conversations", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        mode: "direct",
+        command: "Start the task.",
+        preferredWorkerType: "claude",
+        allowedWorkerTypes: ["claude"],
+      }),
+    });
+    expect(createResponse.status).toBe(200);
+    const { runId } = await createResponse.json() as { runId: string };
+    await waitUntil(() => mockAskAgent.mock.calls.length === 1);
+
+    const followUpResponse = await client.fetch(`/api/conversations/${runId}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "continue" }),
+    });
+    expect(followUpResponse.status).toBe(200);
+
+    await waitUntil(() => mockAskAgent.mock.calls.length === 3);
+    await waitUntil(async () => {
+      const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+      return run?.status !== "running";
+    });
+
+    const [run, events] = await Promise.all([
+      db.select().from(runs).where(eq(runs.id, runId)).get(),
+      db.select().from(executionEvents).where(eq(executionEvents.runId, runId)),
+    ]);
+    expect(run?.status).not.toBe("failed");
+    expect(run?.lastError).toBeNull();
+    expect(mockCancelAgent).toHaveBeenCalledWith(`${runId}-worker-1`);
+    expect(events.some((event) => event.eventType === "worker_session_recreated_from_transcript")).toBe(true);
+    expect(events.some((event) => event.eventType === "run_failed")).toBe(false);
   });
 });

@@ -255,6 +255,13 @@ export type WorkerEvent =
   | { kind: "worker.terminal"; runId: string; workerId: string; status: string }
   | { kind: "worker.reattached"; runId: string; workerId: string }
   | { kind: "worker.recreated"; runId: string; workerId: string }
+  | {
+      kind: "worker.selection_deferred";
+      runId: string;
+      workerId: string;
+      requestedType: string;
+      reason: "worker_turn_active";
+    }
   | { kind: "worker.recovery_continuation_started"; runId: string; workerId: string }
   | { kind: "worker.recovery_continuation_completed"; runId: string; workerId: string }
   | { kind: "worker.recovery_continuation_superseded"; runId: string; workerId: string }
@@ -396,7 +403,22 @@ export type SupervisorEvent =
       source: string | null;
       error: string;
     }
-  | { kind: "supervisor.durable_wake_claimed"; runId: string; reason: string; source: string | null };
+  | { kind: "supervisor.durable_wake_claimed"; runId: string; reason: string; source: string | null }
+  | {
+      // A due quota wake was claimed (and therefore deleted) but the handler
+      // could not act on it. The run keeps its open incident and is left for
+      // `resumeElapsedQuotaWaits` to sweep.
+      kind: "supervisor.quota_wake_dropped";
+      runId: string;
+      reason: "run_missing" | "no_open_incident";
+      status: string | null;
+    }
+  | {
+      kind: "supervisor.quota_wake_swept";
+      runId: string;
+      status: string;
+      action: "resumed" | "cleared" | "rescheduled";
+    };
 
 export type PlanEvent =
   | { kind: "plan.ready"; runId: string; planId: string | null }
@@ -442,8 +464,16 @@ export type AccountEvent =
   | { kind: "account.login_required"; accountId: string; workerType: string; reason: string };
 
 export type ConversationEvent =
+  | {
+      kind: "conversation.commit_agent_selected";
+      runId: string;
+      workerType: string;
+      model: string;
+      effort: string;
+    }
   | { kind: "conversation.awaiting_user"; runId: string; workerId?: string; reason: "worker_requested_input" }
   | { kind: "conversation.read"; runId: string; lastReadAt: string }
+  | { kind: "conversation.title_updated"; runId: string; source: "agent_session"; title: string }
   | { kind: "conversation.project_moved"; runId: string; previousProjectPath: string | null; projectPath: string }
   | { kind: "conversation.deleted"; runId: string }
   | { kind: "conversation.delete_failed"; runId: string; blockingTable: string | null }
@@ -736,9 +766,26 @@ function append(event: NamedEvent | SnapshotMarker, runIdOverride?: string | nul
  * and signals the SSE stream to wake up so subscribed clients receive
  * the frame promptly.
  */
+/**
+ * Event kinds whose whole payload is the frame itself — the client learns
+ * everything it needs from the named event and fetches any bodies through the
+ * dedicated content endpoint. These must not force a snapshot rebuild; see
+ * `notifyEventStreamSubscribers` in `live-updates.ts`.
+ *
+ * `worker.entry_appended` fires once per appended transcript entry, so it is
+ * by far the hottest emitter in the system. Its contract (`named-events.ts`
+ * type below, and `routes/worker-entries.ts`) is explicitly "wake up and pull
+ * from afterSeq" — the snapshot carries cursors, not bodies.
+ */
+const DELTA_ONLY_EVENT_KINDS = new Set<string>([
+  "worker.entry_appended",
+]);
+
 export function emitNamedEvent(event: NamedEvent): BufferedEntry {
   const entry = append(event);
-  notifyEventStreamSubscribers();
+  notifyEventStreamSubscribers({
+    snapshotRelevant: !DELTA_ONLY_EVENT_KINDS.has(event.kind),
+  });
   return entry;
 }
 

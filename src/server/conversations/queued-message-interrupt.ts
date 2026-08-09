@@ -33,6 +33,11 @@ import {
   trackConversationBackgroundTask,
 } from "./worker-turn-gate";
 import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
+import {
+  isProviderSessionDiagnosticErrorMessage,
+  userFacingProviderSessionErrorMessage,
+} from "@/server/workers/session-recovery";
+import { recreateWorkerFromTranscript } from "@/server/workers/provider-session-recovery";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
@@ -439,9 +444,32 @@ async function deliverInterruptedQueuedMessage(args: {
         ? buildDirectWorkerPrompt(workerContent)
         : workerContent;
       const imageAttachments = resolveImageAttachments(attachments, getAppDataPath);
-      const response = imageAttachments.length
-        ? await askAgent(worker.id, workerPrompt, imageAttachments)
-        : await askAgent(worker.id, workerPrompt);
+      let response;
+      try {
+        response = imageAttachments.length
+          ? await askAgent(worker.id, workerPrompt, imageAttachments)
+          : await askAgent(worker.id, workerPrompt);
+      } catch (error) {
+        if (!isProviderSessionDiagnosticErrorMessage(errorMessage(error))) {
+          throw error;
+        }
+
+        const currentWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
+        const recreated = await recreateWorkerFromTranscript({
+          run,
+          worker: currentWorker ?? worker,
+          nextUserPrompt: workerPrompt,
+          source: "steer",
+          reason: "provider_session_diagnostic_after_steer",
+        });
+        await db.update(workers).set({
+          status: "working",
+          updatedAt: new Date(),
+        }).where(eq(workers.id, worker.id));
+        response = imageAttachments.length
+          ? await askAgent(worker.id, recreated.replayPrompt, imageAttachments)
+          : await askAgent(worker.id, recreated.replayPrompt);
+      }
       const finishedAt = new Date();
 
       // Before any terminal persistence, confirm a newer interrupt has not
@@ -535,21 +563,23 @@ async function handleInterruptDeliveryError(args: {
     }
   }
 
+  const rawErrorMessage = errorMessage(error);
+  const surfacedErrorMessage = userFacingProviderSessionErrorMessage(rawErrorMessage);
   const busy = isAgentBusyError(error);
   await db.update(queuedConversationMessages).set({
     status: busy ? "pending" : "failed",
-    lastError: errorMessage(error),
+    lastError: surfacedErrorMessage,
     updatedAt: failedAt,
   }).where(eq(queuedConversationMessages.id, record.id));
 
   if (isEmptyQueuedWorkerOutputError(error)) {
     await db.update(workers).set({
       status: "error",
-      outputLog: error.message,
+      outputLog: surfacedErrorMessage,
       updatedAt: failedAt,
     }).where(eq(workers.id, worker.id));
     if (run.mode === "direct" || run.mode === "commit") {
-      await persistRunFailure(runId, error, {
+      await persistRunFailure(runId, new Error(surfacedErrorMessage), {
         surface: { code: "worker.idle.empty_output", workerId: worker.id },
       });
     }
@@ -563,7 +593,7 @@ async function handleInterruptDeliveryError(args: {
       details: {
         summary: `Worker ${worker.id} was still busy after cancel; queued message kept pending.`,
         queuedMessageId: record.id,
-        error: errorMessage(error),
+        error: surfacedErrorMessage,
         source,
       },
     });
@@ -575,14 +605,14 @@ async function handleInterruptDeliveryError(args: {
       details: {
         summary: `Interrupt delivery failed for ${worker.id}.`,
         queuedMessageId: record.id,
-        error: errorMessage(error),
+        error: surfacedErrorMessage,
         source,
       },
     });
     emitNamedEvent({
       kind: "error.surfaced",
       code: "queue.interrupt.delivery_failed",
-      message: `Interrupt delivery failed: ${errorMessage(error)}`,
+      message: `Interrupt delivery failed: ${surfacedErrorMessage}`,
       surface: "toast",
       runId,
       workerId: worker.id,

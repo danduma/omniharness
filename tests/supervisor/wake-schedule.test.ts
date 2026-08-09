@@ -31,6 +31,7 @@ import {
   scheduleDurableSupervisorWakeAt,
   setDurableSupervisorWakeExecutorForTests,
 } from "@/server/supervisor/wake-schedule";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 
 const baseNow = new Date("2026-05-10T10:00:00.000Z");
 
@@ -60,6 +61,7 @@ describe("durable supervisor wake schedule", () => {
     vi.useFakeTimers();
     vi.setSystemTime(baseNow);
     resetDurableSupervisorWakeSchedulerForTests();
+    __resetNamedEventsForTests();
     await db.delete(planningReviewFindings);
     await db.delete(planningReviewRounds);
     await db.delete(planningReviewRuns);
@@ -230,6 +232,33 @@ describe("durable supervisor wake schedule", () => {
 
     expect(executor).toHaveBeenCalledTimes(1);
     expect(executor).toHaveBeenCalledWith(runId);
+  });
+
+  it("records a rejected durable wake executor instead of leaving an unhandled rejection", async () => {
+    const runId = await insertRun();
+    const executor = vi.fn(() => {
+      throw new Error("unexpected durable wake failure");
+    });
+    setDurableSupervisorWakeExecutorForTests(executor);
+    await scheduleDurableSupervisorWakeAt({
+      runId,
+      wakeAt: new Date(baseNow.getTime()),
+      reason: "quota_wait",
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(async () => {
+      const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+      const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+      expect(run?.status).toBe("failed");
+      expect(events.some((event) => event.eventType === "run_failed")).toBe(true);
+    });
+
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+      kind: "error.surfaced",
+      code: "supervisor.wake.failed",
+      runId,
+    }));
   });
 
   it("fires future durable wakes after an in-memory scheduler restart", async () => {
