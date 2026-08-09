@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { StateManager } from "@/lib/state-manager";
+import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
 
 export const UI_TEXT_SIZE_STORAGE_KEY = "omni-ui-font-size";
 export const CONVERSATION_TEXT_SIZE_STORAGE_KEY = "omni-conversation-font-size";
@@ -82,7 +83,7 @@ function writeLocalPreference(key: string, value: string) {
     return;
   }
 
-  window.localStorage.setItem(key, value);
+  safeSetBrowserStorageItem(window.localStorage, key, value);
 }
 
 function removeLocalPreference(key: string) {
@@ -144,6 +145,7 @@ export function getUiTextSizeStyle(level: UiTextSizeLevel): CSSProperties {
     // `calc(var(--spacing) * n)`, so overriding this single variable grows the
     // controls themselves — not just their labels — along with the text size.
     "--spacing": `calc(0.25rem * ${textSize.uiScale})`,
+    "--omni-mobile-sidebar-width": `${22 * textSize.uiScale}rem`,
     "--omni-ui-font-size": boostedPx(textSize.uiSize, "--omni-mobile-ui-font-boost"),
     "--omni-ui-xxs-size": boostedPx(Math.max(10, textSize.uiSize - 4), "--omni-mobile-ui-font-boost"),
     "--omni-ui-xs-size": boostedPx(Math.max(11, textSize.uiSize - 2), "--omni-mobile-ui-font-boost"),

@@ -8,6 +8,7 @@ import {
   buildEventStreamUrl,
   createLegacyLiveEventAPIs,
 } from "@/runtime-api/legacy-live-events";
+import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
 import type { EventStreamState } from "./types";
 import { workerEntriesManager } from "./WorkerEntriesManager";
 import { sidebarWorkerActivityManager, type SidebarWorkerActivityManager } from "./SidebarWorkerActivityManager";
@@ -148,7 +149,7 @@ export class LiveEventCursorManager {
     }
     this.lastEventId = normalized;
     if (this.storage && this.storageKey) {
-      this.storage.setItem(this.storageKey, normalized);
+      safeSetBrowserStorageItem(this.storage, this.storageKey, normalized);
     }
     return true;
   }

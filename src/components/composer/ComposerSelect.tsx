@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { ChevronDownIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +15,9 @@ export type ComposerSelectProps<TValue extends string = string> = {
   onChange: (value: TValue) => void;
   themeMode: "day" | "night";
   ariaLabel: string;
+  fullWidth?: boolean;
+  disabled?: boolean;
+  className?: string;
 };
 
 export function ComposerSelect<TValue extends string>({
@@ -22,15 +26,24 @@ export function ComposerSelect<TValue extends string>({
   onChange,
   themeMode,
   ariaLabel,
+  fullWidth = false,
+  disabled = false,
+  className,
 }: ComposerSelectProps<TValue>) {
   return (
-    <span className="relative inline-flex min-w-0 max-w-[8.5rem] shrink items-center">
+    <span className={cn(
+      "relative inline-flex items-center",
+      fullWidth ? "w-full min-w-0" : "w-auto max-w-none shrink-0",
+    )}>
       <select
         value={value}
         aria-label={ariaLabel}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value as TValue)}
         className={cn(
-          "h-7 w-full min-w-0 appearance-none truncate rounded-md border-0 bg-transparent py-0 pl-1.5 pr-5 text-right text-xs shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/45 sm:h-8 sm:pl-2 sm:text-sm",
+          "h-7 min-w-0 appearance-none rounded-md border-0 bg-transparent py-0 pl-1.5 pr-5 text-xs shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/45 sm:h-8 sm:pl-2 sm:text-sm",
+          fullWidth ? "w-full text-left" : "w-auto [field-sizing:content]",
+          className,
           themeMode === "night"
             ? "text-muted-foreground hover:text-foreground"
             : "text-[#8f8f8f] hover:text-[#5e5e5e] dark:text-muted-foreground dark:hover:text-foreground",

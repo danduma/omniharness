@@ -1,4 +1,5 @@
 import { StateManager } from "@/lib/state-manager";
+import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
 
 export const PREFLIGHT_CONFIRMATION_ACTIONS_STORAGE_KEY = "omni.preflight-confirmation-actions.handled";
 
@@ -63,11 +64,7 @@ export class PreflightConfirmationActionsManager extends StateManager<PreflightC
     if (!storage) {
       return;
     }
-    try {
-      storage.setItem(PREFLIGHT_CONFIRMATION_ACTIONS_STORAGE_KEY, JSON.stringify(Array.from(messageIds)));
-    } catch {
-      // Browser storage can be unavailable or full; the in-memory state still hides the buttons.
-    }
+    safeSetBrowserStorageItem(storage, PREFLIGHT_CONFIRMATION_ACTIONS_STORAGE_KEY, JSON.stringify(Array.from(messageIds)));
   }
 }
 

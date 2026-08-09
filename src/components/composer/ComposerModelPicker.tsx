@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { ChevronDownIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
@@ -10,6 +11,9 @@ type ComposerModelPickerProps = {
   options: WorkerModelOption[];
   onChange: (value: string) => void;
   themeMode: "day" | "night";
+  fullWidth?: boolean;
+  disabled?: boolean;
+  className?: string;
 };
 
 export function ComposerModelPicker({
@@ -17,19 +21,28 @@ export function ComposerModelPicker({
   options,
   onChange,
   themeMode,
+  fullWidth = false,
+  disabled = false,
+  className,
 }: ComposerModelPickerProps) {
   const selectedLabel = options.find((option) => option.value === value)?.label ?? value;
   const hasSelectedOption = options.some((option) => option.value === value);
 
   return (
-    <span className="relative inline-flex min-w-0 max-w-[13rem] shrink items-center">
+    <span className={cn(
+      "relative inline-flex items-center",
+      fullWidth ? "w-full min-w-0" : "w-auto max-w-none shrink-0",
+    )}>
       <select
         value={value}
         aria-label={t("conversation.composer.workerModelAria")}
         title={selectedLabel}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         className={cn(
-          "h-7 w-full min-w-0 appearance-none truncate rounded-md border-0 bg-transparent py-0 pl-1.5 pr-5 text-right text-xs font-normal shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/45 sm:h-8 sm:pl-2 sm:text-sm [field-sizing:content]",
+          "h-7 min-w-0 appearance-none rounded-md border-0 bg-transparent py-0 pl-1.5 pr-5 text-xs font-normal shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/45 sm:h-8 sm:pl-2 sm:text-sm",
+          fullWidth ? "w-full text-left" : "w-auto [field-sizing:content]",
+          className,
           themeMode === "night"
             ? "text-muted-foreground hover:bg-background/45 hover:text-foreground"
             : "text-[#8f8f8f] hover:bg-black/[0.04] hover:text-[#5e5e5e] dark:text-muted-foreground dark:hover:bg-background/45 dark:hover:text-foreground",

@@ -41,6 +41,7 @@ describe("AppearancePreferencesManager", () => {
       "--omni-ui-font-size": "calc(14px + var(--omni-mobile-ui-font-boost, 0px))",
       "--omni-ui-sm-size": "calc(14px + var(--omni-mobile-ui-font-boost, 0px))",
       "--omni-ui-scale": 1,
+      "--omni-mobile-sidebar-width": "22rem",
       "--spacing": "calc(0.25rem * 1)",
     });
     expect(getConversationTextSizeStyle("default")).toMatchObject({
@@ -53,6 +54,7 @@ describe("AppearancePreferencesManager", () => {
   it("grows controls, not just text, as the UI text size increases", () => {
     expect(getUiTextSizeStyle("huge")).toMatchObject({
       "--omni-ui-scale": 1.3,
+      "--omni-mobile-sidebar-width": "28.6rem",
       "--spacing": "calc(0.25rem * 1.3)",
     });
     expect(getUiTextSizeStyle("tiny")).toMatchObject({

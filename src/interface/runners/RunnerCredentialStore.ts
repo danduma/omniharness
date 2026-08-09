@@ -1,3 +1,5 @@
+import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
+
 const CREDENTIAL_STORAGE_KEY = "omniharness.runnerCredentials";
 const CREDENTIAL_SCHEMA_VERSION = 1;
 
@@ -125,7 +127,7 @@ export class WebRunnerCredentialStore implements RunnerCredentialStore {
       this.document = emptyDocument();
       this.recoveryNoticeCode = "runner.credentials.corruptReset";
       try {
-        this.storage?.setItem(CREDENTIAL_STORAGE_KEY, JSON.stringify(this.document));
+        safeSetBrowserStorageItem(this.storage, CREDENTIAL_STORAGE_KEY, JSON.stringify(this.document));
       } catch {
         // The in-memory session store remains usable when browser storage is unavailable.
       }
@@ -137,7 +139,7 @@ export class WebRunnerCredentialStore implements RunnerCredentialStore {
   }
 
   private persist(next: CredentialDocument) {
-    this.storage?.setItem(CREDENTIAL_STORAGE_KEY, JSON.stringify(next));
+    safeSetBrowserStorageItem(this.storage, CREDENTIAL_STORAGE_KEY, JSON.stringify(next));
     this.document = next;
   }
 
