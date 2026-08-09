@@ -10,7 +10,11 @@ import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { requireApiSession } from "@/server/auth/guards";
 import { buildLiveWorkerSnapshots } from "@/server/workers/live-snapshots";
 import { readWorkerLatestSeq } from "@/server/workers/output-store";
-import { getEventStreamNotificationVersion, waitForEventStreamNotification } from "@/server/events/live-updates";
+import {
+  getEventStreamNotificationVersion,
+  getEventStreamSnapshotVersion,
+  waitForEventStreamNotification,
+} from "@/server/events/live-updates";
 import {
   emitStreamHeartbeatIfDue,
   emitNamedEvent,
@@ -21,6 +25,7 @@ import {
 } from "@/server/events/named-events";
 import { parseEventStreamId } from "@/shared/runtime";
 import { withEventPayloadChecksum } from "@/server/events/payload-checksum";
+import { stripUnusedRunSnapshotFields } from "@/server/events/run-snapshot-fields";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
 import { serializeQueuedConversationMessage } from "@/server/conversations/queued-message-records";
@@ -40,6 +45,16 @@ import {
 import { subscribeAuthSessionRevocations } from "@/server/auth/session-revocation";
 
 const STREAM_REFRESH_INTERVAL_MS = 15_000;
+// Minimum wall-clock gap between full snapshot rebuilds on one stream. A
+// rebuild costs ~40 SQLite queries, a bridge fetch, and two serializations of
+// a multi-hundred-KB payload, so an unthrottled rebuild-per-notification melts
+// the client's main thread once several sessions stream at once.
+const MIN_SNAPSHOT_REBUILD_INTERVAL_MS = 250;
+// Delta-only wake-ups (worker transcript appends) are already fully delivered
+// by their named frames. They still refresh snapshot-only fields such as
+// `agents[].currentText`, so they get a rebuild — just on a lazy cadence
+// instead of once per streamed entry.
+const DELTA_SNAPSHOT_REBUILD_INTERVAL_MS = 2_000;
 const RUNTIME_AGENT_GRACE_MS = 150;
 const RUNTIME_AGENT_TIMEOUT_MS = 5000;
 const EXECUTION_EVENT_LIMIT = 100;
@@ -79,7 +94,7 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}, prob
   const requestedSelectedRunId = options.selectedRunId?.trim() || null;
   const allPlans = await db.select().from(plans).orderBy(desc(plans.createdAt), desc(plans.id));
   probe?.mark("q.plans");
-  const allRuns = await db.select().from(runs).where(isNull(runs.archivedAt)).orderBy(desc(runs.createdAt), desc(runs.id));
+  const allRuns = await db.select().from(runs).where(isNull(runs.archivedAt)).orderBy(desc(runs.lastActivityAt), desc(runs.createdAt), desc(runs.id));
   probe?.mark("q.runs");
   const visibleRunIds = allRuns.map((run) => run.id);
   const selectedRun = requestedSelectedRunId ? allRuns.find((run) => run.id === requestedSelectedRunId) ?? null : null;
@@ -495,7 +510,7 @@ function buildEventPayload(
     messages: records.msgs.map(serializeMessageRecord),
     readMarkers,
     plans: records.allPlans,
-    runs: records.allRuns,
+    runs: records.allRuns.map((run) => stripUnusedRunSnapshotFields(run, { selectedRunId })),
     sessions,
     accounts: records.allAccounts.map(toAccountDto),
     agents: agentsData.map(compactAgentSnapshot),
@@ -961,9 +976,16 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
       // client has seen live agent state, always wait for the enriched
       // payload instead of regressing to the degraded one.
       let hasDeliveredRuntimePayload = false;
+      // Snapshot-rebuild pacing state. `snapshotVersionAtLastBuild` records
+      // what the build covered, so a wake carrying only delta-only events is
+      // recognisable and does not force an immediate rebuild.
+      let snapshotVersionAtLastBuild = getEventStreamSnapshotVersion();
+      let lastSnapshotBuiltAt = 0;
       while (!streamClosed) {
         try {
           notificationVersionAtStart = getEventStreamNotificationVersion();
+          snapshotVersionAtLastBuild = getEventStreamSnapshotVersion();
+          lastSnapshotBuiltAt = Date.now();
           drainBufferedEvents();
           const runtimePayloadPromise = buildSharedRuntimeEnrichedEventPayload(eventPayloadOptions);
           const runtimePayload = hasDeliveredRuntimePayload
@@ -1003,14 +1025,39 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
         }
 
         if (!streamClosed) {
+          // Park until a rebuild is actually justified. Every wake drains the
+          // cheap named frames immediately — transcript streaming keeps its
+          // full speed — but the expensive snapshot rebuild is rate limited,
+          // and a wake caused only by delta-only events waits out the longer
+          // window instead of forcing a rebuild per streamed entry.
           while (!streamClosed) {
             const waitResult = await waitForEventStreamNotification(STREAM_REFRESH_INTERVAL_MS, notificationVersionAtStart);
-            if (waitResult.notified) {
+            notificationVersionAtStart = getEventStreamNotificationVersion();
+            drainBufferedEvents();
+
+            if (!waitResult.notified) {
+              // Idle timeout: refresh anyway so snapshot-only fields cannot
+              // drift indefinitely, matching the previous behaviour.
+              emitStreamHeartbeatIfDue();
               break;
             }
-            emitStreamHeartbeatIfDue();
-            drainBufferedEvents();
-            notificationVersionAtStart = getEventStreamNotificationVersion();
+
+            const snapshotVersionNow = getEventStreamSnapshotVersion();
+            const hasSnapshotRelevantChange = snapshotVersionNow !== snapshotVersionAtLastBuild;
+            const requiredGapMs = hasSnapshotRelevantChange
+              ? MIN_SNAPSHOT_REBUILD_INTERVAL_MS
+              : DELTA_SNAPSHOT_REBUILD_INTERVAL_MS;
+            const elapsedMs = Date.now() - lastSnapshotBuiltAt;
+            if (elapsedMs >= requiredGapMs) {
+              break;
+            }
+            await delay(requiredGapMs - elapsedMs);
+            // Re-check liveness after sleeping, then rebuild on the next pass.
+            if (!streamClosed) {
+              notificationVersionAtStart = getEventStreamNotificationVersion();
+              drainBufferedEvents();
+            }
+            break;
           }
         }
       }

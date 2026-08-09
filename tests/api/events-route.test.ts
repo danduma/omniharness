@@ -534,7 +534,9 @@ describe("GET /api/events", () => {
     );
 
     for (const source of [runtimeSource, persistedSource]) {
-      expect(source).toContain("orderBy(desc(runs.createdAt), desc(runs.id))");
+      // Runs order by conversation activity; createdAt is the fallback for rows
+      // whose activity stamp is absent, and id remains the stable tie-breaker.
+      expect(source).toContain("orderBy(desc(runs.lastActivityAt), desc(runs.createdAt), desc(runs.id))");
       expect(source).toContain("orderBy(asc(messages.createdAt), asc(messages.id))");
       expect(source).toContain("orderBy(desc(queuedConversationMessages.createdAt), desc(queuedConversationMessages.id))");
       expect(source).toContain("orderBy(desc(recoveryIncidents.updatedAt), desc(recoveryIncidents.id))");

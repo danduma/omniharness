@@ -3,7 +3,7 @@
 
 import { isTerminalRunStatus, normalizeRunStatus } from "@/lib/run-status";
 import { isWorkerActiveStatus } from "@/lib/conversation-workers";
-import { getRunLatestUnreadTimestamp, isRunUnread } from "@/lib/conversation-state";
+import { isRunUnread, resolveRunLatestUnreadTimestamp } from "@/lib/conversation-state";
 import type { SidebarGroup, SidebarRun } from "./types";
 
 export const ACTIVE_SESSION_ACTIVITY_WINDOW_MS = 20 * 60 * 1000;
@@ -37,6 +37,7 @@ type RunInput = {
   status: string;
   createdAt: string;
   updatedAt?: string | null;
+  lastActivityAt?: string | null;
 };
 
 type WorkerInput = {
@@ -69,6 +70,95 @@ type QueuedMessageInput = {
   deliveredAt?: string | null;
 };
 
+/**
+ * Per-run rollups computed in ONE pass over each global collection.
+ *
+ * Without this, classifying N runs cost N full scans of every message, queued
+ * message, worker and agent in the app — and the sidebar did that three times
+ * over on every SSE frame, allocating two `Date` objects per message compared.
+ * With ~40 runs and a few thousand accumulated messages that is hundreds of
+ * thousands of iterations per frame, which is what made the sidebar the single
+ * most expensive thing on the client's main thread while sessions streamed.
+ *
+ * Build once with `buildSidebarActivityIndex`, reuse for every run.
+ */
+export interface SidebarActivityIndex {
+  latestMessageAtByRunId: Map<string, string>;
+  latestUserInputAtByRunId: Map<string, string>;
+  workersByRunId: Map<string, WorkerInput[]>;
+  agentsByWorkerId: Map<string, AgentInput>;
+}
+
+export function buildSidebarActivityIndex(args: {
+  messages: MessageInput[];
+  queuedMessages: QueuedMessageInput[];
+  workers: WorkerInput[];
+  agents: AgentInput[];
+}): SidebarActivityIndex {
+  const latestMessageAtByRunId = new Map<string, string>();
+  const latestUserInputAtByRunId = new Map<string, string>();
+  const workersByRunId = new Map<string, WorkerInput[]>();
+  const agentsByWorkerId = new Map<string, AgentInput>();
+
+  const keepLater = (map: Map<string, string>, runId: string, value: string | null | undefined) => {
+    if (!value) return;
+    const existing = map.get(runId);
+    if (!existing || parseTimestampMs(value) > parseTimestampMs(existing)) {
+      map.set(runId, value);
+    }
+  };
+
+  for (const message of args.messages) {
+    keepLater(latestMessageAtByRunId, message.runId, message.createdAt);
+    if (isUserInputMessage(message)) {
+      keepLater(latestUserInputAtByRunId, message.runId, message.createdAt);
+    }
+  }
+
+  for (const queued of args.queuedMessages) {
+    keepLater(
+      latestUserInputAtByRunId,
+      queued.runId,
+      queued.deliveredAt ?? queued.updatedAt ?? queued.createdAt,
+    );
+  }
+
+  for (const worker of args.workers) {
+    const bucket = workersByRunId.get(worker.runId);
+    if (bucket) {
+      bucket.push(worker);
+    } else {
+      workersByRunId.set(worker.runId, [worker]);
+    }
+  }
+
+  for (const agent of args.agents) {
+    agentsByWorkerId.set(agent.name, agent);
+  }
+
+  return { latestMessageAtByRunId, latestUserInputAtByRunId, workersByRunId, agentsByWorkerId };
+}
+
+function indexFromArgs(args: {
+  messages: MessageInput[];
+  queuedMessages: QueuedMessageInput[];
+  workers: WorkerInput[];
+  agents: AgentInput[];
+}) {
+  return buildSidebarActivityIndex(args);
+}
+
+/**
+ * Indexed twin of `getRunLatestUnreadTimestamp` from `@/lib/conversation-state`.
+ * Same status rules (shared implementation), no per-run message scan.
+ */
+export function getIndexedRunLatestUnreadTimestamp(
+  run: RunInput,
+  index: SidebarActivityIndex,
+): string | null {
+  return resolveRunLatestUnreadTimestamp(run, index.latestMessageAtByRunId.get(run.id) ?? null);
+}
+
 export interface SidebarRunActivityArgs {
   run: RunInput;
   messages: MessageInput[];
@@ -81,60 +171,50 @@ export interface SidebarRunActivityArgs {
   selectedRunId?: string | null;
 }
 
-function getLatestUserInputAt(
-  runId: string,
-  messages: MessageInput[],
-  queuedMessages: QueuedMessageInput[],
-): string | null {
-  let latest: string | null = null;
-
-  for (const msg of messages) {
-    if (msg.runId !== runId || !isUserInputMessage(msg)) continue;
-    if (parseTimestampMs(msg.createdAt) > parseTimestampMs(latest)) {
-      latest = msg.createdAt;
-    }
-  }
-
-  for (const qm of queuedMessages) {
-    if (qm.runId !== runId) continue;
-    const ts = qm.deliveredAt ?? qm.updatedAt ?? qm.createdAt;
-    if (parseTimestampMs(ts) > parseTimestampMs(latest)) {
-      latest = ts;
-    }
-  }
-
-  return latest;
-}
-
 // recentActivityAt: max of eligible user-input and worker-output signals
 export function getSidebarRunLastActivityAt(args: SidebarRunActivityArgs): string | null {
-  const userInputAt = getLatestUserInputAt(args.run.id, args.messages, args.queuedMessages);
+  return getIndexedSidebarRunLastActivityAt(args, indexFromArgs(args));
+}
+
+function getIndexedSidebarRunLastActivityAt(
+  args: Pick<SidebarRunActivityArgs, "run" | "workerOutputObservedAtByRunId">,
+  index: SidebarActivityIndex,
+): string | null {
+  const userInputAt = index.latestUserInputAtByRunId.get(args.run.id) ?? null;
   const workerOutputAt = args.workerOutputObservedAtByRunId[args.run.id] ?? null;
   return maxTimestamp(userInputAt, workerOutputAt);
 }
 
-function getWorkingActivityAt(
-  args: Pick<SidebarRunActivityArgs, "run" | "workers" | "agents">,
-): string | null {
-  const { run, workers, agents } = args;
-  const runWorkers = workers.filter((w) => w.runId === run.id);
-  const activeWorkers = runWorkers.filter((w) => isWorkerActiveStatus(w.status));
-  const runWorkerIds = new Set(runWorkers.map((w) => w.id));
-  const activeAgents = agents.filter((a) => runWorkerIds.has(a.name) && isWorkerActiveStatus(a.state));
+function getIndexedWorkingActivityAt(run: RunInput, index: SidebarActivityIndex): string | null {
+  const runWorkers = index.workersByRunId.get(run.id) ?? [];
+  const timestamps: (string | null | undefined)[] = [run.updatedAt];
 
-  return maxTimestamp(
-    run.updatedAt,
-    ...activeWorkers.map((w) => w.updatedAt),
-    ...activeAgents.map((a) => a.updatedAt),
-    run.createdAt,
-  );
+  for (const worker of runWorkers) {
+    if (isWorkerActiveStatus(worker.status)) {
+      timestamps.push(worker.updatedAt);
+    }
+    const agent = index.agentsByWorkerId.get(worker.id);
+    if (agent && isWorkerActiveStatus(agent.state)) {
+      timestamps.push(agent.updatedAt);
+    }
+  }
+
+  timestamps.push(run.createdAt);
+  return maxTimestamp(...timestamps);
 }
 
 export function isSidebarRunCurrentlyWorking(
   args: Pick<SidebarRunActivityArgs, "run" | "workers" | "agents">,
 ): boolean {
-  const { run, workers, agents } = args;
+  return isIndexedSidebarRunCurrentlyWorking(args.run, buildSidebarActivityIndex({
+    messages: [],
+    queuedMessages: [],
+    workers: args.workers,
+    agents: args.agents,
+  }));
+}
 
+function isIndexedSidebarRunCurrentlyWorking(run: RunInput, index: SidebarActivityIndex): boolean {
   // Terminal runs are never "working" — stale worker metadata loses.
   if (isTerminalRunStatus(run.status)) return false;
 
@@ -143,12 +223,13 @@ export function isSidebarRunCurrentlyWorking(
 
   if (normalizedStatus !== "running" && normalizedStatus !== "awaiting_user") return false;
 
-  const runWorkers = workers.filter((w) => w.runId === run.id);
+  const runWorkers = index.workersByRunId.get(run.id) ?? [];
 
-  if (runWorkers.some((w) => isWorkerActiveStatus(w.status))) return true;
-
-  const runWorkerIds = new Set(runWorkers.map((w) => w.id));
-  if (agents.some((a) => runWorkerIds.has(a.name) && isWorkerActiveStatus(a.state))) return true;
+  for (const worker of runWorkers) {
+    if (isWorkerActiveStatus(worker.status)) return true;
+    const agent = index.agentsByWorkerId.get(worker.id);
+    if (agent && isWorkerActiveStatus(agent.state)) return true;
+  }
 
   // Run is "running" with no active workers/agents yet — still counts.
   return normalizedStatus === "running";
@@ -164,16 +245,28 @@ export interface RunActiveClassification {
 }
 
 export function classifySidebarRun(args: SidebarRunActivityArgs): RunActiveClassification {
+  return classifyIndexedSidebarRun(args, indexFromArgs(args));
+}
+
+/**
+ * The hot path. `buildActiveConversationGroups` builds the index once and calls
+ * this per run, so classification is O(workers in run) instead of O(all
+ * messages + all workers + all agents).
+ */
+export function classifyIndexedSidebarRun(
+  args: Pick<SidebarRunActivityArgs, "run" | "readMarkers" | "workerOutputObservedAtByRunId" | "nowMs" | "selectedRunId">,
+  index: SidebarActivityIndex,
+): RunActiveClassification {
   const { run, readMarkers, nowMs } = args;
   const lastReadAt = readMarkers[run.id] ?? null;
   const normalizedStatus = normalizeRunStatus(run.status);
 
-  const latestUnreadAt = getRunLatestUnreadTimestamp(run, args.messages);
+  const latestUnreadAt = getIndexedRunLatestUnreadTimestamp(run, index);
   const isUnread = isRunUnread({ latestMessageAt: latestUnreadAt, lastReadAt });
 
-  const isWorking = isSidebarRunCurrentlyWorking(args);
+  const isWorking = isIndexedSidebarRunCurrentlyWorking(run, index);
 
-  const recentActivityAt = getSidebarRunLastActivityAt(args);
+  const recentActivityAt = getIndexedSidebarRunLastActivityAt(args, index);
   const allowsRecentActivity = normalizedStatus !== "cancelled" && normalizedStatus !== "canceled";
   const isRecent =
     allowsRecentActivity &&
@@ -188,9 +281,12 @@ export function classifySidebarRun(args: SidebarRunActivityArgs): RunActiveClass
     activeSortAt = maxTimestamp(activeSortAt, latestUnreadAt);
   }
   if (isWorking) {
-    activeSortAt = maxTimestamp(activeSortAt, getWorkingActivityAt(args));
+    activeSortAt = maxTimestamp(activeSortAt, getIndexedWorkingActivityAt(run, index));
   }
-  if (!activeSortAt) activeSortAt = run.createdAt;
+  // Worker output is only observed live (see SidebarWorkerActivityManager), so a
+  // run whose last turn finished before this page load has no in-memory signal.
+  // The persisted activity stamp covers that gap; creation date is the last resort.
+  if (!activeSortAt) activeSortAt = run.lastActivityAt ?? run.createdAt;
 
   return { isActive, isUnread, isWorking, isRecent, recentActivityAt, activeSortAt };
 }
@@ -223,27 +319,28 @@ export function buildActiveConversationGroups(args: BuildActiveGroupsArgs): Side
 
   const activeGroups: Array<{ group: SidebarGroup; latestActivityMs: number }> = [];
 
+  // One pass over the global collections, reused for every run below. This
+  // replaces N full scans of messages/queued/workers/agents per frame.
+  const index = buildSidebarActivityIndex({ messages, queuedMessages, workers, agents });
+
   for (const group of groups) {
     const activeRuns: Array<SidebarRun & { activeSortAt: string | null }> = [];
     let groupLatestMs = 0;
 
     for (const run of group.runs) {
-      const result = classifySidebarRun({
+      const result = classifyIndexedSidebarRun({
         run: {
           id: run.id,
           status: run.status,
           createdAt: run.createdAt,
           updatedAt: (run as SidebarRun & { updatedAt?: string | null }).updatedAt ?? null,
+          lastActivityAt: run.lastActivityAt ?? null,
         },
-        messages,
         readMarkers,
-        workers,
-        agents,
-        queuedMessages,
         workerOutputObservedAtByRunId,
         nowMs,
         selectedRunId,
-      });
+      }, index);
 
       if (!result.isActive) continue;
 

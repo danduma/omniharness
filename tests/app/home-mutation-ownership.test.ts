@@ -8,6 +8,7 @@ import {
   shouldSelectSourceRunMutationResult,
   shouldRestoreSelectionAfterOptimisticRemovalError,
   shouldClearSubmittedComposer,
+  resolveQueuedMessageRowAfterSend,
 } from "@/interface/home/useHomeMutations";
 
 describe("home mutation ownership guards", () => {
@@ -180,5 +181,34 @@ describe("home mutation ownership guards", () => {
       lastText: "latest durable text",
     });
     expect(merged.outputEntries?.map((entry) => entry.id)).toEqual(["entry-history", "entry-live"]);
+  });
+});
+
+describe("queued message row ownership after a send settles", () => {
+  test("hides the queue row when the server also delivered a transcript message", () => {
+    // Both surfaces would otherwise render the same text: the message row in
+    // the transcript and the queue row it was released from in the drawer.
+    expect(resolveQueuedMessageRowAfterSend({
+      message: { id: "message-1" },
+      queuedMessage: { id: "message-1" },
+    })).toBe("hide");
+  });
+
+  // The old guard was `busyAction === "steer" && data.message`, so a stale-idle
+  // prediction — which sends no busyAction at all — fell to the else branch and
+  // left both the transcript bubble and the drawer row rendering. busyAction is
+  // deliberately not a parameter here: the delivered message row decides.
+
+  test("keeps the queue row when the message was queued rather than delivered", () => {
+    expect(resolveQueuedMessageRowAfterSend({
+      queuedMessage: { id: "message-1" },
+    })).toBe("upsert");
+  });
+
+  test("does nothing when the server returned no queue row", () => {
+    expect(resolveQueuedMessageRowAfterSend({
+      message: { id: "message-1" },
+    })).toBe("none");
+    expect(resolveQueuedMessageRowAfterSend({})).toBe("none");
   });
 });

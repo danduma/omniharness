@@ -1,6 +1,6 @@
 import type React from "react";
-import { lazy, useEffect, useMemo } from "react";
-import { ArrowDown, ArrowLeftRight, Blocks, Check, ChevronDown, CirclePlay, CircleStop, Copy, FolderGit2, GitBranch, Pencil, RotateCcw, Route } from "lucide-react";
+import { lazy, memo, useCallback, useEffect, useMemo } from "react";
+import { ArrowDown, ArrowLeftRight, Blocks, Check, ChevronDown, CirclePlay, CircleStop, Copy, FolderGit2, GitBranch, MoreHorizontal, Pencil, RotateCcw, Route } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -47,6 +47,7 @@ import { RecoveryIncidentInspector } from "./RecoveryIncidentInspector";
 import { RunRecoveryNotice } from "./RunRecoveryNotice";
 import { UserInputMessage, type UserInputMessageAction } from "./UserInputMessage";
 import { t, useI18nSnapshot } from "@/lib/i18n";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 const Terminal = lazy(
   () => import("@/components/Terminal").then((m) => ({ default: m.Terminal })),
@@ -556,16 +557,31 @@ function WorkerOutputCopyAction({
 
   return (
     <div className="flex w-full justify-end">
-      <span className="relative inline-flex flex-col items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover/worker-output-actions:opacity-100">
+      <span className="relative inline-flex flex-col items-center opacity-100 transition-opacity md:opacity-0 md:focus-within:opacity-100 md:group-hover/worker-output-actions:opacity-100">
         <button
           type="button"
           aria-label={t("conversation.message.copyAria")}
           title={t("conversation.message.copyAria")}
           onClick={() => void onCopy(content, messageId)}
-          className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="hidden h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:inline-flex"
         >
           <Copy className="h-4 w-4" />
         </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label={t("conversation.message.actionsAria")}
+            title={t("conversation.message.actionsAria")}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden"
+          >
+            <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" side="top">
+            <DropdownMenuItem className="min-h-10 cursor-pointer" onClick={() => void onCopy(content, messageId)}>
+              <Copy className="h-4 w-4" aria-hidden="true" />
+              {t("conversation.message.copyAria")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         {copiedMessageId === messageId ? (
           <span
             role="status"
@@ -774,7 +790,13 @@ function LatestRecoveryAction({
   );
 }
 
-export function ConversationMain({
+/**
+ * Memoized. Every SSE frame gave the shell a new state identity and re-rendered
+ * this entire subtree, even when nothing it renders had changed. Its props are
+ * spread from `sharedSidebarProps`, whose callbacks are now stable, so the
+ * shallow comparison is meaningful.
+ */
+const ConversationMain = memo(function ConversationMain({
   scrollRef,
   selectedRunId,
   selectedRun,
@@ -841,7 +863,7 @@ export function ConversationMain({
   respondingElicitationRequestId = null,
   respondingPermissionRequestId = null,
 }: ConversationMainProps) {
-  useI18nSnapshot();
+  const i18nSnapshot = useI18nSnapshot();
   const { hasOutputBelow } = useManagerSnapshot(conversationMainManager);
   const { handledMessageIds: handledPreflightConfirmationMessageIds } = useManagerSnapshot(preflightConfirmationActionsManager);
   const selectedRunIsTerminal = isTerminalRunStatus(selectedRun?.status);
@@ -903,6 +925,24 @@ export function ConversationMain({
     () => JSON.parse(supersededSeqRangesKey) as SupersededSeqRange[],
     [supersededSeqRangesKey],
   );
+  // One pass instead of a nested scan. This used to be a `.some()` over the
+  // whole timeline *inside* the timeline map — O(n^2) with two `Date`
+  // allocations per candidate, so a 500-item supervisor conversation cost
+  // ~250k iterations and ~500k Date parses on every render.
+  const latestClarificationAnswerMsByRunId = useMemo(() => {
+    const latest = new Map<string, number>();
+    for (const candidate of conversationTimelineItems) {
+      if (candidate.type !== "message" || candidate.message.kind !== "clarification_answer") {
+        continue;
+      }
+      const candidateMs = new Date(candidate.message.createdAt).getTime();
+      const existing = latest.get(candidate.message.runId);
+      if (existing === undefined || candidateMs > existing) {
+        latest.set(candidate.message.runId, candidateMs);
+      }
+    }
+    return latest;
+  }, [conversationTimelineItems]);
   // Memoized because this array is the `entries` prop Terminal keys its
   // activity derivation on. Rebuilding it every render handed Terminal a new
   // reference each time, so the activity rebuild — measured at ~3ms for a
@@ -1003,17 +1043,22 @@ export function ConversationMain({
       checkoutPath: suggestCheckoutPath(forkWorkspaceSnapshot.repoRoot, nextBranch),
     });
   }, [forkWorkspaceDialog, forkWorkspaceSnapshot, selectedRun?.title]);
-  const handleCopyDirectMessage = async (content: string, messageId: string) => {
+  const handleCopyDirectMessage = useCallback(async (content: string, messageId: string) => {
     try {
       await navigator.clipboard.writeText(content);
       conversationCopyNoticeManager.showCopiedMessage(messageId);
     } catch (error) {
       console.error("Copy message failed:", error);
     }
-  };
+  }, []);
   const canRetryConversation = isDirectConversation || (isImplementationConversation && selectedRun?.status !== "failed");
   const canRecoverUserMessage = isDirectConversation || isImplementationConversation;
-  const getUserMessageActions = (message: Pick<MessageRecord, "id" | "content">): UserInputMessageAction[] => {
+  // Must be stable: this is a dependency of Terminal's `activity` useMemo, and
+  // as a plain arrow it took a new identity every render, so the entire
+  // activity pipeline — flatMap over all entries, seq map build, the O(n*m)
+  // fallback filter, order-key assignment and the final sort — re-ran on every
+  // single render instead of only when the entries changed.
+  const getUserMessageActions = useCallback((message: Pick<MessageRecord, "id" | "content">): UserInputMessageAction[] => {
     if (!canRecoverUserMessage) {
       return [];
     }
@@ -1068,7 +1113,20 @@ export function ConversationMain({
         ],
       },
     ];
-  };
+  }, [
+    canRecoverUserMessage,
+    isDirectConversation,
+    isImplementationConversation,
+    recoverRun.isPending,
+    handleCopyDirectMessage,
+    handleRetryMessage,
+    handleStartEditingMessage,
+    handleForkMessage,
+    handleForkMessageIntoWorktree,
+    // Action labels come from `t()`, so they must be rebuilt when the language
+    // changes rather than captured once.
+    i18nSnapshot,
+  ]);
   const handleScrollToLatestOutput = () => {
     const viewport = scrollRef.current?.querySelector('[data-slot="scroll-area-viewport"], [data-radix-scroll-area-viewport]') as HTMLDivElement | null;
     viewport?.scrollTo({
@@ -1255,12 +1313,8 @@ export function ConversationMain({
               const isPlanningWorkerMessage = msg.role === "worker" && msg.kind === "planning";
               const isExpanded = expandedDirectMessageIds.has(msg.id);
               const userMessageActions: UserInputMessageAction[] = isCurrentRunMessage ? getUserMessageActions(msg) : [];
-              const hasLaterClarificationAnswer = conversationTimelineItems.some((candidate) => (
-                candidate.type === "message"
-                && candidate.message.runId === msg.runId
-                && candidate.message.kind === "clarification_answer"
-                && new Date(candidate.message.createdAt).getTime() > new Date(msg.createdAt).getTime()
-              ));
+              const latestClarificationAnswerMs = latestClarificationAnswerMsByRunId.get(msg.runId) ?? -Infinity;
+              const hasLaterClarificationAnswer = latestClarificationAnswerMs > new Date(msg.createdAt).getTime();
               const showPreflightConfirmationActions = isCurrentRunMessage
                 && selectedRun?.status === "awaiting_user"
                 && isPreflightConfirmationMessage(msg)
@@ -1560,4 +1614,5 @@ export function ConversationMain({
   </div>
 
   );
-}
+});
+export { ConversationMain };

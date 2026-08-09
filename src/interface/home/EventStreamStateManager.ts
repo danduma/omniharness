@@ -19,6 +19,38 @@ function sortMessages(messages: MessageRecord[]) {
 
 type RunRecord = EventStreamState["runs"][number];
 
+/**
+ * True when a rebuilt state carries nothing the current one does not already
+ * have, so the incoming copy can be dropped and the existing object identity
+ * kept.
+ *
+ * The server stamps every snapshot with `snapshotChecksum` over the whole
+ * payload (`server/events/payload-checksum.ts`), so an equal checksum means an
+ * identical server-side view. Comparing the merged arrays by identity would be
+ * useless here — a re-delivered payload is a fresh `JSON.parse`, so every array
+ * is a new object even when byte-identical. The checksum is the only cheap
+ * signal that actually distinguishes "same data" from "new data".
+ *
+ * Scope-defining fields are still compared, because a frame that only switches
+ * `snapshotRunId` must not be swallowed just because the catalog hashed the
+ * same.
+ *
+ * Dropping the duplicate also protects optimistic state: after a local
+ * mutation, `snapshotChecksum` still reflects the last *server* view, so a poll
+ * that re-delivers that same view would otherwise revert the optimistic change
+ * and flicker until the server caught up.
+ */
+function isNoOpSnapshotUpdate(current: EventStreamState, next: EventStreamState) {
+  const checksum = next.snapshotChecksum;
+  if (!checksum || checksum !== current.snapshotChecksum) {
+    return false;
+  }
+
+  return next.snapshotRunId === current.snapshotRunId
+    && next.snapshotSource === current.snapshotSource
+    && next.messageScope?.complete === current.messageScope?.complete;
+}
+
 function mergeByKey<T>(current: T[] | undefined, incoming: T[] | undefined, getKey: (item: T) => string | null | undefined) {
   const incomingItems = incoming ?? [];
   const seen = new Set<string>();
@@ -366,7 +398,14 @@ export class EventStreamStateManager {
       snapshotSource,
     };
 
-    if (Object.is(nextState, this.state)) {
+    // `nextState` is always a fresh literal, so the old `Object.is` guard here
+    // could never fire — every frame took a new identity and re-rendered the
+    // whole shell, even for a byte-identical payload. Polls (the 5s snapshot
+    // validation and the 15s SSE fallback) re-deliver unchanged snapshots
+    // routinely, so this was a guaranteed floor of full-tree cascades while
+    // idle. The server-computed checksum covers the whole payload, so an equal
+    // checksum plus an unchanged merge result means genuinely nothing moved.
+    if (isNoOpSnapshotUpdate(this.state, nextState)) {
       return this.state;
     }
 

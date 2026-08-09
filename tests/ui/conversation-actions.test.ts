@@ -183,6 +183,15 @@ test("compact layouts rename the conversation in a dialog and drop the duplicate
   expect(homeHeaderSource).toContain('className="hidden max-w-[10rem] shrink-0 truncate font-mono text-[10px] text-muted-foreground lg:inline"');
 });
 
+test("mobile rename dialog follows the visual viewport when the keyboard opens", () => {
+  const homeHeaderSource = readSource("src/components/home/HomeHeader.tsx");
+
+  expect(homeHeaderSource).toContain("useVisualViewportSnapshot");
+  expect(homeHeaderSource).toContain("getVisualViewportDialogStyle");
+  expect(homeHeaderSource).toContain("style={renameDialogStyle}");
+  expect(homeHeaderSource).toContain('className="max-h-[calc(100dvh-2rem)] overflow-y-auto"');
+});
+
 test("the run branch shows in the commit menus instead of the top bar", () => {
   const homeHeaderSource = readSource("src/components/home/HomeHeader.tsx");
   const titleRow = homeHeaderSource.slice(
@@ -330,6 +339,7 @@ test("direct-control terminal user messages render attachment metadata", () => {
   expect(terminalSource).toContain('content: entry.entry.text,');
   expect(terminalSource).toContain('createdAt: authoritativeTimestamp,');
   expect(terminalSource).toContain('activity.attachments.length > 0');
+  expect(terminalSource).toContain('className="max-w-none whitespace-pre-wrap break-words"');
   expect(terminalSource).toContain("attachmentImagePreviewManager.open({");
   expect(terminalSource).toContain("name: attachment.name,");
   expect(terminalSource).toContain("size: attachment.size,");
@@ -473,7 +483,10 @@ test("supervisor conversation messages render markdown", () => {
   expect(pageSource).toContain("<MarkdownContent");
   expect(pageSource).toContain("content={msg.content}");
   expect(markdownContentSource).toContain("function renderInlineMarkdown");
-  expect(markdownContentSource).toContain("export function MarkdownContent");
+  // Memoized on both axes so a streaming sibling entry cannot force a
+  // re-parse of every message in the transcript.
+  expect(markdownContentSource).toContain("export const MarkdownContent = memo(");
+  expect(markdownContentSource).toContain("useMemo(\n    () => parseMarkdownBlocks(");
   expect(markdownContentSource).not.toContain("dangerouslySetInnerHTML");
 });
 

@@ -191,4 +191,30 @@ describe("auto-resume selection guards", () => {
       ":Cannot spawn worker because system resources are low (disk free 6912 MB, below 8192 MB). Free disk space before retrying.",
     )).toBe(true);
   });
+
+  it("does not auto-resume Claude EDE diagnostics, while leaving explicit recovery available", () => {
+    const timer = setTimeout(() => undefined, 10_000);
+    const failureKey = ":Ask failed: Internal error: [ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null";
+    const entries = new Map([
+      ["failed-run", { failureKey, targetMessageId: "message-a", timerId: timer }],
+    ]);
+
+    try {
+      expect(isPermanentAutoResumeFailure(failureKey)).toBe(true);
+      expect(shouldFireAutoResumeTimer({
+        entries,
+        runId: "failed-run",
+        failureKey,
+        targetMessageId: "message-a",
+        activeRunId: "failed-run",
+        isAutoResumableConversation: true,
+        selectedRunStatus: "failed",
+        failedWorkerAvailabilityStatus: "ok",
+        hasWorkerFailureDetail: false,
+        recoverRunIsPending: false,
+      })).toBe(false);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
 });

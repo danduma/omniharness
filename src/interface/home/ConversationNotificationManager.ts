@@ -1,4 +1,5 @@
 import { StateManager } from "@/lib/state-manager";
+import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
 import { t } from "@/lib/i18n";
 import { registerServiceWorker } from "@/lib/pwa";
 import type { AgentSnapshot, EventStreamState, RunRecord } from "./types";
@@ -386,7 +387,7 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
       }
     }
 
-    this.storage?.setItem(CONVERSATION_NOTIFICATIONS_STORAGE_KEY, "true");
+    safeSetBrowserStorageItem(this.storage, CONVERSATION_NOTIFICATIONS_STORAGE_KEY, "true");
     this.patch({
       enabled: true,
       permission: "granted",
@@ -395,7 +396,7 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
   }
 
   disable() {
-    this.storage?.setItem(CONVERSATION_NOTIFICATIONS_STORAGE_KEY, "false");
+    safeSetBrowserStorageItem(this.storage, CONVERSATION_NOTIFICATIONS_STORAGE_KEY, "false");
     if (this.pushClient.isSupported()) {
       void this.pushClient.unsubscribe().then((endpoint) => {
         if (endpoint) {

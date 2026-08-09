@@ -9,6 +9,7 @@ type RunRecord = {
   status: string;
   createdAt: string;
   updatedAt?: string | null;
+  lastActivityAt?: string | null;
   projectPath?: string | null;
   title?: string | null;
   preferredWorkerType?: string | null;
@@ -25,9 +26,39 @@ export type ConversationGroup = {
     status: string;
     createdAt: string;
     updatedAt?: string | null;
+    lastActivityAt?: string | null;
     preferredWorkerType?: string | null;
   }>;
 };
+
+function timestampMs(value: string | null | undefined) {
+  if (!value) return 0;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
+ * Order sessions by conversation activity, newest first.
+ *
+ * `lastActivityAt` is written server-side on the last user message and the last
+ * finished agent turn (see the `runs_activity_*` triggers in
+ * `src/server/db/index.ts`). Sorting here rather than relying on the snapshot's
+ * `ORDER BY` matters because `EventStreamStateManager` merges runs by id and
+ * appends unseen ones to the end — an optimistically created run would
+ * otherwise sink to the bottom of its project until the next full snapshot.
+ */
+function compareConversationRunsDesc(
+  a: { lastActivityAt?: string | null; createdAt: string; id: string },
+  b: { lastActivityAt?: string | null; createdAt: string; id: string },
+) {
+  const activityDiff =
+    Math.max(timestampMs(b.lastActivityAt), timestampMs(b.createdAt))
+    - Math.max(timestampMs(a.lastActivityAt), timestampMs(a.createdAt));
+  if (activityDiff !== 0) return activityDiff;
+  const createdDiff = timestampMs(b.createdAt) - timestampMs(a.createdAt);
+  if (createdDiff !== 0) return createdDiff;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
 
 function findMatchingProject(planPath: string, explicitProjects: string[]) {
   return (
@@ -63,10 +94,12 @@ export function buildConversationGroups(args: {
         status: run.status,
         createdAt: run.createdAt,
         updatedAt: run.updatedAt ?? null,
+        lastActivityAt: run.lastActivityAt ?? null,
         preferredWorkerType: run.preferredWorkerType,
       };
     })
-    .filter((run): run is NonNullable<typeof run> => Boolean(run));
+    .filter((run): run is NonNullable<typeof run> => Boolean(run))
+    .sort(compareConversationRunsDesc);
 
   const groups = new Map<string, ConversationGroup>();
 
@@ -111,6 +144,7 @@ export function buildConversationGroups(args: {
         status: run.status,
         createdAt: run.createdAt,
         updatedAt: run.updatedAt,
+        lastActivityAt: run.lastActivityAt,
         preferredWorkerType: run.preferredWorkerType,
       })),
   }));
@@ -125,6 +159,7 @@ export function buildConversationGroups(args: {
       status: run.status,
       createdAt: run.createdAt,
       updatedAt: run.updatedAt,
+      lastActivityAt: run.lastActivityAt,
       preferredWorkerType: run.preferredWorkerType,
     }));
 

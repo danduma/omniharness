@@ -1,4 +1,5 @@
 import { StateManager, type StateUpdate } from "@/lib/state-manager";
+import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
 
 export const loginShellManager = new class extends StateManager<{ password: string }> {
   constructor() {
@@ -168,7 +169,7 @@ export class FileViewerPanelManager extends StateManager<{ wordWrap: boolean; re
     this.setKey("renderMarkdown", (current) => {
       const next = !current;
       if (typeof window !== "undefined" && typeof window.localStorage !== "undefined") {
-        window.localStorage.setItem(FILE_VIEWER_RENDER_MARKDOWN_STORAGE_KEY, String(next));
+        safeSetBrowserStorageItem(window.localStorage, FILE_VIEWER_RENDER_MARKDOWN_STORAGE_KEY, String(next));
       }
       return next;
     });
@@ -289,10 +290,42 @@ export const workerCardManager = new class extends StateManager<{
     [workerId]: false,
   }));
 
-  setElicitationDraft = (key: string, value: string) => {
-    if (typeof window !== "undefined") {
+  /**
+   * Pending sessionStorage writes, flushed off the interaction path.
+   *
+   * `sessionStorage.setItem` is synchronous and can hit disk. Doing it inline
+   * meant every keystroke and every option click in an elicitation form paid
+   * for a storage write *before* the state update that repaints the control,
+   * which showed up as input lag. The in-memory draft is the source of truth
+   * for rendering; storage is only a reload-survival backup, so it can lag by
+   * a frame.
+   */
+  private pendingElicitationDraftWrites = new Map<string, string>();
+  private elicitationDraftFlushHandle: ReturnType<typeof setTimeout> | null = null;
+
+  private scheduleElicitationDraftFlush() {
+    if (this.elicitationDraftFlushHandle !== null || typeof window === "undefined") {
+      return;
+    }
+    this.elicitationDraftFlushHandle = setTimeout(() => {
+      this.elicitationDraftFlushHandle = null;
+      this.flushElicitationDraftWrites();
+    }, 0);
+  }
+
+  flushElicitationDraftWrites = () => {
+    if (typeof window === "undefined" || this.pendingElicitationDraftWrites.size === 0) {
+      return;
+    }
+    for (const [key, value] of this.pendingElicitationDraftWrites) {
       window.sessionStorage.setItem(`omniharness:elicitation:${key}`, value);
     }
+    this.pendingElicitationDraftWrites.clear();
+  };
+
+  setElicitationDraft = (key: string, value: string) => {
+    this.pendingElicitationDraftWrites.set(key, value);
+    this.scheduleElicitationDraftFlush();
     this.setKey("elicitationDraftsByKey", (current) => ({
       ...current,
       [key]: value,
@@ -312,6 +345,13 @@ export const workerCardManager = new class extends StateManager<{
     for (const key of Object.keys(next)) {
       if (key.startsWith(prefix)) {
         delete next[key];
+      }
+    }
+    // Drop queued writes for this prefix first, or a deferred flush would
+    // rewrite a draft that was just cleared.
+    for (const key of [...this.pendingElicitationDraftWrites.keys()]) {
+      if (key.startsWith(prefix)) {
+        this.pendingElicitationDraftWrites.delete(key);
       }
     }
     if (typeof window !== "undefined") {

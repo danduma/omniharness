@@ -38,36 +38,61 @@ export function hasMeaningfulConversationOverflow(
   return metrics.scrollHeight - metrics.clientHeight > CONVERSATION_MEANINGFUL_OVERFLOW_PX;
 }
 
+/**
+ * Following the latest output is cancelled by the reader scrolling UP, and by
+ * nothing else.
+ *
+ * This used to end with a bare `shouldConversationFollowLatest(metrics)`, which
+ * meant content growing *beneath* the viewport also cancelled it — the reader
+ * had not moved, but they were no longer within 8px of the bottom, so the app
+ * decided they had chosen to stop following. `wasFollowing` keeps the intent
+ * sticky; a reader who returns to the bottom re-arms it.
+ */
 export function shouldConversationKeepFollowingLatest(
   metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
   previousScrollTop: number,
+  wasFollowing = false,
 ) {
   if (metrics.scrollTop < previousScrollTop) {
     return false;
   }
 
-  return shouldConversationFollowLatest(metrics);
+  return wasFollowing || shouldConversationFollowLatest(metrics);
 }
 
-export function shouldConversationRetryInitialLatestPosition({
+/**
+ * Re-pin to the bottom when we are supposed to be following but have drifted
+ * off it — i.e. content grew below the viewport after we positioned.
+ *
+ * This replaces a one-shot "retry the initial position" check that was gated on
+ * `positionedRunId !== selectedRunId` and therefore could fire at most once per
+ * run, during the very pass that marked the run positioned. If that single
+ * attempt measured short for any reason, the conversation stayed stranded
+ * mid-transcript with no way to recover. Making the condition a property of the
+ * current geometry rather than a one-time flag means it self-corrects for every
+ * cause of landing short — late layout, async content, or a transcript window
+ * that grew after an earlier `loadOlder`.
+ *
+ * Terminates naturally: once pinned to the bottom
+ * `shouldConversationFollowLatest` is true and this returns false.
+ */
+export function shouldConversationReanchorToLatest({
   selectedRunId,
-  positionedRunId,
   selectedRunHasOutput,
   shouldFollowLatest,
   metrics,
 }: {
   selectedRunId: string | null;
-  positionedRunId: string | null;
   selectedRunHasOutput: boolean;
   shouldFollowLatest: boolean;
-  metrics: Pick<HTMLDivElement, "clientHeight" | "scrollHeight">;
+  metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">;
 }) {
   return Boolean(
     selectedRunId
     && selectedRunHasOutput
-    && positionedRunId !== selectedRunId
     && shouldFollowLatest
-    && hasMeaningfulConversationOverflow(metrics),
+    && hasMeaningfulConversationOverflow(metrics)
+    && !shouldConversationFollowLatest(metrics),
   );
 }
 
@@ -204,9 +229,8 @@ export function useRunSelectionEffects({
     };
 
     const updateOutputBelowState = () => {
-      if (shouldConversationRetryInitialLatestPosition({
+      if (shouldConversationReanchorToLatest({
         selectedRunId,
-        positionedRunId: instantPositionedRunIdRef.current,
         selectedRunHasOutput,
         shouldFollowLatest: shouldFollowLatestRef.current,
         metrics: viewport,
@@ -219,7 +243,11 @@ export function useRunSelectionEffects({
     previousScrollTopRef.current = viewport.scrollTop;
 
     const updateFollowState = () => {
-      shouldFollowLatestRef.current = shouldConversationKeepFollowingLatest(viewport, previousScrollTopRef.current);
+      shouldFollowLatestRef.current = shouldConversationKeepFollowingLatest(
+        viewport,
+        previousScrollTopRef.current,
+        shouldFollowLatestRef.current,
+      );
       previousScrollTopRef.current = viewport.scrollTop;
       updateOutputBelowState();
     };

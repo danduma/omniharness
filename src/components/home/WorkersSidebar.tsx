@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { Cpu, PanelRightClose, Terminal as TerminalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -149,7 +149,13 @@ export function ConversationWorkerCard({
   );
 }
 
-export function WorkersSidebar({ workers, agents, supervisorInterventions, preferredModel, preferredEffort, projectRoot, onStopWorker, onStopTerminalProcess, onRespondElicitation, onRespondPermission, onLoadWorkerHistory, stoppingWorkerId, stoppingTerminalProcess, onClose, showHeader = true }: WorkersSidebarProps) {
+/**
+ * Memoized. Every SSE frame gave the shell a new state identity and re-rendered
+ * this whole subtree even when nothing it displays had changed. Its props come
+ * from `sharedSidebarProps`, whose callbacks are now stable, so the shallow
+ * comparison actually holds.
+ */
+const WorkersSidebar = memo(function WorkersSidebar({ workers, agents, supervisorInterventions, preferredModel, preferredEffort, projectRoot, onStopWorker, onStopTerminalProcess, onRespondElicitation, onRespondPermission, onLoadWorkerHistory, stoppingWorkerId, stoppingTerminalProcess, onClose, showHeader = true }: WorkersSidebarProps) {
   useI18nSnapshot();
   const { activeTab: requestedActiveTab, focusedWorkerId } = useManagerSnapshot(workersSidebarManager);
   const workerGroups = buildWorkerLists(workers);
@@ -287,4 +293,6 @@ export function WorkersSidebar({ workers, agents, supervisorInterventions, prefe
       )}
     </div>
   );
-}
+});
+
+export { WorkersSidebar };

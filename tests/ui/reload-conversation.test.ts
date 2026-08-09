@@ -18,13 +18,11 @@ test("HomeHeader accepts onReload callback and renders Reload Session dropdown i
   expect(headerSource).toContain('t("session.menu.reload")');
 });
 
-test("HomeApp defines handleReload callback clearing localStorage snapshot and worker entries caches", () => {
+test("HomeApp defines handleReload callback clearing disposable preview caches", () => {
   // Verify handleReload is defined in HomeApp
   expect(appSource).toContain("const handleReload = useCallback(() => {");
-  expect(appSource).toContain('window.localStorage.removeItem("omni-event-stream-snapshot-cache:v1")');
-  expect(appSource).toContain('window.localStorage.removeItem("omni-worker-entries-cache:v2")');
-  // The retired v1 key is still cleared so upgrading clients reclaim the space.
-  expect(appSource).toContain('window.localStorage.removeItem("omni-worker-entries-cache:v1")');
+  expect(appSource).toContain('import { clearPreviewCacheStorage } from "@/lib/browser-storage";');
+  expect(appSource).toContain("clearPreviewCacheStorage();");
   expect(appSource).toContain("window.location.reload()");
 
   // Verify handleReload is passed to HomeHeader

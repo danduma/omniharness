@@ -191,6 +191,30 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
     }, notify);
   }
 
+  /**
+   * The rows the drawer should actually render.
+   *
+   * A message id must appear exactly once across the whole conversation
+   * surface, but the transcript and this drawer are separate lists, so neither
+   * one's dedup can see the other's copy. The composer predicts busy-ness from
+   * event-stream state, so it can render a message as a transcript bubble that
+   * the server then decides to queue; the queue row reaches the client on the
+   * event stream before the POST returns, and the text is on screen twice
+   * until it does. Suppress the row for as long as the send owns a transcript
+   * bubble — when the POST settles it decides which surface keeps the message.
+   *
+   * `inFlightSentMessageIds` is passed in rather than mirrored into this
+   * manager's state: `SentConversationMessagesManager` already owns that fact,
+   * and a second copy could disagree with it.
+   */
+  getVisibleQueuedMessagesForRun(
+    runId: string | null | undefined,
+    inFlightSentMessageIds: ReadonlySet<string>,
+  ) {
+    return this.getQueuedMessagesForRun(runId)
+      .filter((message) => !inFlightSentMessageIds.has(message.id));
+  }
+
   getQueuedMessagesForRun(runId: string | null | undefined) {
     const normalizedRunId = runId?.trim();
     if (!normalizedRunId) {

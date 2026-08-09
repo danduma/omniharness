@@ -216,6 +216,24 @@
     color: var(--muted-foreground);
   }
 
+  /*
+   * DO NOT add `content-visibility: auto` to transcript rows.
+   *
+   * It was tried and reverted on 2026-08-05. The premise in the comment that
+   * used to live here — "scroll height keeps working on real measurements" —
+   * is wrong. Off-screen rows report `contain-intrinsic-size`, not their real
+   * height, and the conversation finds the bottom by reading
+   * `viewport.scrollHeight` inside a pre-paint layout effect. Every row that
+   * had never been rendered contributed a placeholder height, so opening a
+   * session scrolled to a "bottom" far above the real one, and the transcript
+   * appeared to load in the middle of the conversation.
+   *
+   * Positioning no longer depends on `scrollHeight` (see the bottom sentinel
+   * in `useRunSelectionEffects.ts`), so this could be revisited — but only
+   * with a test that opens a long transcript and asserts the last row is the
+   * one in view.
+   */
+
   .omni-activity-text {
     color: color-mix(in oklch, var(--foreground) 82%, var(--muted-foreground));
   }

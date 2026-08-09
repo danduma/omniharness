@@ -7,7 +7,7 @@ import {
   hasMeaningfulConversationOverflow,
   shouldConversationFollowLatest,
   shouldConversationKeepFollowingLatest,
-  shouldConversationRetryInitialLatestPosition,
+  shouldConversationReanchorToLatest,
   shouldConversationShowOutputBelow,
 } from "@/interface/home/useRunSelectionEffects";
 
@@ -78,6 +78,14 @@ const folderPickerSource = fs.readFileSync(
 const conversationSidebarSource = readSource("src/components/home/ConversationSidebar.tsx");
 const homeHeaderSource = readSource("src/components/home/HomeHeader.tsx");
 
+test("session search exposes a translated clear button when text is present", () => {
+  expect(conversationSidebarSource).toMatch(/import \{[^}]*\bX\b[^}]*\} from "lucide-react";/);
+  expect(conversationSidebarSource).toContain("{searchQuery ? (");
+  expect(conversationSidebarSource).toContain('aria-label={t("common.clear")}');
+  expect(conversationSidebarSource).toContain('onClick={() => setSearchQuery("")}');
+  expect(conversationSidebarSource).toContain("pr-9");
+});
+
 test("runner controls live under the OmniHarness brand in the conversation sidebar", () => {
   expect(conversationSidebarSource).toContain('import { RunnerControls } from "@/interface/runners/RunnerControls";');
   expect(conversationSidebarSource).toContain('placement="sidebar"');
@@ -116,7 +124,7 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('setLeftSidebarWidth(getDefaultConversationSidebarWidth(window.innerWidth));');
   expect(pageSource).toContain('setLeftSidebarWidth(clampConversationSidebarWidth(nextWidth, window.innerWidth));');
   expect(pageSource).toContain('window.localStorage.getItem("omni-conversations-sidebar-width")');
-  expect(pageSource).toContain('window.localStorage.setItem("omni-conversations-sidebar-width", String(leftSidebarWidth))');
+  expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, "omni-conversations-sidebar-width", String(leftSidebarWidth))');
   expect(pageSource).toContain('style={{ width: leftSidebarOpen ? leftSidebarWidth : 0 }}');
   expect(pageSource).toContain('aria-hidden={!leftSidebarOpen}');
   expect(pageSource).toContain('inert={!leftSidebarOpen ? true : undefined}');
@@ -201,6 +209,10 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).not.toContain('className="flex h-32 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground"');
 });
 
+test("mobile conversation sidebar width overrides the sheet default width", () => {
+  expect(homeHeaderSource).toContain('!w-[min(var(--omni-mobile-sidebar-width),calc(100vw-1rem))]');
+});
+
 test("folder picker exposes stable path identity for local browser journeys", () => {
   expect(folderPickerSource).toContain('data-testid="folder-picker-current-path"');
   expect(folderPickerSource).toContain('data-parent-path={data?.parent || ""}');
@@ -218,7 +230,7 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('setRightSidebarWidth(getDefaultWorkersSidebarWidth(window.innerWidth));');
   expect(pageSource).toContain('setRightSidebarWidth(clampWorkersSidebarWidth(nextWidth, window.innerWidth));');
   expect(pageSource).toContain('window.localStorage.getItem("omni-workers-sidebar-width")');
-  expect(pageSource).toContain('window.localStorage.setItem("omni-workers-sidebar-width", String(rightSidebarWidth))');
+  expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, "omni-workers-sidebar-width", String(rightSidebarWidth))');
   expect(pageSource).toContain("{workspaceSideWindowAvailable && !rightSidebarOpen ? (");
   expect(pageSource).toContain('title="Toggle workspace side window"');
   expect(pageSource).toContain('title={closeButtonLabel}');
@@ -400,7 +412,11 @@ test("conversation output only follows live worker updates when already near the
   expect(pageSource).toContain("const selectedRunHasOutput = hasSelectedRunMessageOutput(selectedRunId, state.messages);");
   expect(pageSource).toContain("const shouldRestoreInstantly = runChanged");
   expect(pageSource).toContain('const scrollBehavior: ScrollBehavior = shouldRestoreInstantly ? "auto" : "smooth";');
-  expect(pageSource).toContain("shouldConversationRetryInitialLatestPosition({");
+  expect(pageSource).toContain("shouldConversationReanchorToLatest({");
+  // The sticky-follow flag must actually be threaded through, or growth
+  // beneath the viewport silently drops the reader out of follow mode again.
+  expect(pageSource).toContain("shouldFollowLatestRef.current,\n      );");
+  expect(pageSource).not.toContain("shouldConversationRetryInitialLatestPosition");
   expect(pageSource).toContain("const outputVersion = getConversationOutputVersion(selectedRunId, state.messages, state.agents);");
   expect(pageSource).toContain("if (!runChanged && !outputChanged) {");
   expect(pageSource).toContain("}, [scrollRef, outputVersion, selectedRunHasOutput, selectedRunId]);");
@@ -452,36 +468,70 @@ test("conversation output only follows live worker updates when already near the
     scrollHeight: 990,
   })).toBe(false);
 
-  expect(shouldConversationRetryInitialLatestPosition({
+  // Content grew below a reader who is still following: re-pin. This is the
+  // regression from 2026-08-05 — the old one-shot check refused to fire once
+  // the run had been positioned, so a conversation that measured short on open
+  // stayed stranded mid-transcript.
+  expect(shouldConversationReanchorToLatest({
     selectedRunId: "run-1",
-    positionedRunId: null,
     selectedRunHasOutput: true,
     shouldFollowLatest: true,
     metrics: {
+      scrollTop: 100,
       clientHeight: 300,
       scrollHeight: 1000,
     },
   })).toBe(true);
 
-  expect(shouldConversationRetryInitialLatestPosition({
+  // Already pinned to the bottom: nothing to do, and this is what stops the
+  // re-anchor from looping against its own scroll.
+  expect(shouldConversationReanchorToLatest({
     selectedRunId: "run-1",
-    positionedRunId: "run-1",
     selectedRunHasOutput: true,
     shouldFollowLatest: true,
     metrics: {
+      scrollTop: 696,
       clientHeight: 300,
       scrollHeight: 1000,
     },
   })).toBe(false);
 
-  expect(shouldConversationRetryInitialLatestPosition({
+  // The reader scrolled up: never yank them back.
+  expect(shouldConversationReanchorToLatest({
     selectedRunId: "run-1",
-    positionedRunId: null,
     selectedRunHasOutput: true,
     shouldFollowLatest: false,
     metrics: {
+      scrollTop: 100,
       clientHeight: 300,
       scrollHeight: 1000,
+    },
+  })).toBe(false);
+
+  // Following survives content growing beneath the viewport — only an upward
+  // scroll cancels it. Without the sticky flag, streaming output silently
+  // dropped the reader out of follow mode.
+  expect(shouldConversationKeepFollowingLatest({
+    scrollTop: 696,
+    clientHeight: 300,
+    scrollHeight: 2000,
+  }, 696, true)).toBe(true);
+
+  expect(shouldConversationKeepFollowingLatest({
+    scrollTop: 500,
+    clientHeight: 300,
+    scrollHeight: 2000,
+  }, 696, true)).toBe(false);
+
+  // No meaningful overflow: nothing to anchor to.
+  expect(shouldConversationReanchorToLatest({
+    selectedRunId: "run-1",
+    selectedRunHasOutput: true,
+    shouldFollowLatest: true,
+    metrics: {
+      scrollTop: 0,
+      clientHeight: 900,
+      scrollHeight: 990,
     },
   })).toBe(false);
 
@@ -600,8 +650,8 @@ test("terminal renderer owns reusable planning transcript behavior", () => {
   expect(terminalSource).toContain("emptyState?: ReactNode;");
   expect(terminalSource).toContain("const filteredActivity = useMemo(");
   expect(terminalSource).toContain("activity.filter(activityFilter)");
-  expect(terminalSource).toContain("const open = (thoughtOpenById[activity.id] ?? thoughtsDefaultOpen) || activity.inProgress;");
-  expect(terminalSource).toContain("const open = toolGroupOpenById[activity.id] ?? toolGroupsDefaultOpen;");
+  expect(terminalSource).toContain("const open = (openOverride ?? thoughtsDefaultOpen) || activity.inProgress;");
+  expect(terminalSource).toContain("const open = openOverride ?? toolGroupsDefaultOpen;");
   expect(terminalSource).toContain("group-hover/agent-message:opacity-100");
   expect(terminalSource).toContain("conversationCopyNoticeManager.showCopiedMessage(messageId)");
   expect(terminalSource).toContain("{emptyState}");
@@ -670,6 +720,29 @@ test("implementation worker messages show a compact latest turn with expandable 
   expect(pageSource).not.toContain('msg.role === "worker"\n                          ? "border-[#333] bg-[#1e1e1e] font-mono text-[12px] text-emerald-400 shadow-sm"');
 });
 
+test("worker output exposes copy from a bottom-right mobile actions menu", () => {
+  expect(pageSource).toContain("DropdownMenu");
+  expect(pageSource).toContain("DropdownMenuTrigger");
+  expect(pageSource).toContain("DropdownMenuItem");
+  expect(pageSource).toContain("MoreHorizontal");
+  expect(pageSource).toContain('aria-label={t("conversation.message.actionsAria")}');
+  expect(pageSource).toContain("md:hidden");
+  expect(pageSource).toContain("hidden h-6 w-6");
+  expect(pageSource).toContain("md:inline-flex");
+  expect(pageSource).toContain('t("conversation.message.copyAria")');
+});
+
+test("conversation sidebar remembers scroll across mobile drawer remounts", () => {
+  expect(conversationSidebarSource).toContain("class ConversationSidebarScrollManager");
+  expect(conversationSidebarSource).toContain("scrollTopBySurface");
+  expect(conversationSidebarSource).toContain("const scrollAreaRef = useRef<HTMLDivElement>(null);");
+  expect(conversationSidebarSource).toContain('data-slot="scroll-area-viewport"');
+  expect(conversationSidebarSource).toContain("scrollRestoreAttemptedRef");
+  expect(conversationSidebarSource).toContain("scrollIntoView({ block: \"center\" })");
+  expect(conversationSidebarSource).toContain("conversationSidebarScrollManager.setScrollTop");
+  expect(conversationSidebarSource).toContain('ref={scrollAreaRef}');
+});
+
 test("direct conversations render the user transcript next to the worker surface", () => {
   expect(pageSource).toContain("const directConversationMessages = useMemo(() => {");
   expect(pageSource).toContain("expandedDirectMessageIds: new Set()");
@@ -685,7 +758,7 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).toContain('const isExpanded = expandedDirectMessageIds.has(msg.id);');
   expect(pageSource).toContain('className="flex justify-end"');
   expect(pageSource).toContain('flex-col items-end');
-  expect(pageSource).toContain('const handleCopyDirectMessage = async (content: string, messageId: string) => {');
+  expect(pageSource).toContain('const handleCopyDirectMessage = useCallback(async (content: string, messageId: string) => {');
   expect(pageSource).toContain('await navigator.clipboard.writeText(content);');
   expect(pageSource).toContain('select-text');
   expect(pageSource).toContain('aria-label={isExpanded ? "Show less message text" : "Show more message text"}');
@@ -726,7 +799,7 @@ test("header includes a persistent day night mode toggle beside the workers side
   expect(pageSource).toContain("const didMountThemeEffectRef = useRef(false)");
   expect(pageSource).toContain('window.localStorage.getItem("omni-theme-mode")');
   expect(pageSource).toContain("if (!didMountThemeEffectRef.current)");
-  expect(pageSource).toContain('window.localStorage.setItem("omni-theme-mode", themeMode)');
+  expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, "omni-theme-mode", themeMode)');
   expect(pageSource).toContain('document.documentElement.classList.toggle("dark", themeMode === "night")');
   expect(pageSource).toContain('const label = t(themeMode === "night" ? "theme.mode.switchDay" : "theme.mode.switchNight")');
   expect(pageSource).toContain("aria-label={label}");
@@ -794,7 +867,7 @@ test("project groups show a loading indicator while conversations are still hydr
 test("project group collapsed state survives page reloads", () => {
   expect(pageSource).toContain("collapsedProjectPaths: new Set()");
   expect(pageSource).toContain('window.localStorage.getItem("omni-collapsed-projects")');
-  expect(pageSource).toContain('window.localStorage.setItem("omni-collapsed-projects", JSON.stringify(Array.from(collapsedProjectPaths)))');
+  expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, "omni-collapsed-projects", JSON.stringify(Array.from(collapsedProjectPaths)))');
   expect(pageSource).toContain("collapsedProjectPaths={collapsedProjectPaths}");
   expect(pageSource).toContain("onProjectOpenChange: actions.handleProjectOpenChange,");
   expect(pageSource).toContain("collapseProjects: (projectPaths: string[]) => homeUiStateManager.collapseProjects(projectPaths)");

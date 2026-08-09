@@ -51,6 +51,8 @@ export type RunRecord = {
   status: string;
   createdAt: string;
   updatedAt?: string | null;
+  /** Last user message or last finished agent turn — the sidebar's sort key. */
+  lastActivityAt?: string | null;
   failedAt?: string | null;
   lastError?: string | null;
   archivedAt?: string | null;
@@ -426,6 +428,7 @@ export type SidebarRun = {
   status: string;
   createdAt: string;
   updatedAt?: string | null;
+  lastActivityAt?: string | null;
   preferredWorkerType?: WorkerType | null;
 };
 export type SidebarGroup = { path: string; name: string; runs: SidebarRun[] };

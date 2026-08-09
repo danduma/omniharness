@@ -42,6 +42,12 @@ export const runs = sqliteTable('runs', {
   memoryMetadataRevision: integer('memory_metadata_revision').notNull().default(0),
   lastMemoryConsolidationAt: integer('last_memory_consolidation_at', { mode: 'timestamp' }),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  // Conversation-visible activity: the last user message or the last agent turn
+  // that finished. Distinct from `updatedAt`, which every piece of background
+  // bookkeeping bumps (memory consolidation, watchdog, auto-commit, quota
+  // recovery, title generation...) and so cannot order the sidebar. Maintained
+  // by SQL triggers — see `initializeDatabaseSchema`.
+  lastActivityAt: integer('last_activity_at', { mode: 'timestamp' }),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });
 

@@ -1,5 +1,14 @@
 import type { ComposerWorkerOption, WorkerModelCatalog, WorkerType } from "./types";
-import { GIT_AUTO_COMMIT_MILESTONES_SETTING, GIT_PUSH_ON_COMMIT_SETTING } from "@/lib/commit-workflow";
+import {
+  DEFAULT_COMMIT_WORKER_EFFORT,
+  DEFAULT_COMMIT_WORKER_MODEL,
+  DEFAULT_COMMIT_WORKER_TYPE,
+  GIT_AUTO_COMMIT_MILESTONES_SETTING,
+  GIT_COMMIT_WORKER_EFFORT_SETTING,
+  GIT_COMMIT_WORKER_MODEL_SETTING,
+  GIT_COMMIT_WORKER_TYPE_SETTING,
+  GIT_PUSH_ON_COMMIT_SETTING,
+} from "@/lib/commit-workflow";
 import { DEFAULT_RUNTIME_RESOURCE_SETTINGS, runtimeResourceSettingsToEnv } from "@/lib/runtime-resource-settings";
 
 export const PRODUCT_NAME = "OmniHarness";
@@ -118,6 +127,9 @@ export const DEFAULT_SERVER_SETTINGS: Record<string, string> = {
   BUSY_MESSAGE_ACTION: "queue",
   [GIT_AUTO_COMMIT_MILESTONES_SETTING]: "false",
   [GIT_PUSH_ON_COMMIT_SETTING]: "false",
+  [GIT_COMMIT_WORKER_TYPE_SETTING]: DEFAULT_COMMIT_WORKER_TYPE,
+  [GIT_COMMIT_WORKER_MODEL_SETTING]: DEFAULT_COMMIT_WORKER_MODEL,
+  [GIT_COMMIT_WORKER_EFFORT_SETTING]: DEFAULT_COMMIT_WORKER_EFFORT,
   RECOVERY_POLICY: JSON.stringify({
     autoRecoverImplementationRuns: true,
     autoRecoverDirectRuns: false,

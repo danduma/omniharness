@@ -1,6 +1,7 @@
 import { StateManager } from "@/lib/state-manager";
 import type { GitWorkspaceSnapshot, GitWorkspaceTarget } from "@/lib/git-workspace";
 import { t } from "@/lib/i18n";
+import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
 import type { RuntimeAPIs } from "@/runtime-api/types";
 
 export type GitWorkspaceLaunchRequest = {
@@ -155,7 +156,7 @@ function writeCache(cache: CachedGitWorkspaceState) {
       .filter((entry): entry is [string, CachedGitWorkspaceProject] => Boolean(entry[1]?.snapshot))
       .sort(([, first], [, second]) => Date.parse(second.savedAt) - Date.parse(first.savedAt))
       .slice(0, CACHE_MAX_PROJECTS);
-    storage.setItem(CACHE_STORAGE_KEY, JSON.stringify({ projects: Object.fromEntries(entries) }));
+    safeSetBrowserStorageItem(storage, CACHE_STORAGE_KEY, JSON.stringify({ projects: Object.fromEntries(entries) }));
   } catch {
     // The live git API remains the source of truth when browser storage is unavailable.
   }

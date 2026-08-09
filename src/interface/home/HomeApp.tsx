@@ -19,6 +19,7 @@ import { ConversationMain } from "@/components/home/ConversationMain";
 import { ConversationSidebar } from "@/components/home/ConversationSidebar";
 import { HomeHeader } from "@/components/home/HomeHeader";
 import { resolveProjectScope } from "@/lib/project-scope";
+import { clearPreviewCacheStorage } from "@/lib/browser-storage";
 import { WORKER_OPTIONS } from "./constants";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { conversationNotificationManager } from "./ConversationNotificationManager";
@@ -402,10 +403,6 @@ export function HomeApp({
   }, [appearanceTextSizeStyle]);
 
   const busyMessageQueueState = useManagerSnapshot(busyMessageQueueManager);
-  const selectedQueuedMessages = useMemo(
-    () => busyMessageQueueState.queuedMessages.filter((message) => message.runId === selectedRunId),
-    [busyMessageQueueState.queuedMessages, selectedRunId],
-  );
   const settingsDraft = useManagerSnapshot(settingsDraftManager);
 
   // Derived once per real change: the snapshot only takes a new identity when
@@ -420,6 +417,14 @@ export function HomeApp({
   const sendingUserMessageIds = useMemo(
     () => sentConversationMessagesManager.getInFlightMessageIds(),
     [sentConversationMessages],
+  );
+  // Derived from both managers: the drawer must not render a row the
+  // transcript is already showing as an in-flight bubble, or a message the
+  // server queued after the composer predicted an idle conversation appears
+  // twice for the length of the round trip.
+  const selectedQueuedMessages = useMemo(
+    () => busyMessageQueueManager.getVisibleQueuedMessagesForRun(selectedRunId, sendingUserMessageIds),
+    [busyMessageQueueState.queuedMessages, selectedRunId, sendingUserMessageIds],
   );
 
   const scrollConversationToBottom = useCallback(() => {
@@ -1221,14 +1226,7 @@ export function HomeApp({
   const composerProjectFiles = projectFilesQuery.data?.files ?? EMPTY_PROJECT_FILES;
 
   const handleReload = useCallback(() => {
-    try {
-      window.localStorage.removeItem("omni-event-stream-snapshot-cache:v1");
-      window.localStorage.removeItem("omni-worker-entries-cache:v2");
-      // Retired key — still cleared so upgrading clients reclaim the space.
-      window.localStorage.removeItem("omni-worker-entries-cache:v1");
-    } catch {
-      // ignore
-    }
+    clearPreviewCacheStorage();
     window.location.reload();
   }, []);
 
@@ -1275,6 +1273,33 @@ export function HomeApp({
     />
   );
 
+  // Stable identities for the shell callbacks below.
+  //
+  // `sharedSidebarProps` is spread into `ConversationSidebar` and `HomeHeader`,
+  // so React.memo compares each value individually — the container object being
+  // a fresh literal is harmless, but the inline arrows inside it were not. Each
+  // one took a new identity every render, which defeated memoization on the two
+  // largest components in the shell. `commitRenamingRun` was the worst: it
+  // closed over `state`, so by construction it changed on every SSE frame.
+  //
+  // The ref carries the values these handlers need without putting them in the
+  // dependency arrays, so the handlers stay stable while still reading current
+  // values when invoked.
+  const shellCallbackDepsRef = useRef({ state, renameValue, actions, logoutMutation });
+  useEffect(() => {
+    shellCallbackDepsRef.current = { state, renameValue, actions, logoutMutation };
+  });
+
+  const openOnboarding = useCallback(() => setShowOnboarding(true), [setShowOnboarding]);
+  const openFolderPicker = useCallback(() => setShowFolderPicker(true), [setShowFolderPicker]);
+  const openPairDeviceDialog = useCallback(() => setShowPairDeviceDialog(true), [setShowPairDeviceDialog]);
+  const openExternalSessions = useCallback(() => setShowExternalSessionsPicker(true), [setShowExternalSessionsPicker]);
+  const logout = useCallback(() => shellCallbackDepsRef.current.logoutMutation.mutate(), []);
+  const commitRenamingRun = useCallback((runId: string) => {
+    const current = shellCallbackDepsRef.current;
+    current.actions.handleCommitRenamingRun(runId, current.renameValue, current.state);
+  }, []);
+
   // Auth gates
   if (!routeReady || sessionQuery.isLoading || (authEnabled && !appUnlocked && Boolean(pairTokenFromUrl) && redeemPairMutation.isPending)) {
     return <BootShell />;
@@ -1316,8 +1341,8 @@ export function HomeApp({
     onCollapseAllProjects: collapseProjects,
     onShowMoreProjectSessions: actions.handleShowMoreProjectSessions,
     setShowSettings,
-    openOnboarding: () => setShowOnboarding(true),
-    openFolderPicker: () => setShowFolderPicker(true),
+    openOnboarding,
+    openFolderPicker,
     startNewPlan: actions.handleStartNewPlan,
     beginConversationInProject: actions.beginConversationInProject,
     autoCommitProject: actions.handleManualCommitProject,
@@ -1337,16 +1362,16 @@ export function HomeApp({
     cancelMovingRun: actions.handleCancelMovingRun,
     isMoveRunToProjectPending: moveRunToProject.isPending,
     startRenamingRun: actions.handleStartRenamingRun,
-    commitRenamingRun: (runId: string) => actions.handleCommitRenamingRun(runId, renameValue, state),
+    commitRenamingRun,
     cancelRenamingRun: actions.handleCancelRenamingRun,
     archiveRun: actions.handleArchiveRun,
     deleteRun: actions.handleDeleteRun,
     authEnabled,
-    openPairDeviceDialog: () => setShowPairDeviceDialog(true),
-    logout: () => logoutMutation.mutate(),
+    openPairDeviceDialog,
+    logout,
     themeMode,
     setThemeMode,
-    onOpenExternalSessions: () => setShowExternalSessionsPicker(true),
+    onOpenExternalSessions: openExternalSessions,
   };
 
   return (
