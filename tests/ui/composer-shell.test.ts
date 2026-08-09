@@ -20,6 +20,10 @@ const pageSource = [
   "src/components/home/WorkersSidebar.tsx",
   "src/components/WorkerCard.tsx",
 ].map((relativePath) => fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8")).join("\n");
+const mobileComposerSettingsPath = path.resolve(process.cwd(), "src/components/composer/MobileComposerSettings.tsx");
+const mobileComposerSettingsSource = fs.existsSync(mobileComposerSettingsPath)
+  ? fs.readFileSync(mobileComposerSettingsPath, "utf8")
+  : "";
 const composerSelectSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/composer/ComposerSelect.tsx"),
   "utf8"
@@ -37,7 +41,7 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('themeMode === "night"');
   expect(pageSource).toContain('rounded-[2rem] border border-[#dededd] bg-[#fdfdfc]');
   expect(pageSource).toContain('focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc]');
-  expect(pageSource).toContain("px-4 pb-0 pt-3");
+  expect(pageSource).toContain("px-4 pb-0 pt-5");
   expect(pageSource).toContain('"omni-composer-input w-full resize-none bg-transparent outline-none"');
   expect(pageSource).toContain('hasAttachments ? "min-h-[152px] sm:min-h-[112px]" : "min-h-[112px] sm:min-h-[72px]"');
   expect(globalsSource).toContain(".omni-composer-input");
@@ -48,7 +52,7 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(composerSelectSource).not.toContain("selectedLabel");
   expect(composerSelectSource).not.toContain("opacity-0");
   expect(pageSource).toContain("<ComposerModelPicker");
-  expect(pageSource).toContain('ariaLabel="Worker effort"');
+  expect(pageSource).toContain('ariaLabel={t("conversation.composer.settings.effort")}');
   expect(composerModelPickerSource).toContain("<select");
   expect(composerModelPickerSource).toContain('aria-label={t("conversation.composer.workerModelAria")}');
   expect(composerModelPickerSource).toContain("selectedLabel");
@@ -81,9 +85,9 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain('const savedModel = resolveSavedComposerModel(savedModelValue)');
   expect(pageSource).toContain('if (savedModel) {\n      setSelectedModel(savedModel);\n    }');
   expect(pageSource).toContain('window.localStorage.getItem(getEffortStorageKey(savedWorker, savedModel))');
-  expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_WORKER_STORAGE_KEY, selectedCliAgent)');
-  expect(pageSource).toContain('window.localStorage.setItem(COMPOSER_MODEL_STORAGE_KEY, selectedModel)');
-  expect(pageSource).toContain('window.localStorage.setItem(getEffortStorageKey(selectedCliAgent, selectedModel), selectedEffort)');
+  expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, COMPOSER_WORKER_STORAGE_KEY, selectedCliAgent)');
+  expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, COMPOSER_MODEL_STORAGE_KEY, selectedModel)');
+  expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, getEffortStorageKey(selectedCliAgent, selectedModel), selectedEffort)');
   expect(pageSource).toContain("const activeWorkerModelOptions = useMemo(");
   expect(pageSource).toContain("options={activeWorkerModelOptions}");
   expect(composerModelPickerSource).toContain("options.map");
@@ -106,8 +110,8 @@ test("direct mode requires an explicit cli agent and tightens dropdown alignment
   expect(pageSource).toContain('const nextDirectWorker = selectedCliAgent === "auto" ? (autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex") : selectedCliAgent;');
   expect(pageSource).toContain('<ComposerSelect');
   expect(pageSource).toContain('<ComposerModelPicker');
-  expect(composerSelectSource).toContain('"h-7 w-full min-w-0 appearance-none truncate rounded-md border-0 bg-transparent py-0 pl-1.5 pr-5 text-right text-xs shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/45 sm:h-8 sm:pl-2 sm:text-sm"');
-  expect(composerModelPickerSource).toContain('"h-7 w-full min-w-0 appearance-none truncate rounded-md border-0 bg-transparent py-0 pl-1.5 pr-5 text-right text-xs font-normal shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/45 sm:h-8 sm:pl-2 sm:text-sm [field-sizing:content]"');
+  expect(composerSelectSource).toContain('"h-7 min-w-0 appearance-none rounded-md border-0 bg-transparent py-0 pl-1.5 pr-5 text-xs shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/45 sm:h-8 sm:pl-2 sm:text-sm"');
+  expect(composerModelPickerSource).toContain('"h-7 min-w-0 appearance-none rounded-md border-0 bg-transparent py-0 pl-1.5 pr-5 text-xs font-normal shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/45 sm:h-8 sm:pl-2 sm:text-sm"');
 });
 
 test("composer exposes native file input, paste ingestion, previews, and removal controls", () => {
@@ -118,10 +122,21 @@ test("composer exposes native file input, paste ingestion, previews, and removal
   expect(pageSource).toContain('event.clipboardData.items');
   expect(pageSource).toContain('onAddPastedImages(pastedImages)');
   expect(pageSource).toContain('attachment.kind === "image" && attachment.previewUrl');
-  expect(pageSource).toContain('aria-label={`Remove ${attachment.name}`}');
+  expect(pageSource).toContain('t("conversation.composer.removeAttachment", { attachment: attachment.name })');
   expect(pageSource).toContain('<Plus className="h-[18px] w-[18px]" />');
   expect(pageSource).not.toContain("FileAttachmentPickerDialog");
   expect(pageSource).toContain("attachments,");
+});
+
+test("composer accepts dropped files and exposes an active drop target", () => {
+  expect(pageSource).toContain("fileDragDepth");
+  expect(pageSource).toContain('data-composer-dropzone="true"');
+  expect(pageSource).toContain("onDragEnter");
+  expect(pageSource).toContain("onDragOver");
+  expect(pageSource).toContain("onDragLeave");
+  expect(pageSource).toContain("onDrop");
+  expect(pageSource).toContain("Array.from(event.dataTransfer.files)");
+  expect(pageSource).toContain('t("conversation.composer.dropFilesActive")');
 });
 
 test("composer mention picker can open a project file without inserting it", () => {
@@ -145,20 +160,54 @@ test("composer mention picker anchors above the typing shell on mobile", () => {
   expect(typingShellIndex).toBeGreaterThan(mentionPickerIndex);
 });
 
-test("composer controls stay on one mobile row while keeping readable label widths", () => {
+test("composer settings stay readable without clipping on either viewport", () => {
   expect(pageSource).toContain('className="mt-0 flex items-center gap-1 pb-2 sm:gap-2"');
-  expect(pageSource).toContain('className="ml-auto hidden min-w-0 items-center justify-end gap-1 sm:flex sm:gap-2"');
-  expect(pageSource).toContain('"ml-auto flex h-8 min-w-0 max-w-[min(13rem,48vw)] shrink items-center gap-1.5 rounded-full px-2 text-xs font-medium sm:hidden"');
-  expect(pageSource).toContain("const selectedHarnessLabel = shouldLockDirectWorker");
-  expect(pageSource).toContain("const selectedModelLabel = activeWorkerModelOptions.find");
-  expect(pageSource).toContain("const mobileSettingsSummary = `${selectedHarnessLabel} · ${selectedAccountLabel} · ${selectedModelLabel}`;");
-  expect(pageSource).toContain("title={mobileSettingsSummary}");
-  expect(pageSource).toContain("{selectedHarnessLabel}");
-  expect(pageSource).toContain("{selectedModelLabel}");
+  expect(pageSource).toContain('data-composer-settings="true"');
+  expect(pageSource).toContain("flex-wrap");
+  expect(pageSource).toContain('className="ml-auto sm:hidden"');
+  expect(composerSelectSource).toContain("shrink-0");
+  expect(composerModelPickerSource).toContain("shrink-0");
   expect(pageSource).toContain('"h-8 w-8 shrink-0 rounded-full transition-all"');
-  expect(pageSource).not.toContain('className="mt-0 flex flex-wrap items-center gap-x-1 gap-y-1 pb-2 sm:flex-nowrap sm:gap-2"');
-  expect(pageSource).not.toContain('className="order-3 flex min-w-0 basis-full items-center justify-end gap-1 sm:order-none sm:basis-auto sm:flex-1 sm:gap-2"');
-  expect(pageSource).not.toContain('className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2"');
+});
+
+test("workspace control floats above the typing shell instead of joining settings", () => {
+  const workspaceIndex = pageSource.indexOf("<BranchWorkspaceButton");
+  const textareaIndex = pageSource.indexOf('data-composer-input="true"');
+  const settingsIndex = pageSource.indexOf('data-composer-settings="true"');
+
+  expect(workspaceIndex).toBeGreaterThan(-1);
+  expect(workspaceIndex).toBeLessThan(textareaIndex);
+  expect(settingsIndex).toBeGreaterThan(textareaIndex);
+  expect(pageSource).toContain('data-composer-workspace="true"');
+});
+
+test("mobile composer settings expose one unlabeled summary chip in an upward-wrapping rail", () => {
+  expect(mobileComposerSettingsSource).toContain('data-composer-mobile-settings="true"');
+  expect(mobileComposerSettingsSource).toContain("bottom-full");
+  expect(mobileComposerSettingsSource).toContain("max-w-full");
+  expect(mobileComposerSettingsSource).toContain("min-w-0");
+  expect(mobileComposerSettingsSource).toContain("pointer-events-auto");
+  expect(mobileComposerSettingsSource).toContain("flex-wrap");
+  expect(mobileComposerSettingsSource).toContain("sm:hidden");
+  expect(mobileComposerSettingsSource).toContain('data-composer-settings-chip="true"');
+  expect(mobileComposerSettingsSource).toContain('data-composer-settings-dialog="true"');
+  expect(mobileComposerSettingsSource).toContain("SlidersHorizontal");
+  expect(mobileComposerSettingsSource).toContain('<SheetContent data-composer-settings-dialog="true" side="bottom"');
+  expect(mobileComposerSettingsSource).toContain("disabled={descriptorArgs.disabled}");
+  expect(mobileComposerSettingsSource).not.toContain("MobileComposerChip");
+  expect(mobileComposerSettingsSource).not.toContain('t("settings.commitAgent.cli")');
+  expect(mobileComposerSettingsSource).toContain("getMobileComposerSettingDescriptors");
+  expect(mobileComposerSettingsSource).toContain("useI18nSnapshot()");
+  expect(pageSource).toContain("<MobileComposerSettings");
+  expect(pageSource).toContain("mobileSettingsOpen");
+  expect(pageSource).toContain("setMobileSettingsOpen");
+  expect(pageSource).toContain("settingsOpen={mobileSettingsOpen}");
+});
+
+test("mobile and desktop composer placements remain distinct", () => {
+  expect(mobileComposerSettingsSource).toContain("!selectedRunId ?");
+  expect(pageSource).toContain('className="pointer-events-none absolute inset-x-0 -top-5 z-30 hidden justify-start px-3 sm:flex sm:px-4"');
+  expect(mobileComposerSettingsSource).toContain("BranchWorkspaceButton");
 });
 
 test("composer draft state is isolated from the root home app subscription", () => {

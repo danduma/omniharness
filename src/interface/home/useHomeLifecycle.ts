@@ -20,6 +20,7 @@ import { claudeModelGatewayManager } from "./ClaudeModelGatewayManager";
 import { LiveEventConnectionManager, LiveEventCursorManager } from "./LiveEventConnectionManager";
 import type { ComposerWorkerOption, EventStreamState } from "./types";
 import { buildConversationPath, buildInlineError, parseBrowserConversationRoute, parseCollapsedProjectPaths, resolveSavedComposerModel } from "./utils";
+import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
 import type { RunnerConnection } from "@/interface/runners/RunnerConnection";
 
@@ -392,9 +393,7 @@ export function useHomeLifecycle({
       return;
     }
 
-    try {
-      window.localStorage.setItem("omni-conversations-sidebar-width", String(leftSidebarWidth));
-    } catch {
+    if (!safeSetBrowserStorageItem(window.localStorage, "omni-conversations-sidebar-width", String(leftSidebarWidth))) {
       setRuntimeErrors((current) => mergeAppErrors(current, [{
         message: "Failed to persist conversations sidebar width to localStorage.",
         source: "Frontend",
@@ -413,9 +412,7 @@ export function useHomeLifecycle({
       return;
     }
 
-    try {
-      window.localStorage.setItem("omni-workers-sidebar-width", String(rightSidebarWidth));
-    } catch {
+    if (!safeSetBrowserStorageItem(window.localStorage, "omni-workers-sidebar-width", String(rightSidebarWidth))) {
       setRuntimeErrors((current) => mergeAppErrors(current, [{
         message: "Failed to persist worker sidebar width to localStorage.",
         source: "Frontend",
@@ -434,9 +431,7 @@ export function useHomeLifecycle({
       return;
     }
 
-    try {
-      window.localStorage.setItem("omni-collapsed-projects", JSON.stringify(Array.from(collapsedProjectPaths)));
-    } catch {
+    if (!safeSetBrowserStorageItem(window.localStorage, "omni-collapsed-projects", JSON.stringify(Array.from(collapsedProjectPaths)))) {
       setRuntimeErrors((current) => mergeAppErrors(current, [{
         message: "Failed to persist project group state to localStorage.",
         source: "Frontend",
@@ -528,9 +523,7 @@ export function useHomeLifecycle({
       return;
     }
 
-    try {
-      window.localStorage.setItem("omni-theme-mode", themeMode);
-    } catch {
+    if (!safeSetBrowserStorageItem(window.localStorage, "omni-theme-mode", themeMode)) {
       setRuntimeErrors((current) => mergeAppErrors(current, [{
         message: "Failed to persist theme mode to localStorage.",
         source: "Frontend",
@@ -545,7 +538,7 @@ export function useHomeLifecycle({
       return;
     }
 
-    window.localStorage.setItem(COMPOSER_MODE_STORAGE_KEY, selectedConversationMode);
+    safeSetBrowserStorageItem(window.localStorage, COMPOSER_MODE_STORAGE_KEY, selectedConversationMode);
   }, [selectedConversationMode]);
 
   useEffect(() => {
@@ -553,7 +546,7 @@ export function useHomeLifecycle({
       return;
     }
 
-    window.localStorage.setItem(COMPOSER_WORKER_STORAGE_KEY, selectedCliAgent);
+    safeSetBrowserStorageItem(window.localStorage, COMPOSER_WORKER_STORAGE_KEY, selectedCliAgent);
   }, [selectedCliAgent]);
 
   useEffect(() => {
@@ -561,7 +554,7 @@ export function useHomeLifecycle({
       return;
     }
 
-    window.localStorage.setItem(COMPOSER_MODEL_STORAGE_KEY, selectedModel);
+    safeSetBrowserStorageItem(window.localStorage, COMPOSER_MODEL_STORAGE_KEY, selectedModel);
   }, [selectedModel]);
 
   useEffect(() => {
@@ -569,7 +562,7 @@ export function useHomeLifecycle({
       return;
     }
 
-    window.localStorage.setItem(getEffortStorageKey(selectedCliAgent, selectedModel), selectedEffort);
+    safeSetBrowserStorageItem(window.localStorage, getEffortStorageKey(selectedCliAgent, selectedModel), selectedEffort);
   }, [selectedCliAgent, selectedModel, selectedEffort]);
 
   useEffect(() => {

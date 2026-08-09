@@ -1,14 +1,14 @@
 import { memo, useRef } from "react";
 import type React from "react";
-import { ArrowUp, FileText, LoaderCircle, Plus, SlidersHorizontal, Square, X } from "lucide-react";
+import { ArrowUp, FileText, LoaderCircle, Plus, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ComposerModelPicker } from "@/components/composer/ComposerModelPicker";
 import { ComposerSelect } from "@/components/composer/ComposerSelect";
 import { ConversationModePicker, type ConversationModeOption } from "@/components/ConversationModePicker";
+import { MobileComposerSettings } from "@/components/composer/MobileComposerSettings";
 import type { ComposerMode } from "@/interface/home/types";
 import { QueuedMessageDrawer } from "./QueuedMessageDrawer";
 import { BranchWorkspaceButton } from "./BranchWorkspaceButton";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { EFFORT_OPTIONS } from "@/interface/home/constants";
 import { isManualStopCommand, resolveBusyMessageActionForSubmitAction, type BusyComposerBehavior, type BusyMessageAction } from "@/interface/home/busy-message-behavior";
 import { getComposerSubmitShortcutLabel, isAppleComposerShortcutPlatform, shouldInterruptQueuedMessageKeyDown, shouldSubmitComposerKeyDown, shouldUseAlternateComposerSubmitKeyDown } from "@/interface/home/composer-keyboard";
@@ -71,11 +71,14 @@ interface ConversationComposerProps {
   onStopConversation: () => void;
 }
 
-class ComposerUiManager extends StateManager<{ mobileSettingsOpen: boolean }> {
+class ComposerUiManager extends StateManager<{ fileDragDepth: number; mobileSettingsOpen: boolean }> {
   constructor() {
-    super({ mobileSettingsOpen: false });
+    super({ fileDragDepth: 0, mobileSettingsOpen: false });
   }
 
+  beginFileDrag = () => this.setKey("fileDragDepth", (current) => current + 1);
+  endFileDrag = () => this.setKey("fileDragDepth", (current) => Math.max(current - 1, 0));
+  clearFileDrag = () => this.setKey("fileDragDepth", 0);
   setMobileSettingsOpen = (mobileSettingsOpen: boolean) => this.setKey("mobileSettingsOpen", mobileSettingsOpen);
 }
 
@@ -136,7 +139,8 @@ function ConversationComposerInner({
   const trimmedCommand = command.trim();
   const hasAttachments = attachments.length > 0;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const { mobileSettingsOpen } = useManagerSnapshot(composerUiManager);
+  const { fileDragDepth, mobileSettingsOpen } = useManagerSnapshot(composerUiManager);
+  const isFileDragActive = fileDragDepth > 0;
   const isStopButtonVisible = composerBehavior.buttonKind === "stop";
   const showSeparateStopButton = isConversationStoppable && !isStopButtonVisible;
   const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;
@@ -153,13 +157,6 @@ function ConversationComposerInner({
       : composerBehavior.submitAction === "send_steer"
         ? sendButtonAriaLabel
         : t(`${composerBehavior.ariaLabelKey}Title`);
-  const selectedHarnessLabel = shouldLockDirectWorker
-    ? lockedDirectWorkerLabel
-    : composerWorkerOptions.find((option) => option.value === selectedCliAgent)?.label ?? selectedCliAgent;
-  const selectedAccountLabel = composerAccountOptions.find((option) => option.value === selectedWorkerAccountId)?.label
-    ?? t("conversation.composer.account.auto");
-  const selectedModelLabel = activeWorkerModelOptions.find((option) => option.value === selectedModel)?.label ?? selectedModel;
-  const mobileSettingsSummary = `${selectedHarnessLabel} · ${selectedAccountLabel} · ${selectedModelLabel}`;
   const composerPlaceholder = selectedRunId
     ? selectedConversationMode === "planning"
       ? t("conversation.composer.placeholder.planning")
@@ -254,14 +251,89 @@ function ConversationComposerInner({
             </div>
           </div>
         )}
+        {!selectedRunId ? (
+          <div
+            data-composer-workspace="true"
+            className="pointer-events-none absolute inset-x-0 -top-5 z-30 hidden justify-start px-3 sm:flex sm:px-4"
+          >
+            <div className="pointer-events-auto rounded-full border border-border/70 bg-background/95 shadow-sm backdrop-blur-sm dark:bg-[#2f2f2f]/95">
+              <BranchWorkspaceButton
+                projectPath={workspaceProjectPath}
+                disabled={isComposerSubmitting}
+                themeMode={themeMode}
+              />
+            </div>
+          </div>
+        ) : null}
+        <MobileComposerSettings
+          selectedRunId={selectedRunId}
+          workspaceProjectPath={workspaceProjectPath}
+          themeMode={themeMode}
+          shouldLockDirectWorker={shouldLockDirectWorker}
+          lockedDirectWorkerLabel={lockedDirectWorkerLabel}
+          selectedCliAgent={selectedCliAgent}
+          setSelectedCliAgent={setSelectedCliAgent}
+          composerWorkerOptions={composerWorkerOptions}
+          selectedWorkerAccountId={selectedWorkerAccountId}
+          setSelectedWorkerAccountId={setSelectedWorkerAccountId}
+          composerAccountOptions={composerAccountOptions}
+          selectedModel={selectedModel}
+          setSelectedModel={setSelectedModel}
+          activeWorkerModelOptions={activeWorkerModelOptions}
+          selectedEffort={selectedEffort}
+          setSelectedEffort={setSelectedEffort}
+          disabled={isComposerSubmitting}
+          settingsOpen={mobileSettingsOpen}
+          onSettingsOpenChange={composerUiManager.setMobileSettingsOpen}
+        />
         <div
+          data-composer-dropzone="true"
+          onDragEnter={(event) => {
+            if (!event.dataTransfer.types.includes("Files")) {
+              return;
+            }
+            event.preventDefault();
+            composerUiManager.beginFileDrag();
+          }}
+          onDragOver={(event) => {
+            if (!event.dataTransfer.types.includes("Files")) {
+              return;
+            }
+            event.preventDefault();
+            event.dataTransfer.dropEffect = isComposerSubmitting ? "none" : "copy";
+          }}
+          onDragLeave={(event) => {
+            const relatedTarget = event.relatedTarget;
+            if (!relatedTarget || !(relatedTarget instanceof Node) || !event.currentTarget.contains(relatedTarget)) {
+              composerUiManager.endFileDrag();
+            }
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            composerUiManager.clearFileDrag();
+            if (isComposerSubmitting) {
+              return;
+            }
+            const files = Array.from(event.dataTransfer.files);
+            if (files.length > 0) {
+              onAddAttachmentFiles(files);
+            }
+          }}
           className={cn(
-            "rounded-[1.5rem] px-4 pb-0 pt-3 transition-all sm:px-5 sm:pb-0 sm:pt-4",
+            "relative rounded-[1.5rem] px-4 pb-0 pt-5 transition-all sm:px-5 sm:pb-0 sm:pt-5",
+            isFileDragActive && "ring-2 ring-primary/35",
             themeMode === "night"
               ? "border border-transparent bg-muted/80 shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] focus-within:bg-muted/90 dark:bg-[#2f2f2f] dark:focus-within:bg-[#343434]"
               : "rounded-[2rem] border border-[#dededd] bg-[#fdfdfc] shadow-none focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc] dark:border-transparent dark:bg-[#2f2f2f] dark:shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] dark:focus-within:bg-[#343434] sm:rounded-[2.35rem]",
           )}
         >
+          {isFileDragActive ? (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] bg-primary/[0.08]">
+              <span className="rounded-full border border-primary/25 bg-background/95 px-3 py-1.5 text-xs font-medium text-primary shadow-sm">
+                {t("conversation.composer.dropFilesActive")}
+              </span>
+            </div>
+          ) : null}
           <textarea
           data-composer-input="true"
           ref={commandInputRef}
@@ -425,7 +497,7 @@ function ConversationComposerInner({
                       ? "text-muted-foreground hover:bg-background/60 hover:text-foreground"
                       : "text-[#8f8f8f] hover:bg-black/5 hover:text-[#5c5c5c] dark:text-muted-foreground dark:hover:bg-background/60 dark:hover:text-foreground",
                   )}
-                  aria-label={`Remove ${attachment.name}`}
+                  aria-label={t("conversation.composer.removeAttachment", { attachment: attachment.name })}
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -461,24 +533,16 @@ function ConversationComposerInner({
                   ? "text-muted-foreground hover:bg-background/45 hover:text-foreground"
                   : "text-[#959595] hover:bg-black/[0.04] hover:text-[#666666] dark:text-muted-foreground dark:hover:bg-background/45 dark:hover:text-foreground",
               )}
-              aria-label="Attach files"
+              aria-label={t("conversation.composer.attachFiles")}
             >
               <Plus className="h-[18px] w-[18px]" />
             </Button>
 
-          {!selectedRunId ? (
-            <BranchWorkspaceButton
-              projectPath={workspaceProjectPath}
-              disabled={isComposerSubmitting}
-              themeMode={themeMode}
-            />
-          ) : null}
-
           {/* Desktop selectors — hidden on mobile */}
-          <div className="ml-auto hidden min-w-0 items-center justify-end gap-1 sm:flex sm:gap-2">
+          <div data-composer-settings="true" className="ml-auto hidden min-w-0 flex-1 flex-wrap items-center justify-end gap-x-1 gap-y-1 sm:flex sm:gap-x-2">
             {shouldLockDirectWorker ? (
               <div className={cn(
-                "w-max min-w-0 max-w-[8.5rem] shrink truncate rounded-full border px-2 py-1 text-xs font-semibold sm:px-3",
+                "w-max shrink-0 whitespace-nowrap rounded-full border px-2 py-1 text-xs font-semibold sm:px-3",
                 themeMode === "night"
                   ? "border-border/60 bg-background/50 text-muted-foreground"
                   : "border-[#d8d8d8] bg-white/90 text-[#6a6a6a] dark:border-border/60 dark:bg-background/50 dark:text-muted-foreground",
@@ -487,7 +551,7 @@ function ConversationComposerInner({
               </div>
             ) : (
               <ComposerSelect
-                ariaLabel="CLI harness"
+                ariaLabel={t("conversation.composer.settings.agent")}
                 value={selectedCliAgent}
                 options={composerWorkerOptions}
                 onChange={setSelectedCliAgent}
@@ -514,7 +578,7 @@ function ConversationComposerInner({
             />
 
               <ComposerSelect
-                ariaLabel="Worker effort"
+                ariaLabel={t("conversation.composer.settings.effort")}
                 value={selectedEffort}
                 options={EFFORT_OPTIONS.map((effort) => ({ value: effort, label: effort }))}
                 onChange={setSelectedEffort}
@@ -523,33 +587,7 @@ function ConversationComposerInner({
             </>
           </div>
 
-          {/* Mobile settings button — hidden on desktop */}
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => composerUiManager.setMobileSettingsOpen(true)}
-            className={cn(
-              "ml-auto flex h-8 min-w-0 max-w-[min(13rem,48vw)] shrink items-center gap-1.5 rounded-full px-2 text-xs font-medium sm:hidden",
-              themeMode === "night"
-                ? "text-muted-foreground hover:bg-background/45 hover:text-foreground"
-                : "text-[#959595] hover:bg-black/[0.04] hover:text-[#666666] dark:text-muted-foreground dark:hover:bg-background/45 dark:hover:text-foreground",
-            )}
-            aria-label={t("conversation.composer.settings.title")}
-            title={mobileSettingsSummary}
-          >
-            <SlidersHorizontal className="h-[18px] w-[18px]" />
-            <span className="min-w-0 truncate">
-              {selectedHarnessLabel}
-            </span>
-            <span className="shrink-0 text-muted-foreground/55" aria-hidden="true">·</span>
-            <span className="min-w-0 truncate">
-              {selectedAccountLabel}
-            </span>
-            <span className="shrink-0 text-muted-foreground/55" aria-hidden="true">·</span>
-            <span className="min-w-0 truncate">
-              {selectedModelLabel}
-            </span>
-          </Button>
+          <span className="ml-auto sm:hidden" aria-hidden="true" />
 
           {showSeparateStopButton && (
             <Button
@@ -599,65 +637,6 @@ function ConversationComposerInner({
         </div>
       </div>
     </form>
-
-      {/* Mobile settings sheet */}
-      <Sheet open={mobileSettingsOpen} onOpenChange={composerUiManager.setMobileSettingsOpen}>
-        <SheetContent side="bottom" className="px-4 pb-8 pt-0">
-          <SheetHeader className="pb-2">
-            <SheetTitle>{t("conversation.composer.settings.title")}</SheetTitle>
-          </SheetHeader>
-          <div className="flex flex-col gap-5">
-            {shouldLockDirectWorker ? (
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">{t("conversation.composer.settings.agent")}</span>
-                <span className="text-sm text-muted-foreground">{lockedDirectWorkerLabel}</span>
-              </div>
-            ) : (
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">{t("conversation.composer.settings.agent")}</span>
-                <ComposerSelect
-                  ariaLabel="CLI harness"
-                  value={selectedCliAgent}
-                  options={composerWorkerOptions}
-                  onChange={setSelectedCliAgent}
-                  themeMode={themeMode}
-                />
-              </div>
-            )}
-            {composerAccountOptions.length > 1 ? (
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">{t("conversation.composer.settings.account")}</span>
-                <ComposerSelect
-                  ariaLabel={t("conversation.composer.account.ariaLabel")}
-                  value={selectedWorkerAccountId}
-                  options={composerAccountOptions}
-                  onChange={setSelectedWorkerAccountId}
-                  themeMode={themeMode}
-                />
-              </div>
-            ) : null}
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">{t("conversation.composer.settings.model")}</span>
-              <ComposerModelPicker
-                value={selectedModel}
-                options={activeWorkerModelOptions}
-                onChange={setSelectedModel}
-                themeMode={themeMode}
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">{t("conversation.composer.settings.effort")}</span>
-              <ComposerSelect
-                ariaLabel="Worker effort"
-                value={selectedEffort}
-                options={EFFORT_OPTIONS.map((effort) => ({ value: effort, label: effort }))}
-                onChange={setSelectedEffort}
-                themeMode={themeMode}
-              />
-            </div>
-          </div>
-        </SheetContent>
-      </Sheet>
     </div>
   );
 }
