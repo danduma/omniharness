@@ -487,7 +487,13 @@ describe("stream writer wake events", () => {
 });
 
 describe("writeWorkerOutputEntries (diff-and-append)", () => {
-  it("emits worker entry wake events for appended bridge entries", async () => {
+  it("emits one wake event per append batch carrying the highest seq", async () => {
+    // The frame is a cursor hint, not content: `WorkerEntriesManager.onWakeUp`
+    // fetches forward from its OWN `latestContiguousSeq`, so the highest seq in
+    // a batch describes the whole batch. Emitting one event per entry
+    // multiplied the wake-up rate — and, before snapshot pacing, the
+    // full-snapshot rebuild rate — by the batch size for no added information.
+    // Keep this at one event per batch.
     const runId = uniqueId("run");
     const workerId = uniqueId("worker");
     try {
@@ -504,7 +510,6 @@ describe("writeWorkerOutputEntries (diff-and-append)", () => {
         workerId: event.workerId,
         seq: event.seq,
       }))).toEqual([
-        { runId, workerId, seq: 1 },
         { runId, workerId, seq: 2 },
       ]);
     } finally {

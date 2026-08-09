@@ -113,6 +113,24 @@ describe("persistRunFailure", () => {
     expect(persistedMessages[0]?.content).toBe("Run failed: codex ACP adapter is not installed");
   });
 
+  it("does not persist the raw incomplete ACP diagnostic", async () => {
+    const { runId } = await seedRunningRun();
+    const diagnostic = "Ask failed: Internal error: [ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null";
+
+    await persistRunFailure(runId, new Error(diagnostic), {
+      surface: { code: "conversation.continue.failed" },
+    });
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedMessage = await db.select().from(messages).where(eq(messages.runId, runId)).get();
+    const surfaced = collectSurfacedEvents();
+
+    expect(persistedRun?.lastError).not.toContain("[ede_diagnostic]");
+    expect(persistedMessage?.content).not.toContain("[ede_diagnostic]");
+    expect(surfaced[0]?.message).not.toContain("[ede_diagnostic]");
+    expect(surfaced[0]?.cause?.message).not.toContain("[ede_diagnostic]");
+  });
+
   it("does not append duplicate run_failed events when the same failure is persisted twice", async () => {
     const { runId } = await seedRunningRun();
 

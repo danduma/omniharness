@@ -2,7 +2,14 @@ import { randomUUID } from "crypto";
 import { and, asc, eq } from "drizzle-orm";
 import { askAgent, cancelAgent, getAgent, respondElicitation, spawnAgent } from "@/server/bridge-client";
 import { db } from "@/server/db";
-import { clarifications, messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
+import {
+  clarifications,
+  messages,
+  queuedConversationMessages,
+  runs,
+  workerCredentialAllocations,
+  workers,
+} from "@/server/db/schema";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { answerClarification } from "@/server/clarifications/store";
 import { resumeRunAfterClarification } from "@/server/clarifications/loop";
@@ -36,6 +43,13 @@ import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
 import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import { reconcileRecoveredHumanInputEntries } from "@/server/workers/human-input-entries";
+import { resolveRecoveryIncidentsAfterHealthyTurn } from "@/server/runs/recovery-incidents";
+import {
+  isProviderSessionDiagnosticErrorMessage,
+  userFacingProviderSessionErrorMessage,
+} from "@/server/workers/session-recovery";
+import { recreateWorkerFromTranscript, type WorkerRecreationSelection } from "@/server/workers/provider-session-recovery";
+import { decodeClaudeGatewayModel } from "@/lib/claude-model-gateway";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
@@ -134,6 +148,120 @@ async function selectConversationWorker(runId: string) {
   const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
   const sortedWorkers = [...runWorkers].sort(compareWorkersForFollowUp);
   return sortedWorkers.find((worker) => !isWorkerCancelled(worker)) ?? sortedWorkers[0] ?? null;
+}
+
+function isDirectWorkerSelectionSwitchable(worker: WorkerRecord) {
+  return ["cancelled", "canceled", "done", "error", "failed", "idle", "stopped"].includes(normalizeWorkerStatus(worker.status));
+}
+
+async function reconcileDirectWorkerSelection(args: {
+  run: RunRecord;
+  worker: WorkerRecord;
+  nextUserPrompt: string;
+}) {
+  const requestedType = args.run.preferredWorkerType?.trim() || args.worker.type;
+  const requestedModel = args.run.preferredWorkerModel?.trim() || null;
+  const requestedEffort = args.run.preferredWorkerEffort?.trim().toLowerCase() || null;
+  const requestedAccountId = args.run.preferredWorkerAccountId?.trim() || null;
+  const currentAllocation = await db
+    .select()
+    .from(workerCredentialAllocations)
+    .where(eq(workerCredentialAllocations.workerId, args.worker.id))
+    .get();
+  const currentModel = args.worker.effectiveLaunchModel?.trim() || null;
+  const currentEffort = args.worker.effectiveLaunchEffort?.trim().toLowerCase() || null;
+  const typeChanged = normalizeWorkerType(args.worker.type) !== normalizeWorkerType(requestedType);
+  const modelChanged = Boolean(currentModel && requestedModel && currentModel !== requestedModel);
+  const effortChanged = Boolean(currentEffort && requestedEffort && currentEffort !== requestedEffort);
+  const accountChanged = Boolean(
+    requestedAccountId
+    && currentAllocation?.accountId
+    && requestedAccountId !== currentAllocation.accountId,
+  );
+
+  if (!typeChanged && !modelChanged && !effortChanged && !accountChanged) {
+    return null;
+  }
+
+  if (!isDirectWorkerSelectionSwitchable(args.worker)) {
+    await recordExecutionEvent({
+      runId: args.run.id,
+      workerId: args.worker.id,
+      planItemId: null,
+      eventType: "worker_selection_deferred",
+      details: {
+        summary: `Deferred the ${requestedType} selection until ${args.worker.id} is idle.`,
+        previousWorkerType: args.worker.type,
+        nextWorkerType: requestedType,
+        reason: "worker_turn_active",
+      },
+    });
+    emitNamedEvent({
+      kind: "worker.selection_deferred",
+      runId: args.run.id,
+      workerId: args.worker.id,
+      requestedType,
+      reason: "worker_turn_active",
+    });
+    return null;
+  }
+
+  const selection: WorkerRecreationSelection = {
+    type: requestedType,
+    model: requestedModel,
+    effort: requestedEffort,
+    accountId: requestedAccountId,
+    credentialSource: decodeClaudeGatewayModel(requestedModel) ? "gateway" : "account",
+  };
+
+  try {
+    const recreated = await recreateWorkerFromTranscript({
+      run: args.run,
+      worker: args.worker,
+      nextUserPrompt: args.nextUserPrompt,
+      source: "direct-follow-up",
+      reason: "direct_worker_selection_changed",
+      selection,
+    });
+    await recordExecutionEvent({
+      runId: args.run.id,
+      workerId: args.worker.id,
+      planItemId: null,
+      eventType: "worker_selection_reconciled",
+      details: {
+        summary: `Recreated ${args.worker.id} to honor the selected ${requestedType} worker.`,
+        previousWorkerType: args.worker.type,
+        nextWorkerType: requestedType,
+        previousWorkerModel: currentModel,
+        nextWorkerModel: requestedModel,
+        previousWorkerEffort: currentEffort,
+        nextWorkerEffort: requestedEffort,
+        previousAccountId: currentAllocation?.accountId ?? null,
+        nextAccountId: requestedAccountId,
+      },
+    });
+    const worker = await db.select().from(workers).where(eq(workers.id, args.worker.id)).get();
+    return {
+      worker: worker ?? args.worker,
+      replayPrompt: recreated.replayPrompt,
+    };
+  } catch (error) {
+    await db.update(workers).set({
+      status: "error",
+      updatedAt: new Date(),
+    }).where(eq(workers.id, args.worker.id));
+    await persistRunFailure(args.run.id, error);
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "worker.resume.failed",
+      message: `Could not switch ${args.worker.id} to the selected ${requestedType} worker: ${formatErrorMessage(error)}`,
+      surface: "banner",
+      runId: args.run.id,
+      workerId: args.worker.id,
+      cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+    });
+    throw error;
+  }
 }
 
 function elicitationAnswerContent(text: string, requestedSchema: ElicitationSchema | null | undefined): ElicitationContent {
@@ -528,13 +656,52 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
   return { ...resumedWorker, transcriptReplayRequired };
 }
 
-async function askDirectWorkerWithResume(run: RunRecord, worker: WorkerRecord, content: string, imageAttachments?: Array<{ path: string; mimeType: string }>) {
-  const workerPrompt = isDirectRunMode(run.mode) ? buildDirectWorkerPrompt(content) : content;
+async function askDirectWorkerWithResume(
+  run: RunRecord,
+  worker: WorkerRecord,
+  content: string,
+  imageAttachments?: Array<{ path: string; mimeType: string }>,
+  promptOverride?: string | null,
+) {
+  const workerPrompt = promptOverride ?? (isDirectRunMode(run.mode) ? buildDirectWorkerPrompt(content) : content);
   try {
     return await (imageAttachments?.length
       ? askAgent(worker.id, workerPrompt, imageAttachments)
       : askAgent(worker.id, workerPrompt));
   } catch (error) {
+    if (isProviderSessionDiagnosticErrorMessage(formatErrorMessage(error))) {
+      const currentWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
+      const recreated = await recreateWorkerFromTranscript({
+        run,
+        worker: currentWorker ?? worker,
+        nextUserPrompt: workerPrompt,
+        source: "direct-follow-up",
+        reason: "provider_session_diagnostic_after_direct_follow_up",
+      });
+      await db.update(workers).set({
+        status: "working",
+        updatedAt: new Date(),
+      }).where(eq(workers.id, worker.id));
+      await db.update(runs).set({
+        status: "running",
+        failedAt: null,
+        lastError: null,
+        updatedAt: new Date(),
+      }).where(eq(runs.id, run.id));
+      notifyEventStreamSubscribers();
+
+      try {
+        return imageAttachments?.length
+          ? await askAgent(worker.id, recreated.replayPrompt, imageAttachments)
+          : await askAgent(worker.id, recreated.replayPrompt);
+      } catch (retryError) {
+        if (isProviderSessionDiagnosticErrorMessage(formatErrorMessage(retryError))) {
+          throw new Error(userFacingProviderSessionErrorMessage(formatErrorMessage(retryError)));
+        }
+        throw retryError;
+      }
+    }
+
     if (!isAgentNotFoundError(error)) {
       throw error;
     }
@@ -575,9 +742,16 @@ async function askDirectWorkerWithResume(run: RunRecord, worker: WorkerRecord, c
         nextUserPrompt: workerPrompt,
       })
       : null;
-    return imageAttachments?.length
-      ? askAgent(worker.id, replayPrompt ?? workerPrompt, imageAttachments)
-      : askAgent(worker.id, replayPrompt ?? workerPrompt);
+    try {
+      return imageAttachments?.length
+        ? await askAgent(worker.id, replayPrompt ?? workerPrompt, imageAttachments)
+        : await askAgent(worker.id, replayPrompt ?? workerPrompt);
+    } catch (retryError) {
+      if (isProviderSessionDiagnosticErrorMessage(formatErrorMessage(retryError))) {
+        throw new Error(userFacingProviderSessionErrorMessage(formatErrorMessage(retryError)));
+      }
+      throw retryError;
+    }
   }
 }
 
@@ -590,6 +764,7 @@ async function continueWorkerConversation({
   attachments,
   appendUserInputBeforeAsk = false,
   allowCancelledWorkerResume = false,
+  promptOverride = null,
   onUserInputAppended,
 }: {
   run: RunRecord;
@@ -600,6 +775,7 @@ async function continueWorkerConversation({
   attachments: ChatAttachment[];
   appendUserInputBeforeAsk?: boolean;
   allowCancelledWorkerResume?: boolean;
+  promptOverride?: string | null;
   onUserInputAppended?: () => void;
 }) {
   try {
@@ -640,7 +816,7 @@ async function continueWorkerConversation({
     }
 
     const imageAttachments = resolveImageAttachments(attachments, getAppDataPath);
-    const response = await askDirectWorkerWithResume(run, worker, content, imageAttachments);
+    const response = await askDirectWorkerWithResume(run, worker, content, imageAttachments, promptOverride);
     if (!userInputAppended) {
       // Append user_input on delivery — `askDirectWorkerWithResume` has
       // resolved successfully, so the prompt definitely reached the
@@ -676,6 +852,13 @@ async function continueWorkerConversation({
       status: snapshot?.state ?? response.state,
       updatedAt: new Date(),
     }).where(eq(workers.id, worker.id));
+
+    await resolveRecoveryIncidentsAfterHealthyTurn({
+      runId: run.id,
+      workerId: worker.id,
+      summary: `${worker.id} completed a turn normally after recovery was pending.`,
+      reason: "worker_turn_succeeded",
+    });
 
     // Worker response now lives in the unified worker stream — the
     // bridge entries written by persistWorkerSnapshot above carry the
@@ -741,14 +924,17 @@ async function continueWorkerConversation({
       return;
     }
 
+    const surfacedErrorMessage = userFacingProviderSessionErrorMessage(formatErrorMessage(error));
     await db.update(workers).set({
       status: "error",
       updatedAt: new Date(),
     }).where(eq(workers.id, worker.id));
-    await persistRunFailure(run.id, error, {
+    await persistRunFailure(run.id, new Error(surfacedErrorMessage), {
       surface: { code: "conversation.continue.failed", workerId: worker.id },
     });
-    throw error;
+    throw isProviderSessionDiagnosticErrorMessage(formatErrorMessage(error))
+      ? new Error(surfacedErrorMessage)
+      : error;
   }
 }
 
@@ -1145,7 +1331,7 @@ async function sendConversationMessageUnlocked({
     };
   }
 
-  const worker = await selectConversationWorker(runId);
+  let worker = await selectConversationWorker(runId);
   if (!worker) {
     throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
   }
@@ -1232,6 +1418,15 @@ async function sendConversationMessageUnlocked({
   notifyEventStreamSubscribers();
 
   if (isDirectRunMode(run.mode)) {
+    const selectedWorker = await reconcileDirectWorkerSelection({
+      run,
+      worker,
+      nextUserPrompt: buildDirectWorkerPrompt(workerContent),
+    });
+    const promptOverride = selectedWorker?.replayPrompt ?? null;
+    if (selectedWorker) {
+      worker = selectedWorker.worker;
+    }
     notifyEventStreamSubscribers();
     const allowCancelledWorkerResume = isWorkerCancelled(worker);
 
@@ -1247,6 +1442,7 @@ async function sendConversationMessageUnlocked({
           // Already appended above.
           appendUserInputBeforeAsk: false,
           allowCancelledWorkerResume,
+          promptOverride,
         }));
       } catch (error) {
         if (isAgentBusyError(error)) {
@@ -1286,6 +1482,7 @@ async function sendConversationMessageUnlocked({
       // Already appended above.
       appendUserInputBeforeAsk: false,
       allowCancelledWorkerResume,
+      promptOverride,
     })), { runId });
     turn.catch((error) => {
       if (isAgentBusyError(error)) {

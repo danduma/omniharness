@@ -7,6 +7,7 @@ import { isTerminalRunStatus, normalizeRunStatus } from "@/server/runs/status";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { emitNamedEvent, type ErrorSurface, type SurfacedErrorCode } from "@/server/events/named-events";
+import { userFacingProviderSessionErrorMessage } from "@/server/workers/session-recovery";
 
 export { formatErrorMessage };
 
@@ -25,7 +26,8 @@ export async function persistRunFailure(
   error: unknown,
   options: PersistRunFailureOptions = {},
 ) {
-  const errorMessage = formatErrorMessage(error);
+  const rawErrorMessage = formatErrorMessage(error);
+  const errorMessage = userFacingProviderSessionErrorMessage(rawErrorMessage);
   const now = new Date();
   const content = `Run failed: ${errorMessage}`;
   const currentRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
@@ -59,7 +61,7 @@ export async function persistRunFailure(
       surface: options.surface.surface ?? "toast",
       runId,
       ...(options.surface.workerId ? { workerId: options.surface.workerId } : {}),
-      cause: { name: cause.name, message: cause.message },
+      cause: { name: cause.name, message: errorMessage !== rawErrorMessage ? errorMessage : cause.message },
     });
   }
 

@@ -97,6 +97,15 @@ describe("isTransientSupervisorError", () => {
     expect(isTransientSupervisorError(invalidKey)).toBe(false);
   });
 
+  it("does not retry incomplete ACP diagnostic results", () => {
+    const diagnostic = Object.assign(
+      new Error("Ask failed: Internal error: [ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"),
+      { status: 500 },
+    );
+
+    expect(isTransientSupervisorError(diagnostic)).toBe(false);
+  });
+
   it("still retries rate limits that mention authentication-adjacent wording", () => {
     expect(isTransientSupervisorError(Object.assign(
       new Error("Ask failed: API Error: 429 rate limit reached for this account"),

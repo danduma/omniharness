@@ -38,7 +38,15 @@ import { parseSupersededSeqRanges, serializeSupersededSeqRanges } from "@/lib/su
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { appendWorkerSessionMetadata, readWorkerSessionMetadata } from "@/server/workers/session-metadata";
-import { buildTranscriptReplayPrompt, canRecreateRejectedSavedSession, isRejectedSavedSessionErrorMessage, materializeProviderSessionFromWorkerStream } from "@/server/workers/session-recovery";
+import {
+  buildTranscriptReplayPrompt,
+  canRecreateRejectedSavedSession,
+  isProviderSessionDiagnosticErrorMessage,
+  isRejectedSavedSessionErrorMessage,
+  materializeProviderSessionFromWorkerStream,
+  userFacingProviderSessionErrorMessage,
+} from "@/server/workers/session-recovery";
+import { recreateWorkerFromTranscript } from "@/server/workers/provider-session-recovery";
 import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
 import { updateDirectRunStatusFromWorkerOutput } from "@/server/conversations/direct-run-status";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
@@ -811,15 +819,39 @@ async function resumeDirectRunFromSavedSession(
     return { runId: run.id };
   }
 
+  const retryPrompt = replayPrompt ?? buildDirectMessagePrompt(run.mode, targetMessage, content, worker.cwd);
+  const retryImages = resolveImageAttachments(parseChatAttachmentsJson(targetMessage.attachmentsJson), getAppDataPath);
   let response;
   try {
-    const retryPrompt = replayPrompt ?? buildDirectMessagePrompt(run.mode, targetMessage, content, worker.cwd);
-    const retryImages = resolveImageAttachments(parseChatAttachmentsJson(targetMessage.attachmentsJson), getAppDataPath);
     response = retryImages.length
       ? await askAgent(worker.id, retryPrompt, retryImages)
       : await askAgent(worker.id, retryPrompt);
   } catch (error) {
-    if (isAgentBusyError(error)) {
+    if (isProviderSessionDiagnosticErrorMessage(formatErrorMessage(error))) {
+      const recreated = await recreateWorkerFromTranscript({
+        run,
+        worker,
+        nextUserPrompt: retryPrompt,
+        source: "direct-retry",
+        reason: "provider_session_diagnostic_after_direct_retry",
+      });
+      resumedWorker = recreated.worker;
+      replayPrompt = recreated.replayPrompt;
+      await db.update(workers).set({
+        status: "working",
+        updatedAt: new Date(),
+      }).where(eq(workers.id, worker.id));
+      try {
+        response = retryImages.length
+          ? await askAgent(worker.id, recreated.replayPrompt, retryImages)
+          : await askAgent(worker.id, recreated.replayPrompt);
+      } catch (retryError) {
+        if (isProviderSessionDiagnosticErrorMessage(formatErrorMessage(retryError))) {
+          throw new Error(userFacingProviderSessionErrorMessage(formatErrorMessage(retryError)));
+        }
+        throw retryError;
+      }
+    } else if (isAgentBusyError(error)) {
       let busySnapshot: AgentRecord | null = null;
       try {
         busySnapshot = await getAgent(worker.id);
@@ -845,17 +877,18 @@ async function resumeDirectRunFromSavedSession(
         createdAt: new Date(),
       });
       return { runId: run.id };
+    } else {
+      const quotaResult = await handleDirectWorkerAskQuotaError({
+        runId: run.id,
+        workerId: worker.id,
+        workerType: resumedWorker.type || worker.type,
+        error,
+      });
+      if (quotaResult) {
+        return quotaResult;
+      }
+      throw error;
     }
-    const quotaResult = await handleDirectWorkerAskQuotaError({
-      runId: run.id,
-      workerId: worker.id,
-      workerType: resumedWorker.type || worker.type,
-      error,
-    });
-    if (quotaResult) {
-      return quotaResult;
-    }
-    throw error;
   }
   await appendUserInputOnDelivery({
     id: targetMessage.id,

@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, lte, or, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import { recoveryIncidents } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -9,6 +9,10 @@ export type RecoveryIncidentKind = "worker_lost" | "session_missing" | "queue_bl
 export type RecoveryIncidentStatus = "open" | "recovering" | "resolved" | "needs_user" | "failed";
 
 const OPEN_INCIDENT_STATUSES: RecoveryIncidentStatus[] = ["open", "recovering", "needs_user"];
+// `failed` belongs here even though it carries a `resolvedAt` stamp: the recovery
+// banner treats it as active, so a gave-up incident is just as visible as an open
+// one and needs the same sweep to disappear.
+const UNSETTLED_INCIDENT_STATUSES: RecoveryIncidentStatus[] = ["open", "recovering", "needs_user", "failed"];
 
 function serializeDetails(details: Record<string, unknown> | null | undefined) {
   return details ? JSON.stringify(details) : null;
@@ -151,6 +155,59 @@ export async function markRecoveryIncidentRecovering(args: {
   });
 }
 
+/**
+ * Atomically claim a recovery incident before starting an external resume.
+ * Multiple wake sources can observe the same open incident; only one may
+ * reattach the provider session. A stale recovering claim can be reclaimed
+ * after a runner crash, but a live claim is left alone.
+ */
+export async function claimRecoveryIncident(args: {
+  incidentId: string;
+  runId: string;
+  workerId?: string | null;
+  decision: string;
+  details?: Record<string, unknown>;
+  staleAfterMs?: number;
+}) {
+  const now = new Date();
+  const staleAfterMs = Math.max(0, args.staleAfterMs ?? 60_000);
+  const staleBefore = new Date(now.getTime() - staleAfterMs);
+  const claimed = await db.update(recoveryIncidents).set({
+    status: "recovering",
+    autoAttemptCount: sql`${recoveryIncidents.autoAttemptCount} + 1`,
+    details: serializeDetails(args.details),
+    updatedAt: now,
+  }).where(and(
+    eq(recoveryIncidents.id, args.incidentId),
+    or(
+      eq(recoveryIncidents.status, "open"),
+      and(
+        eq(recoveryIncidents.status, "recovering"),
+        lte(recoveryIncidents.updatedAt, staleBefore),
+      ),
+    ),
+  )).returning().get();
+
+  if (!claimed) {
+    return null;
+  }
+
+  await insertRecoveryEvent(args.runId, args.workerId, "recovery_policy_decision", {
+    summary: `Recovery policy chose ${args.decision}.`,
+    incidentId: args.incidentId,
+    decision: args.decision,
+    autoAttemptCount: claimed.autoAttemptCount,
+    ...(args.details ?? {}),
+  });
+  emitNamedEvent({
+    kind: "recovery.attempt",
+    runId: args.runId,
+    incidentId: args.incidentId,
+    attempt: claimed.autoAttemptCount,
+  });
+  return claimed;
+}
+
 export async function markRecoveryIncidentResolved(args: {
   incidentId: string;
   runId: string;
@@ -251,6 +308,107 @@ export async function markRecoveryIncidentFailed(args: {
     runId: args.runId,
     ...(args.workerId ? { workerId: args.workerId } : {}),
   });
+}
+
+/**
+ * A worker turn that completes normally is proof the run recovered: the session
+ * exists, the runtime answers, the credentials work, quota is not exhausted.
+ * Nothing used to act on that proof — `markRecoveryIncidentResolved` was only
+ * reachable from an automatic recovery attempt, a quota resume, or the user
+ * stopping the conversation — so a `needs_user` incident survived the very turn
+ * that disproved it and the recovery banner stayed up forever. Anything still
+ * genuinely broken is reopened by the next `openRecoveryIncident` call.
+ */
+export async function resolveRecoveryIncidentsAfterHealthyTurn(args: {
+  runId: string;
+  workerId?: string | null;
+  summary: string;
+  reason: string;
+}) {
+  const records = await db
+    .select()
+    .from(recoveryIncidents)
+    .where(and(
+      eq(recoveryIncidents.runId, args.runId),
+      inArray(recoveryIncidents.status, UNSETTLED_INCIDENT_STATUSES),
+    ));
+
+  // Scope to the worker that just proved itself, plus run-level incidents that
+  // name no worker. A healthy worker in a multi-worker implementation run says
+  // nothing about a sibling that is still lost.
+  const stale = records.filter((record) => (
+    !record.workerId || !args.workerId || record.workerId === args.workerId
+  ));
+
+  for (const incident of stale) {
+    await markRecoveryIncidentResolved({
+      incidentId: incident.id,
+      runId: args.runId,
+      workerId: incident.workerId,
+      summary: args.summary,
+      details: {
+        reason: args.reason,
+        resolvedByHealthyTurn: true,
+        previousStatus: incident.status,
+      },
+    });
+  }
+
+  return stale.length;
+}
+
+/**
+ * A worker that has *begun a new working period* since an incident was recorded
+ * has disproved it just as conclusively as a completed turn: the session
+ * exists, the runtime answers, the credentials work, quota is not exhausted.
+ *
+ * `resolveRecoveryIncidentsAfterHealthyTurn` only fires when a turn *finishes*,
+ * which is too late whenever the code that opens an incident then awaits a full
+ * turn before clearing it — a quota resume awaiting its own resume prompt, a
+ * turn that parks on an elicitation and never returns. The banner then outlives
+ * the condition by the length of the turn, or forever. This sweep closes that
+ * gap at the moment work restarts, without waiting for it to end.
+ *
+ * The `since` fence is the worker's `active_work_started_at` (maintained by the
+ * workers work-timer triggers). Only incidents recorded *before* the current
+ * working period are cleared, so anything opened during this turn survives and
+ * the sweep cannot flap against a genuinely broken worker. Anything still
+ * broken is reopened by the next `openRecoveryIncident` call.
+ */
+export async function resolveRecoveryIncidentsDisprovedByActiveWork(args: {
+  runId: string;
+  workerId: string;
+  since: Date;
+}) {
+  const records = await db
+    .select()
+    .from(recoveryIncidents)
+    .where(and(
+      eq(recoveryIncidents.runId, args.runId),
+      inArray(recoveryIncidents.status, UNSETTLED_INCIDENT_STATUSES),
+    ));
+
+  const stale = records.filter((record) => (
+    (!record.workerId || record.workerId === args.workerId)
+    && record.detectedAt.getTime() < args.since.getTime()
+  ));
+
+  for (const incident of stale) {
+    await markRecoveryIncidentResolved({
+      incidentId: incident.id,
+      runId: args.runId,
+      workerId: incident.workerId,
+      summary: `Worker ${args.workerId} started working again; clearing stale recovery state.`,
+      details: {
+        reason: "worker_resumed_active_work",
+        resolvedByActiveWork: true,
+        previousStatus: incident.status,
+        activeWorkStartedAt: args.since.toISOString(),
+      },
+    });
+  }
+
+  return stale.length;
 }
 
 export async function listRecoveryIncidentsForRun(runId: string) {

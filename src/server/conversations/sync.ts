@@ -14,6 +14,7 @@ import { startSupervisorRun } from "@/server/supervisor/start";
 import { isRecoverableConnectionSupervisorError, isTransientSupervisorError } from "@/server/supervisor/retry";
 import { readWorkerOutputEntries, writeWorkerOutputEntries } from "@/server/workers/output-store";
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
+import { resolveRecoveryIncidentsDisprovedByActiveWork } from "@/server/runs/recovery-incidents";
 import { drainQueuedWorkerMessages } from "./queued-messages";
 import { trackConversationBackgroundTask } from "./worker-turn-gate";
 import {
@@ -683,13 +684,14 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
       || worker.cwd !== nextWorkerCwd
       || worker.currentText !== nextWorkerCurrentText
       || worker.lastText !== agent.lastText;
+    const workerUpdatedAt = new Date();
     if (workerChanged) {
       await withSqliteBusyRetry(() => db.update(workers).set({
         status: nextWorkerStatus,
         cwd: nextWorkerCwd,
         currentText: nextWorkerCurrentText,
         lastText: agent.lastText,
-        updatedAt: new Date(),
+        updatedAt: workerUpdatedAt,
       }).where(eq(workers.id, worker.id)));
     }
     if (worker.status !== nextWorkerStatus) {
@@ -700,6 +702,18 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
         prev: worker.status,
         next: nextWorkerStatus,
       });
+      // The worker just started working again, which disproves any recovery
+      // state recorded before this turn began. Recovery bookkeeping is
+      // otherwise only written when a turn *ends*, so a path that opens an
+      // incident and then awaits a full turn leaves the banner up for the
+      // whole turn — or forever, if the turn never returns.
+      if (normalizedStatus(nextWorkerStatus) === "working") {
+        await resolveRecoveryIncidentsDisprovedByActiveWork({
+          runId: run.id,
+          workerId: worker.id,
+          since: workerUpdatedAt,
+        });
+      }
     }
 
     if (run.mode === "planning") {

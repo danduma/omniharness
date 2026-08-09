@@ -5,8 +5,13 @@ import { recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { isRunnableImplementationRun, normalizeRunStatus } from "@/lib/run-status";
 import { formatErrorMessage } from "@/server/runs/failures";
-import { markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
+import {
+  claimRecoveryIncident,
+  markRecoveryIncidentNeedsUser,
+  markRecoveryIncidentResolved,
+} from "@/server/runs/recovery-incidents";
 import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
 import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
@@ -14,13 +19,41 @@ import { appendSupervisorInputOnDelivery } from "@/server/workers/stream-writer"
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
+import { isTransientSupervisorError } from "@/server/supervisor/retry";
+import {
+  hasFutureDurableSupervisorWake,
+  scheduleDurableSupervisorWakeAt,
+} from "@/server/supervisor/wake-schedule";
+import { isWorkerTurnSupersededError } from "@/server/conversations/worker-turn-gate";
 import { extractQuotaResetInfo } from "./reset-parser";
+import { clearResolvedQuotaIncidents } from "./type-blocking";
 import { handleWorkerQuotaExhaustion, type QuotaRecoveryResult } from "./recovery";
 
 type ResumeQuotaWorkersResult =
   | { state: "none"; resumedCount: number }
   | { state: "resumed"; resumedCount: number }
   | QuotaRecoveryResult;
+
+/**
+ * Where a direct-run quota resume was triggered from. Each source keeps its own
+ * copy for the "nothing left to resume" message and the recorded event reason,
+ * because those strings are what the banner and the event log show the user.
+ */
+export type DirectQuotaResumeSource = "durable_wake" | "watchdog_sweep" | "manual_resume";
+
+const MISSING_SESSION_REASONS: Record<DirectQuotaResumeSource, string> = {
+  durable_wake: "Quota reset arrived, but no resumable worker session was available.",
+  watchdog_sweep: "Quota reset elapsed, but no resumable worker session was available.",
+  manual_resume: "Quota reset resume was requested, but no resumable worker session was available.",
+};
+
+const MISSING_SESSION_EVENT_REASONS: Record<DirectQuotaResumeSource, string> = {
+  durable_wake: "quota_wait",
+  watchdog_sweep: "watchdog_sweep",
+  manual_resume: "manual_resume",
+};
+
+const RESUMABLE_QUOTA_INCIDENT_STATUSES = ["open", "recovering"] as const;
 
 function isAgentAlreadyExistsError(error: unknown, workerId: string) {
   const message = formatErrorMessage(error).toLowerCase();
@@ -90,6 +123,15 @@ async function promptResumedQuotaWorker(args: {
     summary: "Prompted worker to continue after quota reset.",
     interventionType: "recovery",
   });
+  // The resumed bridge can stream output while askAgent is still in flight.
+  // This recovery prompt is accepted once the saved session has reattached,
+  // so anchor it before the ask starts just like a supervisor-spawned prompt.
+  await appendSupervisorInputOnDelivery({
+    runId: args.runId,
+    workerId: args.worker.id,
+    text: prompt,
+    deliveredAt,
+  });
   const response = await askAgent(args.worker.id, prompt);
   let snapshot: AgentRecord | null = null;
   try {
@@ -98,12 +140,6 @@ async function promptResumedQuotaWorker(args: {
   } catch {
     // The ask response is still the durable fallback when the bridge snapshot is unavailable.
   }
-  await appendSupervisorInputOnDelivery({
-    runId: args.runId,
-    workerId: args.worker.id,
-    text: prompt,
-    deliveredAt,
-  });
   await appendAskResponseFallbackEntry({
     runId: args.runId,
     workerId: args.worker.id,
@@ -150,10 +186,21 @@ export async function resumeQuotaExhaustedWorkers(args: {
   let resumedCount = 0;
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const { env: envParams } = await readRuntimeEnvFromSettings();
-  for (const incident of workerIncidents) {
-    const worker = await db.select().from(workers).where(eq(workers.id, incident.workerId ?? "")).get();
+  for (const candidateIncident of workerIncidents) {
+    const worker = await db.select().from(workers).where(eq(workers.id, candidateIncident.workerId ?? "")).get();
     const sessionId = worker?.bridgeSessionId?.trim();
     if (!worker || !sessionId) {
+      continue;
+    }
+
+    const incident = await claimRecoveryIncident({
+      incidentId: candidateIncident.id,
+      runId: args.run.id,
+      workerId: worker.id,
+      decision: "resume_quota_worker",
+      details: { sessionId, reason: "quota_wait" },
+    });
+    if (!incident) {
       continue;
     }
 
@@ -194,17 +241,13 @@ export async function resumeQuotaExhaustedWorkers(args: {
         lastText: resumedWorker.lastText ?? "",
         updatedAt: new Date(),
       }).where(eq(workers.id, worker.id));
-      if (shouldPromptResumedWorker(resumedWorker.state)) {
-        await promptResumedQuotaWorker({
-          runId: args.run.id,
-          worker: {
-            ...worker,
-            status: resumedWorker.state,
-            bridgeSessionId: resumedWorker.sessionId ?? sessionId,
-            bridgeSessionMode: resumedWorker.sessionMode ?? worker.bridgeSessionMode ?? null,
-          },
-        });
-      }
+      // Resolve before prompting, not after. The successful resume is already
+      // proof the quota window reopened; `promptResumedQuotaWorker` then awaits
+      // a full agent turn, and sequencing the resolve behind it left the
+      // incident `open` — and the "Waiting for quota reset" banner up — for the
+      // entire turn, while the worker was visibly working. If the window did
+      // not actually reopen, the ask below throws and the catch reopens a fresh
+      // incident via `handleWorkerQuotaExhaustion`.
       await markRecoveryIncidentResolved({
         incidentId: incident.id,
         runId: args.run.id,
@@ -217,7 +260,50 @@ export async function resumeQuotaExhaustedWorkers(args: {
         },
       });
       resumedCount += 1;
+      notifyEventStreamSubscribers();
+      if (shouldPromptResumedWorker(resumedWorker.state)) {
+        await promptResumedQuotaWorker({
+          runId: args.run.id,
+          worker: {
+            ...worker,
+            status: resumedWorker.state,
+            bridgeSessionId: resumedWorker.sessionId ?? sessionId,
+            bridgeSessionMode: resumedWorker.sessionMode ?? worker.bridgeSessionMode ?? null,
+          },
+        });
+      }
     } catch (error) {
+      if (isWorkerTurnSupersededError(error)) {
+        emitNamedEvent({
+          kind: "worker.recovery_continuation_superseded",
+          runId: args.run.id,
+          workerId: worker.id,
+        });
+        await recordExecutionEvent({
+          runId: args.run.id,
+          workerId: worker.id,
+          planItemId: null,
+          eventType: "quota_resume_prompt_superseded",
+          details: {
+            summary: `Stopped the automatic quota-resume prompt for ${worker.id} because a newer turn took over.`,
+            incidentId: incident.id,
+          },
+        });
+        await markRecoveryIncidentResolved({
+          incidentId: incident.id,
+          runId: args.run.id,
+          workerId: worker.id,
+          summary: "Quota recovery handed control to a newer worker turn.",
+          details: {
+            recoveryState: "quota_resumed",
+            recommendedAction: "none",
+            sessionId,
+            continuationSuperseded: true,
+          },
+        });
+        resumedCount += 1;
+        continue;
+      }
       const quotaInfo = extractQuotaResetInfo(error, { provider: worker.type });
       if (quotaInfo.isQuotaError) {
         return handleWorkerQuotaExhaustion({
@@ -227,7 +313,58 @@ export async function resumeQuotaExhaustedWorkers(args: {
           provider: worker.type,
         });
       }
-      throw error;
+
+      const reason = error instanceof Error ? error.message : String(error);
+      if (isTransientSupervisorError(error)) {
+        await db.update(recoveryIncidents).set({
+          status: "open",
+          lastError: reason,
+          updatedAt: new Date(),
+        }).where(eq(recoveryIncidents.id, incident.id));
+        throw error;
+      }
+
+      await db.update(runs).set({
+        status: "needs_recovery",
+        failedAt: null,
+        lastError: reason,
+        updatedAt: new Date(),
+      }).where(eq(runs.id, args.run.id));
+      await db.update(workers).set({
+        status: "error",
+        currentText: "",
+        updatedAt: new Date(),
+      }).where(eq(workers.id, worker.id));
+      await markRecoveryIncidentNeedsUser({
+        incidentId: incident.id,
+        runId: args.run.id,
+        workerId: worker.id,
+        reason,
+        details: {
+          resumeFailed: true,
+          sessionId,
+          errorType: "non_quota_resume_failure",
+        },
+      });
+      await recordExecutionEvent({
+        runId: args.run.id,
+        workerId: worker.id,
+        planItemId: null,
+        eventType: "quota_resume_failed",
+        details: {
+          summary: `Quota recovery could not resume ${worker.id}.`,
+          incidentId: incident.id,
+          reason,
+          sessionId,
+        },
+      });
+      notifyEventStreamSubscribers();
+      return {
+        state: "needs_recovery" as const,
+        runId: args.run.id,
+        incidentId: incident.id,
+        quota: quotaInfo,
+      };
     }
   }
 
@@ -248,4 +385,174 @@ export async function resumeQuotaExhaustedWorkers(args: {
     return { state: "resumed", resumedCount };
   }
   return { state: "none", resumedCount: 0 };
+}
+
+/**
+ * Resume a non-implementation (direct/commit) run once its quota window has
+ * reopened, and settle the run status afterwards.
+ *
+ * Callers must decide *whether* to resume from the open `quota_exhausted`
+ * incident — never from `runs.status`. Direct-run status is rewritten by
+ * conversation sync and the worker-output resolver, neither of which knows
+ * about quota, so a run parked as `quota_waiting` can be flipped to
+ * `running`/`done` before the reset lands.
+ */
+export async function resumeDirectRunAfterQuotaReset(args: {
+  run: typeof runs.$inferSelect;
+  source: DirectQuotaResumeSource;
+}): Promise<ResumeQuotaWorkersResult> {
+  await db.update(runs).set({
+    status: "running",
+    failedAt: null,
+    lastError: null,
+    updatedAt: new Date(),
+  }).where(eq(runs.id, args.run.id));
+
+  const result = await resumeQuotaExhaustedWorkers({ run: args.run });
+  if (result.state !== "none" || result.resumedCount !== 0) {
+    return result;
+  }
+
+  const reason = MISSING_SESSION_REASONS[args.source];
+  await db.update(runs).set({
+    status: "needs_recovery",
+    lastError: reason,
+    updatedAt: new Date(),
+  }).where(eq(runs.id, args.run.id));
+  await recordExecutionEvent({
+    runId: args.run.id,
+    eventType: "quota_resume_missing_session",
+    details: { summary: reason, reason: MISSING_SESSION_EVENT_REASONS[args.source] },
+  });
+  emitNamedEvent({
+    kind: "error.surfaced",
+    code: "recovery.needs_user",
+    message: reason,
+    surface: "banner",
+    runId: args.run.id,
+  });
+  return result;
+}
+
+function incidentResumeAt(details: string | null | undefined) {
+  if (!details) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(details);
+    const value = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as { resumeAt?: unknown }).resumeAt
+      : null;
+    if (typeof value !== "string") {
+      return null;
+    }
+    const resumeAt = new Date(value);
+    return Number.isNaN(resumeAt.getTime()) ? null : resumeAt;
+  } catch {
+    return null;
+  }
+}
+
+export async function hasResumableQuotaIncident(runId: string) {
+  const incident = await db.select().from(recoveryIncidents).where(and(
+    eq(recoveryIncidents.runId, runId),
+    eq(recoveryIncidents.kind, "quota_exhausted"),
+    inArray(recoveryIncidents.status, [...RESUMABLE_QUOTA_INCIDENT_STATUSES]),
+  )).limit(1).get();
+  return Boolean(incident);
+}
+
+/**
+ * Safety net for direct runs whose durable quota wake never delivered a resume
+ * — the wake row is consumed before the handler decides what to do, so any bail
+ * after the claim destroys the only retry record. Sweeps every open
+ * `quota_exhausted` incident whose reset has already elapsed and resumes it.
+ *
+ * Runs with a future durable wake are left alone; that wake is still the
+ * primary path. `claimRecoveryIncident` debounces re-entry for 60s, and a
+ * failed resume moves the incident to `needs_user`, so repeated sweeps cannot
+ * spin on the same run.
+ */
+export async function resumeElapsedQuotaWaits(options: { now?: Date } = {}) {
+  const now = options.now ?? new Date();
+  const incidents = await db.select().from(recoveryIncidents).where(and(
+    eq(recoveryIncidents.kind, "quota_exhausted"),
+    inArray(recoveryIncidents.status, [...RESUMABLE_QUOTA_INCIDENT_STATUSES]),
+  ));
+
+  const elapsedRunIds = Array.from(new Set<string>(incidents
+    .filter((incident) => {
+      const resumeAt = incidentResumeAt(incident.details);
+      return resumeAt !== null && resumeAt.getTime() <= now.getTime();
+    })
+    .map((incident) => incident.runId)));
+
+  let sweptCount = 0;
+  let clearedCount = 0;
+  for (const runId of elapsedRunIds) {
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    if (!run || run.archivedAt) {
+      continue;
+    }
+    if (normalizeRunStatus(run.status) === "cancelled" || normalizeRunStatus(run.status) === "canceled") {
+      continue;
+    }
+    if (await hasFutureDurableSupervisorWake(runId, now.getTime())) {
+      continue;
+    }
+
+    // Implementation runs park at `quota_waiting`, which the watchdog loop
+    // below deliberately skips — so a lost wake strands them exactly like a
+    // direct conversation. Re-arm a due wake rather than resuming here, so the
+    // normal (well-tested) wake handler does the work. This converges: the
+    // handler either resolves the incident or moves the run out of
+    // `quota_waiting`, and either outcome stops matching on the next sweep.
+    if (run.mode === "implementation") {
+      if (isRunnableImplementationRun(run) && normalizeRunStatus(run.status) === "quota_waiting") {
+        await scheduleDurableSupervisorWakeAt({
+          runId,
+          wakeAt: now,
+          reason: "quota_wait",
+          source: "watchdog-sweep",
+          force: true,
+        });
+        emitNamedEvent({ kind: "supervisor.quota_wake_swept", runId, status: run.status, action: "rescheduled" });
+        sweptCount += 1;
+      }
+      continue;
+    }
+
+    const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+    const blockedWorker = runWorkers.find((worker) => (
+      worker.status === "cred-exhausted" && Boolean(worker.bridgeSessionId?.trim())
+    ));
+    if (!blockedWorker) {
+      // The worker already came back on its own (or has no resumable session),
+      // so the incident is stale bookkeeping that only keeps the "waiting for
+      // quota reset" banner up. Close it without touching the agent — resuming
+      // a conversation the user considers finished would start unrequested work.
+      const { resolvedCount } = await clearResolvedQuotaIncidents(runId, { now });
+      if (resolvedCount > 0) {
+        emitNamedEvent({ kind: "supervisor.quota_wake_swept", runId, status: run.status, action: "cleared" });
+        clearedCount += 1;
+      }
+      continue;
+    }
+
+    emitNamedEvent({ kind: "supervisor.quota_wake_swept", runId, status: run.status, action: "resumed" });
+    await recordExecutionEvent({
+      runId,
+      eventType: "quota_wait_swept",
+      details: {
+        summary: "Quota reset had elapsed with no scheduled wake; resuming from the open incident.",
+        runStatus: run.status,
+        workerId: blockedWorker.id,
+        reason: "watchdog_sweep",
+      },
+    });
+    await resumeDirectRunAfterQuotaReset({ run, source: "watchdog_sweep" });
+    sweptCount += 1;
+  }
+
+  return { sweptCount, clearedCount };
 }

@@ -67,6 +67,24 @@ describe("directWorkerOutputHasPendingHumanInput", () => {
     })).toBe(true);
   });
 
+  it("parks a quota-blocked worker instead of marking the conversation done", () => {
+    // Regression: `cred-exhausted` is idle but not finished. Falling through to
+    // "done" cleared the run out of `quota_waiting`, which dropped the "waiting
+    // for quota reset" banner and left the conversation looking complete while
+    // it was actually blocked on the provider window.
+    expect(resolveDirectRunStatusFromWorkerOutput({
+      workerStatus: "cred-exhausted",
+      lastText: "You've hit your session limit · resets 4pm (Europe/Madrid)",
+    })).toBe("quota_waiting");
+  });
+
+  it("still surfaces pending human input ahead of a quota block", () => {
+    expect(resolveDirectRunStatusFromWorkerOutput({
+      workerStatus: "cred-exhausted",
+      pendingElicitations: [{ requestId: 1 }],
+    })).toBe("awaiting_user");
+  });
+
   it("keeps active direct workers running after structured input is answered", () => {
     expect(resolveDirectRunStatusFromWorkerOutput({
       workerStatus: "working",

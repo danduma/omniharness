@@ -426,6 +426,96 @@ describe("executeSupervisorWake", () => {
     }));
   });
 
+  it("treats a superseded quota-resume prompt as a successful handoff instead of failing the wake", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const incidentId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/quota-resume-superseded.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "implementation",
+      status: "quota_waiting",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "cred-exhausted",
+      cwd: process.cwd(),
+      outputLog: "",
+      bridgeSessionId: "saved-session-1",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(recoveryIncidents).values({
+      id: incidentId,
+      runId,
+      workerId,
+      queuedMessageId: null,
+      kind: "quota_exhausted",
+      status: "open",
+      autoAttemptCount: 0,
+      lastError: "usage limit",
+      details: JSON.stringify({ recoveryState: "quota_waiting" }),
+      detectedAt: now,
+      updatedAt: now,
+      resolvedAt: null,
+    });
+    await db.insert(supervisorScheduledWakes).values({
+      runId,
+      wakeAt: new Date(now.getTime() - 1_000),
+      reason: "quota_wait",
+      source: "time-of-day",
+      incidentId,
+      details: JSON.stringify({ incidentId }),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockSpawnAgent.mockResolvedValue({
+      name: workerId,
+      type: "codex",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "saved-session-1",
+      currentText: "",
+      lastText: "",
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    mockAskAgent.mockRejectedValue(Object.assign(
+      new Error(`Worker turn superseded by a newer worker turn: ${workerId}`),
+      { code: "WORKER_TURN_SUPERSEDED", retryable: false },
+    ));
+    mockSupervisorRun.mockResolvedValue({ state: "wait", delayMs: 5_000 });
+
+    await expect(executeSupervisorWake(runId)).resolves.toBeUndefined();
+    cancelSupervisorWake(runId);
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.id, incidentId)).get();
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(run?.status).toBe("running");
+    expect(run?.lastError).toBeNull();
+    expect(incident?.status).toBe("resolved");
+    expect(events.some((event) => event.eventType === "quota_resume_prompt_superseded")).toBe(true);
+    expect(events.some((event) => event.eventType === "run_failed")).toBe(false);
+    expect(mockSupervisorRun).toHaveBeenCalledTimes(1);
+  });
+
   it("resumes direct quota-waiting workers from saved sessions without starting the supervisor", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -543,6 +633,159 @@ describe("executeSupervisorWake", () => {
     expect(streamEntries.some((entry) => entry.type === "supervisor_input" && entry.text.includes("Continue the interrupted work"))).toBe(true);
     expect(streamEntries.some((entry) => entry.type === "message" && entry.text.includes("Resumed the direct Claude Code session."))).toBe(true);
     expect(incidents.every((incident) => incident.status === "resolved")).toBe(true);
+  });
+
+  it("resumes a direct quota wake even after conversation sync rewrote the run status", async () => {
+    // Regression: this branch gated on `runs.status === "quota_waiting"`, but
+    // direct-run status is rewritten by conversation sync and the worker-output
+    // resolver, neither of which knows about quota. A run parked as
+    // `quota_waiting` could read `running` by the time the reset landed, so the
+    // wake fell through to `run_not_runnable` — and since the wake row is
+    // claimed (deleted) before the check, nothing was left to retry with.
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const incidentId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-quota-clobbered-status.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      // Clobbered by an unrelated writer while the run was parked.
+      status: "running",
+      preferredWorkerAccountId: "claude-sub-1",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "cred-exhausted",
+      cwd: process.cwd(),
+      outputLog: "",
+      currentText: "",
+      lastText: "",
+      bridgeSessionId: "claude-session-1",
+      bridgeSessionMode: "full-access",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(recoveryIncidents).values({
+      id: incidentId,
+      runId,
+      workerId,
+      queuedMessageId: null,
+      kind: "quota_exhausted",
+      status: "open",
+      autoAttemptCount: 0,
+      lastError: "You've hit your session limit · resets 4pm (Europe/Madrid)",
+      details: JSON.stringify({
+        recoveryState: "quota_waiting",
+        recommendedAction: "wait_for_quota_reset",
+        resumeAt: now.toISOString(),
+      }),
+      detectedAt: now,
+      updatedAt: now,
+      resolvedAt: null,
+    });
+    await db.insert(supervisorScheduledWakes).values({
+      runId,
+      wakeAt: new Date(now.getTime() - 1_000),
+      reason: "quota_wait",
+      source: "time-of-day",
+      incidentId,
+      details: JSON.stringify({ incidentId }),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockSpawnAgent.mockResolvedValue({
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "claude-session-1",
+      sessionMode: "full-access",
+      currentText: "",
+      lastText: "",
+      pendingPermissions: [],
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    mockAskAgent.mockResolvedValue({
+      name: workerId,
+      state: "idle",
+      stopReason: null,
+      response: "Resumed after the quota reset.",
+    });
+
+    await executeSupervisorWake(runId);
+    cancelSupervisorWake(runId);
+
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      name: workerId,
+      resumeSessionId: "claude-session-1",
+    }));
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.id, incidentId)).get();
+    expect(run?.status).toBe("running");
+    expect(run?.lastError).toBeNull();
+    expect(incident?.status).toBe("resolved");
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event.kind))
+      .not.toContain("supervisor.quota_wake_dropped");
+  });
+
+  it("reports a due quota wake it cannot apply instead of dropping it silently", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-quota-no-incident.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "done",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(supervisorScheduledWakes).values({
+      runId,
+      wakeAt: new Date(now.getTime() - 1_000),
+      reason: "quota_wait",
+      source: "time-of-day",
+      incidentId: null,
+      details: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await executeSupervisorWake(runId);
+    cancelSupervisorWake(runId);
+
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(events.some((event) => event.eventType === "quota_wake_dropped")).toBe(true);
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(
+      expect.objectContaining({ kind: "supervisor.quota_wake_dropped", reason: "no_open_incident" }),
+    );
+    // The run status is left untouched — the wake handler is not the authority on it.
+    expect((await db.select().from(runs).where(eq(runs.id, runId)).get())?.status).toBe("done");
   });
 
   it("breaks an orphaned lease when an idle worker already produced completion evidence", async () => {

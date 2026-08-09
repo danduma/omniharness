@@ -1056,6 +1056,115 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(systemErrors.filter((message) => message.kind === "error")).toHaveLength(0);
   });
 
+  it("recreates a direct worker when the selected provider changes before continuation", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-provider-switch.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "failed",
+      preferredWorkerType: "codex",
+      preferredWorkerModel: "gpt-5.6-sol",
+      preferredWorkerEffort: "high",
+      preferredWorkerAccountId: "local-session-codex",
+      allowedWorkerTypes: JSON.stringify(["codex"]),
+      lastError: "Internal error: Failed to authenticate. API Error: 403 Account suspended",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "error",
+      cwd: "/workspace/app",
+      bridgeSessionId: "poisoned-claude-session",
+      bridgeSessionMode: "full-access",
+      effectiveLaunchModel: "claude-opus-5",
+      effectiveLaunchEffort: "high",
+      launchCredentialSource: "account",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "The saved Claude turn ended unexpectedly.",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    mockSpawnAgent.mockResolvedValueOnce({
+      name: workerId,
+      type: "codex",
+      cwd: "/workspace/app",
+      state: "idle",
+      sessionId: "fresh-codex-session",
+      sessionMode: "full-access",
+      outputEntries: [],
+      currentText: "",
+      lastText: "Ready to continue.",
+    });
+    mockAskAgent.mockResolvedValueOnce({
+      response: "Continuing with the selected Codex account.",
+      state: "idle",
+    });
+
+    const response = await POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        content: "Continue from the saved transcript.",
+        preferredWorkerType: "codex",
+        preferredWorkerModel: "gpt-5.6-sol",
+        preferredWorkerEffort: "high",
+        preferredWorkerAccountId: "local-session-codex",
+        allowedWorkerTypes: ["codex"],
+      }),
+    }), { params: Promise.resolve({ id: runId }) });
+
+    expect(response.status).toBe(200);
+    await waitFor(
+      () => mockSpawnAgent.mock.calls,
+      (calls) => calls.some((call) => call[0]?.name === workerId && call[0]?.type === "codex"),
+    );
+    await waitFor(
+      () => mockAskAgent.mock.calls,
+      (calls) => calls.some((call) => call[0] === workerId && String(call[1]).includes("Continue from the saved transcript.")),
+    );
+
+    expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      name: workerId,
+      type: "codex",
+      accountId: "local-session-codex",
+      model: "gpt-5.6-sol",
+      effort: "high",
+    }));
+
+    const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(updatedWorker?.type).toBe("codex");
+    expect(updatedWorker?.bridgeSessionId).toBe("fresh-codex-session");
+    expect(updatedRun?.lastError).toBeNull();
+    expect(events.some((event) => event.eventType === "worker_session_recreated_from_transcript")).toBe(true);
+    expect(getNamedEventsSince(0, { runId }).events).toContainEqual(expect.objectContaining({
+      event: expect.objectContaining({
+        kind: "worker.recreated",
+        runId,
+        workerId,
+      }),
+    }));
+  });
+
   it("answers a direct worker elicitation from the main composer instead of queuing it as busy work", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

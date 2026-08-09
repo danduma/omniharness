@@ -9,6 +9,7 @@ import { compactStaleWorkerOutputs } from "@/server/workers/output-store";
 import { compactStaleArtifactStreams } from "@/server/artifacts/compaction";
 import { reapStuckDirectWorkers } from "@/server/workers/stuck-worker-reaper";
 import { syncConversationSessionsFromBridge } from "@/server/conversations/sync";
+import { resumeElapsedQuotaWaits } from "@/server/quota/worker-resume";
 
 const WATCHDOG_INTERVAL_MS = 15_000;
 
@@ -80,6 +81,14 @@ export async function syncRunningSupervision() {
   }).catch((error) => {
     process.stderr.write(`[stuck-reaper] sweep threw: ${error instanceof Error ? error.message : String(error)}\n`);
   });
+  // Direct conversations have no supervisor loop, so a quota wake that never
+  // delivered leaves them stranded with an open incident and a cred-exhausted
+  // worker. The loop below only ever looks at implementation runs; this is the
+  // only sweep that can recover them.
+  await resumeElapsedQuotaWaits().catch((error) => {
+    process.stderr.write(`[quota-sweep] sweep failed: ${error instanceof Error ? error.message : String(error)}\n`);
+  });
+
   const activeRuns = await db.select().from(runs).where(and(
     inArray(runs.status, ["running", "failed", "quota_waiting"]),
     eq(runs.mode, "implementation"),

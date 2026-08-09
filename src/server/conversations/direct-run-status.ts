@@ -148,6 +148,15 @@ export function resolveDirectRunStatusFromWorkerOutput(source: WorkerOutputSourc
     return "awaiting_user";
   }
 
+  // A quota-blocked worker is idle, but the conversation is emphatically not
+  // finished — it is parked waiting for the provider window to reopen. Letting
+  // it fall through to "done" below silently cleared the run out of
+  // `quota_waiting`, which hid the "waiting for quota reset" banner and (until
+  // recovery stopped keying off `runs.status`) stranded the resume entirely.
+  if (normalizeWorkerStatus(source.workerStatus) === "cred-exhausted") {
+    return "quota_waiting";
+  }
+
   if (ACTIVE_DIRECT_WORKER_STATUSES.has(normalizeWorkerStatus(source.workerStatus))) {
     return "running";
   }

@@ -7,7 +7,11 @@ import { emitNamedEvent } from "@/server/events/named-events";
 import { isActiveImplementationRun, isRunnableImplementationRun } from "@/server/runs/status";
 import { Supervisor } from "@/server/supervisor";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
-import { resumeQuotaExhaustedWorkers } from "@/server/quota/worker-resume";
+import {
+  hasResumableQuotaIncident,
+  resumeDirectRunAfterQuotaReset,
+  resumeQuotaExhaustedWorkers,
+} from "@/server/quota/worker-resume";
 import { clearResolvedQuotaIncidents } from "@/server/quota/type-blocking";
 import { isRunPendingFailover } from "@/server/supervisor/worker-failover";
 import { stopRunObserver } from "./observer";
@@ -16,6 +20,7 @@ import {
   cancelDurableSupervisorWake,
   claimDueDurableSupervisorWake,
   hasFutureDurableSupervisorWake,
+  runDetachedSupervisorWakeTask,
   scheduleDurableSupervisorWakeAt,
 } from "./wake-schedule";
 
@@ -39,8 +44,28 @@ const PRE_WORKER_RECOVERY_EVENT_TYPES = new Set([
 ]);
 const ACTIVE_WORKER_STATUS_PATTERN = /\b(working|stuck|starting|pending|busy|running)\b/i;
 
-function shouldResumeQuotaWorkersWithoutSupervisor(run: typeof runs.$inferSelect | null | undefined): run is typeof runs.$inferSelect {
-  return Boolean(run && run.status === "quota_waiting" && run.mode !== "implementation");
+/**
+ * Whether a due wake should resume a direct/commit run's quota-blocked worker.
+ *
+ * `runs.status === "quota_waiting"` alone is not enough: conversation sync and
+ * the direct worker-output resolver rewrite direct-run status without any quota
+ * awareness, so a parked run can read `running` or `done` by the time the reset
+ * lands. When that happened this branch fell through to `run_not_runnable` —
+ * and because the wake row is claimed (deleted) before the check, the only
+ * durable retry record was destroyed and the run hung forever. Fall back to the
+ * open `quota_exhausted` incident, which no other path rewrites.
+ */
+async function shouldResumeQuotaWorkersWithoutSupervisor(
+  run: typeof runs.$inferSelect | null | undefined,
+  dueDurableWake: { reason: string } | null,
+): Promise<boolean> {
+  if (!run || !dueDurableWake || run.mode === "implementation") {
+    return false;
+  }
+  if (run.status === "quota_waiting") {
+    return true;
+  }
+  return dueDurableWake.reason === "quota_wait" && await hasResumableQuotaIncident(run.id);
 }
 
 function scheduleDurableWakeBackup(runId: string, nextDeadline: number, delayMs: number) {
@@ -299,38 +324,40 @@ export async function executeSupervisorWake(runId: string) {
   }
 
   if (!run || !isRunnableImplementationRun(run)) {
-    if (shouldResumeQuotaWorkersWithoutSupervisor(run) && dueDurableWake) {
-      await db.update(runs).set({
-        status: "running",
-        failedAt: null,
-        lastError: null,
-        updatedAt: new Date(),
-      }).where(eq(runs.id, runId));
+    if (run && dueDurableWake && await shouldResumeQuotaWorkersWithoutSupervisor(run, dueDurableWake)) {
       if (dueDurableWake.reason === "quota_wait") {
-        const quotaResumeResult = await resumeQuotaExhaustedWorkers({ run });
-        if (quotaResumeResult.state === "none" && quotaResumeResult.resumedCount === 0) {
-          const reason = "Quota reset arrived, but no resumable worker session was available.";
-          await db.update(runs).set({
-            status: "needs_recovery",
-            lastError: reason,
-            updatedAt: new Date(),
-          }).where(eq(runs.id, runId));
-          await recordExecutionEvent({
-            runId,
-            eventType: "quota_resume_missing_session",
-            details: { summary: reason, reason: "quota_wait" },
-          });
-          emitNamedEvent({
-            kind: "error.surfaced",
-            code: "recovery.needs_user",
-            message: reason,
-            surface: "banner",
-            runId,
-          });
-        }
+        await resumeDirectRunAfterQuotaReset({ run, source: "durable_wake" });
+      } else {
+        await db.update(runs).set({
+          status: "running",
+          failedAt: null,
+          lastError: null,
+          updatedAt: new Date(),
+        }).where(eq(runs.id, runId));
       }
       await releaseSupervisorWakeLease(runId, leaseId);
       return;
+    }
+
+    // Claiming the wake already deleted it, so a quota wake that lands here is
+    // gone for good — say so instead of returning silently, and leave the open
+    // incident for `resumeElapsedQuotaWaits` to pick up.
+    if (dueDurableWake?.reason === "quota_wait") {
+      emitNamedEvent({
+        kind: "supervisor.quota_wake_dropped",
+        runId,
+        reason: run ? "no_open_incident" : "run_missing",
+        status: run?.status ?? null,
+      });
+      await recordExecutionEvent({
+        runId,
+        eventType: "quota_wake_dropped",
+        details: {
+          summary: "A due quota wake was claimed but could not be applied to this run.",
+          runStatus: run?.status ?? null,
+          runMode: run?.mode ?? null,
+        },
+      });
     }
 
     emitNamedEvent({ kind: "supervisor.wake_skipped", runId, reason: "run_not_runnable" });
@@ -432,7 +459,7 @@ export function scheduleSupervisorWake(runId: string, delayMs = 0) {
     source: delayMs === LEASE_BLOCKED_RETRY_MS ? "lease_retry" : "volatile",
   });
   wakeTimers.set(runId, setTimeout(() => {
-    void executeSupervisorWake(runId);
+    runDetachedSupervisorWakeTask(runId, () => executeSupervisorWake(runId));
   }, Math.max(0, delayMs)));
 }
 

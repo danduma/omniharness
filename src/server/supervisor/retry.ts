@@ -71,6 +71,11 @@ const PERMANENT_MESSAGE_PATTERNS = [
   /\bcap_exceeded\b/i,
   /\binsufficient quota\b/i,
   /\bresource exhausted\b/i,
+  // ACP can return an incomplete user-result diagnostic when a resumed
+  // session is stuck at an interrupted tool/permission boundary. Retrying the
+  // same session only repeats the broken state; recovery must stop and surface
+  // it for a fresh-session/manual path.
+  /\[ede_diagnostic\]/i,
 ];
 
 export interface RetrySupervisorRequestOptions {

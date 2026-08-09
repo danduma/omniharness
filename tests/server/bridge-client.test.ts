@@ -209,6 +209,25 @@ describe("bridge client", () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
+  it("does not retry an incomplete ACP diagnostic ask", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        error: "Internal error: [ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null",
+      }), {
+        status: 500,
+        statusText: "Internal Server Error",
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const { askAgent } = await import("@/server/bridge-client");
+
+    await expect(askAgent("worker-1", "continue")).rejects.toThrow(/ede_diagnostic/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
   it("does not restart an ask after a newer worker turn retires it", async () => {
     vi.useFakeTimers();
     const reset = new TypeError(

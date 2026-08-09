@@ -29,6 +29,7 @@ import {
   markRecoveryIncidentRecovering,
   markRecoveryIncidentResolved,
   openRecoveryIncident,
+  resolveRecoveryIncidentsAfterHealthyTurn,
   type RecoveryIncidentKind,
 } from "./recovery-incidents";
 import { computeRecoveryBackoff, decideRecoveryAction, getRecoveryPolicy } from "./recovery-policy";
@@ -534,6 +535,20 @@ export async function reconcileRunRecovery(args: {
   });
 
   if (state.kind === "healthy" || state.kind === "recovering") {
+    // A silent early return here left incidents from an earlier failure hanging
+    // open long after the run went healthy again, which is what kept the recovery
+    // banner on screen. `recovering` is genuinely still in flight, so only
+    // `healthy` settles the leftovers.
+    if (state.kind === "healthy") {
+      const resolved = await resolveRecoveryIncidentsAfterHealthyTurn({
+        runId: run.id,
+        summary: "Run is healthy again; clearing leftover recovery incidents.",
+        reason: "run_reconciled_healthy",
+      });
+      if (resolved > 0) {
+        notifyEventStreamSubscribers();
+      }
+    }
     return { action: "none" as const, runId: run.id, recoveryState: state };
   }
 

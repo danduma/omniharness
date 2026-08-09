@@ -2,6 +2,26 @@ import { describe, expect, it } from "vitest";
 import { buildLiveWorkerSnapshot } from "@/server/workers/live-snapshots";
 
 describe("buildLiveWorkerSnapshot", () => {
+  it("does not expose an incomplete ACP diagnostic from a failed live worker", () => {
+    const rawDiagnostic = "Ask failed: Internal error: [ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null";
+    const snapshot = buildLiveWorkerSnapshot({
+      agent: {
+        name: "worker-poisoned-session",
+        type: "claude",
+        cwd: "/repo",
+        state: "error",
+        currentText: "",
+        lastText: "",
+        lastError: rawDiagnostic,
+        outputEntries: [],
+      },
+    });
+
+    expect(snapshot?.lastError).toBe("Claude Code returned an incomplete response after the interrupted session. OmniHarness replaced the session, but the turn did not complete. Try sending the message again.");
+    expect(snapshot?.bridgeLastError).toBe(snapshot?.lastError);
+    expect(snapshot?.lastError).not.toContain("[ede_diagnostic]");
+  });
+
   it("drops stale live current text from an idle completed direct worker", () => {
     const snapshot = buildLiveWorkerSnapshot({
       agent: {

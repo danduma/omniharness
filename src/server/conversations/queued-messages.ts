@@ -23,6 +23,7 @@ import { persistRunFailure } from "@/server/runs/failures";
 import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
 import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
+import { resolveRecoveryIncidentsAfterHealthyTurn } from "@/server/runs/recovery-incidents";
 import {
   serializeQueuedConversationMessage,
   type BusyMessageAction,
@@ -409,6 +410,13 @@ export async function persistDeliveredWorkerResponse({
     status: snapshot?.state ?? response.state,
     updatedAt: deliveredAt,
   }).where(eq(workers.id, workerId));
+
+  await resolveRecoveryIncidentsAfterHealthyTurn({
+    runId: run.id,
+    workerId,
+    summary: `${workerId} delivered a queued message normally after recovery was pending.`,
+    reason: "queued_message_delivered",
+  });
 
   if (run.mode === "direct" || run.mode === "commit") {
     await updateDirectRunStatusFromWorkerOutput({
