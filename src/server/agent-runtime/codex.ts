@@ -16,6 +16,29 @@ function modeIdFromUnknown(value: unknown) {
   return typeof mode.id === "string" && mode.id.trim() ? mode.id.trim() : null;
 }
 
+export function resolveCodexSessionMode(requestedMode: string | null | undefined, availableModes?: unknown) {
+  const normalizedRequested = requestedMode?.trim();
+  if (!normalizedRequested) {
+    return normalizedRequested;
+  }
+
+  if (normalizedRequested !== "full-access" && normalizedRequested !== "danger-full-access") {
+    return normalizedRequested;
+  }
+
+  const availableModeIds = Array.isArray(availableModes)
+    ? new Set(availableModes.map(modeIdFromUnknown).filter((id): id is string => id !== null))
+    : null;
+
+  // OmniHarness uses the cross-agent "full-access" name. Codex ACP exposes
+  // the same mode as "agent-full-access"; leaving the public name unchanged
+  // would make the adapter silently retain its network-disabled default.
+  if (!availableModeIds || availableModeIds.has("agent-full-access")) {
+    return "agent-full-access";
+  }
+  return normalizedRequested;
+}
+
 export function shouldSetRequestedMode(
   requestedMode: string | null | undefined,
   currentModeId: string | null | undefined,
