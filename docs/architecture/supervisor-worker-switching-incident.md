@@ -123,16 +123,17 @@ Regression expectations:
 
 ### 6. Supervisor input was appended after streamed worker output
 
-For supervisor-spawned workers, the server appended `supervisor_input` after `askAgent()` resolved. Gemini streams output while `askAgent()` is still in flight. That meant bridge output received earlier sequence numbers, and the original instruction appeared at the end of the transcript.
+For supervisor-spawned workers, the server appended `supervisor_input` after `askAgent()` resolved. Gemini streams output while `askAgent()` is still in flight. That meant bridge output received earlier sequence numbers, and the original instruction appeared at the end of the transcript. Automatic quota-resume prompts had the same failure mode: the saved session was successfully reattached, but the recovery prompt was appended only after the resumed turn completed.
 
 Required invariant:
 
-> For a freshly supervisor-spawned worker, append the initial `supervisor_input` before invoking `askAgent()`, so the worker stream reads input -> worker activity -> answer.
+> For any accepted server-driven worker turn, append `supervisor_input` before invoking `askAgent()`, so the worker stream reads input -> worker activity -> answer. This includes freshly spawned workers, failover handoffs, and quota-resume continuations.
 
 Regression expectations:
 
 - A supervisor-spawned worker prompt is the first supervisor input before streamed bridge output.
 - Failover handoff prompts follow the same rule.
+- A quota-resume prompt is anchored before the resumed turn starts.
 - Ordinary follow-ups that may hit a busy worker still need delivery-aware handling; do not append speculative duplicate follow-ups to the stream.
 
 ## The invariants we keep
@@ -222,4 +223,3 @@ Avoid these patterns:
 ## The short version
 
 The user stopped the worker to change the next worker. That must be respected as a durable control-plane boundary. The next worker selection must be persisted before continuation. A spawned bridge session must be reflected back into the persisted worker stream. And the transcript must be ordered by the actual worker turn: input first, output after.
-

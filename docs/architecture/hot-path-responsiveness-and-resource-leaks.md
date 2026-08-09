@@ -549,3 +549,131 @@ Compared against the failure baseline:
   eviction triggers a disk + DB re-read of the canonical state on the
   next access. Verify that path exists before claiming the cache is
   load-bearing.
+
+## August 5, 2026 — Third recurrence, this time on the client
+
+Reported symptom: with several sessions streaming at once the UI became slow to
+click (especially the elicitation/permission forms), slow to scroll, and would
+periodically freeze outright. Unlike the May incidents, server request times
+were fine — the damage was on the browser's main thread.
+
+### Root cause: delta wake-ups were still forcing full snapshot rebuilds
+
+The May fixes correctly moved worker transcript bodies *off* the snapshot
+(Rule 2) and gave clients an incremental content channel: the
+`worker.entry_appended` named event is a wake-up carrying only `(workerId,
+seq)`, and the client pulls from `GET /api/workers/:id/entries?afterSeq=N`.
+
+What was never done was decoupling that wake-up from the snapshot rebuild:
+
+1. `writeWorkerOutputEntries` emitted one `worker.entry_appended` **per
+   appended entry** (`output-store.ts`).
+2. `emitNamedEvent` called `notifyEventStreamSubscribers()` unconditionally
+   (`named-events.ts`).
+3. That bumped a **process-global** counter and fired every listener
+   (`live-updates.ts`).
+4. Every parked SSE stream resolved immediately and rebuilt a full payload
+   (~40 SQLite queries, a bridge fetch, and two serializations of a
+   multi-hundred-KB object).
+
+So the event designed to make snapshots unnecessary was the thing triggering
+them, at transcript-token cadence, for every connected client. Because the
+counter is global and unscoped, output on run A rebuilt run B's snapshot too —
+cost scaled as `streaming_workers × connected_clients`.
+
+### Secondary causes found in the same pass
+
+- **Dead payload weight.** `db.select().from(runs)` pulled every column.
+  Measured on a real database: 130 non-archived runs carrying **142,579 bytes
+  of `gitBaselineJson`** in every frame, with zero frontend consumers — the
+  field existed only as a declaration in `shared/home-types.ts`.
+- **Dead change detection.** `EventStreamStateManager.update` guarded with
+  `Object.is(nextState, this.state)` where `nextState` was a freshly allocated
+  literal, so the guard could never fire. Every frame — including re-delivered,
+  byte-identical poll payloads — took a new state identity and re-rendered the
+  shell.
+- **O(runs × messages), three times over.** The sidebar's Active-tab
+  classification rescanned every message, queued message, worker and agent
+  once per run, allocating two `Date` objects per comparison, and did so from
+  three separate places per frame.
+- **Unmemoized transcript.** `MarkdownContent` re-parsed every message on every
+  render with no cache. `terminalUiManager` is one flat store shared by every
+  tool/thought/group in the transcript and broadcasts to all subscribers, so a
+  single disclosure click re-rendered every row — this was the reported click
+  latency. Only two `React.memo` calls existed in the entire codebase.
+- **Layout thrash.** Terminal's pre-paint `useLayoutEffect` did
+  read `scrollHeight` → write `scrollTop` → read `scrollHeight` again, forcing
+  two synchronous layouts per commit.
+- **Storage on the interaction path.** `setElicitationDraft` did a synchronous
+  `sessionStorage.setItem` before the state update that repaints the control.
+
+### Fixes landed
+
+- `live-updates.ts` — `notifyEventStreamSubscribers({ snapshotRelevant })`
+  maintains a second counter. `named-events.ts` classifies
+  `worker.entry_appended` as delta-only.
+- `routes/events.ts` — the SSE park loop drains cheap named frames on every
+  wake but floor-gates rebuilds: 250 ms for snapshot-relevant changes, 2 s for
+  delta-only wakes.
+- `output-store.ts` — one wake-up per append batch carrying the highest seq
+  (safe: `WorkerEntriesManager.onWakeUp` fetches from its own cursor).
+- `events/run-snapshot-fields.ts` — shared column trimming for both snapshot
+  builders. Drops `gitBaselineJson` and `plannerReadinessVerdictJson`
+  outright; scopes `plannerArtifactsJson` to the selected run.
+- `supervisor/observer.ts` — the unconditional per-poll notify moved inside the
+  `claimedTransition` guard.
+- `EventStreamStateManager.ts` — real change detection via the server's
+  `snapshotChecksum`.
+- `sidebar-activity.ts` — `buildSidebarActivityIndex` computes per-run rollups
+  in one pass; classification is now O(workers in run).
+- `MarkdownContent.tsx` — `memo` + `useMemo` around the parse, with the
+  hook-free `renderMarkdownContent` kept exported for the structure tests.
+- `Terminal.tsx` — per-id `useManagerSelector` reads replace five whole-state
+  subscriptions; `ActivityRow` memoized; single pre-write `scrollHeight` read;
+  cached activity fingerprint.
+- `globals.css` / `Terminal.tsx` — `content-visibility: auto` on transcript
+  rows.
+- `component-state-managers.ts` — elicitation draft writes batched off the
+  click path.
+
+### Permanent rules added
+
+#### Rule 11: A Wake-Up Is Not A Rebuild
+
+If a named event fully describes its own change, emitting it must not force a
+snapshot rebuild. Classify it delta-only. Snapshot rebuilds are expensive
+enough that they need an explicit floor interval, not "whenever something
+happened".
+
+#### Rule 12: Broadcast Payloads Need Column Projection
+
+Any query whose rows go out on a broadcast channel must select an explicit
+column list, like `WORKER_SNAPSHOT_COLUMNS` already does. `select()` on a table
+with JSON blob columns ships those blobs to every client on every frame. Before
+adding a field to a broadcast payload, name its consumer.
+
+#### Rule 13: Guards Must Be Able To Fire
+
+An equality guard against a freshly allocated object is dead code. If a merge
+allocates unconditionally, compare content — a checksum the server already
+computes is cheaper than the render cascade it prevents.
+
+#### Rule 14: Shared Flat Stores Need Per-Key Selectors
+
+A `StateManager` keyed by id and read with `useManagerSnapshot` re-renders every
+subscriber on any key's change. Components that read one entry out of a shared
+map must use `useManagerSelector` with a per-id selector.
+
+### Anti-patterns added
+
+- "The event is small, so emitting it per entry is fine." — the frame is small;
+  the rebuild it triggers is not. Cost belongs to the wake-up, not the payload.
+- "We already moved the big data off the snapshot." — necessary, not
+  sufficient. Also move the *trigger*.
+- "The component is cheap to re-render." — not when it is rendered once per
+  transcript entry and re-parses markdown each time. Measure per-row cost
+  times row count.
+- "It's only a sessionStorage write." — synchronous storage on a click handler
+  runs before the repaint that acknowledges the click.
+- "Nothing reads this field, but it's harmless to include." — 142 KB per frame
+  per client of harmless.

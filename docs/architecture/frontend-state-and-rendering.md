@@ -16,7 +16,7 @@ Each shared manager owns a focused slice of UI state. Components should subscrib
 | Manager | Owned state | Notes |
 | --- | --- | --- |
 | `HomeUiStateManager` | shell UI: selected run id, composer worker/model/effort/mode selections, dialog visibility, sidebar widths, mobile nav, attachments, editing rename state, runtime errors, read markers, draft project path | Stores transient view state; do not put server data here |
-| `EventStreamStateManager` | live event snapshot, cached output entries, merged runs/messages/workers/events | Persists per-run snapshots; merges live updates |
+| `EventStreamStateManager` | live event snapshot, cached output entries, merged runs/messages/workers/events | Server/SSE state is authoritative; browser preview bodies are memory-only |
 | `SettingsDraftManager` | unsaved settings draft and save payload | Hydrated once per successful settings load |
 | `BusyMessageQueueManager` | queued message visibility, cancellation state | Updated optimistically by composer controller |
 | `AppearancePreferencesManager` | text-size preferences, theme-adjacent UI prefs | Persists to localStorage |
@@ -25,8 +25,11 @@ Each shared manager owns a focused slice of UI state. Components should subscrib
 
 ## Conversation Loading Invariants
 
-- Selecting a run hydrates `EventStreamStateManager` from the scoped frontend
-  cache immediately, then asks the server whether the snapshot checksum changed.
+- Selecting a run hydrates `EventStreamStateManager` from its in-memory scoped
+  preview when available, then asks the server whether the snapshot checksum
+  changed. Browser `localStorage` is not used for event snapshots or worker
+  transcript bodies; those payloads can consume the entire origin quota and
+  crowd out preferences and credentials.
 - A not-modified snapshot confirms freshness and must not replace local state.
 - Worker-backed transcripts render from `WorkerEntriesManager` entries. Legacy
   `messages` rows are fallback evidence only after the selected worker stream
