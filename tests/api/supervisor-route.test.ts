@@ -9,11 +9,9 @@ import { persistRunFailure } from "@/server/runs/failures";
 const {
   mockStartSupervisorRun,
   mockSyncAccounts,
-  mockQueueConversationTitleGeneration,
 } = vi.hoisted(() => ({
   mockStartSupervisorRun: vi.fn(),
   mockSyncAccounts: vi.fn().mockResolvedValue(undefined),
-  mockQueueConversationTitleGeneration: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/server/supervisor/start", () => ({
@@ -26,10 +24,6 @@ vi.mock("@/server/credits", () => ({
   },
 }));
 
-vi.mock("@/server/conversation-title", () => ({
-  queueConversationTitleGeneration: mockQueueConversationTitleGeneration,
-}));
-
 import { supervisorRoute as POST } from "@/../tests/helpers/runtime-routes";
 
 describe("POST /api/supervisor", () => {
@@ -38,7 +32,6 @@ describe("POST /api/supervisor", () => {
   beforeEach(() => {
     mockStartSupervisorRun.mockClear();
     mockSyncAccounts.mockClear();
-    mockQueueConversationTitleGeneration.mockClear();
   });
 
   afterEach(() => {
@@ -76,7 +69,6 @@ describe("POST /api/supervisor", () => {
     expect(insertedMessage?.content).toBe(command);
     expect(mockSyncAccounts).toHaveBeenCalledOnce();
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
-    expect(mockQueueConversationTitleGeneration).toHaveBeenCalledWith({ runId: payload.runId, command });
 
     const adHocPlanPath = getAppDataPath(insertedPlan!.path);
     createdFiles.push(adHocPlanPath);
@@ -141,7 +133,6 @@ describe("POST /api/supervisor", () => {
 
     expect(insertedRun?.projectPath).toBe(projectPath);
     expect(insertedRun?.title).toBe(command);
-    expect(mockQueueConversationTitleGeneration).toHaveBeenCalledWith({ runId: payload.runId, command });
   });
 
   it("persists preferred and allowed worker types on the run", async () => {

@@ -10,6 +10,11 @@ import {
   writeWorkerOutputEntries,
 } from "@/server/workers/output-store";
 import { appendWorkerSessionMetadata } from "@/server/workers/session-metadata";
+import {
+  applyAgentSessionTitle,
+  extractAgentSessionTitle,
+} from "@/server/conversations/agent-session-title";
+import { readAgentSessionTitleFromTranscript } from "@/server/conversations/agent-transcript-title";
 
 type PersistableWorkerSnapshot = Pick<AgentRecord, "outputEntries" | "currentText" | "lastText"> & {
   sessionId?: string | null;
@@ -81,6 +86,35 @@ async function seedInitialDirectUserPrompt(worker: typeof workers.$inferSelect) 
   });
 }
 
+/**
+ * Take the title the agent generated for itself, in preference to anything
+ * derived from the user's first message.
+ *
+ * Two sources, checked cheapest-first. The ACP `session_info_update` route is
+ * the one the protocol intends, but Claude Code does not currently send it;
+ * its title lives in its own session transcript instead, found by the session
+ * id already recorded on the worker.
+ */
+async function adoptAgentGeneratedTitle(
+  worker: typeof workers.$inferSelect,
+  snapshot: PersistableWorkerSnapshot,
+) {
+  const streamTitle = extractAgentSessionTitle(snapshot.outputEntries);
+  if (streamTitle) {
+    await applyAgentSessionTitle({ runId: worker.runId, title: streamTitle });
+    return;
+  }
+
+  const sessionId = (snapshot.sessionId ?? worker.bridgeSessionId)?.trim();
+  if (!sessionId || !worker.cwd) {
+    return;
+  }
+  const transcriptTitle = await readAgentSessionTitleFromTranscript({ sessionId, cwd: worker.cwd });
+  if (transcriptTitle) {
+    await applyAgentSessionTitle({ runId: worker.runId, title: transcriptTitle });
+  }
+}
+
 export async function persistWorkerSnapshot(
   workerId: string,
   snapshot: PersistableWorkerSnapshot,
@@ -93,6 +127,7 @@ export async function persistWorkerSnapshot(
   if (Array.isArray(snapshot.outputEntries) && snapshot.outputEntries.length > 0) {
     await seedInitialDirectUserPrompt(worker);
     await writeWorkerOutputEntries(worker.runId, workerId, snapshot.outputEntries);
+    await adoptAgentGeneratedTitle(worker, snapshot);
   }
   await appendWorkerSessionMetadata({
     runId: worker.runId,

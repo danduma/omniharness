@@ -24,6 +24,11 @@ import {
   settingsGetRoute as GET,
   settingsPostRoute as POST,
 } from "@/../tests/helpers/runtime-routes";
+import {
+  GIT_COMMIT_WORKER_EFFORT_SETTING,
+  GIT_COMMIT_WORKER_MODEL_SETTING,
+  GIT_COMMIT_WORKER_TYPE_SETTING,
+} from "@/lib/commit-workflow";
 
 describe("/api/settings", () => {
   let tempDirs: string[] = [];
@@ -102,6 +107,42 @@ describe("/api/settings", () => {
     expect(payload.resourceSnapshot).toHaveProperty("totalMemoryMb");
     expect(payload.resourceSnapshot).toHaveProperty("diskFreeMb");
     expect(payload.resourceSnapshot).toHaveProperty("diskTotalMb");
+  });
+
+  it("stores the dedicated project commit agent settings", async () => {
+    const response = await POST(await makeAuthenticatedRequest("http://localhost/api/settings", {
+      method: "POST",
+      body: JSON.stringify({
+        [GIT_COMMIT_WORKER_TYPE_SETTING]: "claude",
+        [GIT_COMMIT_WORKER_MODEL_SETTING]: "custom-commit-model",
+        [GIT_COMMIT_WORKER_EFFORT_SETTING]: "extra high",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const rows = await db.select().from(settings);
+    expect(Object.fromEntries(rows.map((row) => [row.key, row.value]))).toMatchObject({
+      [GIT_COMMIT_WORKER_TYPE_SETTING]: "claude",
+      [GIT_COMMIT_WORKER_MODEL_SETTING]: "custom-commit-model",
+      [GIT_COMMIT_WORKER_EFFORT_SETTING]: "extra high",
+    });
+  });
+
+  it("rejects invalid dedicated project commit agent settings", async () => {
+    const response = await POST(await makeAuthenticatedRequest("http://localhost/api/settings", {
+      method: "POST",
+      body: JSON.stringify({
+        [GIT_COMMIT_WORKER_TYPE_SETTING]: "not-a-worker",
+        [GIT_COMMIT_WORKER_EFFORT_SETTING]: "not-an-effort",
+      }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: "invalid_commit_worker_settings",
+      },
+    });
   });
 
   it("does not fail the whole response when an old encrypted secret cannot be decrypted", async () => {

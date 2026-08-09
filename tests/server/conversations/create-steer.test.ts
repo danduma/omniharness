@@ -29,10 +29,6 @@ vi.mock("@/server/runs/ad-hoc-plan", () => ({
   rewriteAdHocPlan: vi.fn(),
 }));
 
-vi.mock("@/server/conversation-title", () => ({
-  queueConversationTitleGeneration: vi.fn(() => Promise.resolve()),
-}));
-
 vi.mock("@/server/bridge-client", () => ({
   askAgent: mockAskAgent,
   cancelAgent: vi.fn(() => Promise.resolve()),
