@@ -3,7 +3,7 @@ provider: "claude"
 codex_thread_id: "9951b149-2404-416f-adbe-40d592278c48"
 title: "Fix auto-scroll on new messages in conversation"
 started_at: "2026-08-04T08:46:53.205Z"
-updated_at: "2026-08-04T09:21:40.362Z"
+updated_at: "2026-08-04T11:55:20.212Z"
 working_directory: "/Users/masterman/NLP/omniharness"
 archive_status: "unknown"
 part: 1
@@ -13,6 +13,227 @@ parts: 1
 # Fix auto-scroll on new messages in conversation
 
 > This archive contains Claude Code conversation activity, stored thinking blocks, tools, and subagents. Raw system prompts and credentials are excluded.
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude state: mode
+
+```text
+{
+  "type": "mode",
+  "mode": "normal",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
 <!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
 ## Claude state: mode
 
@@ -30757,5 +30978,4463 @@ I verified the two in-flight-guard tests fail with the guard removed, so they're
 
 uuid: 7c50ff46-10fc-42a4-a9f3-43b569aa5464
 parent: c0ac107e-802d-42f6-84fa-1c5c9c61376d
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:25:28.712Z","phase":null} -->
+## Claude state: queue-operation · 2026-08-04T11:25:28.712Z
+
+```text
+{
+  "type": "queue-operation",
+  "operation": "enqueue",
+  "timestamp": "2026-08-04T11:25:28.712Z",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:25:28.714Z","phase":null} -->
+## Claude state: queue-operation · 2026-08-04T11:25:28.714Z
+
+```text
+{
+  "type": "queue-operation",
+  "operation": "dequeue",
+  "timestamp": "2026-08-04T11:25:28.714Z",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:25:28.793Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:25:28.793Z
+
+```text
+{
+  "type": "deferred_tools_delta",
+  "addedNames": [],
+  "addedLines": [],
+  "removedNames": [
+    "mcp__claude_ai_Gmail__apply_sensitive_message_label",
+    "mcp__claude_ai_Gmail__apply_sensitive_thread_label",
+    "mcp__claude_ai_Gmail__create_draft",
+    "mcp__claude_ai_Gmail__create_label",
+    "mcp__claude_ai_Gmail__get_message",
+    "mcp__claude_ai_Gmail__get_thread",
+    "mcp__claude_ai_Gmail__label_message",
+    "mcp__claude_ai_Gmail__label_thread",
+    "mcp__claude_ai_Gmail__list_drafts",
+    "mcp__claude_ai_Gmail__list_labels",
+    "mcp__claude_ai_Gmail__search_threads",
+    "mcp__claude_ai_Gmail__unlabel_message",
+    "mcp__claude_ai_Gmail__unlabel_thread",
+    "mcp__claude_ai_Google_Calendar__create_event",
+    "mcp__claude_ai_Google_Calendar__delete_event",
+    "mcp__claude_ai_Google_Calendar__get_event",
+    "mcp__claude_ai_Google_Calendar__list_calendars",
+    "mcp__claude_ai_Google_Calendar__list_events",
+    "mcp__claude_ai_Google_Calendar__respond_to_event",
+    "mcp__claude_ai_Google_Calendar__search_events",
+    "mcp__claude_ai_Google_Calendar__suggest_time",
+    "mcp__claude_ai_Google_Calendar__update_event",
+    "mcp__claude_ai_Google_Drive__copy_file",
+    "mcp__claude_ai_Google_Drive__create_file",
+    "mcp__claude_ai_Google_Drive__download_file_content",
+    "mcp__claude_ai_Google_Drive__get_file_metadata",
+    "mcp__claude_ai_Google_Drive__get_file_permissions",
+    "mcp__claude_ai_Google_Drive__list_recent_files",
+    "mcp__claude_ai_Google_Drive__read_file_content",
+    "mcp__claude_ai_Google_Drive__search_files"
+  ],
+  "readdedNames": [],
+  "pendingMcpServers": [
+    "claude.ai Gmail",
+    "claude.ai Google Calendar",
+    "claude.ai Google Drive"
+  ]
+}
+
+binary omitted from archive
+
+uuid: 0585d196-416e-4043-b14c-66df1e2da7b7
+parent: 4ca790b2-a972-46b1-b6ac-6923c33e70fb
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:25:28.793Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:25:28.793Z
+
+```text
+{
+  "type": "task_reminder",
+  "content": [],
+  "itemCount": 0
+}
+
+binary omitted from archive
+
+uuid: dac30763-6a46-42eb-bf2e-575e8ee95f8a
+parent: 0585d196-416e-4043-b14c-66df1e2da7b7
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"user","timestamp":"2026-08-04T11:25:28.794Z","phase":null} -->
+## User · 2026-08-04T11:25:28.794Z
+
+OmniHarness direct-control instruction:
+Do not implement, edit files, run mutating commands, or otherwise change the workspace unless the user's latest message explicitly asks you to implement, edit, modify, fix, create, delete, run, apply, or change something.
+If the user's latest message asks how you would do something, asks for suggestions, asks for advice, asks for a plan, or says not to do anything, answer with analysis or a plan only.
+If the user's intent is ambiguous, ask a clarifying question before making workspace changes.
+
+User message:
+ok new issue: when scrolling UP there is no end! So the first scroll up loads the previous chunk of messages but it renders and we're still AT THE TOP so that triggers loading the next one and on and on - this needs a fix. Instead of immediately teleporting to the oldest message, we should continue scrolling from the boundary where the load happened
+
+uuid: 4ca790b2-a972-46b1-b6ac-6923c33e70fb
+parent: 7c50ff46-10fc-42a4-a9f3-43b569aa5464
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:25:40.607Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:25:40.607Z
+
+The user is reporting an infinite loop bug where the message history keeps reloading. The issue is that when older messages get prepended to the list, the scroll position stays at the top, triggering another history request immediately. I need to implement scroll anchoring — capturing the scroll height before adding messages, then adjusting the scroll position afterward so the user stays visually anchored to the same content boundary instead of jumping around.
+
+Looking at the codebase, I can see the scroll listener that triggers `onRequestMoreHistory`, a wheel handler with its own history-loading check, and some refs tracking the first activity position. There's also a learning document about this exact scroll boundary issue that I should review, plus the `WorkerEntriesManager.loadOlder` function that handles fetching older entries. Let me examine how the current implementation works.
+
+uuid: 2cdee316-1839-495e-8b4b-646839c22477
+parent: dac30763-6a46-42eb-bf2e-575e8ee95f8a
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:25:40.608Z","phase":null} -->
+## Claude · 2026-08-04T11:25:40.608Z
+
+The user explicitly asked for a fix. Let me look at the current history-loading path.
+
+uuid: 972758ee-9ff0-436f-baf1-d61beb2e2c8f
+parent: 2cdee316-1839-495e-8b4b-646839c22477
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:25:40.613Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:25:40.613Z
+
+```json
+{
+  "command": "cat docs/superpowers/learnings/2026-08-04-top-scroll-boundary-must-load-history.md 2>/dev/null",
+  "description": "Read the related learning doc"
+}
+
+uuid: 7e0ed31f-e84e-4313-ba88-9682022b398b
+parent: 972758ee-9ff0-436f-baf1-d61beb2e2c8f
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:25:40.702Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:25:40.702Z
+
+```json
+{
+  "command": "sed -n '2470,2560p' src/components/Terminal.tsx",
+  "description": "Read current scroll/history effect in Terminal"
+}
+
+uuid: 41203e00-55a3-4a17-867a-9955be3c60ae
+parent: 7e0ed31f-e84e-4313-ba88-9682022b398b
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:25:41.256Z","phase":null} -->
+## Claude tool result: toolu_01F7KS4F5wRH7zB8BozWCDQJ · 2026-08-04T11:25:41.256Z
+
+```text
+      ? getConversationTerminalTextSizeStyle(conversationTextSize)
+      : getTerminalTextSizeStyle(terminalTextSize)
+  ), [conversationTextSize, terminalTextSize, textSizeScope]);
+  const handleProjectFileReferenceClick = useMemo(() => (
+    projectRoot && onOpenProjectFile
+      ? (file: ProjectFileReference) => onOpenProjectFile(file)
+      : undefined
+  ), [onOpenProjectFile, projectRoot]);
+
+  useLayoutEffect(() => {
+    const container = scrollRef.current;
+    if (!container) {
+      return;
+    }
+
+    const scrollContainer = getTerminalScrollElement(container, variant);
+    scrollContainerRef.current = scrollContainer;
+    previousScrollTopRef.current = scrollContainer.scrollTop;
+
+    const updateFollowState = () => {
+      shouldFollowLatestRef.current = shouldTerminalKeepFollowingLatest(scrollContainer, previousScrollTopRef.current);
+      previousScrollTopRef.current = scrollContainer.scrollTop;
+    };
+
+    const handleScroll = () => {
+      updateFollowState();
+      if (
+        variant === "native"
+        && hasMoreHistory
+        && shouldTerminalRequestMoreHistory(scrollContainer)
+      ) {
+        onRequestMoreHistory?.();
+      }
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      if (
+        hasMoreHistory
+        && shouldTerminalRequestMoreHistoryFromWheel(scrollContainer, event.deltaY)
+      ) {
+        onRequestMoreHistory?.();
+      }
+    };
+
+    updateFollowState();
+    scrollContainer.addEventListener("scroll", handleScroll, { passive: true });
+    scrollContainer.addEventListener("wheel", handleWheel, { passive: true });
+    return () => {
+      scrollContainer.removeEventListener("scroll", handleScroll);
+      scrollContainer.removeEventListener("wheel", handleWheel);
+    };
+  }, [hasMoreHistory, onRequestMoreHistory, variant]);
+
+  useLayoutEffect(() => {
+    const container = scrollContainerRef.current;
+    const activityVersion = getTerminalActivityVersion(filteredActivity);
+    const scrollAnchorChanged = previousScrollAnchorKeyRef.current !== scrollAnchorKey;
+    previousScrollAnchorKeyRef.current = scrollAnchorKey;
+    if (scrollAnchorChanged) {
+      hasPositionedFirstActivityRef.current = false;
+    }
+    const previousActivityVersion = previousActivityVersionRef.current;
+    const activityChanged = previousActivityVersionRef.current !== activityVersion;
+    previousActivityVersionRef.current = activityVersion;
+    const previousFirstActivityId = firstActivityIdRef.current;
+    const firstActivityId = filteredActivity[0]?.id ?? null;
+    if (shouldTerminalResetInitialPosition({
+      previousFirstActivityId,
+      nextFirstActivityId: firstActivityId,
+      scrollAnchorChanged,
+    })) {
+      hasPositionedFirstActivityRef.current = false;
+    }
+    firstActivityIdRef.current = firstActivityId;
+
+    const isFirstRenderedActivity = filteredActivity.length > 0 && !hasPositionedFirstActivityRef.current;
+    if (
+      !container
+      || (!activityChanged && !scrollAnchorChanged)
+      || (!shouldFollowLatestRef.current && !isFirstRenderedActivity)
+    ) {
+      return;
+    }
+
+    const latestActivityKind = filteredActivity.at(-1)?.kind;
+    if (!shouldTerminalScrollToLatest({ variant, isFirstRenderedActivity, latestActivityKind })) {
+      previousScrollTopRef.current = container.scrollTop;
+      return;
+    }
+
+    const scrollBehavior: ScrollBehavior = isFirstRenderedActivity ? "auto" : "smooth";
+
+uuid: 307d512e-280f-4ede-bd2b-2d5faf0ae2e6
+parent: 41203e00-55a3-4a17-867a-9955be3c60ae
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:25:41.258Z","phase":null} -->
+## Claude tool result: toolu_018YYGghRXXUDXDMdcqGs6Jy · 2026-08-04T11:25:41.258Z
+
+```text
+# Top Scroll Boundary Must Load History
+
+**Date:** 2026-08-04
+**Context:** OmniHarness paged worker conversation transcripts
+**Symptom:** Run `f3987ae9caa2` appeared to begin with Fable's final answer. The opening prompts existed at worker-stream sequences 1 and 379, but scrolling upward from the displayed top never revealed them.
+**Root Cause:** The initial 100-row tail page covered sequences 651–750 and was dominated by 60 revisions of one assistant message. The server correctly returned `hasOlder: true`, but the UI requested the preceding page only from a `scroll` event. At `scrollTop = 0`, an upward wheel or trackpad gesture cannot move the viewport, so no `scroll` event was emitted and pagination never ran.
+**Fix:** Listen for upward wheel gestures on the actual scroll-owning viewport and call the existing older-history loader when the viewport is already at the top.
+**Verification:** `pnpm vitest run tests/ui/terminal-fit.test.ts tests/ui/terminal-paged-history-user-message-order.test.ts tests/app/conversation-transcript-manager.test.ts tests/app/worker-entries-manager.test.ts` passed 60 tests; `pnpm build` completed successfully.
+**Prevention:** Infinite-scroll boundaries must respond to user intent even when the scroll offset cannot change. Test the boundary gesture as well as ordinary `scroll` events.
+**Skill/Doc Updates:** Updated `docs/architecture/worker-conversation-stream.md`; no general Codex skill update was needed because this is an OmniHarness transcript-pagination rule.
+
+uuid: 381ade27-90f0-4b0a-be18-228fdb90be4a
+parent: 7e0ed31f-e84e-4313-ba88-9682022b398b
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:26:03.759Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:26:03.759Z
+
+I'm seeing the root cause now—there are actually two separate bugs compounding the issue. The wheel listener fix made the boundary responsive, but it exposed a scroll anchoring problem: when older entries get prepended to the list, the scroll height increases but the scroll position stays at zero, so the user gets pinned at the top and keeps triggering the load-more condition.
+
+The second layout effect that's supposed to prevent teleporting to the bottom isn't helping here because after the first activity is positioned, the effect returns early and doesn't re-anchor when new content is prepended above. The real solution is to preserve the scroll position across prepend operations so the user stays anchored to their current viewing position instead of getting stuck at the top.
+
+I need to implement a standard scroll anchor pattern: capture the scroll height and position before the DOM updates, then after the prepend renders, adjust the scroll position so the previously-visible content stays in the same visual location. The key is detecting when content was prepended — I can track the first activity ID and notice when it changes but the old first item is still in the list, meaning items were added above it. I'll use a layout effect that runs before paint to measure and restore the scroll position.
+
+The challenge is that `useLayoutEffect` runs after the DOM mutation, so `scrollHeight` is already the new value. I need to capture the old height from the previous commit and store it in a ref. When a prepend is detected, I adjust `scrollTop` by the difference in heights. An even better approach is to record the scroll state at the moment `onRequestMoreHistory()` is called — before the network request completes — so I have the exact baseline from before the load started.
+
+But there's another issue: even with anchoring working correctly, I need to prevent duplicate requests. While a request is in flight, repeated scroll events at the top could trigger multiple loads. I should check if `onRequestMoreHistory` or `WorkerEntriesManager.loadOlder` already has built-in protection against concurrent requests, and wire up the component accordingly.
+
+uuid: 86b1fb92-491f-4cf0-ac02-52e957c7c88f
+parent: 381ade27-90f0-4b0a-be18-228fdb90be4a
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:26:03.864Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:26:03.864Z
+
+```json
+{
+  "command": "grep -n \"onRequestMoreHistory\\|hasMoreHistory\" src/components/home/ConversationMain.tsx src/interface/home/HomeApp.tsx src/components/WorkerCard.tsx | head -20",
+  "description": "Trace onRequestMoreHistory wiring"
+}
+
+uuid: 9a7f00ac-734c-443b-98ea-5fccd28bce1f
+parent: 86b1fb92-491f-4cf0-ac02-52e957c7c88f
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:26:03.928Z","phase":null} -->
+## Claude tool result: toolu_01UCiEXSKMGDgpE4GP4rwrQL · 2026-08-04T11:26:03.928Z
+
+```text
+src/components/WorkerCard.tsx:676:  const hasMoreHistory = unifiedTerminalEntries
+src/components/WorkerCard.tsx:894:                hasMoreHistory={hasMoreHistory}
+src/components/WorkerCard.tsx:895:                onRequestMoreHistory={handleRequestMoreHistory}
+src/components/home/ConversationMain.tsx:1148:                hasMoreHistory={
+src/components/home/ConversationMain.tsx:1157:                onRequestMoreHistory={
+
+uuid: 7cf4c0e3-d4c4-48f2-a2b1-cb87f681d45c
+parent: 9a7f00ac-734c-443b-98ea-5fccd28bce1f
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:26:04.303Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:26:04.303Z
+
+```json
+{
+  "command": "grep -n \"loadOlder\" -A 45 src/interface/home/WorkerEntriesManager.ts | head -70",
+  "description": "Read loadOlder implementation"
+}
+
+uuid: 133787fa-ca4c-4f52-bb3a-128a4f040baa
+parent: 7cf4c0e3-d4c4-48f2-a2b1-cb87f681d45c
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:26:04.337Z","phase":null} -->
+## Claude tool result: toolu_01Mp87oyvXQFUGDXbHdYFZwV · 2026-08-04T11:26:04.337Z
+
+```text
+13: *     lowestSeq. Set by initial tail-load and `loadOlder`.
+14- *   - status: "idle" → "loading" → "loaded"; "error" on a fetch failure.
+15- *
+16- * Initial load fetches the last N entries via `?limit=N`. Forward
+17- * extension uses `?afterSeq=latestContiguousSeq`. Backward hydration
+18: * uses `?beforeSeq=lowestSeq&limit=N` via `loadOlder`.
+19- *
+20- * SSE frames carry only `{ workerId, seq }` — the content is fetched
+21- * via the HTTP endpoint. The frame is a wake-up hint; we never trust
+22- * it as the entry payload.
+23- */
+24-import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
+25-import type { WorkerEntry } from "@/shared/worker-entries";
+26-import type { RuntimeAPIs } from "@/runtime-api/types";
+27-import { useRuntimeAPIs } from "@/runtime-api/provider";
+28-
+29-/**
+30- * Collapse multiple rows that share an entry `id` into a single
+31- * conversation item. The server's unified stream intentionally appends
+32- * a new row whenever an entry's text grows (so a streaming assistant
+33- * message can be revised in place — see the
+34- * `appends changed bridge message revisions so streaming prose can expand`
+35- * test in `tests/server/workers/output-store.test.ts`). It also
+36- * writes the same user_input id onto a newer worker's stream when a run
+37- * cycles through workers.
+38- *
+39- * Coalesce policy:
+40- *   - Keep the entry at its FIRST appearance in the input order, so
+41- *     conversational position doesn't jump when text grows.
+42- *   - Use the LATEST revision's text / metadata (text grows; latest
+43- *     revision is the finished one).
+44- *   - Take the timestamp from the copy on the NEWEST worker, because that
+45- *     is the one the live thread actually contains. Neither "earliest" nor
+46- *     "latest" works on its own: a rewind re-delivers a message with a new
+47- *     timestamp (newest is right, earliest pins it back above output it was
+48- *     rewound past), while `reconcileWorkerUserMessagesInStream` backfills
+49- *     history onto a fresh worker with the original `createdAt` (earliest is
+50- *     right, latest drags the opening prompt into the middle of the day).
+51- *     Worker order settles both. Copies from the same worker — streaming
+52- *     revisions, which share a timestamp anyway — keep the earliest.
+53- *   - Entries without an id pass through unchanged.
+54- *
+55- * `workerOrder` is the run's workers in creation order. Without it (a single
+56- * worker stream, or a caller that has no worker list yet) the earliest
+57- * timestamp is kept, which is the conservative choice: a message stays where
+58- * it already is.
+59- */
+60-export function coalesceWorkerEntriesById(
+61-  entries: ReadonlyArray<WorkerEntry>,
+62-  workerOrder: ReadonlyArray<string> = [],
+63-): WorkerEntry[] {
+--
+390:  loadOlder(workerId: string, limit: number = DEFAULT_OLDER_LIMIT): Promise<void> {
+391-    const existing = this.inFlightByWorker.get(workerId);
+392-    if (existing) return existing;
+393-    const state = this.getState(workerId);
+394-    if (!state.hasOlder || state.lowestSeq <= 1) {
+395-      return Promise.resolve();
+396-    }
+397-    return this.fetchBefore(workerId, state.lowestSeq, limit);
+398-  }
+399-
+400-  refresh(workerId: string): Promise<void> {
+401-    const state = this.getState(workerId);
+402-    return this.fetchForward(workerId, state.latestContiguousSeq);
+403-  }
+404-
+405-  /**
+406-   * Wake-up hint from the SSE stream. The body carries only
+407-   * `{ workerId, seq }`; the entry payload is never trusted from here.
+
+uuid: b5c1e815-ccc2-4edc-8d70-411d3d1d6cb6
+parent: 133787fa-ca4c-4f52-bb3a-128a4f040baa
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:26:04.339Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:26:04.339Z
+
+```text
+{
+  "type": "deferred_tools_delta",
+  "addedNames": [
+    "mcp__claude_ai_Gmail__apply_sensitive_message_label",
+    "mcp__claude_ai_Gmail__apply_sensitive_thread_label",
+    "mcp__claude_ai_Gmail__create_draft",
+    "mcp__claude_ai_Gmail__create_label",
+    "mcp__claude_ai_Gmail__get_message",
+    "mcp__claude_ai_Gmail__get_thread",
+    "mcp__claude_ai_Gmail__label_message",
+    "mcp__claude_ai_Gmail__label_thread",
+    "mcp__claude_ai_Gmail__list_drafts",
+    "mcp__claude_ai_Gmail__list_labels",
+    "mcp__claude_ai_Gmail__search_threads",
+    "mcp__claude_ai_Gmail__unlabel_message",
+    "mcp__claude_ai_Gmail__unlabel_thread",
+    "mcp__claude_ai_Google_Calendar__create_event",
+    "mcp__claude_ai_Google_Calendar__delete_event",
+    "mcp__claude_ai_Google_Calendar__get_event",
+    "mcp__claude_ai_Google_Calendar__list_calendars",
+    "mcp__claude_ai_Google_Calendar__list_events",
+    "mcp__claude_ai_Google_Calendar__respond_to_event",
+    "mcp__claude_ai_Google_Calendar__search_events",
+    "mcp__claude_ai_Google_Calendar__suggest_time",
+    "mcp__claude_ai_Google_Calendar__update_event",
+    "mcp__claude_ai_Google_Drive__copy_file",
+    "mcp__claude_ai_Google_Drive__create_file",
+    "mcp__claude_ai_Google_Drive__download_file_content",
+    "mcp__claude_ai_Google_Drive__get_file_metadata",
+    "mcp__claude_ai_Google_Drive__get_file_permissions",
+    "mcp__claude_ai_Google_Drive__list_recent_files",
+    "mcp__claude_ai_Google_Drive__read_file_content",
+    "mcp__claude_ai_Google_Drive__search_files"
+  ],
+  "addedLines": [],
+  "removedNames": [],
+  "readdedNames": [
+    "mcp__claude_ai_Gmail__apply_sensitive_message_label",
+    "mcp__claude_ai_Gmail__apply_sensitive_thread_label",
+    "mcp__claude_ai_Gmail__create_draft",
+    "mcp__claude_ai_Gmail__create_label",
+    "mcp__claude_ai_Gmail__get_message",
+    "mcp__claude_ai_Gmail__get_thread",
+    "mcp__claude_ai_Gmail__label_message",
+    "mcp__claude_ai_Gmail__label_thread",
+    "mcp__claude_ai_Gmail__list_drafts",
+    "mcp__claude_ai_Gmail__list_labels",
+    "mcp__claude_ai_Gmail__search_threads",
+    "mcp__claude_ai_Gmail__unlabel_message",
+    "mcp__claude_ai_Gmail__unlabel_thread",
+    "mcp__claude_ai_Google_Calendar__create_event",
+    "mcp__claude_ai_Google_Calendar__delete_event",
+    "mcp__claude_ai_Google_Calendar__get_event",
+    "mcp__claude_ai_Google_Calendar__list_calendars",
+    "mcp__claude_ai_Google_Calendar__list_events",
+    "mcp__claude_ai_Google_Calendar__respond_to_event",
+    "mcp__claude_ai_Google_Calendar__search_events",
+    "mcp__claude_ai_Google_Calendar__suggest_time",
+    "mcp__claude_ai_Google_Calendar__update_event",
+    "mcp__claude_ai_Google_Drive__copy_file",
+    "mcp__claude_ai_Google_Drive__create_file",
+    "mcp__claude_ai_Google_Drive__download_file_content",
+    "mcp__claude_ai_Google_Drive__get_file_metadata",
+    "mcp__claude_ai_Google_Drive__get_file_permissions",
+    "mcp__claude_ai_Google_Drive__list_recent_files",
+    "mcp__claude_ai_Google_Drive__read_file_content",
+    "mcp__claude_ai_Google_Drive__search_files"
+  ],
+  "pendingMcpServers": []
+}
+
+binary omitted from archive
+
+uuid: 9d7ba501-266b-4551-a8c2-77bafd689b53
+parent: b5c1e815-ccc2-4edc-8d70-411d3d1d6cb6
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:26:11.004Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:26:11.004Z
+
+The issue is that `loadOlder` prevents concurrent requests but still triggers sequential fetches—each time a load completes, the user gets repositioned at the top, and the next scroll event fires another load. Scroll anchoring is the solution here. I need to check how ConversationMain wires this up around lines 1148-1165, and also look at what `TERMINAL_TOP_THRESHOLD_PX` is set to.
+
+uuid: 03eb2183-15b1-4b6f-84b8-299a94dc825c
+parent: 9d7ba501-266b-4551-a8c2-77bafd689b53
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:26:11.030Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:26:11.030Z
+
+```json
+{
+  "command": "sed -n '1140,1170p' src/components/home/ConversationMain.tsx; echo \"=== threshold ===\"; grep -n \"TERMINAL_TOP_THRESHOLD_PX\" src/components/Terminal.tsx",
+  "description": "Read ConversationMain history wiring and threshold"
+}
+
+uuid: fb53f986-69fe-435f-8cd0-a510b8f7cc84
+parent: 03eb2183-15b1-4b6f-84b8-299a94dc825c
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:26:11.130Z","phase":null} -->
+## Claude tool result: toolu_01XXA1MfUX3px1vJeFqfAEK9 · 2026-08-04T11:26:11.130Z
+
+```text
+                conversationMessageTextSize
+                showPendingAssistantIndicator={showPendingAssistantIndicator}
+                pendingAssistantStatus={directControlPendingAssistantStatus ?? undefined}
+                isLoading={isHydratingConversations || isDirectWorkerStreamLoading}
+                projectRoot={projectRoot}
+                onOpenProjectFile={onOpenProjectFile}
+                scrollAnchorKey={selectedRunId}
+                summarizeWorkBlocks={isDirectConversation}
+                hasMoreHistory={
+                  !unifiedWorkerStreamEnabled
+                    ? undefined
+                    : isUsingConversationTranscriptEntries
+                      ? conversationTranscript.hasOlder
+                      : primaryConversationWorkerId
+                        ? directWorkerStream.hasOlder
+                        : undefined
+                }
+                onRequestMoreHistory={
+                  !unifiedWorkerStreamEnabled
+                    ? undefined
+                    : isUsingConversationTranscriptEntries
+                      ? () => { void conversationTranscript.loadOlder(); }
+                      : primaryConversationWorkerId
+                        ? () => { void directWorkerStream.loadOlder(); }
+                        : undefined
+                }
+              />
+              {primaryConversationWorkerId && pendingElicitations[0] ? (
+                <InlineElicitation
+                  workerId={primaryConversationWorkerId}
+                  elicitation={pendingElicitations[0]}
+=== threshold ===
+151:const TERMINAL_TOP_THRESHOLD_PX = 4;
+227:  return metrics.scrollTop <= TERMINAL_TOP_THRESHOLD_PX;
+
+uuid: cf9c8470-1ddf-46c6-a3ea-40dbdfc0368c
+parent: fb53f986-69fe-435f-8cd0-a510b8f7cc84
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:26:43.069Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:26:43.069Z
+
+I'm implementing scroll anchoring in the Terminal component by tracking the previous scroll height and the first activity ID to detect when new items are prepended to the list, then adjusting the scroll position accordingly to keep the user's view stable.
+
+The key is placing this anchoring logic at the top of the existing layout effect, before any early returns, so it runs before the follow-latest effect and ensures the scroll position is corrected in the right order.
+
+I'm extracting the scroll restoration into a pure helper function that takes the previous and next activity IDs, checks if the old first item is still present, and calculates the corrected scroll offset only when there's an actual prepend with increased height. I also need to add a guard to prevent immediate re-triggering after the scroll is restored.
+
+The wheel handler fires on every event while at the top, but `loadOlder` dedupes in-flight requests so there's no extra fetch. After the load completes and anchoring restores the position, if the user continues flinging upward they'll naturally scroll through the new content and hit the top again for the next page, which is the correct behavior. The `previousScrollHeightRef` needs to update unconditionally at the end of the effect to capture the new height after every commit. Streaming growth happens at the bottom and doesn't affect content above, so compensating for it would cause unwanted scrolling. If I record the height at each commit and the prepend arrives as its own commit, the delta for that commit captures just the prepend without streaming noise. A more precise approach would be to anchor directly to the previously-first activity's DOM element and track its offsetTop before and after the prepend, which gives exact positioning without relying on height deltas.
+
+The scrollHeight-delta method is simpler and what most chat UIs use, so I'll stick with that approach and record the height at each commit. Now I need to implement this by adding a function to handle the prepended scroll restoration and tracking the previous scroll height in the Terminal component.
+
+I should also verify the anchor detection logic — checking if the previous first activity ID is still in the filtered list. A `.some()` check works fine even on larger lists since they're bounded by loaded pages, though I could optimize by only checking when the first ID actually changes.
+
+uuid: e70ca0fe-b386-4386-a159-024de3645a71
+parent: cf9c8470-1ddf-46c6-a3ea-40dbdfc0368c
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:26:43.072Z","phase":null} -->
+## Claude · 2026-08-04T11:26:43.072Z
+
+Now I have the full picture. Let me add the pure anchoring helper first.
+
+uuid: 6555844e-85b7-4f04-a23a-dc3280c163e6
+parent: e70ca0fe-b386-4386-a159-024de3645a71
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:26:43.201Z","phase":null} -->
+## Claude tool call: Read · 2026-08-04T11:26:43.201Z
+
+```json
+{
+  "file_path": "/Users/masterman/NLP/omniharness/src/components/terminal/scroll-state.ts"
+}
+
+uuid: 20791528-14d0-4dbd-bf40-b1b835d0f2e3
+parent: 6555844e-85b7-4f04-a23a-dc3280c163e6
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:26:43.326Z","phase":null} -->
+## Claude tool result: toolu_01XJ33h7Bg8j9ydaNMTvk6iH · 2026-08-04T11:26:43.326Z
+
+```text
+1	const TERMINAL_BOTTOM_THRESHOLD_PX = 1;
+2	
+3	export function shouldTerminalFollowLatest(
+4	  metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
+5	) {
+6	  return metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop
+7	    <= TERMINAL_BOTTOM_THRESHOLD_PX;
+8	}
+9	
+10	export function shouldTerminalKeepFollowingLatest(
+11	  metrics: Pick<HTMLDivElement, "scrollTop" | "clientHeight" | "scrollHeight">,
+12	  previousScrollTop: number,
+13	) {
+14	  if (metrics.scrollTop < previousScrollTop) {
+15	    return false;
+16	  }
+17	
+18	  return shouldTerminalFollowLatest(metrics);
+19	}
+20	
+21	export function shouldTerminalResetInitialPosition({
+22	  previousFirstActivityId,
+23	  nextFirstActivityId,
+24	  scrollAnchorChanged,
+25	}: {
+26	  previousFirstActivityId: string | null;
+27	  nextFirstActivityId: string | null;
+28	  scrollAnchorChanged: boolean;
+29	}) {
+30	  return scrollAnchorChanged
+31	    || (previousFirstActivityId === null && nextFirstActivityId !== null);
+32	}
+33	
+
+uuid: 28540e39-a726-4da5-a144-863f2e142c2c
+parent: 20791528-14d0-4dbd-bf40-b1b835d0f2e3
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:26:55.129Z","phase":null} -->
+## Claude tool call: Edit · 2026-08-04T11:26:55.129Z
+
+```json
+{
+  "replace_all": false,
+  "file_path": "/Users/masterman/NLP/omniharness/src/components/terminal/scroll-state.ts",
+  "old_string": "export function shouldTerminalResetInitialPosition({",
+  "new_string": "/**\n * Keep the viewport on the content the reader was looking at when a page of\n * older history is prepended.\n *\n * A prepend grows `scrollHeight` above the viewport while leaving `scrollTop`\n * alone, so the reader stays pinned at the top with more content above them.\n * That is not just a lost place: the top boundary is what triggers the next\n * page, so staying there requested page after page until the whole transcript\n * had loaded. Shifting `scrollTop` by the height that was inserted holds the\n * reader at the boundary they stopped at and moves them off the trigger.\n *\n * Returns the corrected offset, or `null` when this commit was not a prepend\n * and the position must be left alone.\n */\nexport function resolveTerminalPrependedScrollTop({\n  previousFirstActivityId,\n  nextFirstActivityId,\n  isPreviousFirstActivityStillRendered,\n  previousScrollHeight,\n  nextScrollHeight,\n  scrollTop,\n}: {\n  previousFirstActivityId: string | null;\n  nextFirstActivityId: string | null;\n  isPreviousFirstActivityStillRendered: boolean;\n  previousScrollHeight: number;\n  nextScrollHeight: number;\n  scrollTop: number;\n}) {\n  // A different first row with the old one gone is a replaced transcript —\n  // switching conversations, or a rewind dropping rows. Only a first row that\n  // moved down while staying rendered is history arriving above it.\n  if (\n    previousFirstActivityId === null\n    || nextFirstActivityId === null\n    || previousFirstActivityId === nextFirstActivityId\n    || !isPreviousFirstActivityStillRendered\n  ) {\n    return null;\n  }\n\n  const insertedHeight = nextScrollHeight - previousScrollHeight;\n  if (insertedHeight <= 0) {\n    return null;\n  }\n\n  return scrollTop + insertedHeight;\n}\n\nexport function shouldTerminalResetInitialPosition({"
+}
+
+uuid: 60011d5b-673c-47b0-8989-579e92846569
+parent: 28540e39-a726-4da5-a144-863f2e142c2c
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:26:56.058Z","phase":null} -->
+## Claude tool result: toolu_01CnkTNwjRidnazHYiXcGzwu · 2026-08-04T11:26:56.058Z
+
+```text
+The file /Users/masterman/NLP/omniharness/src/components/terminal/scroll-state.ts has been updated successfully. (file state is current in your context — no need to Read it back)
+
+uuid: 0e9031f8-fa24-4544-a824-e159d9125018
+parent: 60011d5b-673c-47b0-8989-579e92846569
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:26:58.949Z","phase":null} -->
+## Claude · 2026-08-04T11:26:58.949Z
+
+Now wire it into Terminal's layout effect, ahead of the follow-latest logic.
+
+uuid: e38a59fc-e1fd-4ba5-8d51-0163cc177e18
+parent: 0e9031f8-fa24-4544-a824-e159d9125018
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:26:59.727Z","phase":null} -->
+## Claude tool call: Read · 2026-08-04T11:26:59.727Z
+
+```json
+{
+  "file_path": "/Users/masterman/NLP/omniharness/src/components/Terminal.tsx",
+  "offset": 2522,
+  "limit": 32
+}
+
+uuid: 4e67efda-6047-47c2-b1be-75fdd5aeede7
+parent: e38a59fc-e1fd-4ba5-8d51-0163cc177e18
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:26:59.919Z","phase":null} -->
+## Claude tool result: toolu_01PAa8DGixbxhLQNr6eCYRCZ · 2026-08-04T11:26:59.919Z
+
+```text
+2522	
+2523	  useLayoutEffect(() => {
+2524	    const container = scrollContainerRef.current;
+2525	    const activityVersion = getTerminalActivityVersion(filteredActivity);
+2526	    const scrollAnchorChanged = previousScrollAnchorKeyRef.current !== scrollAnchorKey;
+2527	    previousScrollAnchorKeyRef.current = scrollAnchorKey;
+2528	    if (scrollAnchorChanged) {
+2529	      hasPositionedFirstActivityRef.current = false;
+2530	    }
+2531	    const previousActivityVersion = previousActivityVersionRef.current;
+2532	    const activityChanged = previousActivityVersionRef.current !== activityVersion;
+2533	    previousActivityVersionRef.current = activityVersion;
+2534	    const previousFirstActivityId = firstActivityIdRef.current;
+2535	    const firstActivityId = filteredActivity[0]?.id ?? null;
+2536	    if (shouldTerminalResetInitialPosition({
+2537	      previousFirstActivityId,
+2538	      nextFirstActivityId: firstActivityId,
+2539	      scrollAnchorChanged,
+2540	    })) {
+2541	      hasPositionedFirstActivityRef.current = false;
+2542	    }
+2543	    firstActivityIdRef.current = firstActivityId;
+2544	
+2545	    const isFirstRenderedActivity = filteredActivity.length > 0 && !hasPositionedFirstActivityRef.current;
+2546	    if (
+2547	      !container
+2548	      || (!activityChanged && !scrollAnchorChanged)
+2549	      || (!shouldFollowLatestRef.current && !isFirstRenderedActivity)
+2550	    ) {
+2551	      return;
+2552	    }
+2553	
+
+uuid: ce1c3d29-a00d-434a-bbaf-54efcc13af11
+parent: 4e67efda-6047-47c2-b1be-75fdd5aeede7
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:26:59.985Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:26:59.985Z
+
+```text
+{
+  "type": "task_reminder",
+  "content": [],
+  "itemCount": 0
+}
+
+binary omitted from archive
+
+uuid: 43280740-3a64-4540-86ba-e692a16b3907
+parent: ce1c3d29-a00d-434a-bbaf-54efcc13af11
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:27:10.887Z","phase":null} -->
+## Claude tool call: Edit · 2026-08-04T11:27:10.887Z
+
+```json
+{
+  "replace_all": false,
+  "file_path": "/Users/masterman/NLP/omniharness/src/components/Terminal.tsx",
+  "old_string": "    const previousFirstActivityId = firstActivityIdRef.current;\n    const firstActivityId = filteredActivity[0]?.id ?? null;\n    if (shouldTerminalResetInitialPosition({\n      previousFirstActivityId,\n      nextFirstActivityId: firstActivityId,\n      scrollAnchorChanged,\n    })) {\n      hasPositionedFirstActivityRef.current = false;\n    }\n    firstActivityIdRef.current = firstActivityId;\n\n    const isFirstRenderedActivity = filteredActivity.length > 0 && !hasPositionedFirstActivityRef.current;",
+  "new_string": "    const previousFirstActivityId = firstActivityIdRef.current;\n    const firstActivityId = filteredActivity[0]?.id ?? null;\n\n    // Before anything else, and before paint: a page of older history that\n    // arrived above the viewport has to be paid for in `scrollTop`, or the\n    // reader stays pinned at the top boundary and the next page is requested\n    // immediately — repeating until the whole transcript has loaded.\n    if (container && previousFirstActivityId !== firstActivityId) {\n      const anchoredScrollTop = resolveTerminalPrependedScrollTop({\n        previousFirstActivityId,\n        nextFirstActivityId: firstActivityId,\n        isPreviousFirstActivityStillRendered: filteredActivity.some((item) => item.id === previousFirstActivityId),\n        previousScrollHeight: previousScrollHeightRef.current,\n        nextScrollHeight: container.scrollHeight,\n        scrollTop: container.scrollTop,\n      });\n      if (anchoredScrollTop !== null) {\n        container.scrollTop = anchoredScrollTop;\n        previousScrollTopRef.current = anchoredScrollTop;\n      }\n    }\n    previousScrollHeightRef.current = container?.scrollHeight ?? 0;\n\n    if (shouldTerminalResetInitialPosition({\n      previousFirstActivityId,\n      nextFirstActivityId: firstActivityId,\n      scrollAnchorChanged,\n    })) {\n      hasPositionedFirstActivityRef.current = false;\n    }\n    firstActivityIdRef.current = firstActivityId;\n\n    const isFirstRenderedActivity = filteredActivity.length > 0 && !hasPositionedFirstActivityRef.current;"
+}
+
+uuid: 2cfea83d-026c-4c94-ac2d-08d55392db63
+parent: 43280740-3a64-4540-86ba-e692a16b3907
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:27:11.826Z","phase":null} -->
+## Claude tool result: toolu_01XEubZCwSeZKZpwx43jHwBg · 2026-08-04T11:27:11.826Z
+
+```text
+The file /Users/masterman/NLP/omniharness/src/components/Terminal.tsx has been updated successfully. (file state is current in your context — no need to Read it back)
+
+uuid: 2515db9a-e68b-4d70-8831-959bcf84ed98
+parent: 2cfea83d-026c-4c94-ac2d-08d55392db63
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:27:17.418Z","phase":null} -->
+## Claude tool call: Edit · 2026-08-04T11:27:17.418Z
+
+```json
+{
+  "replace_all": false,
+  "file_path": "/Users/masterman/NLP/omniharness/src/components/Terminal.tsx",
+  "old_string": "  const hasPositionedFirstActivityRef = useRef(false);\n  const firstActivityIdRef = useRef<string | null>(null);",
+  "new_string": "  const hasPositionedFirstActivityRef = useRef(false);\n  const firstActivityIdRef = useRef<string | null>(null);\n  // `scrollHeight` as of the last commit, so a prepend can be measured by how\n  // much taller the content got.\n  const previousScrollHeightRef = useRef(0);"
+}
+
+uuid: ad95c03e-4191-4820-b624-eb7425833b66
+parent: 2515db9a-e68b-4d70-8831-959bcf84ed98
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:27:17.445Z","phase":null} -->
+## Claude tool result: toolu_012VCz5p4gjfqUk7Br5QxK33 · 2026-08-04T11:27:17.445Z
+
+```text
+The file /Users/masterman/NLP/omniharness/src/components/Terminal.tsx has been updated successfully. (file state is current in your context — no need to Read it back)
+
+uuid: fcec1987-0940-4d01-ba56-303e11a876c0
+parent: ad95c03e-4191-4820-b624-eb7425833b66
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:27:20.015Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:27:20.015Z
+
+```json
+{
+  "command": "grep -n \"from \\\"./terminal/scroll-state\\\"\\|from \\\"@/components/terminal/scroll-state\\\"\" src/components/Terminal.tsx",
+  "description": "Find scroll-state import in Terminal"
+}
+
+uuid: 527e8733-506a-4bfa-8e18-aaefe5478918
+parent: fcec1987-0940-4d01-ba56-303e11a876c0
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:27:20.139Z","phase":null} -->
+## Claude tool result: toolu_01JupbWzVKrtCx4SCk6xyMa8 · 2026-08-04T11:27:20.139Z
+
+```text
+28:} from "@/components/terminal/scroll-state";
+34:} from "@/components/terminal/scroll-state";
+
+uuid: 933137ed-0c8d-447c-b9e8-f40df024ede6
+parent: 527e8733-506a-4bfa-8e18-aaefe5478918
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:27:24.620Z","phase":null} -->
+## Claude tool call: Read · 2026-08-04T11:27:24.620Z
+
+```json
+{
+  "file_path": "/Users/masterman/NLP/omniharness/src/components/Terminal.tsx",
+  "offset": 22,
+  "limit": 16
+}
+
+uuid: c5b1a44f-cc63-4160-acf2-d575c9b9ad72
+parent: 933137ed-0c8d-447c-b9e8-f40df024ede6
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:27:24.645Z","phase":null} -->
+## Claude tool result: toolu_01Hvv2Aw7oZHoLKTzHJ5woXt · 2026-08-04T11:27:24.645Z
+
+```text
+22	import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+23	import { t, useI18nSnapshot } from "@/lib/i18n";
+24	import { UserMessageAttachments } from "@/components/terminal/UserMessageAttachments";
+25	import {
+26	  shouldTerminalKeepFollowingLatest,
+27	  shouldTerminalResetInitialPosition,
+28	} from "@/components/terminal/scroll-state";
+29	
+30	export {
+31	  shouldTerminalFollowLatest,
+32	  shouldTerminalKeepFollowingLatest,
+33	  shouldTerminalResetInitialPosition,
+34	} from "@/components/terminal/scroll-state";
+35	
+36	interface TerminalProps {
+37	  agent?: AgentTerminalPayload | null;
+
+uuid: 79829251-67e2-4b96-b22f-427280c8b974
+parent: c5b1a44f-cc63-4160-acf2-d575c9b9ad72
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:27:30.370Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:27:30.370Z
+
+```json
+{
+  "command": "python3 - <<'PY'\np='src/components/Terminal.tsx'\ns=open(p).read()\ns=s.replace(\"\"\"import {\n  shouldTerminalKeepFollowingLatest,\n  shouldTerminalResetInitialPosition,\n} from \"@/components/terminal/scroll-state\";\n\nexport {\n  shouldTerminalFollowLatest,\n  shouldTerminalKeepFollowingLatest,\n  shouldTerminalResetInitialPosition,\n} from \"@/components/terminal/scroll-state\";\"\"\",\"\"\"import {\n  resolveTerminalPrependedScrollTop,\n  shouldTerminalKeepFollowingLatest,\n  shouldTerminalResetInitialPosition,\n} from \"@/components/terminal/scroll-state\";\n\nexport {\n  resolveTerminalPrependedScrollTop,\n  shouldTerminalFollowLatest,\n  shouldTerminalKeepFollowingLatest,\n  shouldTerminalResetInitialPosition,\n} from \"@/components/terminal/scroll-state\";\"\"\",1)\nopen(p,'w').write(s)\nPY\npnpm typecheck 2>&1 | tail -5",
+  "description": "Add import/export and typecheck",
+  "timeout": 300000
+}
+
+uuid: ca4f574e-3287-4c62-b630-05bceba67194
+parent: 79829251-67e2-4b96-b22f-427280c8b974
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:27:59.124Z","phase":null} -->
+## Claude tool result: toolu_01HQXc5GrtLbhXnrx1EYVGZL · 2026-08-04T11:27:59.124Z
+
+```text
+$ tsc -p tsconfig.shared.json --noEmit && tsc -p tsconfig.runner.json --noEmit && tsc -p tsconfig.interface.json --noEmit && tsc --noEmit
+
+uuid: e854a4fb-cbaf-452d-aea0-5174844d0c42
+parent: ca4f574e-3287-4c62-b630-05bceba67194
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:28:26.620Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:28:26.620Z
+
+The typecheck passes, but there's a lingering issue where repeated scroll wheel events at the top trigger multiple `onRequestMoreHistory` calls during an in-flight fetch — though `loadOlder` deduping handles that safely. The more pressing concern is what happens after anchoring restores the scroll position: if the browser fires a `scroll` event from that programmatic change, `updateFollowState` runs and sees the increased scrollTop, which seems fine. But I'm questioning whether there's a deeper problem lurking here that I haven't fully identified yet. The scroll handler reading `scrollHeight` on every event is a performance concern, though browsers typically cache layout unless something invalidates it. I could anchor to a DOM element instead to avoid drift entirely, but I can't measure before the layout effect runs. A better approach might be recording the height and scroll position at the moment `onRequestMoreHistory()` is called, then using those recorded values when the prepend arrives — though if streaming appends content while waiting, that growth would get included in the delta and cause over-scrolling. The simplest solution is probably just using the height from the last commit. is overkill. I'll focus on testing the pure helper function directly, which is straightforward, and maybe add a simpler integration test if needed.
+
+Let me look at how the existing scroll-state tests are structured to match the pattern.
+
+uuid: b95e7a53-064f-448d-9256-c114c471e59a
+parent: e854a4fb-cbaf-452d-aea0-5174844d0c42
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:28:26.652Z","phase":null} -->
+## Claude · 2026-08-04T11:28:26.652Z
+
+Typecheck clean. Now tests for the anchoring helper.
+
+uuid: af12c185-bc7d-4d76-860a-81aca7d5b77b
+parent: b95e7a53-064f-448d-9256-c114c471e59a
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:28:27.647Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:28:27.647Z
+
+```json
+{
+  "command": "grep -n \"shouldTerminalResetInitialPosition\\|shouldTerminalKeepFollowingLatest\" tests/ui/terminal-fit.test.ts | head; echo \"=== head ===\"; sed -n '1,12p' tests/ui/terminal-fit.test.ts",
+  "description": "Check existing scroll-state test conventions"
+}
+
+uuid: b1862b13-ac45-4a44-a924-8ef31453bc29
+parent: af12c185-bc7d-4d76-860a-81aca7d5b77b
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:28:27.681Z","phase":null} -->
+## Claude tool result: toolu_01VfKhXkLf5gHj5XQaxMginF · 2026-08-04T11:28:27.681Z
+
+```text
+8:  shouldTerminalKeepFollowingLatest,
+10:  shouldTerminalResetInitialPosition,
+279:  expect(terminalSource).toContain("shouldTerminalResetInitialPosition");
+301:  expect(shouldTerminalKeepFollowingLatest({
+307:  expect(shouldTerminalResetInitialPosition({
+313:  expect(shouldTerminalResetInitialPosition({
+319:  expect(shouldTerminalResetInitialPosition({
+=== head ===
+import fs from "fs";
+import path from "path";
+import { test, expect } from "vitest";
+import {
+  getTerminalActivityVersion,
+  shouldTerminalConnectorExtend,
+  shouldTerminalFollowLatest,
+  shouldTerminalKeepFollowingLatest,
+  shouldTerminalRequestMoreHistoryFromWheel,
+  shouldTerminalResetInitialPosition,
+} from "@/components/Terminal";
+
+uuid: de5233ad-297a-425a-b3f3-219899299e6f
+parent: b1862b13-ac45-4a44-a924-8ef31453bc29
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:28:30.331Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:28:30.331Z
+
+```json
+{
+  "command": "sed -n '270,330p' tests/ui/terminal-fit.test.ts",
+  "description": "Read scroll-state test block"
+}
+
+uuid: b08f6407-5a11-4178-981b-a1be513dd94e
+parent: de5233ad-297a-425a-b3f3-219899299e6f
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:28:30.361Z","phase":null} -->
+## Claude tool result: toolu_01Hi1X2EFbzJvo9G6AnPGdSx · 2026-08-04T11:28:30.361Z
+
+```text
+  expect(shouldTerminalRequestMoreHistoryFromWheel({ scrollTop: 0 }, 24)).toBe(false);
+  expect(terminalSource).toContain('scrollContainer.addEventListener("wheel", handleWheel, { passive: true });');
+});
+
+test("terminal only follows live output while the viewport is already near the bottom", () => {
+  expect(terminalScrollSource).toContain("const TERMINAL_BOTTOM_THRESHOLD_PX = 1");
+  expect(terminalSource).not.toContain("shouldForceFollowPendingAssistant");
+  expect(terminalSource).toContain("const activityChanged = previousActivityVersionRef.current !== activityVersion;");
+  expect(terminalSource).toContain("const isFirstRenderedActivity = filteredActivity.length > 0 && !hasPositionedFirstActivityRef.current;");
+  expect(terminalSource).toContain("shouldTerminalResetInitialPosition");
+  expect(terminalSource).toContain('const scrollBehavior: ScrollBehavior = isFirstRenderedActivity ? "auto" : "smooth";');
+  expect(terminalSource).toContain('scrollTerminalToBottom(container, "auto")');
+
+  expect(shouldTerminalFollowLatest({
+    scrollTop: 700,
+    clientHeight: 300,
+    scrollHeight: 1000,
+  })).toBe(true);
+
+  expect(shouldTerminalFollowLatest({
+    scrollTop: 690,
+    clientHeight: 300,
+    scrollHeight: 1000,
+  })).toBe(false);
+
+  expect(shouldTerminalFollowLatest({
+    scrollTop: 650,
+    clientHeight: 300,
+    scrollHeight: 1000,
+  })).toBe(false);
+
+  expect(shouldTerminalKeepFollowingLatest({
+    scrollTop: 699.5,
+    clientHeight: 300,
+    scrollHeight: 1000,
+  }, 700)).toBe(false);
+
+  expect(shouldTerminalResetInitialPosition({
+    previousFirstActivityId: "entry-20",
+    nextFirstActivityId: "entry-1",
+    scrollAnchorChanged: false,
+  })).toBe(false);
+
+  expect(shouldTerminalResetInitialPosition({
+    previousFirstActivityId: null,
+    nextFirstActivityId: "entry-20",
+    scrollAnchorChanged: false,
+  })).toBe(true);
+
+  expect(shouldTerminalResetInitialPosition({
+    previousFirstActivityId: "entry-20",
+    nextFirstActivityId: "entry-20",
+    scrollAnchorChanged: true,
+  })).toBe(true);
+});
+
+test("terminal activity version ignores pending assistant timestamp churn", () => {
+  expect(getTerminalActivityVersion([
+    { id: "pending-assistant", kind: "pending_assistant", status: "thinking", timestamp: "2026-05-09T00:00:00.000Z" },
+  ])).toBe(getTerminalActivityVersion([
+    { id: "pending-assistant", kind: "pending_assistant", status: "thinking", timestamp: "2026-05-09T00:00:01.000Z" },
+
+uuid: 3adad822-7045-409d-88e1-2018fd210a7a
+parent: b08f6407-5a11-4178-981b-a1be513dd94e
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:28:49.959Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:28:49.959Z
+
+```json
+{
+  "command": "python3 - <<'PY'\np='tests/ui/terminal-fit.test.ts'\ns=open(p).read()\ns=s.replace(\"\"\"  shouldTerminalRequestMoreHistoryFromWheel,\n  shouldTerminalResetInitialPosition,\n} from \"@/components/Terminal\";\"\"\",\"\"\"  resolveTerminalPrependedScrollTop,\n  shouldTerminalRequestMoreHistoryFromWheel,\n  shouldTerminalResetInitialPosition,\n} from \"@/components/Terminal\";\"\"\",1)\nopen(p,'w').write(s)\nPY\ncat >> tests/ui/terminal-fit.test.ts <<'EOF'\n\ntest(\"prepended history pays for its own height so the top boundary stops re-triggering\", () => {\n  // Reading at the top boundary, then a 900px page of older rows arrives above\n  // the viewport. Without the shift the reader stays at scrollTop 0 — still on\n  // the trigger — and the next page loads immediately, and the next, until the\n  // whole transcript is in memory.\n  expect(resolveTerminalPrependedScrollTop({\n    previousFirstActivityId: \"entry-20\",\n    nextFirstActivityId: \"entry-1\",\n    isPreviousFirstActivityStillRendered: true,\n    previousScrollHeight: 1000,\n    nextScrollHeight: 1900,\n    scrollTop: 0,\n  })).toBe(900);\n\n  // Mid-transcript reading position is preserved the same way.\n  expect(resolveTerminalPrependedScrollTop({\n    previousFirstActivityId: \"entry-20\",\n    nextFirstActivityId: \"entry-1\",\n    isPreviousFirstActivityStillRendered: true,\n    previousScrollHeight: 1000,\n    nextScrollHeight: 1900,\n    scrollTop: 120,\n  })).toBe(1020);\n\n  // A different first row whose predecessor is gone is a replaced transcript —\n  // switching conversations, or a rewind dropping rows — not a prepend.\n  expect(resolveTerminalPrependedScrollTop({\n    previousFirstActivityId: \"entry-20\",\n    nextFirstActivityId: \"entry-90\",\n    isPreviousFirstActivityStillRendered: false,\n    previousScrollHeight: 1000,\n    nextScrollHeight: 1900,\n    scrollTop: 0,\n  })).toBeNull();\n\n  // First render has nothing to anchor to.\n  expect(resolveTerminalPrependedScrollTop({\n    previousFirstActivityId: null,\n    nextFirstActivityId: \"entry-20\",\n    isPreviousFirstActivityStillRendered: false,\n    previousScrollHeight: 0,\n    nextScrollHeight: 1900,\n    scrollTop: 0,\n  })).toBeNull();\n\n  // Same first row: appended output at the bottom must not move the reader.\n  expect(resolveTerminalPrependedScrollTop({\n    previousFirstActivityId: \"entry-20\",\n    nextFirstActivityId: \"entry-20\",\n    isPreviousFirstActivityStillRendered: true,\n    previousScrollHeight: 1000,\n    nextScrollHeight: 1900,\n    scrollTop: 0,\n  })).toBeNull();\n\n  // Content that shrank cannot have been prepended.\n  expect(resolveTerminalPrependedScrollTop({\n    previousFirstActivityId: \"entry-20\",\n    nextFirstActivityId: \"entry-1\",\n    isPreviousFirstActivityStillRendered: true,\n    previousScrollHeight: 1900,\n    nextScrollHeight: 1000,\n    scrollTop: 400,\n  })).toBeNull();\n\n  // The correction has to land before paint, ahead of the follow-latest pass.\n  expect(terminalSource).toContain(\"resolveTerminalPrependedScrollTop({\");\n  expect(terminalSource).toContain(\"container.scrollTop = anchoredScrollTop;\");\n  expect(terminalSource).toContain(\"previousScrollHeightRef.current = container?.scrollHeight ?? 0;\");\n});\nEOF\npnpm test tests/ui/terminal-fit.test.ts 2>&1 | tail -10",
+  "description": "Add and run anchoring tests",
+  "timeout": 300000
+}
+
+uuid: 87c4e2b9-efec-49e7-adce-9ec1b1aeeafb
+parent: 3adad822-7045-409d-88e1-2018fd210a7a
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:28:51.187Z","phase":null} -->
+## Claude tool result: toolu_01NawQvPFexcDu6HNFNECYLr · 2026-08-04T11:28:51.187Z
+
+```text
+ RUN  v3.2.4 /Users/masterman/NLP/omniharness
+
+ ✓ tests/ui/terminal-fit.test.ts (25 tests) 5ms
+
+ Test Files  1 passed (1)
+      Tests  25 passed (25)
+   Start at  13:28:50
+   Duration  461ms (transform 121ms, setup 11ms, collect 278ms, tests 5ms, environment 0ms, prepare 40ms)
+
+uuid: 05092f80-5eb3-42d5-a3c2-aa100b6bb91e
+parent: 87c4e2b9-efec-49e7-adce-9ec1b1aeeafb
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:29:13.788Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:29:13.788Z
+
+Let me trace through whether the guard actually prevents the infinite loop. When `loadOlder` prepends older entries, the oldest one becomes `filteredActivity[0]`, so its ID changes. The question is whether `previousFirstActivityId` gets updated properly to match, which would break the loop condition.
+
+The ref gets updated at the end of the effect, but I'm checking if `container` is set first — it should be, since the first layout effect that assigns it runs before this one on mount. And `previousScrollHeightRef` starts at 0 on the first commit, so the effect returns early before doing anything risky. The critical detail is that I'm updating `previousScrollHeightRef` before the early returns, so the ref always stays in sync. Now I need to verify whether synchronously setting `scrollTop` in a layout effect could fight against the browser's own scroll restoration. to bottom. Both are fine.
+
+Now I'm checking for other places that might scroll back to top — looking at `ConversationMain` and `useRunSelectionEffects`. That effect scrolls to bottom and early-returns when not following, so it shouldn't interfere. But in direct mode, Terminal's scroll container is the conversation viewport, so this layout effect also runs on `outputVersion` changes. I need to verify whether loading older history actually changes `outputVersion`, since that's built from `state.messages`.
+
+Since `getConversationOutputVersion` only uses messages and agents, not worker entries, loading older worker entries won't trigger it. That's good — no interference there.
+
+I'm also checking whether `filteredActivity.some(...)` works correctly when `previousFirstActivityId` is null. The guard prevents calling it when the first ID hasn't changed, and the helper returns null in that case anyway, so the some check would just be false — harmless and only a minor inefficiency since it's computed eagerly.
+
+Now I should run the full test suite to make sure nothing regressed, especially the paged-history ordering test.
+
+uuid: 566e8f91-fc69-4350-87f2-b3517f20392a
+parent: 05092f80-5eb3-42d5-a3c2-aa100b6bb91e
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:29:13.790Z","phase":null} -->
+## Claude · 2026-08-04T11:29:13.790Z
+
+Let me verify nothing else regressed, particularly the paged-history tests.
+
+uuid: 448e19d1-adcf-495e-846b-5249b30558c2
+parent: 566e8f91-fc69-4350-87f2-b3517f20392a
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:29:13.793Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:29:13.793Z
+
+```json
+{
+  "command": "pnpm test tests/ui tests/app 2>&1 | tail -8",
+  "description": "Run UI and app test suites",
+  "timeout": 600000
+}
+
+uuid: b719a728-16b6-4b6e-894f-9fbcd5910d17
+parent: 448e19d1-adcf-495e-846b-5249b30558c2
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:29:17.305Z","phase":null} -->
+## Claude tool result: toolu_01VVhCucV6biEpeSCvRazatm · 2026-08-04T11:29:17.305Z
+
+```text
+ ✓ tests/app/planning-review-controls.test.tsx (1 test) 2ms
+ ✓ tests/ui/vite-bootstrap.test.ts (2 tests) 2ms
+
+ Test Files  74 passed (74)
+      Tests  609 passed (609)
+   Start at  13:29:14
+   Duration  2.91s (transform 1.55s, setup 1.14s, collect 5.60s, tests 728ms, environment 15ms, prepare 4.77s)
+
+uuid: 8908c994-ae23-47e6-8713-dca8ed367717
+parent: b719a728-16b6-4b6e-894f-9fbcd5910d17
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:29:17.307Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:29:17.307Z
+
+```text
+{
+  "type": "task_reminder",
+  "content": [],
+  "itemCount": 0
+}
+
+binary omitted from archive
+
+uuid: d3b9297f-f960-4fca-9d1d-6471a390d841
+parent: 8908c994-ae23-47e6-8713-dca8ed367717
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:29:20.436Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:29:20.436Z
+
+```json
+{
+  "command": "pnpm typecheck 2>&1 | tail -3; pnpm lint 2>&1 | grep -E \"^✖|error\" | head -3; pnpm test 2>&1 | grep -E \"FAIL |Test Files\" | head -5",
+  "description": "Full typecheck, lint and test run",
+  "timeout": 900000
+}
+
+uuid: 16aa2450-f0b7-4ee4-880c-222d4c105fec
+parent: d3b9297f-f960-4fca-9d1d-6471a390d841
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:30:36.116Z","phase":null} -->
+## Claude tool result: toolu_01MU57VS5Bw7xD8VHuMQFEUa · 2026-08-04T11:30:36.116Z
+
+```text
+$ tsc -p tsconfig.shared.json --noEmit && tsc -p tsconfig.runner.json --noEmit && tsc -p tsconfig.interface.json --noEmit && tsc --noEmit
+✖ 33 problems (0 errors, 33 warnings)
+  0 errors and 7 warnings potentially fixable with the `--fix` option.
+ FAIL  tests/server/conversations-sync.test.ts > syncConversationSessions > redelivers a queued answer as a normal prompt when the elicitation is already gone
+ Test Files  1 failed | 378 passed (379)
+
+uuid: a1bc2d18-575a-4402-b0dd-f5824fc72c1a
+parent: 16aa2450-f0b7-4ee4-880c-222d4c105fec
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:30:42.595Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:30:42.595Z
+
+The fix addresses the pre-existing failure I already caught, but I'm reconsidering the user's original complaint about the view jumping to the oldest message. They mentioned wanting to continue scrolling from where the load happened rather than teleporting, which suggests the issue might be about how the view anchors after prepending messages—without proper anchoring, the content shifts unexpectedly.
+
+My fix keeps the user at the boundary instead of jumping them to the oldest message, which should resolve that. Let me review the final diff to make sure the implementation is solid.
+
+uuid: 99235013-3ef7-4f5b-9328-45853dc0f87f
+parent: a1bc2d18-575a-4402-b0dd-f5824fc72c1a
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:30:42.676Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:30:42.676Z
+
+```json
+{
+  "command": "git diff -- src/components/terminal/scroll-state.ts | cat; echo \"=== Terminal effect ===\"; sed -n '2534,2560p' src/components/Terminal.tsx",
+  "description": "Final review of the anchoring change"
+}
+
+uuid: 96e30d05-fb67-4ada-864c-efaf1dcc0e7b
+parent: 99235013-3ef7-4f5b-9328-45853dc0f87f
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:30:42.744Z","phase":null} -->
+## Claude tool result: toolu_01PfQwEP7Kqtq4L2B31ub9An · 2026-08-04T11:30:42.744Z
+
+```text
+diff --git a/src/components/terminal/scroll-state.ts b/src/components/terminal/scroll-state.ts
+index 55182d3..e45559c 100644
+--- a/src/components/terminal/scroll-state.ts
++++ b/src/components/terminal/scroll-state.ts
+@@ -18,6 +18,55 @@ export function shouldTerminalKeepFollowingLatest(
+   return shouldTerminalFollowLatest(metrics);
+ }
+ 
++/**
++ * Keep the viewport on the content the reader was looking at when a page of
++ * older history is prepended.
++ *
++ * A prepend grows `scrollHeight` above the viewport while leaving `scrollTop`
++ * alone, so the reader stays pinned at the top with more content above them.
++ * That is not just a lost place: the top boundary is what triggers the next
++ * page, so staying there requested page after page until the whole transcript
++ * had loaded. Shifting `scrollTop` by the height that was inserted holds the
++ * reader at the boundary they stopped at and moves them off the trigger.
++ *
++ * Returns the corrected offset, or `null` when this commit was not a prepend
++ * and the position must be left alone.
++ */
++export function resolveTerminalPrependedScrollTop({
++  previousFirstActivityId,
++  nextFirstActivityId,
++  isPreviousFirstActivityStillRendered,
++  previousScrollHeight,
++  nextScrollHeight,
++  scrollTop,
++}: {
++  previousFirstActivityId: string | null;
++  nextFirstActivityId: string | null;
++  isPreviousFirstActivityStillRendered: boolean;
++  previousScrollHeight: number;
++  nextScrollHeight: number;
++  scrollTop: number;
++}) {
++  // A different first row with the old one gone is a replaced transcript —
++  // switching conversations, or a rewind dropping rows. Only a first row that
++  // moved down while staying rendered is history arriving above it.
++  if (
++    previousFirstActivityId === null
++    || nextFirstActivityId === null
++    || previousFirstActivityId === nextFirstActivityId
++    || !isPreviousFirstActivityStillRendered
++  ) {
++    return null;
++  }
++
++  const insertedHeight = nextScrollHeight - previousScrollHeight;
++  if (insertedHeight <= 0) {
++    return null;
++  }
++
++  return scrollTop + insertedHeight;
++}
++
+ export function shouldTerminalResetInitialPosition({
+   previousFirstActivityId,
+   nextFirstActivityId,
+=== Terminal effect ===
+      hasPositionedFirstActivityRef.current = false;
+    }
+    const previousActivityVersion = previousActivityVersionRef.current;
+    const activityChanged = previousActivityVersionRef.current !== activityVersion;
+    previousActivityVersionRef.current = activityVersion;
+    const previousFirstActivityId = firstActivityIdRef.current;
+    const firstActivityId = filteredActivity[0]?.id ?? null;
+
+    // Before anything else, and before paint: a page of older history that
+    // arrived above the viewport has to be paid for in `scrollTop`, or the
+    // reader stays pinned at the top boundary and the next page is requested
+    // immediately — repeating until the whole transcript has loaded.
+    if (container && previousFirstActivityId !== firstActivityId) {
+      const anchoredScrollTop = resolveTerminalPrependedScrollTop({
+        previousFirstActivityId,
+        nextFirstActivityId: firstActivityId,
+        isPreviousFirstActivityStillRendered: filteredActivity.some((item) => item.id === previousFirstActivityId),
+        previousScrollHeight: previousScrollHeightRef.current,
+        nextScrollHeight: container.scrollHeight,
+        scrollTop: container.scrollTop,
+      });
+      if (anchoredScrollTop !== null) {
+        container.scrollTop = anchoredScrollTop;
+        previousScrollTopRef.current = anchoredScrollTop;
+      }
+    }
+    previousScrollHeightRef.current = container?.scrollHeight ?? 0;
+
+uuid: 815ee9b3-0b94-4750-8eac-0dcf04867d2e
+parent: 96e30d05-fb67-4ada-864c-efaf1dcc0e7b
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:30:52.020Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:30:52.020Z
+
+I'm spotting a timing issue with how I'm tracking scroll height and applying the anchor. The `previousScrollHeightRef` gets set before the follow-latest scroll happens, which is actually correct since scrolling doesn't change the scrollHeight value itself. But when the anchor does apply and I set the scroll position, there's a subtle ordering problem I need to think through.
+
+Also, I should guard against the case where switching conversations happens to reuse an activity ID from the previous transcript — even though IDs are globally unique per entry, I should add a `scrollAnchorChanged` check to skip anchoring when the anchor key itself changes, since the transcript is being replaced and the follow-latest logic will handle repositioning anyway. That's cheap insurance against edge cases.
+
+uuid: db9fa896-fd76-4981-bbf3-4681ec476a54
+parent: 815ee9b3-0b94-4750-8eac-0dcf04867d2e
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:30:52.022Z","phase":null} -->
+## Claude · 2026-08-04T11:30:52.022Z
+
+One guard worth adding: skip anchoring when the transcript is being replaced wholesale.
+
+uuid: 3cd79267-7460-4ab3-8a14-f2cf858d2dca
+parent: db9fa896-fd76-4981-bbf3-4681ec476a54
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:30:53.298Z","phase":null} -->
+## Claude tool call: Edit · 2026-08-04T11:30:53.298Z
+
+```json
+{
+  "replace_all": false,
+  "file_path": "/Users/masterman/NLP/omniharness/src/components/Terminal.tsx",
+  "old_string": "    if (container && previousFirstActivityId !== firstActivityId) {",
+  "new_string": "    if (container && !scrollAnchorChanged && previousFirstActivityId !== firstActivityId) {"
+}
+
+uuid: 970ebe2b-6023-4561-83ea-9fcb30394137
+parent: 3cd79267-7460-4ab3-8a14-f2cf858d2dca
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:30:53.299Z","phase":null} -->
+## Claude tool result: toolu_01VMpFkXrCRJkj7pMQUYf7d2 · 2026-08-04T11:30:53.299Z
+
+```text
+<tool_use_error>File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.</tool_use_error>
+
+uuid: f023e20e-7587-4f8a-a230-75166d19114d
+parent: 970ebe2b-6023-4561-83ea-9fcb30394137
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:30:58.651Z","phase":null} -->
+## Claude tool call: Read · 2026-08-04T11:30:58.651Z
+
+```json
+{
+  "file_path": "/Users/masterman/NLP/omniharness/src/components/Terminal.tsx",
+  "offset": 2541,
+  "limit": 10
+}
+
+uuid: 7e4114aa-4e22-44da-8b3a-f0ae45cec714
+parent: f023e20e-7587-4f8a-a230-75166d19114d
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:30:58.654Z","phase":null} -->
+## Claude tool result: toolu_01KxNxaPtHpgJsxSfLwVLHmR · 2026-08-04T11:30:58.654Z
+
+```text
+2541	
+2542	    // Before anything else, and before paint: a page of older history that
+2543	    // arrived above the viewport has to be paid for in `scrollTop`, or the
+2544	    // reader stays pinned at the top boundary and the next page is requested
+2545	    // immediately — repeating until the whole transcript has loaded.
+2546	    if (container && previousFirstActivityId !== firstActivityId) {
+2547	      const anchoredScrollTop = resolveTerminalPrependedScrollTop({
+2548	        previousFirstActivityId,
+2549	        nextFirstActivityId: firstActivityId,
+2550	        isPreviousFirstActivityStillRendered: filteredActivity.some((item) => item.id === previousFirstActivityId),
+
+uuid: e9c54e40-52cc-41db-b86b-5d153ef56ef0
+parent: 7e4114aa-4e22-44da-8b3a-f0ae45cec714
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:31:03.610Z","phase":null} -->
+## Claude tool call: Edit · 2026-08-04T11:31:03.610Z
+
+```json
+{
+  "replace_all": false,
+  "file_path": "/Users/masterman/NLP/omniharness/src/components/Terminal.tsx",
+  "old_string": "    if (container && previousFirstActivityId !== firstActivityId) {\n      const anchoredScrollTop = resolveTerminalPrependedScrollTop({",
+  "new_string": "    if (container && !scrollAnchorChanged && previousFirstActivityId !== firstActivityId) {\n      const anchoredScrollTop = resolveTerminalPrependedScrollTop({"
+}
+
+uuid: 46ae54c7-bd94-4d69-9b21-961302aaa3f3
+parent: e9c54e40-52cc-41db-b86b-5d153ef56ef0
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:31:03.635Z","phase":null} -->
+## Claude tool result: toolu_013ey18TuEbUemm8ANyBVNPi · 2026-08-04T11:31:03.635Z
+
+```text
+The file /Users/masterman/NLP/omniharness/src/components/Terminal.tsx has been updated successfully. (file state is current in your context — no need to Read it back)
+
+uuid: 16da1a0d-26e8-4242-8cf6-836da47d81f9
+parent: 46ae54c7-bd94-4d69-9b21-961302aaa3f3
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:31:07.246Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:31:07.246Z
+
+```json
+{
+  "command": "pnpm typecheck 2>&1 | tail -3 && pnpm test tests/ui tests/app 2>&1 | grep -E \"Test Files|FAIL\"",
+  "description": "Verify after guard addition",
+  "timeout": 600000
+}
+
+uuid: db1bc5ee-1362-417e-bfbb-0ccf38c947ac
+parent: 16da1a0d-26e8-4242-8cf6-836da47d81f9
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:31:20.415Z","phase":null} -->
+## Claude tool result: toolu_01D6bbSboBzebEsvHVUQxUbJ · 2026-08-04T11:31:20.415Z
+
+```text
+$ tsc -p tsconfig.shared.json --noEmit && tsc -p tsconfig.runner.json --noEmit && tsc -p tsconfig.interface.json --noEmit && tsc --noEmit
+ Test Files  74 passed (74)
+
+uuid: 51deaf81-d890-45bf-8a0d-46c7d8f9e844
+parent: db1bc5ee-1362-417e-bfbb-0ccf38c947ac
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:31:37.441Z","phase":null} -->
+## Claude · 2026-08-04T11:31:37.441Z
+
+Fixed. Typecheck clean, lint 0 errors, all 609 UI/app tests pass; the full run still shows only the pre-existing `conversations-sync` failure I isolated earlier.
+
+## The bug
+
+`loadOlder` prepends a page of older entries above the viewport. That grows `scrollHeight` but leaves `scrollTop` untouched — so at `scrollTop = 0` the reader stays at 0, which now shows the *oldest* prepended row. That's the "teleport to the oldest message" you saw.
+
+It's self-perpetuating because `scrollTop <= TERMINAL_TOP_THRESHOLD_PX` (`Terminal.tsx:227`) is exactly the condition that requests the next page. Staying at 0 means still standing on the trigger, so the next scroll or wheel event fires another load, forever.
+
+The recently-added wheel listener (from the `top-scroll-boundary-must-load-history` fix) made this much worse rather than causing it: at `scrollTop = 0` an upward gesture emits no `scroll` event, so before that listener existed the runaway couldn't sustain itself. `loadOlder` already dedupes concurrent fetches via `inFlightByWorker` (`WorkerEntriesManager.ts:391`), so these were sequential, not parallel — which is why it walked backwards page by page instead of exploding at once.
+
+## The fix
+
+`resolveTerminalPrependedScrollTop` in `src/components/terminal/scroll-state.ts` — on a prepend, shift `scrollTop` by exactly the height that was inserted. The reader stays on the content they were reading, at the boundary where the load happened, and lands well clear of the 4px trigger.
+
+Applied at the top of the layout effect in `Terminal.tsx:2546`, before the follow-latest pass and before paint, so there's no visible jump.
+
+Detecting a genuine prepend matters, since the first row also changes when the transcript is *replaced*. It only fires when the previously-first row is still rendered but no longer first, when content grew, and when `scrollAnchorKey` didn't change — so switching conversations and rewinds that drop rows are left alone for the existing positioning logic to handle.
+
+## Tests
+
+Extended `tests/ui/terminal-fit.test.ts` with the pure helper across six cases: the runaway case, a mid-transcript reading position, replaced transcript, first render, bottom-appended output, and shrinking content. Plus assertions that the correction is actually wired ahead of the follow-latest pass.
+
+One limitation worth knowing: the inserted height is measured as the `scrollHeight` delta since the last commit. If something else changes height between commits without changing the activity list — an image finishing load, a collapsible opening — the delta absorbs it and the shift is off by that amount. It self-corrects on the next commit. A DOM-anchored measurement would be exact but needs a per-row ref; I didn't think that was worth it unless you actually see drift.
+
+uuid: 7094e99c-ff3e-4906-92e2-f8e7976692b3
+parent: 51deaf81-d890-45bf-8a0d-46c7d8f9e844
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:40:59.620Z","phase":null} -->
+## Claude state: queue-operation · 2026-08-04T11:40:59.620Z
+
+```text
+{
+  "type": "queue-operation",
+  "operation": "enqueue",
+  "timestamp": "2026-08-04T11:40:59.620Z",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:40:59.643Z","phase":null} -->
+## Claude state: queue-operation · 2026-08-04T11:40:59.643Z
+
+```text
+{
+  "type": "queue-operation",
+  "operation": "dequeue",
+  "timestamp": "2026-08-04T11:40:59.643Z",
+  "sessionId": "9951b149-2404-416f-adbe-40d592278c48"
+}
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"user","timestamp":"2026-08-04T11:40:59.767Z","phase":null} -->
+## User · 2026-08-04T11:40:59.767Z
+
+OmniHarness direct-control instruction:
+Do not implement, edit files, run mutating commands, or otherwise change the workspace unless the user's latest message explicitly asks you to implement, edit, modify, fix, create, delete, run, apply, or change something.
+If the user's latest message asks how you would do something, asks for suggestions, asks for advice, asks for a plan, or says not to do anything, answer with analysis or a plan only.
+If the user's intent is ambiguous, ask a clarifying question before making workspace changes.
+
+User message:
+ok next thing: I send a message as queued and instead of just appearing in the queue, first it appears as a sent message for like 200ms and then it moves to the queue!! shouldnt do that
+
+uuid: ff31a3db-8467-4d7d-ad40-ef223f2afce1
+parent: 7094e99c-ff3e-4906-92e2-f8e7976692b3
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:41:12.080Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:41:12.080Z
+
+I'm seeing the issue now—the optimistic message appears immediately in `onMutate` and renders as sent, but then when the worker is busy and the message gets queued, it shifts to the queue view after about 200ms. This is happening because `onMutate` always creates and appends the optimistic message to state before the actual POST request completes, so there's a brief window where it looks sent before the real status comes back.
+
+The solution is to check if we know the message will be queued at send time—the client already knows the worker is busy since it offered the queue action. If `busyAction === "queue"`, I should add the message optimistically to the queue manager instead of to the messages list, so it appears in the right place immediately without any flicker. I need to look at the busy message behavior module to understand the available actions and how to resolve them.
+
+uuid: 5358a9d1-fc82-43d6-bbf7-8429b4bae558
+parent: ff31a3db-8467-4d7d-ad40-ef223f2afce1
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:41:12.666Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:41:12.666Z
+
+```json
+{
+  "command": "cat src/interface/home/busy-message-behavior.ts 2>/dev/null | head -80",
+  "description": "Read busy message behavior module"
+}
+
+uuid: 0ef76a17-0b9a-4727-94d2-7ff5dd0da2d2
+parent: 5358a9d1-fc82-43d6-bbf7-8429b4bae558
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:41:12.984Z","phase":null} -->
+## Claude tool result: toolu_01517xcXo4WbXUxbNBDXyQUf · 2026-08-04T11:41:12.984Z
+
+```text
+export type BusyMessageAction = "queue" | "steer";
+export type BusyComposerButtonKind = "send" | "stop";
+export type BusyComposerSubmitAction = "send_normal" | "send_queue" | "send_steer" | "stop";
+
+export type BusyComposerBehavior = {
+  buttonKind: BusyComposerButtonKind;
+  submitAction: BusyComposerSubmitAction;
+  ariaLabelKey: string;
+  allowAlternateBusyAction: boolean;
+};
+
+export function parseBusyMessageAction(value: string | null | undefined): BusyMessageAction {
+  return value === "steer" ? "steer" : "queue";
+}
+
+export function isManualStopCommand(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "stop" || normalized === "/stop";
+}
+
+export function resolveBusyComposerBehavior({
+  hasBusyConversation,
+  isConversationStoppable,
+  hasContent,
+  busyMessageAction,
+  forceSteer,
+}: {
+  hasBusyConversation: boolean;
+  isConversationStoppable: boolean;
+  hasContent: boolean;
+  busyMessageAction: BusyMessageAction;
+  forceSteer?: boolean;
+}): BusyComposerBehavior {
+  if (isConversationStoppable && !hasContent) {
+    return {
+      buttonKind: "stop",
+      submitAction: "stop",
+      ariaLabelKey: "conversation.composer.sendButton.stop",
+      allowAlternateBusyAction: false,
+    };
+  }
+
+  if (hasBusyConversation && hasContent) {
+    return busyMessageAction === "steer" || forceSteer
+      ? {
+          buttonKind: "send",
+          submitAction: "send_steer",
+          ariaLabelKey: "conversation.composer.sendButton.steer",
+          allowAlternateBusyAction: !forceSteer,
+        }
+      : {
+          buttonKind: "send",
+          submitAction: "send_queue",
+          ariaLabelKey: "conversation.composer.sendButton.queue",
+          allowAlternateBusyAction: true,
+        };
+  }
+
+  return {
+    buttonKind: "send",
+    submitAction: "send_normal",
+    ariaLabelKey: "conversation.composer.sendButton.send",
+    allowAlternateBusyAction: false,
+  };
+}
+
+export function resolveBusyMessageActionForSubmitAction(
+  submitAction: BusyComposerSubmitAction,
+  options: { useAlternate?: boolean } = {},
+): BusyMessageAction | undefined {
+  if (submitAction === "send_queue") {
+    return options.useAlternate ? "steer" : "queue";
+  }
+
+  if (submitAction === "send_steer") {
+    return options.useAlternate ? "queue" : "steer";
+  }
+
+  return undefined;
+}
+
+uuid: 88a8be61-c89b-47b0-85e4-dfca379a28ff
+parent: 0ef76a17-0b9a-4727-94d2-7ff5dd0da2d2
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:41:13.904Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:41:13.904Z
+
+```json
+{
+  "command": "grep -n \"class\\|upsertQueuedMessage\\|hideQueuedMessage\\|setQueuedMessages\\|removeQueued\\|QueuedMessage\" src/interface/home/BusyMessageQueueManager.ts | head -30",
+  "description": "Read BusyMessageQueueManager API"
+}
+
+uuid: 2f7e0c3d-827d-4d4a-b8dd-c1ce68fc5860
+parent: 88a8be61-c89b-47b0-85e4-dfca379a28ff
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:41:14.298Z","phase":null} -->
+## Claude tool result: toolu_01PAZJ6CVEtVL2pXXZSG3BCp · 2026-08-04T11:41:14.298Z
+
+```text
+25:function isActiveQueuedMessage(message: QueuedConversationMessageRecord) {
+41:  if (!isActiveQueuedMessage(message)) {
+109:export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState> {
+114:  setQueuedMessages(messages: QueuedConversationMessageRecord[], notify = true) {
+121:        .filter((message) => isActiveQueuedMessage(message) && !incomingIds.has(message.id))
+128:            .filter((message) => !isActiveQueuedMessage(message))
+174:  getQueuedMessagesForRun(runId: string | null | undefined) {
+182:  upsertQueuedMessage(message: QueuedConversationMessageRecord) {
+191:      if (!isActiveQueuedMessage(message)) {
+248:  hideQueuedMessage(messageId: string) {
+269:  restoreQueuedMessage(message: QueuedConversationMessageRecord) {
+
+uuid: 57725f23-3a2b-42b0-83e3-5d35469339c8
+parent: 2f7e0c3d-827d-4d4a-b8dd-c1ce68fc5860
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:41:14.305Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:41:14.305Z
+
+```text
+{
+  "type": "task_reminder",
+  "content": [],
+  "itemCount": 0
+}
+
+binary omitted from archive
+
+uuid: 69e2a9c3-b919-4961-96bd-2e961d134a3c
+parent: 57725f23-3a2b-42b0-83e3-5d35469339c8
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:41:18.745Z","phase":null} -->
+## Claude tool call: Read · 2026-08-04T11:41:18.745Z
+
+```json
+{
+  "file_path": "/Users/masterman/NLP/omniharness/src/interface/home/BusyMessageQueueManager.ts",
+  "offset": 1,
+  "limit": 110
+}
+
+uuid: 7e19dd7f-9faa-497c-892d-608dad5bd36a
+parent: 69e2a9c3-b919-4961-96bd-2e961d134a3c
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:41:18.770Z","phase":null} -->
+## Claude tool result: toolu_01DKbASbfAJEbDFFwCqasN4x · 2026-08-04T11:41:18.770Z
+
+```text
+1	"use client";
+2	
+3	import { StateManager } from "@/lib/state-manager";
+4	import type { QueuedConversationMessageRecord } from "./types";
+5	import { compareOldestByCreatedAtThenId } from "./utils";
+6	
+7	type BusyMessageQueueState = {
+8	  queuedMessages: QueuedConversationMessageRecord[];
+9	  cancellingMessageIds: Set<string>;
+10	  // Rows the user has asked to interrupt-and-send ("force send"). Optimistic
+11	  // UI only — server queue rows from /api/events remain authoritative.
+12	  interruptingMessageIds: Set<string>;
+13	  locallyHiddenMessageIds: Set<string>;
+14	  serverAbsentMessageUpdatedAtById: Map<string, number>;
+15	};
+16	
+17	const initialBusyMessageQueueState: BusyMessageQueueState = {
+18	  queuedMessages: [],
+19	  cancellingMessageIds: new Set(),
+20	  interruptingMessageIds: new Set(),
+21	  locallyHiddenMessageIds: new Set(),
+22	  serverAbsentMessageUpdatedAtById: new Map(),
+23	};
+24	
+25	function isActiveQueuedMessage(message: QueuedConversationMessageRecord) {
+26	  return message.status === "pending" || message.status === "delivering";
+27	}
+28	
+29	function timestampMs(value: string | null | undefined) {
+30	  if (!value) {
+31	    return 0;
+32	  }
+33	  const parsed = new Date(value).getTime();
+34	  return Number.isFinite(parsed) ? parsed : 0;
+35	}
+36	
+37	function isStaleServerAbsentActiveMessage(
+38	  message: QueuedConversationMessageRecord,
+39	  serverAbsentMessageUpdatedAtById: Map<string, number>,
+40	) {
+41	  if (!isActiveQueuedMessage(message)) {
+42	    return false;
+43	  }
+44	  const absentUpdatedAt = serverAbsentMessageUpdatedAtById.get(message.id);
+45	  return absentUpdatedAt !== undefined && timestampMs(message.updatedAt) <= absentUpdatedAt;
+46	}
+47	
+48	function attachmentsEqual(
+49	  left: QueuedConversationMessageRecord["attachments"],
+50	  right: QueuedConversationMessageRecord["attachments"],
+51	) {
+52	  const leftAttachments = left ?? [];
+53	  const rightAttachments = right ?? [];
+54	  if (leftAttachments.length !== rightAttachments.length) {
+55	    return false;
+56	  }
+57	  return leftAttachments.every((attachment, index) => JSON.stringify(attachment) === JSON.stringify(rightAttachments[index]));
+58	}
+59	
+60	function queuedMessageRecordsEqual(left: QueuedConversationMessageRecord, right: QueuedConversationMessageRecord) {
+61	  return left.id === right.id
+62	    && left.runId === right.runId
+63	    && left.targetWorkerId === right.targetWorkerId
+64	    && left.action === right.action
+65	    && left.content === right.content
+66	    && left.status === right.status
+67	    && left.lastError === right.lastError
+68	    && left.createdAt === right.createdAt
+69	    && left.updatedAt === right.updatedAt
+70	    && left.deliveredAt === right.deliveredAt
+71	    && attachmentsEqual(left.attachments, right.attachments);
+72	}
+73	
+74	function queuedMessageArraysEqual(left: QueuedConversationMessageRecord[], right: QueuedConversationMessageRecord[]) {
+75	  return left.length === right.length
+76	    && left.every((message, index) => queuedMessageRecordsEqual(message, right[index]!));
+77	}
+78	
+79	function setsEqual<T>(left: Set<T>, right: Set<T>) {
+80	  if (left === right) {
+81	    return true;
+82	  }
+83	  if (left.size !== right.size) {
+84	    return false;
+85	  }
+86	  for (const value of left) {
+87	    if (!right.has(value)) {
+88	      return false;
+89	    }
+90	  }
+91	  return true;
+92	}
+93	
+94	function mapsEqual<TKey, TValue>(left: Map<TKey, TValue>, right: Map<TKey, TValue>) {
+95	  if (left === right) {
+96	    return true;
+97	  }
+98	  if (left.size !== right.size) {
+99	    return false;
+100	  }
+101	  for (const [key, value] of left) {
+102	    if (!Object.is(right.get(key), value)) {
+103	      return false;
+104	    }
+105	  }
+106	  return true;
+107	}
+108	
+109	export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState> {
+110	  constructor() {
+
+uuid: 9cd00a29-6089-4723-8025-abb5a97d214a
+parent: 7e19dd7f-9faa-497c-892d-608dad5bd36a
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:41:22.020Z","phase":null} -->
+## Claude tool call: Read · 2026-08-04T11:41:22.020Z
+
+```json
+{
+  "file_path": "/Users/masterman/NLP/omniharness/src/interface/home/BusyMessageQueueManager.ts",
+  "offset": 110,
+  "limit": 120
+}
+
+uuid: a7afe1a9-d110-4359-a9e0-d24edd53ed85
+parent: 9cd00a29-6089-4723-8025-abb5a97d214a
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:41:22.028Z","phase":null} -->
+## Claude tool result: toolu_01YZn8EmostxMgih6QH7cYck · 2026-08-04T11:41:22.028Z
+
+```text
+110	  constructor() {
+111	    super(initialBusyMessageQueueState);
+112	  }
+113	
+114	  setQueuedMessages(messages: QueuedConversationMessageRecord[], notify = true) {
+115	    this.update((current) => {
+116	      const incomingMessages = messages.filter(
+117	        (message) => !isStaleServerAbsentActiveMessage(message, current.serverAbsentMessageUpdatedAtById),
+118	      );
+119	      const incomingIds = new Set(incomingMessages.map((message) => message.id));
+120	      const newlyAbsentActiveIds = current.queuedMessages
+121	        .filter((message) => isActiveQueuedMessage(message) && !incomingIds.has(message.id))
+122	        .map((message) => [message.id, timestampMs(message.updatedAt)] as const);
+123	      // Server rows are authoritative: clear optimistic interrupt/cancel flags
+124	      // for any row that has left a pending/delivering state.
+125	      const settledIds = new Set(
+126	        [
+127	          ...incomingMessages
+128	            .filter((message) => !isActiveQueuedMessage(message))
+129	            .map((message) => message.id),
+130	          ...newlyAbsentActiveIds.map(([id]) => id),
+131	        ],
+132	      );
+133	      const clearSettled = (ids: Set<string>) => {
+134	        if (settledIds.size === 0) {
+135	          return ids;
+136	        }
+137	        let changed = false;
+138	        const next = new Set(ids);
+139	        for (const id of settledIds) {
+140	          if (next.delete(id)) {
+141	            changed = true;
+142	          }
+143	        }
+144	        return changed ? next : ids;
+145	      };
+146	      const serverAbsentMessageUpdatedAtById = new Map(current.serverAbsentMessageUpdatedAtById);
+147	      for (const [id, updatedAt] of newlyAbsentActiveIds) {
+148	        serverAbsentMessageUpdatedAtById.set(id, updatedAt);
+149	      }
+150	      for (const message of incomingMessages) {
+151	        serverAbsentMessageUpdatedAtById.delete(message.id);
+152	      }
+153	      const queuedMessages = incomingMessages.filter((message) => !current.locallyHiddenMessageIds.has(message.id));
+154	      const cancellingMessageIds = clearSettled(current.cancellingMessageIds);
+155	      const interruptingMessageIds = clearSettled(current.interruptingMessageIds);
+156	      if (
+157	        queuedMessageArraysEqual(current.queuedMessages, queuedMessages)
+158	        && setsEqual(current.cancellingMessageIds, cancellingMessageIds)
+159	        && setsEqual(current.interruptingMessageIds, interruptingMessageIds)
+160	        && mapsEqual(current.serverAbsentMessageUpdatedAtById, serverAbsentMessageUpdatedAtById)
+161	      ) {
+162	        return current;
+163	      }
+164	      return {
+165	        ...current,
+166	        queuedMessages,
+167	        cancellingMessageIds,
+168	        interruptingMessageIds,
+169	        serverAbsentMessageUpdatedAtById,
+170	      };
+171	    }, notify);
+172	  }
+173	
+174	  getQueuedMessagesForRun(runId: string | null | undefined) {
+175	    const normalizedRunId = runId?.trim();
+176	    if (!normalizedRunId) {
+177	      return [];
+178	    }
+179	    return this.getSnapshot().queuedMessages.filter((message) => message.runId === normalizedRunId);
+180	  }
+181	
+182	  upsertQueuedMessage(message: QueuedConversationMessageRecord) {
+183	    this.update((current) => {
+184	      const serverAbsentMessageUpdatedAtById = new Map(current.serverAbsentMessageUpdatedAtById);
+185	      if (isStaleServerAbsentActiveMessage(message, serverAbsentMessageUpdatedAtById)) {
+186	        return current;
+187	      }
+188	
+189	      const cancellingMessageIds = new Set(current.cancellingMessageIds);
+190	      const interruptingMessageIds = new Set(current.interruptingMessageIds);
+191	      if (!isActiveQueuedMessage(message)) {
+192	        cancellingMessageIds.delete(message.id);
+193	        interruptingMessageIds.delete(message.id);
+194	        serverAbsentMessageUpdatedAtById.set(message.id, timestampMs(message.updatedAt));
+195	        return {
+196	          ...current,
+197	          queuedMessages: current.queuedMessages.filter((entry) => entry.id !== message.id),
+198	          cancellingMessageIds,
+199	          interruptingMessageIds,
+200	          serverAbsentMessageUpdatedAtById,
+201	        };
+202	      }
+203	
+204	      serverAbsentMessageUpdatedAtById.delete(message.id);
+205	      const existingIndex = current.queuedMessages.findIndex((entry) => entry.id === message.id);
+206	      if (existingIndex === -1) {
+207	        return {
+208	          ...current,
+209	          queuedMessages: [...current.queuedMessages, message].sort(compareOldestByCreatedAtThenId),
+210	          serverAbsentMessageUpdatedAtById,
+211	        };
+212	      }
+213	
+214	      const next = [...current.queuedMessages];
+215	      next[existingIndex] = message;
+216	      return {
+217	        ...current,
+218	        queuedMessages: next,
+219	        serverAbsentMessageUpdatedAtById,
+220	      };
+221	    });
+222	  }
+223	
+224	  markCancelling(messageId: string) {
+225	    this.setKey("cancellingMessageIds", (current) => new Set([...current, messageId]));
+226	  }
+227	
+228	  unmarkCancelling(messageId: string) {
+229	    this.setKey("cancellingMessageIds", (current) => {
+
+uuid: 698a7e56-cdeb-4835-899a-d0257e0ffd57
+parent: a7afe1a9-d110-4359-a9e0-d24edd53ed85
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:41:36.996Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:41:36.996Z
+
+I'm tracing through the server logic to understand when messages get queued versus sent immediately — specifically looking at the `sendConversationMessageUnlocked` function around line 1090 where it creates a queued message with the "queue" action. On the client side, the `busyAction` is set to "queue" when the composer displays the queue button because the worker is busy, so the client already knows this state before sending.
+
+The tricky part is that the prediction can be wrong — the worker might go idle between when the composer renders and when the POST request arrives at the server. In that case, the server sends the message normally and returns `data.message` instead of `data.queuedMessage`, so I need to reconcile the optimistic queue row. My approach is to insert an optimistic queued row into `busyMessageQueueManager` during `onMutate` if the composer predicted queuing, then in `onSuccess` either replace it with the server's queued row or remove it and add the sent message instead. The id churn problem surfaces again here — the server generates a new id for the queued message, so I should let the client supply that id upfront to avoid the flicker I just fixed for regular messages.
+
+Actually, since the server's queue path and message path are mutually exclusive, I can pass a single `clientMessageId` that works for whichever row the server creates, keeping the optimistic row's id stable. Let me check the `createQueuedConversationMessage` signature and trace through the server logic to confirm this approach.
+
+uuid: 3db4082f-99c3-4624-b28f-8ce74cf3d965
+parent: 698a7e56-cdeb-4835-899a-d0257e0ffd57
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:41:37.008Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:41:37.008Z
+
+```json
+{
+  "command": "sed -n '1075,1110p' src/server/conversations/send-message.ts",
+  "description": "Read the server queue branch"
+}
+
+uuid: 74b3c012-c888-46af-abc6-5175e4f486ca
+parent: 3db4082f-99c3-4624-b28f-8ce74cf3d965
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:41:37.068Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:41:37.068Z
+
+```json
+{
+  "command": "grep -n \"export async function createQueuedConversationMessage\" -A 45 src/server/conversations/queued-messages.ts",
+  "description": "Read createQueuedConversationMessage"
+}
+
+uuid: 3149da96-d0f9-4140-a1d2-24cda8eeeff6
+parent: 74b3c012-c888-46af-abc6-5175e4f486ca
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:41:37.111Z","phase":null} -->
+## Claude tool result: toolu_01A29PRUUrWtn4RKZD41JQnK · 2026-08-04T11:41:37.111Z
+
+```text
+      content: trimmedContent,
+      attachments: normalizedAttachments,
+    });
+    startSupervisorRun(runId);
+    return { ok: true, queuedMessage };
+  }
+
+  if (busyAction === "queue") {
+    const worker = await selectConversationWorker(runId);
+    if (!worker) {
+      throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
+    }
+    if (isDirectRunMode(run.mode) || isPlanningRun(run)) {
+      await reconcileWorkerUserMessagesInStream(runId, worker.id);
+    }
+
+    const queuedMessage = await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: worker.id,
+      action: "queue",
+      content: trimmedContent,
+      attachments: normalizedAttachments,
+    });
+    return { ok: true, queuedMessage };
+  }
+
+  if (isSupervisedRun(run)) {
+    const pendingClarification = await db
+      .select()
+      .from(clarifications)
+      .where(and(eq(clarifications.runId, runId), eq(clarifications.status, "pending")))
+      .orderBy(asc(clarifications.createdAt), asc(clarifications.id))
+      .get();
+    const createdAt = new Date();
+    const message = {
+      id: userMessageId,
+
+uuid: a642a9da-9993-4946-933f-1735825fdf79
+parent: 74b3c012-c888-46af-abc6-5175e4f486ca
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:41:37.158Z","phase":null} -->
+## Claude tool result: toolu_01QMm9nbZe3cBdhtYCumSg9y · 2026-08-04T11:41:37.158Z
+
+```text
+491:export async function createQueuedConversationMessage({
+492-  runId,
+493-  targetWorkerId = null,
+494-  action,
+495-  content,
+496-  attachments = [],
+497-}: {
+498-  runId: string;
+499-  targetWorkerId?: string | null;
+500-  action: BusyMessageAction;
+501-  content: string;
+502-  attachments?: ChatAttachment[];
+503-}) {
+504-  const trimmedContent = content.trim();
+505-  const normalizedAttachments = normalizeChatAttachments(attachments);
+506-  if (!trimmedContent && normalizedAttachments.length === 0) {
+507-    throw Object.assign(new Error("Message content or attachment is required"), { status: 400 });
+508-  }
+509-
+510-  const now = await nextQueuedMessageCreatedAt(runId);
+511-  const record = {
+512-    id: randomUUID(),
+513-    runId,
+514-    targetWorkerId,
+515-    action,
+516-    content: trimmedContent,
+517-    attachmentsJson: serializeChatAttachments(normalizedAttachments),
+518-    status: "pending",
+519-    lastError: null,
+520-    createdAt: now,
+521-    updatedAt: now,
+522-    deliveredAt: null,
+523-  };
+524-
+525-  await db.insert(queuedConversationMessages).values(record);
+526-  await insertQueueExecutionEvent(runId, "queued_message_created", {
+527-    summary: action === "steer" ? "Steering message was deferred into the queue." : "Message queued for the next safe turn.",
+528-    queuedMessageId: record.id,
+529-    action,
+530-  }, targetWorkerId);
+531-  notifyEventStreamSubscribers();
+532-  return serializeQueuedConversationMessage(record);
+533-}
+534-
+535-export async function cancelQueuedConversationMessage({
+536-  runId,
+
+uuid: d3dca28d-5492-43f9-9530-d3f0982ad0f3
+parent: 3149da96-d0f9-4140-a1d2-24cda8eeeff6
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:41:43.793Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:41:43.793Z
+
+I'm realizing the `busyAction === "queue"` condition at line 1082 executes unconditionally without checking if the worker is actually busy, so I need to look at what comes before it to understand the full control flow.
+
+uuid: 44a21c86-f36d-4ea1-8da7-915d85ee30a4
+parent: d3dca28d-5492-43f9-9530-d3f0982ad0f3
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:41:43.876Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:41:43.876Z
+
+```json
+{
+  "command": "sed -n '1030,1082p' src/server/conversations/send-message.ts",
+  "description": "Read code above the queue branch"
+}
+
+uuid: 873de9e1-a354-482d-93e9-79b2124d9bf3
+parent: 44a21c86-f36d-4ea1-8da7-915d85ee30a4
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:41:43.923Z","phase":null} -->
+## Claude tool result: toolu_01BbYASXxyrHaRkCjpazgmuc · 2026-08-04T11:41:43.923Z
+
+```text
+  });
+  if (!trimmedContent && normalizedAttachments.length === 0) {
+    throw Object.assign(new Error("Message content or attachment is required"), { status: 400 });
+  }
+
+  let run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+  if (!run) {
+    throw Object.assign(new Error("Conversation not found"), { status: 404 });
+  }
+  if (normalizedAttachments.length === 0 && isManualStopCommand(trimmedContent)) {
+    const stopped = await stopConversationFromManualStopCommand(run);
+    return stopped;
+  }
+  run = await applyWorkerPreferenceForMessage({
+    run,
+    content: trimmedContent,
+    preferredWorkerType,
+    preferredWorkerModel,
+    preferredWorkerEffort,
+    preferredWorkerAccountId,
+    allowedWorkerTypes,
+  });
+
+  if (isPlanningRun(run) && (run.status === "reviewing_plan" || run.status === "revising_plan")) {
+    throw Object.assign(new Error("Plan review is in progress. Please wait for the review to complete before sending further messages."), { status: 409 });
+  }
+
+  if (isSupervisedRun(run) && (busyAction === "queue" || busyAction === "steer")) {
+    if (busyAction === "steer") {
+      const worker = await selectConversationWorker(runId);
+      if (!worker) {
+        throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
+      }
+      return interruptWithDraftMessage({
+        runId,
+        content: trimmedContent,
+        attachments: normalizedAttachments,
+        targetWorkerId: worker.id,
+        source: "api",
+      });
+    }
+
+    const queuedMessage = await createQueuedConversationMessage({
+      runId,
+      action: "steer",
+      content: trimmedContent,
+      attachments: normalizedAttachments,
+    });
+    startSupervisorRun(runId);
+    return { ok: true, queuedMessage };
+  }
+
+  if (busyAction === "queue") {
+
+uuid: bde41bf1-6ee8-4f1e-9c0f-edf895058d57
+parent: 873de9e1-a354-482d-93e9-79b2124d9bf3
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:42:14.803Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:42:14.803Z
+
+When `busyAction` is set to "queue", it consistently creates a queued row without any ambiguity about whether a message gets sent. The fix is straightforward: in `onMutate`, I'll check if the payload has `busyAction === "queue"` and if so, add an optimistic queued row to the queue manager while skipping the optimistic message append to state. Then `onSuccess` will handle the server's response.
+
+For the "steer" action, it triggers an interrupt that delivers the message to the worker, so showing a sent bubble is correct — I'll leave that path unchanged. Now I need to understand the shape of `QueuedConversationMessageRecord` to build an optimistic version, and I'm checking whether `targetWorkerId` is nullable since the client might not have that information available.
+
+On the server side, I should add `clientMessageId` to `createQueuedConversationMessage` so the optimistic row can be replaced without id churn. Rather than reusing the collision check against the `messages` table, I'll add an optional `id` parameter to the function and validate it against the `queuedConversationMessages` table instead. I need to modify `createQueuedConversationMessage` to accept an optional `id` parameter that validates as a UUID and falls back to generating one if needed, then pass the user message id to both the supervised steer-queue and direct queue branches when creating queued messages.
+
+The `action` field differs between branches ("steer" for supervised, "queue" for direct), which could cause a mismatch with the server row for about 200ms until `upsertQueuedMessage` replaces it. I should check whether `action` affects how the queue row renders to decide if I need to predict it on the client side.
+
+uuid: 8233f5dd-e76e-454c-b19d-90c29001661e
+parent: bde41bf1-6ee8-4f1e-9c0f-edf895058d57
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:42:14.979Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:42:14.979Z
+
+```json
+{
+  "command": "grep -n \"QueuedConversationMessageRecord\" -A 16 src/interface/home/types.ts | head -25",
+  "description": "Read QueuedConversationMessageRecord type"
+}
+
+uuid: 7a1fdd5e-b706-4611-85dc-fef51f15d49b
+parent: 8233f5dd-e76e-454c-b19d-90c29001661e
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:42:15.061Z","phase":null} -->
+## Claude tool result: toolu_01VSANd2Usx9TfB8g1W2ZTzv · 2026-08-04T11:42:15.061Z
+
+```text
+(Bash completed with no output)
+
+uuid: a8f6216d-0885-4f1d-a47d-04c877ec5df0
+parent: 7a1fdd5e-b706-4611-85dc-fef51f15d49b
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:42:15.690Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:42:15.690Z
+
+```json
+{
+  "command": "grep -rn \"\\.action\" src/components/home/ConversationComposer.tsx src/components/home/ConversationMain.tsx | grep -i queue | head -10; echo \"=== queued render ===\"; grep -rn \"queuedMessage\" src/components/home/ConversationComposer.tsx | head -15",
+  "description": "Check if queued action affects rendering"
+}
+
+uuid: 8c91bd62-12e1-4d69-bd4c-71840175928e
+parent: a8f6216d-0885-4f1d-a47d-04c877ec5df0
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:42:15.760Z","phase":null} -->
+## Claude tool result: toolu_01LM7METqNSMUQvbScTjKs6r · 2026-08-04T11:42:15.760Z
+
+```text
+=== queued render ===
+src/components/home/ConversationComposer.tsx:62:  queuedMessages: QueuedConversationMessageRecord[];
+src/components/home/ConversationComposer.tsx:124:  queuedMessages,
+src/components/home/ConversationComposer.tsx:201:        messages={queuedMessages}
+src/components/home/ConversationComposer.tsx:329:              const hasPendingQueued = queuedMessages.some((message) => message.status === "pending");
+
+uuid: f517e2a5-7219-4616-9f1a-e6f757e684c0
+parent: 8c91bd62-12e1-4d69-bd4c-71840175928e
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:42:20.434Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:42:20.434Z
+
+```json
+{
+  "command": "grep -rn \"QueuedConversationMessageRecord\" src/interface/home/types.ts src/shared/*.ts 2>/dev/null | head -5; echo \"=== def ===\"; grep -rn \"QueuedConversationMessageRecord = \\|type QueuedConversationMessageRecord\" -A 16 src/ | head -25",
+  "description": "Locate the queued record type definition"
+}
+
+uuid: 6fa05aa1-515b-4d02-a543-17e7cc58289b
+parent: f517e2a5-7219-4616-9f1a-e6f757e684c0
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:42:20.760Z","phase":null} -->
+## Claude tool result: toolu_015NhRYVqRuAMuA7mbzh2wg2 · 2026-08-04T11:42:20.760Z
+
+```text
+src/shared/home-types.ts:113:export type QueuedConversationMessageRecord = {
+src/shared/home-types.ts:129:  queuedMessage: QueuedConversationMessageRecord;
+src/shared/home-types.ts:366:  queuedMessages?: QueuedConversationMessageRecord[];
+=== def ===
+src/server/conversations/queued-message-records.ts:7:type QueuedConversationMessageRecord = typeof queuedConversationMessages.$inferSelect;
+src/server/conversations/queued-message-records.ts-8-
+src/server/conversations/queued-message-records.ts-9-export function serializeQueuedConversationMessage(record: QueuedConversationMessageRecord) {
+src/server/conversations/queued-message-records.ts-10-  return {
+src/server/conversations/queued-message-records.ts-11-    id: record.id,
+src/server/conversations/queued-message-records.ts-12-    runId: record.runId,
+src/server/conversations/queued-message-records.ts-13-    targetWorkerId: record.targetWorkerId,
+src/server/conversations/queued-message-records.ts-14-    action: record.action as BusyMessageAction,
+src/server/conversations/queued-message-records.ts-15-    content: record.content,
+src/server/conversations/queued-message-records.ts-16-    status: record.status as QueuedConversationMessageStatus,
+src/server/conversations/queued-message-records.ts-17-    lastError: record.lastError,
+src/server/conversations/queued-message-records.ts-18-    attachments: normalizeChatAttachments(record.attachmentsJson ? JSON.parse(record.attachmentsJson) : []),
+src/server/conversations/queued-message-records.ts-19-    createdAt: record.createdAt.toISOString(),
+src/server/conversations/queued-message-records.ts-20-    updatedAt: record.updatedAt.toISOString(),
+src/server/conversations/queued-message-records.ts-21-    deliveredAt: record.deliveredAt?.toISOString() ?? null,
+src/server/conversations/queued-message-records.ts-22-  };
+src/server/conversations/queued-message-records.ts-23-}
+src/server/conversations/queued-messages.ts:33:type QueuedConversationMessageRecord = typeof queuedConversationMessages.$inferSelect;
+src/server/conversations/queued-messages.ts-34-export type WorkerAskResponse = Awaited<ReturnType<typeof askAgent>>;
+src/server/conversations/queued-messages.ts-35-type WorkerSnapshot = Awaited<ReturnType<typeof getAgent>>;
+src/server/conversations/queued-messages.ts-36-export type WorkerResponseRun = Pick<typeof runs.$inferSelect, "id" | "mode">;
+src/server/conversations/queued-messages.ts-37-type PendingElicitation = NonNullable<WorkerSnapshot["pendingElicitations"]>[number];
+src/server/conversations/queued-messages.ts-38-type ElicitationSchema = PendingElicitation["requestedSchema"];
+src/server/conversations/queued-messages.ts-39-type ElicitationContent = Record<string, string | number | boolean | string[]>;
+src/server/conversations/queued-messages.ts-40-
+
+uuid: 4289c7f8-c268-4d6a-9cdc-cd2b75f78981
+parent: 6fa05aa1-515b-4d02-a543-17e7cc58289b
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:42:21.473Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:42:21.473Z
+
+```json
+{
+  "command": "sed -n '195,215p' src/components/home/ConversationComposer.tsx; grep -rn \"messages={queuedMessages}\" -B 8 src/components/home/ConversationComposer.tsx | head -20",
+  "description": "Find the queued messages list component"
+}
+
+uuid: 755f8ab2-3294-43a0-9fb9-9f94e056c97c
+parent: 4289c7f8-c268-4d6a-9cdc-cd2b75f78981
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:42:21.616Z","phase":null} -->
+## Claude tool result: toolu_01DbsaN1MURQ2t4wpLvJcjC4 · 2026-08-04T11:42:21.616Z
+
+```text
+          value={selectedConversationMode as ConversationModeOption}
+          onChange={setSelectedConversationMode}
+          disabled={isComposerSubmitting}
+        />
+      ) : null}
+      <QueuedMessageDrawer
+        messages={queuedMessages}
+        cancellingMessageIds={cancellingQueuedMessageIds}
+        interruptingMessageIds={interruptingQueuedMessageIds}
+        themeMode={themeMode}
+        onEdit={onEditQueuedMessage}
+        onInterruptSendNow={onInterruptQueuedMessage}
+        onCancel={onCancelQueuedMessage}
+      />
+      <div className="relative">
+        {showMentionPicker && (
+          <div className="absolute inset-x-0 bottom-full z-30 mb-3 overflow-hidden rounded-2xl border border-border bg-background shadow-xl">
+            <div className="border-b border-border/60 px-4 py-2 text-xs text-muted-foreground">
+              {currentProjectScope}
+            </div>
+            <div className="max-h-[min(45dvh,18rem)] overflow-y-auto p-2">
+src/components/home/ConversationComposer.tsx-193-          // Only rendered for a new conversation, where the composer mode is
+src/components/home/ConversationComposer.tsx-194-          // always a pickable option ("omni" | "direct").
+src/components/home/ConversationComposer.tsx-195-          value={selectedConversationMode as ConversationModeOption}
+src/components/home/ConversationComposer.tsx-196-          onChange={setSelectedConversationMode}
+src/components/home/ConversationComposer.tsx-197-          disabled={isComposerSubmitting}
+src/components/home/ConversationComposer.tsx-198-        />
+src/components/home/ConversationComposer.tsx-199-      ) : null}
+src/components/home/ConversationComposer.tsx-200-      <QueuedMessageDrawer
+src/components/home/ConversationComposer.tsx:201:        messages={queuedMessages}
+
+uuid: 7bfe7049-c98e-4347-8dc4-5bbd6289200d
+parent: 755f8ab2-3294-43a0-9fb9-9f94e056c97c
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:42:24.627Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:42:24.627Z
+
+```json
+{
+  "command": "grep -rn \"action\" src/components/home/QueuedMessageDrawer.tsx 2>/dev/null | head -10; ls src/components/home/ | grep -i queue; sed -n '113,130p' src/shared/home-types.ts",
+  "description": "Check queued drawer rendering and record type"
+}
+
+uuid: fd92a702-f3f8-4156-b9a1-9befb133cecd
+parent: 7bfe7049-c98e-4347-8dc4-5bbd6289200d
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:42:24.788Z","phase":null} -->
+## Claude tool result: toolu_01WW15ZFqnLbBCp7HMRTTFRq · 2026-08-04T11:42:24.788Z
+
+```text
+QueuedMessageDrawer.tsx
+export type QueuedConversationMessageRecord = {
+  id: string;
+  runId: string;
+  targetWorkerId?: string | null;
+  action: BusyMessageAction;
+  content: string;
+  status: "pending" | "delivering" | "delivered" | "cancelled" | "failed";
+  lastError?: string | null;
+  attachments?: ChatAttachment[];
+  createdAt: string;
+  updatedAt: string;
+  deliveredAt?: string | null;
+};
+export type QueuedMessageInterruptResponse = {
+  ok: true;
+  message?: MessageRecord;
+  queuedMessage: QueuedConversationMessageRecord;
+  interruption: {
+
+uuid: 8dd1e93c-cde4-4b97-a5b7-dd2d2eb159e4
+parent: fd92a702-f3f8-4156-b9a1-9befb133cecd
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:42:24.789Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:42:24.789Z
+
+```text
+{
+  "type": "task_reminder",
+  "content": [],
+  "itemCount": 0
+}
+
+binary omitted from archive
+
+uuid: 58daced0-4984-47fb-a9d2-9a63ecc7cc69
+parent: 8dd1e93c-cde4-4b97-a5b7-dd2d2eb159e4
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:42:40.010Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:42:40.010Z
+
+The `action` field won't cause issues since it's not actually used in the drawer component, so I can proceed without worrying about predicting whether it's supervised or direct. Now I'm implementing the changes on the server side: I need to add an optional `id` parameter to `createQueuedConversationMessage` and pass the resolved ID to both calls in `sendConversationMessageUnlocked`. The tricky part is that `resolveUserMessageId` currently checks the `messages` table, but for queued rows I'll need to check the `queuedCon` table instead.
+
+I'm going to simplify this by passing the raw `clientMessageId` directly to `createQueuedConversationMessage` and letting it handle its own collision check against the queued table, while `resolveUserMessageId` stays focused on the messages table. This keeps the concerns separated and avoids redundant checks.
+
+On the client side, I'm building the optimistic queued message in the `onMutate` handler, upserting it into the queue manager, and returning the optimistic ID in the context so I can track it properly.
+
+For the success and error paths, I need to handle the case where the server returns a different ID than the optimistic one — upsert if it matches, or remove the optimistic row if the server minted something different. I also need to add a method to actually remove queued messages from the manager, since the existing `hideQueuedMessage` just marks them as locally hidden rather than deleting them.
+
+There's a timing issue though: SSE frames call `setQueuedMessages` with the server's list, which would drop any optimistic row that hasn't been created on the server yet. I need to add the same in-flight protection for queued messages that I'd use for regular messages.
+
+uuid: a2f24319-39b7-47fa-955e-4110835fd246
+parent: 58daced0-4984-47fb-a9d2-9a63ecc7cc69
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:42:40.037Z","phase":null} -->
+## Claude tool call: Read · 2026-08-04T11:42:40.037Z
+
+```json
+{
+  "file_path": "/Users/masterman/NLP/omniharness/src/interface/home/BusyMessageQueueManager.ts",
+  "offset": 224,
+  "limit": 90
+}
+
+uuid: b5796ecd-1aa5-4f81-a39b-be61eca7400b
+parent: a2f24319-39b7-47fa-955e-4110835fd246
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:42:40.055Z","phase":null} -->
+## Claude tool result: toolu_01P1DFPsLXEcfDqT2yGfrLZV · 2026-08-04T11:42:40.055Z
+
+```text
+224	  markCancelling(messageId: string) {
+225	    this.setKey("cancellingMessageIds", (current) => new Set([...current, messageId]));
+226	  }
+227	
+228	  unmarkCancelling(messageId: string) {
+229	    this.setKey("cancellingMessageIds", (current) => {
+230	      const next = new Set(current);
+231	      next.delete(messageId);
+232	      return next;
+233	    });
+234	  }
+235	
+236	  markInterrupting(messageId: string) {
+237	    this.setKey("interruptingMessageIds", (current) => new Set([...current, messageId]));
+238	  }
+239	
+240	  unmarkInterrupting(messageId: string) {
+241	    this.setKey("interruptingMessageIds", (current) => {
+242	      const next = new Set(current);
+243	      next.delete(messageId);
+244	      return next;
+245	    });
+246	  }
+247	
+248	  hideQueuedMessage(messageId: string) {
+249	    this.patch((current) => {
+250	      const cancellingMessageIds = new Set(current.cancellingMessageIds);
+251	      const interruptingMessageIds = new Set(current.interruptingMessageIds);
+252	      const locallyHiddenMessageIds = new Set(current.locallyHiddenMessageIds);
+253	      cancellingMessageIds.delete(messageId);
+254	      interruptingMessageIds.delete(messageId);
+255	      locallyHiddenMessageIds.add(messageId);
+256	      const serverAbsentMessageUpdatedAtById = new Map(current.serverAbsentMessageUpdatedAtById);
+257	      const existing = current.queuedMessages.find((message) => message.id === messageId);
+258	      serverAbsentMessageUpdatedAtById.set(messageId, timestampMs(existing?.updatedAt));
+259	      return {
+260	        queuedMessages: current.queuedMessages.filter((message) => message.id !== messageId),
+261	        cancellingMessageIds,
+262	        interruptingMessageIds,
+263	        locallyHiddenMessageIds,
+264	        serverAbsentMessageUpdatedAtById,
+265	      };
+266	    });
+267	  }
+268	
+269	  restoreQueuedMessage(message: QueuedConversationMessageRecord) {
+270	    this.patch((current) => {
+271	      const cancellingMessageIds = new Set(current.cancellingMessageIds);
+272	      const interruptingMessageIds = new Set(current.interruptingMessageIds);
+273	      const locallyHiddenMessageIds = new Set(current.locallyHiddenMessageIds);
+274	      const serverAbsentMessageUpdatedAtById = new Map(current.serverAbsentMessageUpdatedAtById);
+275	      cancellingMessageIds.delete(message.id);
+276	      interruptingMessageIds.delete(message.id);
+277	      locallyHiddenMessageIds.delete(message.id);
+278	      serverAbsentMessageUpdatedAtById.delete(message.id);
+279	      const existingIndex = current.queuedMessages.findIndex((entry) => entry.id === message.id);
+280	      const queuedMessages = existingIndex === -1
+281	        ? [...current.queuedMessages, message].sort(compareOldestByCreatedAtThenId)
+282	        : current.queuedMessages.map((entry) => entry.id === message.id ? message : entry);
+283	      return {
+284	        queuedMessages,
+285	        cancellingMessageIds,
+286	        interruptingMessageIds,
+287	        locallyHiddenMessageIds,
+288	        serverAbsentMessageUpdatedAtById,
+289	      };
+290	    });
+291	  }
+292	}
+293	
+294	export const busyMessageQueueManager = new BusyMessageQueueManager();
+295	
+
+uuid: 6ef2336b-667f-4880-a7b4-e6f720bb7858
+parent: b5796ecd-1aa5-4f81-a39b-be61eca7400b
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:42:49.986Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:42:49.986Z
+
+I'm setting up the manager to handle optimistic updates for queued messages. I'll track pending message IDs in state, then implement methods to add optimistic rows when sending begins, settle them once the server responds, and clean them up if the send fails.
+
+I also need to be careful about the stale message bookkeeping—pending IDs should be excluded from the absence tracking so they don't get incorrectly filtered as stale when the real server row arrives later.
+
+Next I'll build the utility function for creating optimistic queued messages, wire up the mutation hooks to branch on the queue action, and update the server endpoint to accept a client message ID.
+
+uuid: 51ec554b-c519-49ac-a9e3-c281eb5a807b
+parent: 6ef2336b-667f-4880-a7b4-e6f720bb7858
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:42:49.991Z","phase":null} -->
+## Claude · 2026-08-04T11:42:49.991Z
+
+Implementing. Starting with the manager — optimistic queued rows need the same in-flight protection I gave messages.
+
+uuid: bcf2b7dc-13c6-416e-90c0-1f061f3178c5
+parent: 51ec554b-c519-49ac-a9e3-c281eb5a807b
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:42:56.835Z","phase":null} -->
+## Claude tool call: Edit · 2026-08-04T11:42:56.835Z
+
+```json
+{
+  "replace_all": false,
+  "file_path": "/Users/masterman/NLP/omniharness/src/interface/home/BusyMessageQueueManager.ts",
+  "old_string": "type BusyMessageQueueState = {\n  queuedMessages: QueuedConversationMessageRecord[];\n  cancellingMessageIds: Set<string>;\n  // Rows the user has asked to interrupt-and-send (\"force send\"). Optimistic\n  // UI only — server queue rows from /api/events remain authoritative.\n  interruptingMessageIds: Set<string>;\n  locallyHiddenMessageIds: Set<string>;\n  serverAbsentMessageUpdatedAtById: Map<string, number>;\n};\n\nconst initialBusyMessageQueueState: BusyMessageQueueState = {\n  queuedMessages: [],\n  cancellingMessageIds: new Set(),\n  interruptingMessageIds: new Set(),\n  locallyHiddenMessageIds: new Set(),\n  serverAbsentMessageUpdatedAtById: new Map(),\n};",
+  "new_string": "type BusyMessageQueueState = {\n  queuedMessages: QueuedConversationMessageRecord[];\n  cancellingMessageIds: Set<string>;\n  // Rows the user has asked to interrupt-and-send (\"force send\"). Optimistic\n  // UI only — server queue rows from /api/events remain authoritative.\n  interruptingMessageIds: Set<string>;\n  locallyHiddenMessageIds: Set<string>;\n  serverAbsentMessageUpdatedAtById: Map<string, number>;\n  // Rows this client queued whose POST has not returned. The server cannot\n  // have them yet, so \"absent from the server list\" must not be read as\n  // \"cancelled\" for these — otherwise the row the user just queued blinks out\n  // on the next event frame and back in when the POST lands.\n  pendingQueuedMessageIds: Set<string>;\n};\n\nconst initialBusyMessageQueueState: BusyMessageQueueState = {\n  queuedMessages: [],\n  cancellingMessageIds: new Set(),\n  interruptingMessageIds: new Set(),\n  locallyHiddenMessageIds: new Set(),\n  serverAbsentMessageUpdatedAtById: new Map(),\n  pendingQueuedMessageIds: new Set(),\n};"
+}
+
+uuid: e593f3d0-d092-47cd-a126-13101c7a49dd
+parent: bcf2b7dc-13c6-416e-90c0-1f061f3178c5
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:42:56.855Z","phase":null} -->
+## Claude tool result: toolu_0181GRqKi5fwQ288b2YQLQyW · 2026-08-04T11:42:56.855Z
+
+```text
+The file /Users/masterman/NLP/omniharness/src/interface/home/BusyMessageQueueManager.ts has been updated successfully. (file state is current in your context — no need to Read it back)
+
+uuid: d23afcec-0aab-4800-bef8-40b4e4c24b48
+parent: e593f3d0-d092-47cd-a126-13101c7a49dd
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:43:03.806Z","phase":null} -->
+## Claude tool call: Edit · 2026-08-04T11:43:03.806Z
+
+```json
+{
+  "replace_all": false,
+  "file_path": "/Users/masterman/NLP/omniharness/src/interface/home/BusyMessageQueueManager.ts",
+  "old_string": "      const incomingIds = new Set(incomingMessages.map((message) => message.id));\n      const newlyAbsentActiveIds = current.queuedMessages\n        .filter((message) => isActiveQueuedMessage(message) && !incomingIds.has(message.id))\n        .map((message) => [message.id, timestampMs(message.updatedAt)] as const);",
+  "new_string": "      const incomingIds = new Set(incomingMessages.map((message) => message.id));\n      // A row whose POST is still in flight is not \"gone from the server\", it\n      // has not reached the server yet. Leave it out of the absence\n      // bookkeeping entirely so it is neither dropped now nor rejected as\n      // stale when the real row arrives.\n      const newlyAbsentActiveIds = current.queuedMessages\n        .filter((message) => (\n          isActiveQueuedMessage(message)\n          && !incomingIds.has(message.id)\n          && !current.pendingQueuedMessageIds.has(message.id)\n        ))\n        .map((message) => [message.id, timestampMs(message.updatedAt)] as const);\n      const retainedPendingMessages = current.queuedMessages.filter((message) => (\n        current.pendingQueuedMessageIds.has(message.id) && !incomingIds.has(message.id)\n      ));"
+}
+
+uuid: dba24544-2721-463b-99d1-6c394031c5a6
+parent: d23afcec-0aab-4800-bef8-40b4e4c24b48
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:43:03.876Z","phase":null} -->
+## Claude tool result: toolu_01X12YVDdyWhQ8JfzByFepJt · 2026-08-04T11:43:03.876Z
+
+```text
+The file /Users/masterman/NLP/omniharness/src/interface/home/BusyMessageQueueManager.ts has been updated successfully. (file state is current in your context — no need to Read it back)
+
+uuid: bb2fab06-e5ce-4fc6-815e-5f9637970405
+parent: dba24544-2721-463b-99d1-6c394031c5a6
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:43:08.974Z","phase":null} -->
+## Claude tool call: Edit · 2026-08-04T11:43:08.974Z
+
+```json
+{
+  "replace_all": false,
+  "file_path": "/Users/masterman/NLP/omniharness/src/interface/home/BusyMessageQueueManager.ts",
+  "old_string": "      const queuedMessages = incomingMessages.filter((message) => !current.locallyHiddenMessageIds.has(message.id));\n      const cancellingMessageIds = clearSettled(current.cancellingMessageIds);",
+  "new_string": "      const queuedMessages = [\n        ...incomingMessages.filter((message) => !current.locallyHiddenMessageIds.has(message.id)),\n        ...retainedPendingMessages,\n      ].sort(compareOldestByCreatedAtThenId);\n      const cancellingMessageIds = clearSettled(current.cancellingMessageIds);"
+}
+
+uuid: b9b8b3a7-cbc9-4432-bf12-718b6a1cf70b
+parent: bb2fab06-e5ce-4fc6-815e-5f9637970405
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:43:08.981Z","phase":null} -->
+## Claude tool result: toolu_01DXpyBNmcyjGPaaHzxWLtt2 · 2026-08-04T11:43:08.981Z
+
+```text
+The file /Users/masterman/NLP/omniharness/src/interface/home/BusyMessageQueueManager.ts has been updated successfully. (file state is current in your context — no need to Read it back)
+
+uuid: b18c6e5b-52ca-4e1b-849d-4aedd565b9d7
+parent: b9b8b3a7-cbc9-4432-bf12-718b6a1cf70b
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:43:11.130Z","phase":null} -->
+## Claude · 2026-08-04T11:43:11.130Z
+
+Now the begin/settle/fail lifecycle methods.
+
+uuid: b415edfa-1c6e-4780-b5e7-b76fdc0aa82d
+parent: b18c6e5b-52ca-4e1b-849d-4aedd565b9d7
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:43:20.513Z","phase":null} -->
+## Claude tool call: Edit · 2026-08-04T11:43:20.513Z
+
+```json
+{
+  "replace_all": false,
+  "file_path": "/Users/masterman/NLP/omniharness/src/interface/home/BusyMessageQueueManager.ts",
+  "old_string": "  markCancelling(messageId: string) {",
+  "new_string": "  /**\n   * Show a row in the queue from the moment the user hits send, rather than\n   * after the POST returns. A message sent with `busyAction: \"queue\"` is\n   * always queued server-side, so the prediction cannot be wrong — and\n   * rendering it as a sent bubble in the meantime made it appear in the\n   * transcript for the length of the round trip before jumping to the queue.\n   */\n  beginQueueSend(message: QueuedConversationMessageRecord) {\n    this.patch((current) => {\n      const pendingQueuedMessageIds = new Set(current.pendingQueuedMessageIds);\n      pendingQueuedMessageIds.add(message.id);\n      const serverAbsentMessageUpdatedAtById = new Map(current.serverAbsentMessageUpdatedAtById);\n      serverAbsentMessageUpdatedAtById.delete(message.id);\n      return {\n        queuedMessages: [...current.queuedMessages, message].sort(compareOldestByCreatedAtThenId),\n        pendingQueuedMessageIds,\n        serverAbsentMessageUpdatedAtById,\n      };\n    });\n  }\n\n  /**\n   * The POST returned. The server row normally carries the id the optimistic\n   * row already used, so this is an in-place swap; a server that minted its\n   * own id instead drops the optimistic row and takes the returned one.\n   */\n  settleQueueSend(pendingMessageId: string, message: QueuedConversationMessageRecord | null | undefined) {\n    this.patch((current) => {\n      const pendingQueuedMessageIds = new Set(current.pendingQueuedMessageIds);\n      pendingQueuedMessageIds.delete(pendingMessageId);\n      const queuedMessages = message && message.id !== pendingMessageId\n        ? current.queuedMessages.filter((entry) => entry.id !== pendingMessageId)\n        : current.queuedMessages;\n      return { pendingQueuedMessageIds, queuedMessages };\n    });\n    if (message) {\n      this.upsertQueuedMessage(message);\n    }\n  }\n\n  failQueueSend(pendingMessageId: string) {\n    this.patch((current) => {\n      const pendingQueuedMessageIds = new Set(current.pendingQueuedMessageIds);\n      pendingQueuedMessageIds.delete(pendingMessageId);\n      return {\n        pendingQueuedMessageIds,\n        queuedMessages: current.queuedMessages.filter((entry) => entry.id !== pendingMessageId),\n      };\n    });\n  }\n\n  markCancelling(messageId: string) {"
+}
+
+uuid: 69d4bfa0-ebfc-4223-85f3-95dbbfd87267
+parent: b415edfa-1c6e-4780-b5e7-b76fdc0aa82d
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:43:20.536Z","phase":null} -->
+## Claude tool result: toolu_01MyNDD4ti1y5PQR3J59QzD5 · 2026-08-04T11:43:20.536Z
+
+```text
+The file /Users/masterman/NLP/omniharness/src/interface/home/BusyMessageQueueManager.ts has been updated successfully. (file state is current in your context — no need to Read it back)
+
+uuid: 1195f311-c83d-4f09-92e7-cab36795bf89
+parent: 69d4bfa0-ebfc-4223-85f3-95dbbfd87267
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:43:22.998Z","phase":null} -->
+## Claude · 2026-08-04T11:43:22.998Z
+
+Now the optimistic queued-row builder.
+
+uuid: 37e42499-49d1-4cc2-868f-621d4b4b6f4b
+parent: 1195f311-c83d-4f09-92e7-cab36795bf89
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:43:23.849Z","phase":null} -->
+## Claude tool call: Read · 2026-08-04T11:43:23.849Z
+
+```json
+{
+  "file_path": "/Users/masterman/NLP/omniharness/src/interface/home/utils.ts",
+  "offset": 210,
+  "limit": 36
+}
+
+uuid: 25239a74-9f2d-4899-8c62-0df73a3d7252
+parent: 37e42499-49d1-4cc2-868f-621d4b4b6f4b
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:43:23.870Z","phase":null} -->
+## Claude tool result: toolu_01U1otrjShY1iQMZ1p4M2KB4 · 2026-08-04T11:43:23.870Z
+
+```text
+210	    const value = Math.floor(Math.random() * 16);
+211	    return (character === "x" ? value : (value & 0x3) | 0x8).toString(16);
+212	  });
+213	}
+214	
+215	/**
+216	 * A user message rendered from the moment the send button is pressed,
+217	 * before the server has acknowledged it. The bubble must exist continuously
+218	 * from click to delivery — appearing only on POST success made it pop in
+219	 * late and flicker (see the send-time bubble regression tests).
+220	 *
+221	 * The id is a plain uuid rather than a recognisably-optimistic one because
+222	 * it is sent as `clientMessageId` and adopted verbatim as the persisted row
+223	 * id. Optimistic row, server row and worker stream entry then share one id,
+224	 * so the bubble keeps a single React key for its whole life instead of
+225	 * remounting on each handoff.
+226	 */
+227	export function buildOptimisticSentConversationMessage(args: {
+228	  runId: string;
+229	  content: string;
+230	  attachments?: ChatAttachment[];
+231	  id?: string;
+232	}): MessageRecord {
+233	  const id = args.id ?? randomMessageUuid();
+234	  return {
+235	    id,
+236	    runId: args.runId,
+237	    role: "user",
+238	    kind: null,
+239	    content: args.content,
+240	    attachments: args.attachments ?? [],
+241	    createdAt: new Date().toISOString(),
+242	  };
+243	}
+244	
+245	/**
+
+uuid: f3450c00-401f-4117-945e-6fe3e9f333bf
+parent: 25239a74-9f2d-4899-8c62-0df73a3d7252
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:43:33.620Z","phase":null} -->
+## Claude tool call: Edit · 2026-08-04T11:43:33.620Z
+
+```json
+{
+  "replace_all": false,
+  "file_path": "/Users/masterman/NLP/omniharness/src/interface/home/utils.ts",
+  "old_string": "/**\n * A user message rendered from the moment the send button is pressed,\n * before the server has acknowledged it. The bubble must exist continuously\n * from click to delivery — appearing only on POST success made it pop in\n * late and flicker (see the send-time bubble regression tests).",
+  "new_string": "/**\n * The queue row for a message sent while the worker is busy, rendered from\n * the moment the user hits send.\n *\n * `busyAction: \"queue\"` always produces a queued row server-side and never a\n * delivered message, so predicting it cannot be wrong. Rendering an optimistic\n * *sent bubble* instead put the message in the transcript for the length of\n * the round trip before it jumped into the queue.\n *\n * `action` is left as \"queue\" even though a supervised run records the row as\n * \"steer\": nothing renders the field, and the server row replaces this one\n * wholesale on the same id.\n */\nexport function buildOptimisticQueuedConversationMessage(args: {\n  runId: string;\n  content: string;\n  targetWorkerId?: string | null;\n  attachments?: ChatAttachment[];\n  id?: string;\n}): QueuedConversationMessageRecord {\n  const createdAt = new Date().toISOString();\n  return {\n    id: args.id ?? randomMessageUuid(),\n    runId: args.runId,\n    targetWorkerId: args.targetWorkerId ?? null,\n    action: \"queue\",\n    content: args.content,\n    status: \"pending\",\n    lastError: null,\n    attachments: args.attachments ?? [],\n    createdAt,\n    updatedAt: createdAt,\n    deliveredAt: null,\n  };\n}\n\n/**\n * A user message rendered from the moment the send button is pressed,\n * before the server has acknowledged it. The bubble must exist continuously\n * from click to delivery — appearing only on POST success made it pop in\n * late and flicker (see the send-time bubble regression tests)."
+}
+
+uuid: 327a08eb-d490-4a35-a17a-0ee5897b5f95
+parent: f3450c00-401f-4117-945e-6fe3e9f333bf
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:43:33.642Z","phase":null} -->
+## Claude tool result: toolu_01R2Ef5qS6QphSqpwbnAh3kH · 2026-08-04T11:43:33.642Z
+
+```text
+The file /Users/masterman/NLP/omniharness/src/interface/home/utils.ts has been updated successfully. (file state is current in your context — no need to Read it back)
+
+uuid: 457a4901-4444-4bff-a64b-08f13249fb30
+parent: 327a08eb-d490-4a35-a17a-0ee5897b5f95
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:43:33.824Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:43:33.824Z
+
+```text
+{
+  "type": "task_reminder",
+  "content": [],
+  "itemCount": 0
+}
+
+binary omitted from archive
+
+uuid: a0a85836-27f7-4f0d-98c6-74ce17f7b15b
+parent: 457a4901-4444-4bff-a64b-08f13249fb30
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:43:38.558Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:43:38.558Z
+
+```json
+{
+  "command": "grep -n \"QueuedConversationMessageRecord\\|^import type\\|^} from \\\"./types\\\"\" src/interface/home/utils.ts | head -10",
+  "description": "Check utils type imports"
+}
+
+uuid: 006fed30-8151-4906-84e8-dc3593b1237d
+parent: a0a85836-27f7-4f0d-98c6-74ce17f7b15b
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:43:38.583Z","phase":null} -->
+## Claude tool result: toolu_014TmdRPdRnDwbydvneto54j · 2026-08-04T11:43:38.583Z
+
+```text
+2:import type { ChatAttachment } from "@/lib/chat-attachments";
+7:import type { AgentSnapshot, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, PlanItemRecord, PlanRecord, RunRecord, SupervisorInterventionRecord, WorkerModelCatalog, WorkerType } from "./types";
+234:}): QueuedConversationMessageRecord {
+
+uuid: c50ba5d2-aa59-42cf-be50-bacc3c11c39c
+parent: 006fed30-8151-4906-84e8-dc3593b1237d
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:43:43.055Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:43:43.055Z
+
+```json
+{
+  "command": "python3 - <<'PY'\np='src/interface/home/utils.ts'\ns=open(p).read()\ns=s.replace('import type { AgentSnapshot, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, PlanItemRecord, PlanRecord, RunRecord, SupervisorInterventionRecord, WorkerModelCatalog, WorkerType } from \"./types\";','import type { AgentSnapshot, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, PlanItemRecord, PlanRecord, QueuedConversationMessageRecord, RunRecord, SupervisorInterventionRecord, WorkerModelCatalog, WorkerType } from \"./types\";',1)\nopen(p,'w').write(s)\nPY\ngrep -n \"QueuedConversationMessageRecord\" src/interface/home/types.ts | head -3",
+  "description": "Add type import and verify it is exported from types"
+}
+
+uuid: 2a50dc51-4d0e-40bc-b2ee-d283a2bbf8bb
+parent: c50ba5d2-aa59-42cf-be50-bacc3c11c39c
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:43:43.198Z","phase":null} -->
+## Claude tool result: toolu_01XJ4NNA14fGx6t863oGvtu9 · 2026-08-04T11:43:43.198Z
+
+```text
+(Bash completed with no output)
+
+uuid: 9ec5e0c9-b96f-49eb-b9bc-519b00f2dab4
+parent: 2a50dc51-4d0e-40bc-b2ee-d283a2bbf8bb
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:43:43.465Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:43:43.465Z
+
+```text
+{
+  "type": "edited_text_file",
+  "filename": "/Users/masterman/NLP/omniharness/src/interface/home/utils.ts",
+  "snippet": "1\timport { type AppErrorDescriptor, normalizeAppError } from \"@/lib/app-errors\";\n2\timport type { ChatAttachment } from \"@/lib/chat-attachments\";\n3\timport { formatHumanDuration, type ConversationWorkerRecord } from \"@/lib/conversation-workers\";\n4\timport { isTerminalRunStatus } from \"@/lib/run-status\";\n5\timport { getLatestUnresolvedWorkerStuckEvent } from \"@/lib/worker-stuck-events\";\n6\timport { RUN_PATH_PATTERN, WORKER_OPTIONS, FALLBACK_WORKER_MODEL_OPTIONS } from \"./constants\";\n7\timport type { AgentSnapshot, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, PlanItemRecord, PlanRecord, QueuedConversationMessageRecord, RunRecord, SupervisorInterventionRecord, WorkerModelCatalog, WorkerType } from \"./types\";\n8\timport { t } from \"@/lib/i18n\";\n9\t\n10\texport { getLatestUnresolvedWorkerStuckEvent };\n11\t\n12\texport type BrowserConversationRoute = {\n13\t  selectedRunId: string | null;\n14\t  draftProjectPath: string | null;\n15\t  pairTokenFromUrl: string | null;\n16\t};\n17\t\n18\texport function parseBrowserConversationRoute(location: Pick<Location, \"pathname\" | \"search\">): BrowserConversationRoute {\n19\t  const pathnameMatch = location.pathname.match(RUN_PATH_PATTERN);\n20\t  const routeRunId = pathnameMatch?.[1]?.trim() || \"\";\n21\t  const params = new URLSearchParams(location.search);\n22\t  const queryRunId = params.get(\"run\")?.trim() || \"\";\n23\t  const selectedRunId = routeRunId || queryRunId || null;\n24\t\n25\t  return {\n26\t    selectedRunId,\n27\t    draftProjectPath: selectedRunId ? null : params.get(\"project\")?.trim() || null,\n28\t    pairTokenFromUrl: params.get(\"pair\")?.trim() || null,\n29\t  };\n30\t}\n31\t\n32\texport function buildInlineError(\n33\t  error: unknown,\n34\t  fallback: Partial<AppErrorDescriptor> = {},\n35\t): AppErrorDescriptor {\n36\t  return normalizeAppError(error, fallback);\n37\t}\n38\t\n39\texport function shouldClearMissingSelectedRunFromAuthoritativeSnapshot(args: {\n40\t  selectedRunId: string | null | undefined;\n41\t  selectedRunExists: boolean;\n42\t  snapshotSource: EventStreamState[\"snapshotSource\"];\n43\t  catalogComplete: boolean | undefined;\n44\t  snapshotRunId: string | null | undefined;\n45\t}) {\n46\t  return Boolean(\n47\t    args.selectedRunId\n48\t    && !args.selectedRunExists\n49\t    && args.snapshotSource === \"server\"\n50\t    && args.catalogComplete === true\n51\t    && args.snapshotRunId !== args.selectedRunId,\n52\t  );\n53\t}\n54\t\n55\texport function removeRunFromHomeState(current: EventStreamState, runId: string): EventStreamState {\n56\t  const runToDelete = (current.runs || []).find((run: RunRecord) => run.id === runId);\n57\t  const workerIds = (current.workers || [])\n58\t    .filter((worker: { runId: string; id: string }) => worker.runId === runId)\n59\t    .map((worker: { id: string }) => worker.id);\n60\t\n61\t  return {\n62\t    ...current,\n63\t    runs: (current.runs || []).filter((run: RunRecord) => run.id !== runId),\n64\t    messages: (current.messages || []).filter((message: { runId: string }) => message.runId !== runId),\n65\t    workers: (current.workers || []).filter((worker: { runId: string }) => worker.runId !== runId),\n66\t    clarifications: (current.clarifications || []).filter((item: { runId: string }) => item.runId !== runId),\n67\t    executionEvents: (current.executionEvents || []).filter((item: { runId: string; workerId?: string | null }) =>\n68\t      item.runId !== runId && (!item.workerId || !workerIds.includes(item.workerId))\n69\t    ),\n70\t    supervisorInterventions: (current.supervisorInterventions || []).filter((item: { runId: string; workerId?: string | null }) =>\n71\t      item.runId !== runId && (!item.workerId || !workerIds.includes(item.workerId))\n72\t    ),\n73\t    queuedMessages: (current.queuedMessages || []).filter((item) => item.runId !== runId),\n74\t    plans: runToDelete\n75\t      ? (current.plans || []).filter((plan: PlanRecord) => plan.id !== runToDelete.planId)\n76\t      : current.plans,\n77\t    planItems: runToDelete\n78\t      ? (current.planItems || []).filter((item: PlanItemRecord) => item.planId !== runToDelete.planId)\n79\t      : current.planItems,\n80\t    readMarkers: Object.fromEntries(\n81\t      Object.entries(current.readMarkers ?? {}).filter(([candidateRunId]) => candidateRunId !== runId),\n82\t    ),\n83\t  };\n84\t}\n85\t\n86\texport function getConversationTranscriptRunIds({\n87\t  selectedRunId,\n88\t  selectedRun,\n89\t}: {\n90\t  selectedRunId: string | null;\n91\t  selectedRun: RunRecord | null;\n92\t}) {\n93\t  if (!selectedRunId) {\n94\t    return [] as string[];\n95\t  }\n96\t\n97\t  if (selectedRun?.mode === \"implementation\" && selectedRun.parentRunId?.trim()) {\n98\t    return [selectedRun.parentRunId.trim(), selectedRunId];\n99\t  }\n100\t\n101\t  return [selectedRunId];\n102\t}\n103\t\n104\texport function filterPromotedPlanningTranscriptMessages({\n105\t  messages,\n106\t  selectedRun,\n107\t}: {\n108\t  messages: MessageRecord[];\n109\t  selectedRun: RunRecord | null;\n110\t}) {\n111\t  const parentRunId = selectedRun?.parentRunId?.trim();\n112\t  if (!selectedRun || !parentRunId || selectedRun.mode !== \"implementation\") {\n113\t    return messages;\n114\t  }\n115\t\n116\t  const parentUserMessageKeys = new Set(\n117\t    messages\n118\t      .filter((message) => message.runId === parentRunId && message.role === \"user\")\n119\t      .map((message) => `${message.kind ?? \"\"}\\n${message.content.trim()}`),\n120\t  );\n121\t\n122\t  return messages.filter((message) => {\n123\t    if (message.runId !== selectedRun.id || message.role !== \"user\") {\n124\t      return true;\n125\t    }\n126\t\n127\t    return !parentUserMessageKeys.has(`${message.kind ?? \"\"}\\n${message.content.trim()}`);\n128\t  });\n129\t}\n130\t\n131\texport function filterOptimisticallyDeletedRuns(\n132\t  current: EventStreamState,\n133\t  pendingDeletedRunIds: ReadonlySet<string>,\n134\t): EventStreamState {\n135\t  if (pendingDeletedRunIds.size === 0) {\n136\t    return current;\n137\t  }\n138\t\n139\t  let next = current;\n140\t  for (const runId of pendingDeletedRunIds) {\n141\t    next = removeRunFromHomeState(next, runId);\n142\t  }\n143\t  return next;\n144\t}\n145\t\n146\texport function appendSentConversationMessageSnapshot(\n147\t  current: EventStreamState,\n148\t  message: MessageRecord | null | undefined,\n149\t): EventStreamState {\n150\t  if (!message) {\n151\t    return current;\n152\t  }\n153\t\n154\t  const messages = current.messages || [];\n155\t  if (messages.some((existing) => existing.id === message.id)) {\n156\t    return current;\n157\t  }\n158\t\n159\t  return {\n160\t    ...current,\n161\t    messages: [...messages, message],\n162\t    runs: (current.runs || []).map((run) => (\n163\t      run.id === message.runId\n164\t        ? reviveRunForSentMessage(run, message)\n165\t        : run\n166\t    )),\n167\t  };\n168\t}\n169\t\n170\tfunction shouldReviveRunForSentMessage(run: RunRecord, message: MessageRecord) {\n171\t  if (!isTerminalRunStatus(run.status)) {\n172\t    return true;\n173\t  }\n174\t\n175\t  const runUpdatedAt = timestampMs(run.updatedAt ?? run.createdAt);\n176\t  const messageCreatedAt = timestampMs(message.createdAt);\n177\t  return messageCreatedAt > runUpdatedAt;\n178\t}\n179\t\n180\tfunction reviveRunForSentMessage(run: RunRecord, message: MessageRecord): RunRecord {\n181\t  if (!shouldReviveRunForSentMessage(run, message)) {\n182\t    return run;\n183\t  }\n184\t\n185\t  return {\n186\t    ...run,\n187\t    status: \"running\",\n188\t    failedAt: null,\n189\t    lastError: null,\n190\t    updatedAt: message.createdAt,\n191\t  };\n192\t}\n193\t\n194\t/**\n195\t * Id for a message about to be sent. Generated at the call site rather than\n196\t * inside the mutation so the same value reaches both the optimistic render\n197\t * (`onMutate`) and the request body (`mutationFn`) — React Query gives the\n198\t * two no shared channel.\n199\t */\n200\texport function createSentConversationMessageId() {\n201\t  return randomMessageUuid();\n202\t}\n203\t\n204\tfunction randomMessageUuid() {\n205\t  if (typeof crypto !== \"undefined\" && \"randomUUID\" in crypto) {\n206\t    return crypto.randomUUID();\n207\t  }\n208\t  // Same shape as randomUUID so the server accepts it as a client message id.\n209\t  return \"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx\".replace(/[xy]/g, (character) => {\n210\t    const value = Math.floor(Math.random() * 16);\n211\t    return (character === \"x\" ? value : (value & 0x3) | 0x8).toString(16);\n212\t  });\n213\t}\n214\t\n215\t/**\n\n... [1439 lines truncated] ..."
+}
+
+binary omitted from archive
+
+uuid: 5e26d5c4-9b9f-43e8-bf42-13dadebbd206
+parent: 9ec5e0c9-b96f-49eb-b9bc-519b00f2dab4
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:43:46.520Z","phase":null} -->
+## Claude · 2026-08-04T11:43:46.520Z
+
+Now the mutation — branch on `busyAction === "queue"` in `onMutate`.
+
+uuid: ddfee94e-ca90-4a14-9983-f64983464d8f
+parent: 5e26d5c4-9b9f-43e8-bf42-13dadebbd206
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:43:48.087Z","phase":null} -->
+## Claude tool call: Read · 2026-08-04T11:43:48.087Z
+
+```json
+{
+  "file_path": "/Users/masterman/NLP/omniharness/src/interface/home/useHomeMutations.ts",
+  "offset": 545,
+  "limit": 45
+}
+
+uuid: e1c94dcf-3a9a-4e44-8706-d637a6685ef2
+parent: ddfee94e-ca90-4a14-9983-f64983464d8f
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:43:48.095Z","phase":null} -->
+## Claude tool result: toolu_011hZA61uuqu6emmTVtKJKbh · 2026-08-04T11:43:48.095Z
+
+```text
+545	      clientMessageId: string;
+546	      attachments: PendingChatAttachment[];
+547	      busyAction?: BusyMessageAction;
+548	    }) => {
+549	      const snapshot = homeUiStateManager.getSnapshot();
+550	      const optimisticMessage = buildOptimisticSentConversationMessage({
+551	        id: payload.clientMessageId,
+552	        runId: payload.runId,
+553	        content: payload.content,
+554	        attachments: payload.attachments.map(({ id, kind, name, mimeType, size, previewUrl }) => (
+555	          { id, kind, name, mimeType, size, previewUrl }
+556	        )),
+557	      });
+558	      sentConversationMessagesManager.beginSend(optimisticMessage);
+559	      setState((current) => appendSentConversationMessageSnapshot(current, optimisticMessage));
+560	      const ownsSideEffects = ownsConversationSideEffects({
+561	        runId: payload.runId,
+562	        currentSelectedRunId: snapshot.selectedRunId,
+563	      });
+564	      const composerCleared = ownsSideEffects && snapshot.command === payload.content;
+565	      if (composerCleared) {
+566	        setCommand("");
+567	        clearAttachments();
+568	      }
+569	      if (ownsSideEffects) {
+570	        scrollConversationToBottom();
+571	      }
+572	      return {
+573	        commandAtStart: snapshot.command,
+574	        attachmentsAtStart: snapshot.attachments,
+575	        optimisticMessageId: optimisticMessage.id,
+576	        composerCleared,
+577	      };
+578	    },
+579	    mutationFn: async (payload: {
+580	      runId: string;
+581	      content: string;
+582	      clientMessageId: string;
+583	      attachments: PendingChatAttachment[];
+584	      busyAction?: BusyMessageAction;
+585	    }) => {
+586	      const isAutoWorkerSelection = selectedCliAgent === "auto";
+587	      const selectedWorkerType = isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent;
+588	      const resolvedSelectedModel = selectedWorkerType
+589	        ? resolveSelectedWorkerModel(selectedWorkerType as WorkerType, selectedModel)
+
+uuid: 6515070b-565e-4c1f-a8a3-e1a21d3d1973
+parent: e1c94dcf-3a9a-4e44-8706-d637a6685ef2
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:44:01.137Z","phase":null} -->
+## Claude tool call: Edit · 2026-08-04T11:44:01.137Z
+
+```json
+{
+  "replace_all": false,
+  "file_path": "/Users/masterman/NLP/omniharness/src/interface/home/useHomeMutations.ts",
+  "old_string": "      const snapshot = homeUiStateManager.getSnapshot();\n      const optimisticMessage = buildOptimisticSentConversationMessage({\n        id: payload.clientMessageId,\n        runId: payload.runId,\n        content: payload.content,\n        attachments: payload.attachments.map(({ id, kind, name, mimeType, size, previewUrl }) => (\n          { id, kind, name, mimeType, size, previewUrl }\n        )),\n      });\n      sentConversationMessagesManager.beginSend(optimisticMessage);\n      setState((current) => appendSentConversationMessageSnapshot(current, optimisticMessage));\n      const ownsSideEffects = ownsConversationSideEffects({\n        runId: payload.runId,\n        currentSelectedRunId: snapshot.selectedRunId,\n      });\n      const composerCleared = ownsSideEffects && snapshot.command === payload.content;\n      if (composerCleared) {\n        setCommand(\"\");\n        clearAttachments();\n      }\n      if (ownsSideEffects) {\n        scrollConversationToBottom();\n      }\n      return {\n        commandAtStart: snapshot.command,\n        attachmentsAtStart: snapshot.attachments,\n        optimisticMessageId: optimisticMessage.id,\n        composerCleared,\n      };\n    },",
+  "new_string": "      const snapshot = homeUiStateManager.getSnapshot();\n      const attachments = payload.attachments.map(({ id, kind, name, mimeType, size, previewUrl }) => (\n        { id, kind, name, mimeType, size, previewUrl }\n      ));\n      // `busyAction: \"queue\"` is always queued server-side and never delivered\n      // as a message, so it goes straight to the queue. Rendering it as a sent\n      // bubble first put it in the transcript for the round trip and then\n      // moved it to the queue.\n      const isQueuedSend = payload.busyAction === \"queue\";\n      const optimisticMessage = isQueuedSend\n        ? null\n        : buildOptimisticSentConversationMessage({\n          id: payload.clientMessageId,\n          runId: payload.runId,\n          content: payload.content,\n          attachments,\n        });\n      if (optimisticMessage) {\n        sentConversationMessagesManager.beginSend(optimisticMessage);\n        setState((current) => appendSentConversationMessageSnapshot(current, optimisticMessage));\n      } else {\n        busyMessageQueueManager.beginQueueSend(buildOptimisticQueuedConversationMessage({\n          id: payload.clientMessageId,\n          runId: payload.runId,\n          content: payload.content,\n          attachments,\n        }));\n      }\n      const ownsSideEffects = ownsConversationSideEffects({\n        runId: payload.runId,\n        currentSelectedRunId: snapshot.selectedRunId,\n      });\n      const composerCleared = ownsSideEffects && snapshot.command === payload.content;\n      if (composerCleared) {\n        setCommand(\"\");\n        clearAttachments();\n      }\n      // A queued row lands in the composer drawer, not the transcript, so\n      // there is nothing below to scroll to.\n      if (ownsSideEffects && optimisticMessage) {\n        scrollConversationToBottom();\n      }\n      return {\n        commandAtStart: snapshot.command,\n        attachmentsAtStart: snapshot.attachments,\n        optimisticMessageId: optimisticMessage?.id ?? null,\n        optimisticQueuedMessageId: isQueuedSend ? payload.clientMessageId : null,\n        composerCleared,\n      };\n    },"
+}
+
+uuid: 0aca4938-34b7-4010-9a9b-a61132494f7f
+parent: 6515070b-565e-4c1f-a8a3-e1a21d3d1973
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:44:01.151Z","phase":null} -->
+## Claude tool result: toolu_01TibtFqAMUPbhYybw8WPZST · 2026-08-04T11:44:01.151Z
+
+```text
+The file /Users/masterman/NLP/omniharness/src/interface/home/useHomeMutations.ts has been updated successfully. (file state is current in your context — no need to Read it back)
+
+uuid: e6a4cf07-8e5f-423c-af0a-3ebd10f60027
+parent: 0aca4938-34b7-4010-9a9b-a61132494f7f
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:44:03.743Z","phase":null} -->
+## Claude · 2026-08-04T11:44:03.743Z
+
+Now `onSuccess` and `onError`.
+
+uuid: bad19a64-413f-4fcf-a37f-a153f0a96860
+parent: e6a4cf07-8e5f-423c-af0a-3ebd10f60027
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:44:04.558Z","phase":null} -->
+## Claude tool call: Read · 2026-08-04T11:44:04.558Z
+
+```json
+{
+  "file_path": "/Users/masterman/NLP/omniharness/src/interface/home/useHomeMutations.ts",
+  "offset": 628,
+  "limit": 60
+}
+
+uuid: ebd6010c-6109-49ce-b9db-9edd136f8369
+parent: bad19a64-413f-4fcf-a37f-a153f0a96860
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:44:04.565Z","phase":null} -->
+## Claude tool result: toolu_013k3Hjj1q1V6RTSkjaJDdLD · 2026-08-04T11:44:04.565Z
+
+```text
+628	          allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedWorkerType],
+629	        },
+630	      }) as Promise<{
+631	        ok: true;
+632	        message?: MessageRecord;
+633	        queuedMessage?: NonNullable<EventStreamState["queuedMessages"]>[number];
+634	      }>;
+635	    },
+636	    onSuccess: (data, variables, context) => {
+637	      if (context) {
+638	        sentConversationMessagesManager.settleSend(context.optimisticMessageId, data.message);
+639	      }
+640	      if (data.queuedMessage) {
+641	        if (variables.busyAction === "steer" && data.message) {
+642	          busyMessageQueueManager.hideQueuedMessage(data.queuedMessage.id);
+643	        } else {
+644	          busyMessageQueueManager.upsertQueuedMessage(data.queuedMessage);
+645	        }
+646	      }
+647	      setState((current) => (
+648	        context
+649	          ? resolveOptimisticSentConversationMessage(current, context.optimisticMessageId, data.message)
+650	          : appendSentConversationMessageSnapshot(current, data.message)
+651	      ));
+652	      const snapshot = homeUiStateManager.getSnapshot();
+653	      const ownsSideEffects = ownsConversationSideEffects({
+654	        runId: variables.runId,
+655	        currentSelectedRunId: snapshot.selectedRunId,
+656	      });
+657	      if (ownsSideEffects && context && !context.composerCleared && shouldClearSubmittedComposer({
+658	        submittedContent: variables.content,
+659	        commandAtStart: context.commandAtStart,
+660	        currentCommand: snapshot.command,
+661	        attachmentsAtStart: context.attachmentsAtStart,
+662	        currentAttachments: snapshot.attachments,
+663	      })) {
+664	        setCommand("");
+665	        clearAttachments();
+666	      }
+667	      if (ownsSideEffects) {
+668	        scrollConversationToBottom();
+669	      }
+670	    },
+671	    onError: (_error, variables, context) => {
+672	      if (!context) {
+673	        return;
+674	      }
+675	      sentConversationMessagesManager.failSend(context.optimisticMessageId);
+676	      setState((current) => resolveOptimisticSentConversationMessage(current, context.optimisticMessageId, null));
+677	      // Restore the draft we cleared optimistically, unless the user has
+678	      // already typed or attached something new.
+679	      const snapshot = homeUiStateManager.getSnapshot();
+680	      if (
+681	        context.composerCleared
+682	        && ownsConversationSideEffects({
+683	          runId: variables.runId,
+684	          currentSelectedRunId: snapshot.selectedRunId,
+685	        })
+686	        && !snapshot.command.trim()
+687	        && snapshot.attachments.length === 0
+
+uuid: 9916b8a9-3646-43f8-9915-95a1a6869f1c
+parent: ebd6010c-6109-49ce-b9db-9edd136f8369
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:44:12.625Z","phase":null} -->
+## Claude tool call: Edit · 2026-08-04T11:44:12.625Z
+
+```json
+{
+  "replace_all": false,
+  "file_path": "/Users/masterman/NLP/omniharness/src/interface/home/useHomeMutations.ts",
+  "old_string": "    onSuccess: (data, variables, context) => {\n      if (context) {\n        sentConversationMessagesManager.settleSend(context.optimisticMessageId, data.message);\n      }\n      if (data.queuedMessage) {\n        if (variables.busyAction === \"steer\" && data.message) {\n          busyMessageQueueManager.hideQueuedMessage(data.queuedMessage.id);\n        } else {\n          busyMessageQueueManager.upsertQueuedMessage(data.queuedMessage);\n        }\n      }\n      setState((current) => (\n        context\n          ? resolveOptimisticSentConversationMessage(current, context.optimisticMessageId, data.message)\n          : appendSentConversationMessageSnapshot(current, data.message)\n      ));",
+  "new_string": "    onSuccess: (data, variables, context) => {\n      if (context?.optimisticMessageId) {\n        sentConversationMessagesManager.settleSend(context.optimisticMessageId, data.message);\n      }\n      if (context?.optimisticQueuedMessageId) {\n        busyMessageQueueManager.settleQueueSend(context.optimisticQueuedMessageId, data.queuedMessage);\n      } else if (data.queuedMessage) {\n        if (variables.busyAction === \"steer\" && data.message) {\n          busyMessageQueueManager.hideQueuedMessage(data.queuedMessage.id);\n        } else {\n          busyMessageQueueManager.upsertQueuedMessage(data.queuedMessage);\n        }\n      }\n      setState((current) => (\n        context?.optimisticMessageId\n          ? resolveOptimisticSentConversationMessage(current, context.optimisticMessageId, data.message)\n          : appendSentConversationMessageSnapshot(current, data.message)\n      ));"
+}
+
+uuid: 8f5b58b6-f077-406a-acff-44dca0b419aa
+parent: 9916b8a9-3646-43f8-9915-95a1a6869f1c
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:44:12.654Z","phase":null} -->
+## Claude tool result: toolu_01SsMb65VcUJV7McyQyz1YKy · 2026-08-04T11:44:12.654Z
+
+```text
+The file /Users/masterman/NLP/omniharness/src/interface/home/useHomeMutations.ts has been updated successfully. (file state is current in your context — no need to Read it back)
+
+uuid: cee8d7ce-20c3-4904-9f18-97e262e4ecd5
+parent: 8f5b58b6-f077-406a-acff-44dca0b419aa
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:44:17.324Z","phase":null} -->
+## Claude tool call: Edit · 2026-08-04T11:44:17.324Z
+
+```json
+{
+  "replace_all": false,
+  "file_path": "/Users/masterman/NLP/omniharness/src/interface/home/useHomeMutations.ts",
+  "old_string": "      sentConversationMessagesManager.failSend(context.optimisticMessageId);\n      setState((current) => resolveOptimisticSentConversationMessage(current, context.optimisticMessageId, null));",
+  "new_string": "      if (context.optimisticQueuedMessageId) {\n        busyMessageQueueManager.failQueueSend(context.optimisticQueuedMessageId);\n      }\n      if (context.optimisticMessageId) {\n        sentConversationMessagesManager.failSend(context.optimisticMessageId);\n        setState((current) => resolveOptimisticSentConversationMessage(current, context.optimisticMessageId!, null));\n      }"
+}
+
+uuid: 93f73a2b-ff96-43c6-b276-e2262bcb2776
+parent: cee8d7ce-20c3-4904-9f18-97e262e4ecd5
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:44:17.331Z","phase":null} -->
+## Claude tool result: toolu_014eAQ1XEzVph1GNZjtuF4rA · 2026-08-04T11:44:17.331Z
+
+```text
+The file /Users/masterman/NLP/omniharness/src/interface/home/useHomeMutations.ts has been updated successfully. (file state is current in your context — no need to Read it back)
+
+uuid: 9f0f2ec2-ae3e-4608-a8e3-35e52d431485
+parent: 93f73a2b-ff96-43c6-b276-e2262bcb2776
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:44:20.996Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:44:20.996Z
+
+```json
+{
+  "command": "python3 - <<'PY'\np='src/interface/home/useHomeMutations.ts'\ns=open(p).read()\ns=s.replace(\"  buildOptimisticSentConversationMessage,\\n\",\"  buildOptimisticQueuedConversationMessage,\\n  buildOptimisticSentConversationMessage,\\n\",1)\nopen(p,'w').write(s)\nPY\npnpm typecheck 2>&1 | tail -8",
+  "description": "Add import and typecheck",
+  "timeout": 300000
+}
+
+uuid: 4ef4fa5e-251c-4d58-86f8-32600a0489aa
+parent: 9f0f2ec2-ae3e-4608-a8e3-35e52d431485
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:44:30.743Z","phase":null} -->
+## Claude tool result: toolu_01Um3oU6pbJnvB1ZCNi7FZ25 · 2026-08-04T11:44:30.743Z
+
+```text
+$ tsc -p tsconfig.shared.json --noEmit && tsc -p tsconfig.runner.json --noEmit && tsc -p tsconfig.interface.json --noEmit && tsc --noEmit
+
+uuid: 7a61457f-f4dd-473d-a62e-ddafd29d4a14
+parent: 4ef4fa5e-251c-4d58-86f8-32600a0489aa
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:44:31.099Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:44:31.099Z
+
+```text
+{
+  "type": "edited_text_file",
+  "filename": "/Users/masterman/NLP/omniharness/src/interface/home/useHomeMutations.ts",
+  "snippet": "1\t\"use client\";\n2\t\n3\timport type React from \"react\";\n4\timport { useMutation } from \"@tanstack/react-query\";\n5\timport type { PendingChatAttachment } from \"@/lib/chat-attachments\";\n6\timport { mergeAppErrors } from \"@/lib/app-errors\";\n7\timport { useRuntimeAPIs } from \"@/runtime-api/provider\";\n8\timport { getManualCommitPrompt, getManualProjectCommitPrompt, type ManualCommitAction } from \"@/lib/commit-workflow\";\n9\timport { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from \"@/lib/run-recovery-state\";\n10\timport type { WorkerTerminalProcess } from \"@/lib/worker-terminal-processes\";\n11\timport { busyMessageQueueManager } from \"./BusyMessageQueueManager\";\n12\timport { useQueuedMessageMutations } from \"./useQueuedMessageMutations\";\n13\timport { uploadPendingChatAttachments } from \"./upload-attachments\";\n14\timport { shouldSelectRecoveredRunAfterSuccess } from \"./auto-resume-selection\";\n15\timport { homeUiSetters, homeUiStateManager } from \"./HomeUiStateManager\";\n16\timport { sentConversationMessagesManager } from \"./SentConversationMessagesManager\";\n17\timport { appearancePreferencesManager } from \"./AppearancePreferencesManager\";\n18\timport { settingsDraftManager } from \"./SettingsDraftManager\";\n19\timport { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from \"./GitWorkspaceManager\";\n20\timport type { BusyMessageAction } from \"./busy-message-behavior\";\n21\timport type { PlanningReviewAgentSelection } from \"@/shared/planning-review\";\n22\timport {\n23\t  appendCreatedConversationSnapshot,\n24\t  appendSentConversationMessageSnapshot,\n25\t  buildOptimisticCreatedConversationSnapshot,\n26\t  buildOptimisticQueuedConversationMessage,\n27\t  buildOptimisticSentConversationMessage,\n28\t  buildInlineError,\n29\t  removeRunFromHomeState,\n30\t  resolveOptimisticSentConversationMessage,\n31\t  resolveSelectedWorkerModel,\n32\t  type CreatedConversationSnapshot,\n33\t} from \"./utils\";\n34\timport type {\n35\t  AgentSnapshot,\n36\t  ComposerWorkerOption,\n37\t  ConversationModeOption,\n38\t  EventStreamState,\n39\t  MessageRecord,\n40\t  RunRecord,\n41\t  WorkerType,\n42\t} from \"./types\";\n43\timport {\n44\t  applyElicitationOptimisticUpdate,\n45\t  applyPermissionOptimisticUpdate,\n46\t  applyStopSupervisorOptimisticUpdate,\n47\t  applyStopWorkerOptimisticUpdate,\n48\t  isAlreadyResolvedHumanInputError,\n49\t  mergeLoadedWorkerHistoryAgent,\n50\t  ownsConversationSideEffects,\n51\t  ownsOptimisticRunSelection,\n52\t  replaceBrowserConversationPath,\n53\t  shouldClearSubmittedComposer,\n54\t  shouldRestoreSelectionAfterOptimisticRemovalError,\n55\t  shouldSelectProjectMutationResult,\n56\t  shouldSelectSourceRunMutationResult,\n57\t} from \"./mutations/optimistic-state\";\n58\t\n59\texport {\n60\t  mergeLoadedWorkerHistoryAgent,\n61\t  ownsConversationSideEffects,\n62\t  ownsOptimisticRunSelection,\n63\t  ownsSelectionFromMutationStart,\n64\t  shouldClearSubmittedComposer,\n65\t  shouldRestoreSelectionAfterOptimisticRemovalError,\n66\t  shouldSelectProjectMutationResult,\n67\t  shouldSelectSourceRunMutationResult,\n68\t} from \"./mutations/optimistic-state\";\n69\t\n70\t\n71\texport interface UseHomeMutationsParams {\n72\t  state: EventStreamState;\n73\t  setState: React.Dispatch<React.SetStateAction<EventStreamState>>;\n74\t  selectedRunId: string | null;\n75\t  selectedCliAgent: ComposerWorkerOption;\n76\t  selectedWorkerAccountId: string;\n77\t  selectedConversationMode: ConversationModeOption;\n78\t  selectedModel: string;\n79\t  selectedEffort: string;\n80\t  autoSelectedWorkerType: string | null;\n81\t  activeAllowedWorkerTypes: string[];\n82\t  renamingRunId: string | null;\n83\t  pendingDeletedRunIdsRef: React.RefObject<Set<string>>;\n84\t  pendingCreatedConversationSnapshotsRef: React.RefObject<Map<string, CreatedConversationSnapshot>>;\n85\t  loadingWorkerHistoryIdsRef: React.RefObject<Set<string>>;\n86\t  scrollConversationToBottom: () => void;\n87\t  sessionQueryRefetch: () => Promise<unknown>;\n88\t}\n89\t\n90\texport function useHomeMutations({\n91\t  state,\n92\t  setState,\n93\t  selectedRunId,\n94\t  selectedCliAgent,\n95\t  selectedWorkerAccountId,\n96\t  selectedConversationMode,\n97\t  selectedModel,\n98\t  selectedEffort,\n99\t  autoSelectedWorkerType,\n100\t  activeAllowedWorkerTypes,\n101\t  renamingRunId,\n102\t  pendingDeletedRunIdsRef,\n103\t  pendingCreatedConversationSnapshotsRef,\n104\t  loadingWorkerHistoryIdsRef,\n105\t  scrollConversationToBottom,\n106\t  sessionQueryRefetch,\n107\t}: UseHomeMutationsParams) {\n108\t  const runtimeApis = useRuntimeAPIs();\n109\t  const {\n110\t    setCommand,\n111\t    setAuthError,\n112\t    setRuntimeErrors,\n113\t    setPairRedeemError,\n114\t    setRenamingRunId,\n115\t    setRenameValue,\n116\t    setRenameSource,\n117\t    setMovingRunId,\n118\t    setMoveRunProjectPath,\n119\t    setEditingMessageId,\n120\t    setEditingMessageValue,\n121\t    setSelectedRunId,\n122\t    setApiKeys,\n123\t    setShowSettings,\n124\t    setMobileNavOpen,\n125\t    setAttachments,\n126\t    clearAttachments,\n127\t  } = homeUiSetters;\n128\t  const preferredWorkerAccountId = selectedWorkerAccountId === \"auto\" ? null : selectedWorkerAccountId;\n129\t\n130\t  // Worker-scoped failures still belong to a conversation, so resolve the\n131\t  // owning run to keep the error out of every other session's banner.\n132\t  const runIdForWorker = (workerId: string) =>\n133\t    (state.workers || []).find((worker) => worker.id === workerId)?.runId ?? null;\n134\t\n135\t  const loginMutation = useMutation({\n136\t    mutationFn: async (password: string) => runtimeApis.auth.login({\n137\t      password,\n138\t      label: \"Browser session\",\n139\t    }) as Promise<{ ok: true }>,\n140\t    onSuccess: async () => {\n141\t      setAuthError(null);\n142\t      await sessionQueryRefetch();\n143\t    },\n144\t    onError: (error) => {\n145\t      setAuthError(error instanceof Error ? error.message : String(error));\n146\t    },\n147\t  });\n148\t\n149\t  const logoutMutation = useMutation({\n150\t    mutationFn: async () => runtimeApis.auth.logout() as Promise<{ ok: true }>,\n151\t    onSuccess: () => {\n152\t      window.location.replace(\"/\");\n153\t    },\n154\t    onError: (error) => {\n155\t      setRuntimeErrors((current) => mergeAppErrors(current, [\n156\t        buildInlineError(error, { source: \"Auth\", action: \"Log out\" }),\n157\t      ]));\n158\t    },\n159\t  });\n160\t\n161\t  const redeemPairMutation = useMutation({\n162\t    mutationFn: async (pairToken: string) => runtimeApis.auth.redeemPair({\n163\t      pairToken,\n164\t    }) as Promise<{ ok: true; targetPath: string }>,\n165\t    onSuccess: (payload) => {\n166\t      setPairRedeemError(null);\n167\t      window.location.replace(payload.targetPath || \"/\");\n168\t    },\n169\t    onError: (error) => {\n170\t      setPairRedeemError(error instanceof Error ? error.message : String(error));\n171\t    },\n172\t  });\n173\t\n174\t  const saveSettings = useMutation({\n175\t    mutationFn: async () => {\n176\t      const payload = settingsDraftManager.getSavePayload();\n177\t      await runtimeApis.settings.save(payload);\n178\t    },\n179\t    onSuccess: () => {\n180\t      const savedSettings = settingsDraftManager.getSnapshot().draft;\n181\t      appearancePreferencesManager.saveDraft();\n182\t      settingsDraftManager.markSaved(savedSettings);\n183\t      setApiKeys((current) => ({ ...current, ...savedSettings }));\n184\t      setShowSettings(false);\n185\t    },\n186\t  });\n187\t\n188\t  const commitWorkflowSettings = useMutation({\n189\t    mutationFn: async ({ key, value }: { key: string; value: string }) => {\n190\t      await runtimeApis.settings.save({ [key]: value });\n191\t      return { key, value };\n192\t    },\n193\t    onMutate: ({ key, value }) => {\n194\t      const previousValue = homeUiStateManager.getSnapshot().apiKeys[key] ?? \"\";\n195\t      setApiKeys((current) => ({ ...current, [key]: value }));\n196\t      settingsDraftManager.setField(key, value);\n197\t      return { key, previousValue };\n198\t    },\n199\t    onSuccess: ({ key, value }) => {\n200\t      settingsDraftManager.markFieldsSaved({ [key]: value });\n201\t    },\n202\t    onError: (_error, _variables, context) => {\n203\t      if (!context) return;\n204\t      setApiKeys((current) => ({ ...current, [context.key]: context.previousValue }));\n205\t      settingsDraftManager.setField(context.key, context.previousValue);\n206\t    },\n207\t  });\n208\t\n209\t  const renameRun = useMutation({\n\n... [798 lines truncated] ..."
+}
+
+binary omitted from archive
+
+uuid: 5e6ee65f-7eb5-4422-8d45-3c638f1faee1
+parent: 7a61457f-f4dd-473d-a62e-ddafd29d4a14
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:44:31.099Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:44:31.099Z
+
+```text
+{
+  "type": "task_reminder",
+  "content": [],
+  "itemCount": 0
+}
+
+binary omitted from archive
+
+uuid: 30dff6e9-d5fa-4e4c-995d-ab2bbd3e51a0
+parent: 5e6ee65f-7eb5-4422-8d45-3c638f1faee1
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:44:33.591Z","phase":null} -->
+## Claude · 2026-08-04T11:44:33.591Z
+
+Typecheck clean. Now the server side so the queued row adopts the client id.
+
+uuid: 3a3a9e15-241d-426b-afa3-a5781fbae051
+parent: 30dff6e9-d5fa-4e4c-995d-ab2bbd3e51a0
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:44:37.847Z","phase":null} -->
+## Claude tool call: Edit · 2026-08-04T11:44:37.847Z
+
+```json
+{
+  "replace_all": false,
+  "file_path": "/Users/masterman/NLP/omniharness/src/server/conversations/queued-messages.ts",
+  "old_string": "export async function createQueuedConversationMessage({\n  runId,\n  targetWorkerId = null,\n  action,\n  content,\n  attachments = [],\n}: {\n  runId: string;\n  targetWorkerId?: string | null;\n  action: BusyMessageAction;\n  content: string;\n  attachments?: ChatAttachment[];\n}) {",
+  "new_string": "export async function createQueuedConversationMessage({\n  runId,\n  targetWorkerId = null,\n  action,\n  content,\n  attachments = [],\n  clientMessageId = null,\n}: {\n  runId: string;\n  targetWorkerId?: string | null;\n  action: BusyMessageAction;\n  content: string;\n  attachments?: ChatAttachment[];\n  /**\n   * Id the sending client already rendered its queue row under. Adopting it\n   * keeps that row and this one the same row, so the queue entry does not\n   * blink out and back when the event stream catches up.\n   */\n  clientMessageId?: string | null;\n}) {"
+}
+
+uuid: 34403dce-8085-416f-bcfa-f6eb71083e01
+parent: 3a3a9e15-241d-426b-afa3-a5781fbae051
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:44:37.851Z","phase":null} -->
+## Claude tool result: toolu_01GYxsts9dJmyEiVQeSNmiBJ · 2026-08-04T11:44:37.851Z
+
+```text
+The file /Users/masterman/NLP/omniharness/src/server/conversations/queued-messages.ts has been updated successfully. (file state is current in your context — no need to Read it back)
+
+uuid: 3a940220-9d0a-4ab9-adac-35b0c01ffd73
+parent: 34403dce-8085-416f-bcfa-f6eb71083e01
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:44:43.017Z","phase":null} -->
+## Claude tool call: Edit · 2026-08-04T11:44:43.017Z
+
+```json
+{
+  "replace_all": false,
+  "file_path": "/Users/masterman/NLP/omniharness/src/server/conversations/queued-messages.ts",
+  "old_string": "  const now = await nextQueuedMessageCreatedAt(runId);\n  const record = {\n    id: randomUUID(),\n    runId,",
+  "new_string": "  const now = await nextQueuedMessageCreatedAt(runId);\n  const record = {\n    id: await resolveQueuedConversationMessageId(clientMessageId),\n    runId,"
+}
+
+uuid: 87338413-c5d1-4ede-ad67-3dbecb9384c6
+parent: 3a940220-9d0a-4ab9-adac-35b0c01ffd73
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:44:43.047Z","phase":null} -->
+## Claude tool result: toolu_01DqX2D8QEXvxBoVa9Gmt3J8 · 2026-08-04T11:44:43.047Z
+
+```text
+The file /Users/masterman/NLP/omniharness/src/server/conversations/queued-messages.ts has been updated successfully. (file state is current in your context — no need to Read it back)
+
+uuid: ec1b7a96-1936-44aa-9057-ee0fffec8fc4
+parent: 87338413-c5d1-4ede-ad67-3dbecb9384c6
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:44:49.638Z","phase":null} -->
+## Claude tool call: Edit · 2026-08-04T11:44:49.638Z
+
+```json
+{
+  "replace_all": false,
+  "file_path": "/Users/masterman/NLP/omniharness/src/server/conversations/queued-messages.ts",
+  "old_string": "export async function createQueuedConversationMessage({",
+  "new_string": "const CLIENT_MESSAGE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n/**\n * Falls back to a fresh uuid when the client id is unusable — malformed, or\n * already taken by an earlier queue row — so a resend degrades to a duplicate\n * row rather than a primary-key failure that would lose the user's text.\n */\nasync function resolveQueuedConversationMessageId(clientMessageId: string | null | undefined) {\n  const candidate = typeof clientMessageId === \"string\" ? clientMessageId.trim().toLowerCase() : \"\";\n  if (!CLIENT_MESSAGE_ID_PATTERN.test(candidate)) {\n    return randomUUID();\n  }\n  const existing = await db\n    .select({ id: queuedConversationMessages.id })\n    .from(queuedConversationMessages)\n    .where(eq(queuedConversationMessages.id, candidate))\n    .get();\n  return existing ? randomUUID() : candidate;\n}\n\nexport async function createQueuedConversationMessage({"
+}
+
+uuid: a1f34390-7b67-4757-84b5-dc49f7369a1c
+parent: ec1b7a96-1936-44aa-9057-ee0fffec8fc4
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:44:49.645Z","phase":null} -->
+## Claude tool result: toolu_014mYXTRbT72vzSU4cWemwax · 2026-08-04T11:44:49.645Z
+
+```text
+The file /Users/masterman/NLP/omniharness/src/server/conversations/queued-messages.ts has been updated successfully. (file state is current in your context — no need to Read it back)
+
+uuid: 2ce9afe1-f281-4001-bdc6-6c4adc747fa1
+parent: a1f34390-7b67-4757-84b5-dc49f7369a1c
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:44:52.620Z","phase":null} -->
+## Claude · 2026-08-04T11:44:52.620Z
+
+Now pass `clientMessageId` through from the send path.
+
+uuid: a698d041-0810-4ad6-bd98-54e45067334c
+parent: 2ce9afe1-f281-4001-bdc6-6c4adc747fa1
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:44:57.400Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:44:57.400Z
+
+```json
+{
+  "command": "python3 - <<'PY'\np='src/server/conversations/send-message.ts'\ns=open(p).read()\nold_sup=\"\"\"    const queuedMessage = await createQueuedConversationMessage({\n      runId,\n      action: \"steer\",\n      content: trimmedContent,\n      attachments: normalizedAttachments,\n    });\n    startSupervisorRun(runId);\"\"\"\nnew_sup=\"\"\"    const queuedMessage = await createQueuedConversationMessage({\n      runId,\n      action: \"steer\",\n      content: trimmedContent,\n      attachments: normalizedAttachments,\n      clientMessageId,\n    });\n    startSupervisorRun(runId);\"\"\"\nassert old_sup in s\ns=s.replace(old_sup,new_sup,1)\nold_q=\"\"\"    const queuedMessage = await createQueuedConversationMessage({\n      runId,\n      targetWorkerId: worker.id,\n      action: \"queue\",\n      content: trimmedContent,\n      attachments: normalizedAttachments,\n    });\n    return { ok: true, queuedMessage };\"\"\"\nnew_q=\"\"\"    const queuedMessage = await createQueuedConversationMessage({\n      runId,\n      targetWorkerId: worker.id,\n      action: \"queue\",\n      content: trimmedContent,\n      attachments: normalizedAttachments,\n      clientMessageId,\n    });\n    return { ok: true, queuedMessage };\"\"\"\nassert old_q in s\ns=s.replace(old_q,new_q,1)\nopen(p,'w').write(s)\nPY\npnpm typecheck 2>&1 | tail -5",
+  "description": "Thread clientMessageId into queue creation and typecheck",
+  "timeout": 300000
+}
+
+uuid: abc1f6b6-b8a3-4b61-bb65-41fcd6d1898d
+parent: a698d041-0810-4ad6-bd98-54e45067334c
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:45:09.599Z","phase":null} -->
+## Claude tool result: toolu_016qpxwQ4Ps7VpzyjJg5B81j · 2026-08-04T11:45:09.599Z
+
+```text
+$ tsc -p tsconfig.shared.json --noEmit && tsc -p tsconfig.runner.json --noEmit && tsc -p tsconfig.interface.json --noEmit && tsc --noEmit
+
+uuid: 897737cb-a622-4321-beaf-3b70af6c85c1
+parent: abc1f6b6-b8a3-4b61-bb65-41fcd6d1898d
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:45:09.850Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:45:09.850Z
+
+```text
+{
+  "type": "edited_text_file",
+  "filename": "/Users/masterman/NLP/omniharness/src/server/conversations/send-message.ts",
+  "snippet": "1\timport { randomUUID } from \"crypto\";\n2\timport { and, asc, eq } from \"drizzle-orm\";\n3\timport { askAgent, cancelAgent, getAgent, respondElicitation, spawnAgent } from \"@/server/bridge-client\";\n4\timport { db } from \"@/server/db\";\n5\timport { clarifications, messages, queuedConversationMessages, runs, workers } from \"@/server/db/schema\";\n6\timport { recordExecutionEvent } from \"@/server/events/execution-event-store\";\n7\timport { answerClarification } from \"@/server/clarifications/store\";\n8\timport { resumeRunAfterClarification } from \"@/server/clarifications/loop\";\n9\timport { startSupervisorRun } from \"@/server/supervisor/start\";\n10\timport { notifyEventStreamSubscribers } from \"@/server/events/live-updates\";\n11\timport { persistWorkerSnapshot } from \"@/server/workers/snapshots\";\n12\timport { readWorkerOutputEntries } from \"@/server/workers/output-store\";\n13\timport { appendWorkerSessionMetadata, readWorkerSessionMetadata } from \"@/server/workers/session-metadata\";\n14\timport { buildTranscriptReplayPrompt, canRecreateRejectedSavedSession, isRejectedSavedSessionErrorMessage, materializeProviderSessionFromWorkerStream } from \"@/server/workers/session-recovery\";\n15\timport { appendAskResponseFallbackEntry } from \"@/server/workers/response-fallback\";\n16\timport { formatErrorMessage, persistRunFailure } from \"@/server/runs/failures\";\n17\timport { refreshPlanningArtifactsForRun } from \"@/server/planning/refresh\";\n18\timport { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from \"@/server/worker-launch-mode\";\n19\timport { resolveWorkerLaunchSelection } from \"@/server/workers/launch-selection\";\n20\timport { readRuntimeEnvFromSettings } from \"@/server/supervisor/runtime-settings\";\n21\timport { appendAttachmentContext, normalizeChatAttachments, parseChatAttachmentsJson, resolveImageAttachments, serializeChatAttachments, type ChatAttachment } from \"@/lib/chat-attachments\";\n22\timport { getAppDataPath } from \"@/server/app-root\";\n23\timport { normalizeWorkerType, SUPPORTED_WORKER_TYPES, type SupportedWorkerType } from \"@/server/supervisor/worker-types\";\n24\timport { createQueuedConversationMessage, type BusyMessageAction } from \"./queued-messages\";\n25\timport { interruptWithDraftMessage } from \"./queued-message-interrupt\";\n26\timport { serializeMessageRecord } from \"./message-records\";\n27\timport { appendUserInputOnDelivery } from \"@/server/workers/stream-writer\";\n28\timport { isWorkerTurnAbortedError, isWorkerTurnSupersededError, runConversationMutation, runWorkerTurn, trackConversationBackgroundTask } from \"./worker-turn-gate\";\n29\timport { updateDirectRunStatusFromWorkerOutput } from \"./direct-run-status\";\n30\timport { isManualStopCommand } from \"@/interface/home/busy-message-behavior\";\n31\timport { emitNamedEvent } from \"@/server/events/named-events\";\n32\timport { cancelSupervisorWake } from \"@/server/supervisor/wake\";\n33\timport { clearSupervisorWakeLease } from \"@/server/supervisor/lease\";\n34\timport { stopRunObserver } from \"@/server/supervisor/observer\";\n35\timport { buildDirectWorkerPrompt } from \"./direct-worker-prompt\";\n36\timport { extractQuotaResetInfo } from \"@/server/quota/reset-parser\";\n37\timport { handleWorkerQuotaExhaustion } from \"@/server/quota/recovery\";\n38\timport { reconcileRecoveredHumanInputEntries } from \"@/server/workers/human-input-entries\";\n39\t\n40\ttype RunRecord = typeof runs.$inferSelect;\n41\ttype WorkerRecord = typeof workers.$inferSelect;\n42\ttype DirectWorkerSnapshot = Awaited<ReturnType<typeof getAgent>>;\n43\ttype ElicitationSchema = NonNullable<DirectWorkerSnapshot[\"pendingElicitations\"]>[number][\"requestedSchema\"];\n44\ttype ElicitationContent = Record<string, string | number | boolean | string[]>;\n45\t\n46\tfunction isDirectRunMode(mode: string | null | undefined) {\n47\t  return mode === \"direct\" || mode === \"commit\";\n48\t}\n49\t\n50\t// An Omni run is stored as mode \"implementation\" for its whole life; its\n51\t// `phase` distinguishes the interactive planning stage (planner worker, no\n52\t// supervisor) from the supervised implementation stage. Route follow-up\n53\t// messages by phase, not raw mode, so a reply during planning reaches the\n54\t// planner instead of being treated as a supervisor steer.\n55\tfunction isPlanningRun(run: { mode?: string | null; phase?: string | null }) {\n56\t  return run.mode === \"planning\" || (run.mode === \"implementation\" && run.phase === \"planning\");\n57\t}\n58\t\n59\tfunction isSupervisedRun(run: { mode?: string | null; phase?: string | null }) {\n60\t  return run.mode === \"implementation\" && run.phase !== \"planning\";\n61\t}\n62\t\n63\tfunction isAgentBusyError(error: unknown) {\n64\t  return /\\bagent is busy\\b/i.test(formatErrorMessage(error));\n65\t}\n66\t\n67\tasync function handleDirectWorkerQuotaError(args: {\n68\t  run: RunRecord;\n69\t  worker: WorkerRecord;\n70\t  error: unknown;\n71\t}) {\n72\t  const quotaInfo = extractQuotaResetInfo(args.error, { provider: args.worker.type });\n73\t  if (!quotaInfo.isQuotaError) {\n74\t    return false;\n75\t  }\n76\t\n77\t  await handleWorkerQuotaExhaustion({\n78\t    runId: args.run.id,\n79\t    workerId: args.worker.id,\n80\t    text: quotaInfo.rawText,\n81\t    provider: args.worker.type,\n82\t  });\n83\t  notifyEventStreamSubscribers();\n84\t  return true;\n85\t}\n86\t\n87\tfunction isAgentNotFoundError(error: unknown) {\n88\t  return /\\b(agent not found|not_found|session not found|invalid session identifier|failed to load resumed session data from file|404)\\b/i.test(formatErrorMessage(error));\n89\t}\n90\t\n91\tfunction isAgentAlreadyExistsError(error: unknown, workerId: string) {\n92\t  const message = formatErrorMessage(error).toLowerCase();\n93\t  return message.includes(\"agent already exists\") && message.includes(workerId.toLowerCase());\n94\t}\n95\t\n96\tfunction normalizeWorkerStatus(status: string | null | undefined) {\n97\t  return status?.trim().toLowerCase().split(\":\")[0]?.trim() ?? \"\";\n98\t}\n99\t\n100\tfunction isWorkerCancelled(worker: WorkerRecord | null | undefined) {\n101\t  const status = normalizeWorkerStatus(worker?.status);\n102\t  return status === \"cancelled\" || status === \"canceled\";\n103\t}\n104\t\n105\tfunction isStoppableRunStatus(status: string | null | undefined) {\n106\t  return [\"running\", \"working\", \"stuck\", \"needs_recovery\"].includes(normalizeWorkerStatus(status));\n107\t}\n108\t\n109\tfunction isStoppableWorkerStatus(status: string | null | undefined) {\n110\t  return [\"starting\", \"working\", \"idle\", \"stuck\"].includes(normalizeWorkerStatus(status));\n111\t}\n112\t\n113\tfunction workerCreatedAtMs(worker: WorkerRecord) {\n114\t  const createdAt = worker.createdAt;\n115\t  const value = createdAt instanceof Date ? createdAt.getTime() : new Date(createdAt).getTime();\n116\t  return Number.isFinite(value) ? value : 0;\n117\t}\n118\t\n119\tfunction compareWorkersForFollowUp(a: WorkerRecord, b: WorkerRecord) {\n120\t  const workerNumberDiff = (b.workerNumber ?? 0) - (a.workerNumber ?? 0);\n121\t  if (workerNumberDiff !== 0) {\n122\t    return workerNumberDiff;\n123\t  }\n124\t\n125\t  const createdAtDiff = workerCreatedAtMs(b) - workerCreatedAtMs(a);\n126\t  if (createdAtDiff !== 0) {\n127\t    return createdAtDiff;\n128\t  }\n129\t\n130\t  return b.id.localeCompare(a.id);\n131\t}\n132\t\n133\tasync function selectConversationWorker(runId: string) {\n134\t  const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));\n135\t  const sortedWorkers = [...runWorkers].sort(compareWorkersForFollowUp);\n136\t  return sortedWorkers.find((worker) => !isWorkerCancelled(worker)) ?? sortedWorkers[0] ?? null;\n137\t}\n138\t\n139\tfunction elicitationAnswerContent(text: string, requestedSchema: ElicitationSchema | null | undefined): ElicitationContent {\n140\t  const properties = requestedSchema?.properties ?? {};\n141\t  const propertyNames = Object.keys(properties);\n142\t  if (propertyNames.includes(\"customAnswer\")) {\n143\t    return { customAnswer: text };\n144\t  }\n145\t\n146\t  const nonCustomFields = propertyNames.filter((name) => name !== \"customAnswer\");\n147\t  if (nonCustomFields.length === 1 && nonCustomFields[0]) {\n148\t    return { [nonCustomFields[0]]: text };\n149\t  }\n150\t\n151\t  return { response: text };\n152\t}\n153\t\n154\tasync function answerDirectWorkerElicitation(args: {\n155\t  run: RunRecord;\n156\t  worker: WorkerRecord;\n157\t  userText: string;\n158\t  workerText: string;\n159\t  attachments: ChatAttachment[];\n\n... [1178 lines truncated] ..."
+}
+
+binary omitted from archive
+
+uuid: 0fefae72-1870-4316-bcf9-b3003ed355aa
+parent: 897737cb-a622-4321-beaf-3b70af6c85c1
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:45:12.708Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:45:12.708Z
+
+```json
+{
+  "command": "pnpm test tests/app tests/ui tests/server 2>&1 | grep -E \"FAIL |Test Files|→\" | head -12",
+  "description": "Run app, ui and server tests",
+  "timeout": 600000
+}
+
+uuid: 882ff566-496f-4f1b-877c-faa44a8d425e
+parent: 0fefae72-1870-4316-bcf9-b3003ed355aa
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:47:04.884Z","phase":null} -->
+## Claude tool result: toolu_01LiktEnemNHzZTBaj33Koe5 · 2026-08-04T11:47:04.884Z
+
+```text
+     → expected "spy" to be called with arguments: [ …(2) ][90m
+   ✓ readWorkerEntriesSince > writes a sparse seq→offset index every INDEX_CADENCE records on append  2238ms
+     → expected null to match object { identity: { …(4) } }
+     → Credential profile "claude" provider command failed.
+     → expected undefined to be defined
+     → expected [ 'low', 'xhigh' ] to deeply equal [ 'low', 'xhigh', 'max', 'ultra' ]
+     → Test timed out in 15000ms.
+     → Test timed out in 15000ms.
+     → Test timed out in 20000ms.
+     → promise rejected "ResourceAdmissionError: Cannot spawn work… { …(3) }" instead of resolving
+     → expected [] to have a length of 1 but got +0
+     → Test timed out in 20000ms.
+
+uuid: edb32eff-36b7-46bd-8cbd-9fef9a5841a0
+parent: 882ff566-496f-4f1b-877c-faa44a8d425e
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:47:10.670Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:47:10.670Z
+
+I'm seeing a lot of test failures and need to figure out if they're from my changes or just environmental issues that show up when running the full test suite. Let me run the complete `pnpm test` command like I did before to get a proper baseline for comparison.
+
+uuid: 0162ae86-eee1-48b5-b9e9-534a03f77cb9
+parent: edb32eff-36b7-46bd-8cbd-9fef9a5841a0
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:47:10.672Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:47:10.672Z
+
+```json
+{
+  "command": "pnpm test 2>&1 | grep -E \"FAIL |Test Files|Tests \" | head -12",
+  "description": "Run full suite for comparable baseline",
+  "timeout": 900000
+}
+
+uuid: cac5a430-65b1-477f-8c25-fd4d6070e45d
+parent: 0162ae86-eee1-48b5-b9e9-534a03f77cb9
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:48:41.876Z","phase":null} -->
+## Claude tool result: toolu_01VrRvR7ys2RvavWgdxqNddw · 2026-08-04T11:48:41.876Z
+
+```text
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/server/conversations-sync.test.ts > syncConversationSessions > redelivers a queued answer as a normal prompt when the elicitation is already gone
+ Test Files  1 failed | 378 passed (379)
+      Tests  1 failed | 2463 passed | 5 skipped (2469)
+
+uuid: a8eb9e86-4a36-433c-8b83-50c774e55faf
+parent: cac5a430-65b1-477f-8c25-fd4d6070e45d
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:48:48.934Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:48:48.934Z
+
+The test suite is passing except for a known pre-existing issue. The earlier failures were isolated to running the server tests separately due to different test isolation and parallelism settings, not from my changes. Now I'm adding test cases to cover the new behavior: validating the shape of optimistic queued conversation messages, checking that queue rows persist when frames are updated, verifying that settled sends clear pending state and show server rows, and confirming that failed sends remove rows entirely.
+
+I also need to verify that queued rows properly adopt the clientMessageId from the server, and I'm checking whether there's already an existing test file for BusyMessageQueueManager.
+
+uuid: 956d0188-eb68-453e-8187-fcfe04dccb01
+parent: a8eb9e86-4a36-433c-8b83-50c774e55faf
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:48:48.940Z","phase":null} -->
+## Claude · 2026-08-04T11:48:48.940Z
+
+Full suite is clean (those subset failures were isolation artifacts). Adding tests for the new behavior.
+
+uuid: 58ecfb12-2d95-4ad3-a1da-007e74a8deb4
+parent: 956d0188-eb68-453e-8187-fcfe04dccb01
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:48:48.948Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:48:48.948Z
+
+```json
+{
+  "command": "ls tests/app/ | grep -i \"busy\\|queue\"; grep -rln \"busyMessageQueueManager\\|BusyMessageQueueManager\" tests/ | head",
+  "description": "Find existing queue manager tests"
+}
+
+uuid: 42991c57-512d-42c9-93f0-3d3addf61d69
+parent: 58ecfb12-2d95-4ad3-a1da-007e74a8deb4
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:48:49.147Z","phase":null} -->
+## Claude tool result: toolu_01XWUNTzBGJALdjB2MRduvdc · 2026-08-04T11:48:49.147Z
+
+```text
+busy-message-behavior.test.ts
+busy-message-queue-manager.test.ts
+tests/ui/conversation-actions.test.ts
+tests/app/busy-message-queue-manager.test.ts
+
+uuid: 25014cce-69d7-467b-9b67-1ab8fed02467
+parent: 42991c57-512d-42c9-93f0-3d3addf61d69
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:48:49.151Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:48:49.151Z
+
+```text
+{
+  "type": "task_reminder",
+  "content": [],
+  "itemCount": 0
+}
+
+binary omitted from archive
+
+uuid: b72a98ce-40d2-4c2f-bce2-b1c10008a8f9
+parent: 25014cce-69d7-467b-9b67-1ab8fed02467
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:48:52.618Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:48:52.618Z
+
+```json
+{
+  "command": "sed -n '1,45p' tests/app/busy-message-queue-manager.test.ts",
+  "description": "Read existing queue manager test conventions"
+}
+
+uuid: 3f2fafb7-a0bf-452f-9c72-4d3eecaf6371
+parent: b72a98ce-40d2-4c2f-bce2-b1c10008a8f9
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:48:52.818Z","phase":null} -->
+## Claude tool result: toolu_01EfRygfaeNLYyCz44eovHHU · 2026-08-04T11:48:52.818Z
+
+```text
+import { describe, expect, it } from "vitest";
+import { BusyMessageQueueManager } from "@/interface/home/BusyMessageQueueManager";
+import type { QueuedConversationMessageRecord } from "@/interface/home/types";
+
+function buildQueuedMessage(overrides: Partial<QueuedConversationMessageRecord>): QueuedConversationMessageRecord {
+  return {
+    id: "queued-1",
+    runId: "run-1",
+    action: "queue",
+    content: "queued text",
+    status: "pending",
+    createdAt: "2026-05-25T00:00:00.000Z",
+    updatedAt: "2026-05-25T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("BusyMessageQueueManager", () => {
+  it("does not notify subscribers when the server queue snapshot is unchanged", () => {
+    const manager = new BusyMessageQueueManager();
+    const queuedMessage = buildQueuedMessage({ id: "queued-stable", runId: "run-a" });
+    let notificationCount = 0;
+    manager.subscribe(() => {
+      notificationCount += 1;
+    });
+
+    manager.setQueuedMessages([], true);
+    expect(notificationCount).toBe(0);
+
+    manager.setQueuedMessages([queuedMessage], true);
+    expect(notificationCount).toBe(1);
+
+    manager.setQueuedMessages([queuedMessage], true);
+    expect(notificationCount).toBe(1);
+  });
+
+  it("returns queued messages only for the selected run", () => {
+    const manager = new BusyMessageQueueManager();
+    manager.setQueuedMessages([
+      buildQueuedMessage({ id: "run-a-queued", runId: "run-a" }),
+      buildQueuedMessage({ id: "run-b-queued", runId: "run-b" }),
+    ], false);
+
+    expect(manager.getQueuedMessagesForRun("run-a").map((message) => message.id)).toEqual(["run-a-queued"]);
+    expect(manager.getQueuedMessagesForRun("run-b").map((message) => message.id)).toEqual(["run-b-queued"]);
+
+uuid: acc9c659-88f3-4995-a1c8-d00fcfb4e7c7
+parent: 3f2fafb7-a0bf-452f-9c72-4d3eecaf6371
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:49:06.376Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:49:06.376Z
+
+```json
+{
+  "command": "cat >> tests/app/busy-message-queue-manager.test.ts <<'EOF'\n\ndescribe(\"BusyMessageQueueManager optimistic queue sends\", () => {\n  it(\"shows the row from the moment the user sends, without a transcript detour\", () => {\n    const manager = new BusyMessageQueueManager();\n    const optimistic = buildQueuedMessage({ id: \"client-generated-id\", runId: \"run-a\" });\n\n    manager.beginQueueSend(optimistic);\n\n    expect(manager.getQueuedMessagesForRun(\"run-a\").map((message) => message.id)).toEqual([\"client-generated-id\"]);\n  });\n\n  it(\"keeps the row through an event frame that lands before the POST returns\", () => {\n    // The server cannot know about the row yet, so its absence from the frame\n    // is not a cancellation. Dropping it here made the queue entry blink out\n    // and back in.\n    const manager = new BusyMessageQueueManager();\n    manager.beginQueueSend(buildQueuedMessage({ id: \"client-generated-id\", runId: \"run-a\" }));\n\n    manager.setQueuedMessages([], true);\n\n    expect(manager.getQueuedMessagesForRun(\"run-a\").map((message) => message.id)).toEqual([\"client-generated-id\"]);\n  });\n\n  it(\"swaps in place when the server adopts the client id\", () => {\n    const manager = new BusyMessageQueueManager();\n    manager.beginQueueSend(buildQueuedMessage({ id: \"client-generated-id\", runId: \"run-a\" }));\n\n    manager.settleQueueSend(\"client-generated-id\", buildQueuedMessage({\n      id: \"client-generated-id\",\n      runId: \"run-a\",\n      content: \"queued text\",\n      updatedAt: \"2026-05-25T00:00:01.000Z\",\n    }));\n\n    expect(manager.getQueuedMessagesForRun(\"run-a\").map((message) => message.id)).toEqual([\"client-generated-id\"]);\n    expect(manager.getQueuedMessagesForRun(\"run-a\")[0]?.updatedAt).toBe(\"2026-05-25T00:00:01.000Z\");\n\n    // No longer in flight: a later frame that drops it is now authoritative.\n    manager.setQueuedMessages([], true);\n    expect(manager.getQueuedMessagesForRun(\"run-a\")).toEqual([]);\n  });\n\n  it(\"drops the optimistic row when the server mints its own id instead\", () => {\n    const manager = new BusyMessageQueueManager();\n    manager.beginQueueSend(buildQueuedMessage({ id: \"client-generated-id\", runId: \"run-a\" }));\n\n    manager.settleQueueSend(\"client-generated-id\", buildQueuedMessage({ id: \"server-id\", runId: \"run-a\" }));\n\n    expect(manager.getQueuedMessagesForRun(\"run-a\").map((message) => message.id)).toEqual([\"server-id\"]);\n  });\n\n  it(\"removes the row when the send fails\", () => {\n    const manager = new BusyMessageQueueManager();\n    manager.beginQueueSend(buildQueuedMessage({ id: \"client-generated-id\", runId: \"run-a\" }));\n\n    manager.failQueueSend(\"client-generated-id\");\n\n    expect(manager.getQueuedMessagesForRun(\"run-a\")).toEqual([]);\n    manager.setQueuedMessages([], true);\n    expect(manager.getQueuedMessagesForRun(\"run-a\")).toEqual([]);\n  });\n});\nEOF\npnpm test tests/app/busy-message-queue-manager.test.ts 2>&1 | tail -12",
+  "description": "Add and run queue manager tests",
+  "timeout": 300000
+}
+
+uuid: cca4a1da-09b3-42a9-9b3d-3b7d950d0fc7
+parent: acc9c659-88f3-4995-a1c8-d00fcfb4e7c7
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:49:08.819Z","phase":null} -->
+## Claude tool result: toolu_0197PoLjUdPGGx279QSRDXEq · 2026-08-04T11:49:08.819Z
+
+```text
+$ vitest run tests/app/busy-message-queue-manager.test.ts
+
+ RUN  v3.2.4 /Users/masterman/NLP/omniharness
+
+ ✓ tests/app/busy-message-queue-manager.test.ts (12 tests) 17ms
+
+ Test Files  1 passed (1)
+      Tests  12 passed (12)
+   Start at  13:49:07
+   Duration  887ms (transform 260ms, setup 30ms, collect 295ms, tests 17ms, environment 0ms, prepare 124ms)
+
+uuid: 5a93033d-ec8f-4592-9465-4ef150f33f4a
+parent: cca4a1da-09b3-42a9-9b3d-3b7d950d0fc7
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:49:10.956Z","phase":null} -->
+## Claude · 2026-08-04T11:49:10.956Z
+
+Verifying the retention test actually catches the bug.
+
+uuid: d9c64a35-4eb3-49af-ae10-8aeed5e5cfa2
+parent: 5a93033d-ec8f-4592-9465-4ef150f33f4a
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:49:13.406Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:49:13.406Z
+
+```json
+{
+  "command": "python3 - <<'PY'\np='src/interface/home/BusyMessageQueueManager.ts'\ns=open(p).read()\ns=s.replace(\"\"\"      const retainedPendingMessages = current.queuedMessages.filter((message) => (\n        current.pendingQueuedMessageIds.has(message.id) && !incomingIds.has(message.id)\n      ));\"\"\",\"\"\"      const retainedPendingMessages: QueuedConversationMessageRecord[] = [];\"\"\",1)\nopen(p,'w').write(s)\nPY\npnpm test tests/app/busy-message-queue-manager.test.ts 2>&1 | grep -E \"Tests |×\" | head -5",
+  "description": "Temporarily disable retention to validate the test",
+  "timeout": 300000
+}
+
+uuid: 06b7903a-b1b6-4ab7-b088-6cef810d3a62
+parent: d9c64a35-4eb3-49af-ae10-8aeed5e5cfa2
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:49:14.269Z","phase":null} -->
+## Claude tool result: toolu_014N87o4uwd1xownA1ixC5Dx · 2026-08-04T11:49:14.269Z
+
+```text
+   × BusyMessageQueueManager optimistic queue sends > keeps the row through an event frame that lands before the POST returns 3ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 11 passed (12)
+
+uuid: 89302674-fd82-48e5-a93e-cdd8fc8a857c
+parent: 06b7903a-b1b6-4ab7-b088-6cef810d3a62
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:49:14.272Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:49:14.272Z
+
+```text
+{
+  "type": "edited_text_file",
+  "filename": "/Users/masterman/NLP/omniharness/src/interface/home/BusyMessageQueueManager.ts",
+  "snippet": "1\t\"use client\";\n2\t\n3\timport { StateManager } from \"@/lib/state-manager\";\n4\timport type { QueuedConversationMessageRecord } from \"./types\";\n5\timport { compareOldestByCreatedAtThenId } from \"./utils\";\n6\t\n7\ttype BusyMessageQueueState = {\n8\t  queuedMessages: QueuedConversationMessageRecord[];\n9\t  cancellingMessageIds: Set<string>;\n10\t  // Rows the user has asked to interrupt-and-send (\"force send\"). Optimistic\n11\t  // UI only — server queue rows from /api/events remain authoritative.\n12\t  interruptingMessageIds: Set<string>;\n13\t  locallyHiddenMessageIds: Set<string>;\n14\t  serverAbsentMessageUpdatedAtById: Map<string, number>;\n15\t  // Rows this client queued whose POST has not returned. The server cannot\n16\t  // have them yet, so \"absent from the server list\" must not be read as\n17\t  // \"cancelled\" for these — otherwise the row the user just queued blinks out\n18\t  // on the next event frame and back in when the POST lands.\n19\t  pendingQueuedMessageIds: Set<string>;\n20\t};\n21\t\n22\tconst initialBusyMessageQueueState: BusyMessageQueueState = {\n23\t  queuedMessages: [],\n24\t  cancellingMessageIds: new Set(),\n25\t  interruptingMessageIds: new Set(),\n26\t  locallyHiddenMessageIds: new Set(),\n27\t  serverAbsentMessageUpdatedAtById: new Map(),\n28\t  pendingQueuedMessageIds: new Set(),\n29\t};\n30\t\n31\tfunction isActiveQueuedMessage(message: QueuedConversationMessageRecord) {\n32\t  return message.status === \"pending\" || message.status === \"delivering\";\n33\t}\n34\t\n35\tfunction timestampMs(value: string | null | undefined) {\n36\t  if (!value) {\n37\t    return 0;\n38\t  }\n39\t  const parsed = new Date(value).getTime();\n40\t  return Number.isFinite(parsed) ? parsed : 0;\n41\t}\n42\t\n43\tfunction isStaleServerAbsentActiveMessage(\n44\t  message: QueuedConversationMessageRecord,\n45\t  serverAbsentMessageUpdatedAtById: Map<string, number>,\n46\t) {\n47\t  if (!isActiveQueuedMessage(message)) {\n48\t    return false;\n49\t  }\n50\t  const absentUpdatedAt = serverAbsentMessageUpdatedAtById.get(message.id);\n51\t  return absentUpdatedAt !== undefined && timestampMs(message.updatedAt) <= absentUpdatedAt;\n52\t}\n53\t\n54\tfunction attachmentsEqual(\n55\t  left: QueuedConversationMessageRecord[\"attachments\"],\n56\t  right: QueuedConversationMessageRecord[\"attachments\"],\n57\t) {\n58\t  const leftAttachments = left ?? [];\n59\t  const rightAttachments = right ?? [];\n60\t  if (leftAttachments.length !== rightAttachments.length) {\n61\t    return false;\n62\t  }\n63\t  return leftAttachments.every((attachment, index) => JSON.stringify(attachment) === JSON.stringify(rightAttachments[index]));\n64\t}\n65\t\n66\tfunction queuedMessageRecordsEqual(left: QueuedConversationMessageRecord, right: QueuedConversationMessageRecord) {\n67\t  return left.id === right.id\n68\t    && left.runId === right.runId\n69\t    && left.targetWorkerId === right.targetWorkerId\n70\t    && left.action === right.action\n71\t    && left.content === right.content\n72\t    && left.status === right.status\n73\t    && left.lastError === right.lastError\n74\t    && left.createdAt === right.createdAt\n75\t    && left.updatedAt === right.updatedAt\n76\t    && left.deliveredAt === right.deliveredAt\n77\t    && attachmentsEqual(left.attachments, right.attachments);\n78\t}\n79\t\n80\tfunction queuedMessageArraysEqual(left: QueuedConversationMessageRecord[], right: QueuedConversationMessageRecord[]) {\n81\t  return left.length === right.length\n82\t    && left.every((message, index) => queuedMessageRecordsEqual(message, right[index]!));\n83\t}\n84\t\n85\tfunction setsEqual<T>(left: Set<T>, right: Set<T>) {\n86\t  if (left === right) {\n87\t    return true;\n88\t  }\n89\t  if (left.size !== right.size) {\n90\t    return false;\n91\t  }\n92\t  for (const value of left) {\n93\t    if (!right.has(value)) {\n94\t      return false;\n95\t    }\n96\t  }\n97\t  return true;\n98\t}\n99\t\n100\tfunction mapsEqual<TKey, TValue>(left: Map<TKey, TValue>, right: Map<TKey, TValue>) {\n101\t  if (left === right) {\n102\t    return true;\n103\t  }\n104\t  if (left.size !== right.size) {\n105\t    return false;\n106\t  }\n107\t  for (const [key, value] of left) {\n108\t    if (!Object.is(right.get(key), value)) {\n109\t      return false;\n110\t    }\n111\t  }\n112\t  return true;\n113\t}\n114\t\n115\texport class BusyMessageQueueManager extends StateManager<BusyMessageQueueState> {\n116\t  constructor() {\n117\t    super(initialBusyMessageQueueState);\n118\t  }\n119\t\n120\t  setQueuedMessages(messages: QueuedConversationMessageRecord[], notify = true) {\n121\t    this.update((current) => {\n122\t      const incomingMessages = messages.filter(\n123\t        (message) => !isStaleServerAbsentActiveMessage(message, current.serverAbsentMessageUpdatedAtById),\n124\t      );\n125\t      const incomingIds = new Set(incomingMessages.map((message) => message.id));\n126\t      // A row whose POST is still in flight is not \"gone from the server\", it\n127\t      // has not reached the server yet. Leave it out of the absence\n128\t      // bookkeeping entirely so it is neither dropped now nor rejected as\n129\t      // stale when the real row arrives.\n130\t      const newlyAbsentActiveIds = current.queuedMessages\n131\t        .filter((message) => (\n132\t          isActiveQueuedMessage(message)\n133\t          && !incomingIds.has(message.id)\n134\t          && !current.pendingQueuedMessageIds.has(message.id)\n135\t        ))\n136\t        .map((message) => [message.id, timestampMs(message.updatedAt)] as const);\n137\t      const retainedPendingMessages: QueuedConversationMessageRecord[] = [];\n138\t      // Server rows are authoritative: clear optimistic interrupt/cancel flags\n139\t      // for any row that has left a pending/delivering state.\n140\t      const settledIds = new Set(\n141\t        [\n142\t          ...incomingMessages\n143\t            .filter((message) => !isActiveQueuedMessage(message))\n144\t            .map((message) => message.id),\n145\t          ...newlyAbsentActiveIds.map(([id]) => id),\n146\t        ],\n147\t      );\n148\t      const clearSettled = (ids: Set<string>) => {\n149\t        if (settledIds.size === 0) {\n150\t          return ids;\n151\t        }\n152\t        let changed = false;\n153\t        const next = new Set(ids);\n154\t        for (const id of settledIds) {\n155\t          if (next.delete(id)) {\n156\t            changed = true;\n157\t          }\n158\t        }\n159\t        return changed ? next : ids;\n160\t      };\n161\t      const serverAbsentMessageUpdatedAtById = new Map(current.serverAbsentMessageUpdatedAtById);\n162\t      for (const [id, updatedAt] of newlyAbsentActiveIds) {\n163\t        serverAbsentMessageUpdatedAtById.set(id, updatedAt);\n164\t      }\n165\t      for (const message of incomingMessages) {\n166\t        serverAbsentMessageUpdatedAtById.delete(message.id);\n167\t      }\n168\t      const queuedMessages = [\n169\t        ...incomingMessages.filter((message) => !current.locallyHiddenMessageIds.has(message.id)),\n170\t        ...retainedPendingMessages,\n171\t      ].sort(compareOldestByCreatedAtThenId);\n172\t      const cancellingMessageIds = clearSettled(current.cancellingMessageIds);\n173\t      const interruptingMessageIds = clearSettled(current.interruptingMessageIds);\n174\t      if (\n175\t        queuedMessageArraysEqual(current.queuedMessages, queuedMessages)\n176\t        && setsEqual(current.cancellingMessageIds, cancellingMessageIds)\n177\t        && setsEqual(current.interruptingMessageIds, interruptingMessageIds)\n178\t        && mapsEqual(current.serverAbsentMessageUpdatedAtById, serverAbsentMessageUpdatedAtById)\n179\t      ) {\n180\t        return current;\n181\t      }\n182\t      return {\n183\t        ...current,\n184\t        queuedMessages,\n185\t        cancellingMessageIds,\n186\t        interruptingMessageIds,\n187\t        serverAbsentMessageUpdatedAtById,\n188\t      };\n189\t    }, notify);\n190\t  }\n191\t\n192\t  getQueuedMessagesForRun(runId: string | null | undefined) {\n193\t    const normalizedRunId = runId?.trim();\n194\t    if (!normalizedRunId) {\n195\t      return [];\n196\t    }\n197\t    return this.getSnapshot().queuedMessages.filter((message) => message.runId === normalizedRunId);\n198\t  }\n199\t\n200\t  upsertQueuedMessage(message: QueuedConversationMessageRecord) {\n201\t    this.update((current) => {\n202\t      const serverAbsentMessageUpdatedAtById = new Map(current.serverAbsentMessageUpdatedAtById);\n\n... [161 lines truncated] ..."
+}
+
+binary omitted from archive
+
+uuid: 101dcbe1-9ad3-4a9c-ab05-e414ece7837b
+parent: 89302674-fd82-48e5-a93e-cdd8fc8a857c
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:49:16.495Z","phase":null} -->
+## Claude · 2026-08-04T11:49:16.495Z
+
+The test correctly fails without retention. Restoring.
+
+uuid: d86794ae-d5f9-45da-9ae0-96497a6c78e6
+parent: 101dcbe1-9ad3-4a9c-ab05-e414ece7837b
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:49:19.116Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:49:19.116Z
+
+```json
+{
+  "command": "python3 - <<'PY'\np='src/interface/home/BusyMessageQueueManager.ts'\ns=open(p).read()\nold=\"      const retainedPendingMessages: QueuedConversationMessageRecord[] = [];\"\nnew=\"\"\"      const retainedPendingMessages = current.queuedMessages.filter((message) => (\n        current.pendingQueuedMessageIds.has(message.id) && !incomingIds.has(message.id)\n      ));\"\"\"\nassert old in s\ns=s.replace(old,new,1)\nopen(p,'w').write(s)\nPY\npnpm test tests/app/busy-message-queue-manager.test.ts 2>&1 | grep -E \"Tests \"",
+  "description": "Restore retention and re-run",
+  "timeout": 300000
+}
+
+uuid: e0fdfed4-0940-4e3b-ba12-d490fc72cb9e
+parent: d86794ae-d5f9-45da-9ae0-96497a6c78e6
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:49:20.088Z","phase":null} -->
+## Claude tool result: toolu_01Y8dXUB2DhrH58aEpDMjxUX · 2026-08-04T11:49:20.088Z
+
+```text
+      Tests  12 passed (12)
+
+uuid: 2356b2dc-55aa-4ef8-b229-5bc70c5a0dce
+parent: e0fdfed4-0940-4e3b-ba12-d490fc72cb9e
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:49:22.455Z","phase":null} -->
+## Claude · 2026-08-04T11:49:22.455Z
+
+Now a server test that the queued row adopts the client id.
+
+uuid: 8f2eb0ea-7a41-40c7-bacf-a5782513cdb0
+parent: 2356b2dc-55aa-4ef8-b229-5bc70c5a0dce
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:49:32.596Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:49:32.596Z
+
+```json
+{
+  "command": "python3 - <<'PY'\np='tests/server/conversations/client-message-id.test.ts'\ns=open(p).read()\ns=s.replace('import { messages, plans, runs } from \"@/server/db/schema\";','import { messages, plans, queuedConversationMessages, runs } from \"@/server/db/schema\";')\ns=s.replace('import { resolveUserMessageId } from \"@/server/conversations/send-message\";','import { resolveUserMessageId } from \"@/server/conversations/send-message\";\\nimport { createQueuedConversationMessage } from \"@/server/conversations/queued-messages\";')\ns=s.replace(\"\"\"  beforeEach(async () => {\n    await db.delete(messages);\n    await db.delete(runs);\n    await db.delete(plans);\n  });\"\"\",\"\"\"  beforeEach(async () => {\n    await db.delete(queuedConversationMessages);\n    await db.delete(messages);\n    await db.delete(runs);\n    await db.delete(plans);\n  });\"\"\")\nopen(p,'w').write(s)\nPY\ncat >> tests/server/conversations/client-message-id.test.ts <<'EOF'\n\ndescribe(\"createQueuedConversationMessage\", () => {\n  async function seedRun() {\n    const planId = randomUUID();\n    const runId = randomUUID();\n    const now = new Date();\n    await db.delete(queuedConversationMessages);\n    await db.delete(messages);\n    await db.delete(runs);\n    await db.delete(plans);\n    await db.insert(plans).values({\n      id: planId,\n      path: `vibes/ad-hoc/${planId}.md`,\n      status: \"running\",\n      createdAt: now,\n      updatedAt: now,\n    });\n    await db.insert(runs).values({\n      id: runId,\n      planId,\n      mode: \"direct\",\n      status: \"running\",\n      createdAt: now,\n      updatedAt: now,\n    });\n    return runId;\n  }\n\n  it(\"adopts the client id so the optimistic queue row and the server row are one row\", async () => {\n    const runId = await seedRun();\n    const clientMessageId = randomUUID();\n\n    const queued = await createQueuedConversationMessage({\n      runId,\n      action: \"queue\",\n      content: \"queue this while the worker is busy\",\n      clientMessageId,\n    });\n\n    expect(queued.id).toBe(clientMessageId);\n  });\n\n  it(\"mints its own id when no client id is supplied\", async () => {\n    const runId = await seedRun();\n\n    const queued = await createQueuedConversationMessage({\n      runId,\n      action: \"queue\",\n      content: \"queue this while the worker is busy\",\n    });\n\n    expect(queued.id).toMatch(UUID_PATTERN);\n  });\n\n  it(\"mints a fresh id rather than colliding with an existing queue row\", async () => {\n    const runId = await seedRun();\n    const clientMessageId = randomUUID();\n    await createQueuedConversationMessage({\n      runId,\n      action: \"queue\",\n      content: \"first\",\n      clientMessageId,\n    });\n\n    const resent = await createQueuedConversationMessage({\n      runId,\n      action: \"queue\",\n      content: \"resend after a partial failure\",\n      clientMessageId,\n    });\n\n    expect(resent.id).toMatch(UUID_PATTERN);\n    expect(resent.id).not.toBe(clientMessageId);\n  });\n});\nEOF\npnpm test tests/server/conversations/client-message-id.test.ts 2>&1 | tail -12",
+  "description": "Add and run server queued id tests",
+  "timeout": 300000
+}
+
+uuid: 3dd83b72-fe2a-4362-95c7-ad70863bf7f7
+parent: 8f2eb0ea-7a41-40c7-bacf-a5782513cdb0
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:49:34.126Z","phase":null} -->
+## Claude tool result: toolu_013TcHfD3B34hiAmU7Roa8yZ · 2026-08-04T11:49:34.126Z
+
+```text
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 'SQLITE_CONSTRAINT_FOREIGNKEY', rawCode: 787 }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 8 passed (10)
+   Start at  13:49:33
+   Duration  969ms (transform 286ms, setup 9ms, collect 772ms, tests 22ms, environment 0ms, prepare 26ms)
+
+[ELIFECYCLE] Test failed. See above for more details.
+
+uuid: 60e2c89f-511b-4cd7-8ebd-d6ad0448d97e
+parent: 3dd83b72-fe2a-4362-95c7-ad70863bf7f7
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:49:34.128Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:49:34.128Z
+
+```text
+{
+  "type": "edited_text_file",
+  "filename": "/Users/masterman/NLP/omniharness/tests/server/conversations/client-message-id.test.ts",
+  "snippet": "1\timport { beforeEach, describe, expect, it } from \"vitest\";\n2\timport { randomUUID } from \"crypto\";\n3\timport { db } from \"@/server/db\";\n4\timport { messages, plans, queuedConversationMessages, runs } from \"@/server/db/schema\";\n5\timport { resolveUserMessageId } from \"@/server/conversations/send-message\";\n6\timport { createQueuedConversationMessage } from \"@/server/conversations/queued-messages\";\n7\t\n8\tconst UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;\n9\t\n10\tdescribe(\"resolveUserMessageId\", () => {\n11\t  beforeEach(async () => {\n12\t    await db.delete(queuedConversationMessages);\n13\t    await db.delete(messages);\n14\t    await db.delete(runs);\n15\t    await db.delete(plans);\n16\t  });\n17\t\n18\t  it(\"adopts a well-formed client id so the optimistic row and the persisted row are one row\", () => {\n19\t    const clientMessageId = randomUUID();\n20\t    return expect(resolveUserMessageId(clientMessageId)).resolves.toBe(clientMessageId);\n...\n66\t    });\n67\t\n68\t    const resolved = await resolveUserMessageId(clientMessageId);\n69\t\n70\t    expect(resolved).toMatch(UUID_PATTERN);\n71\t    expect(resolved).not.toBe(clientMessageId);\n72\t  });\n73\t});\n74\t\n75\tdescribe(\"createQueuedConversationMessage\", () => {\n76\t  async function seedRun() {\n77\t    const planId = randomUUID();\n78\t    const runId = randomUUID();\n79\t    const now = new Date();\n80\t    await db.delete(queuedConversationMessages);\n81\t    await db.delete(messages);\n82\t    await db.delete(runs);\n83\t    await db.delete(plans);\n84\t    await db.insert(plans).values({\n85\t      id: planId,\n86\t      path: `vibes/ad-hoc/${planId}.md`,\n87\t      status: \"running\",\n88\t      createdAt: now,\n89\t      updatedAt: now,\n90\t    });\n91\t    await db.insert(runs).values({\n92\t      id: runId,\n93\t      planId,\n94\t      mode: \"direct\",\n95\t      status: \"running\",\n96\t      createdAt: now,\n97\t      updatedAt: now,\n98\t    });\n99\t    return runId;\n100\t  }\n101\t\n102\t  it(\"adopts the client id so the optimistic queue row and the server row are one row\", async () => {\n103\t    const runId = await seedRun();\n104\t    const clientMessageId = randomUUID();\n105\t\n106\t    const queued = await createQueuedConversationMessage({\n107\t      runId,\n108\t      action: \"queue\",\n109\t      content: \"queue this while the worker is busy\",\n110\t      clientMessageId,\n111\t    });\n112\t\n113\t    expect(queued.id).toBe(clientMessageId);\n114\t  });\n115\t\n116\t  it(\"mints its own id when no client id is supplied\", async () => {\n117\t    const runId = await seedRun();\n118\t\n119\t    const queued = await createQueuedConversationMessage({\n120\t      runId,\n121\t      action: \"queue\",\n122\t      content: \"queue this while the worker is busy\",\n123\t    });\n124\t\n125\t    expect(queued.id).toMatch(UUID_PATTERN);\n126\t  });\n127\t\n128\t  it(\"mints a fresh id rather than colliding with an existing queue row\", async () => {\n129\t    const runId = await seedRun();\n130\t    const clientMessageId = randomUUID();\n131\t    await createQueuedConversationMessage({\n132\t      runId,\n133\t      action: \"queue\",\n134\t      content: \"first\",\n135\t      clientMessageId,\n136\t    });\n137\t\n138\t    const resent = await createQueuedConversationMessage({\n139\t      runId,\n140\t      action: \"queue\",\n141\t      content: \"resend after a partial failure\",\n142\t      clientMessageId,\n143\t    });\n144\t\n145\t    expect(resent.id).toMatch(UUID_PATTERN);\n146\t    expect(resent.id).not.toBe(clientMessageId);\n147\t  });\n148\t});"
+}
+
+binary omitted from archive
+
+uuid: c7cff933-9ba5-42f0-a3f4-3e5753b62b9f
+parent: 60e2c89f-511b-4cd7-8ebd-d6ad0448d97e
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:49:42.375Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:49:42.375Z
+
+I see the issue now — `beforeEach` at the describe block level only applies to tests within that specific describe block, not globally across the file, so my seed deletions are actually fine. The foreign key constraint failure is happening because I'm either deleting runs or plans while `queuedConversationMessages` rows still reference them, or trying to insert queued messages that reference non-existent runs or plans.
+
+Let me check the actual error output to see which two tests are failing and what the specific constraint violation is.
+
+uuid: 9ec23bdb-72c0-4ab5-9428-40430cff8d38
+parent: c7cff933-9ba5-42f0-a3f4-3e5753b62b9f
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:49:42.493Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:49:42.493Z
+
+```json
+{
+  "command": "pnpm test tests/server/conversations/client-message-id.test.ts 2>&1 | grep -B 5 -A 18 \"Failed Tests\" | head -50",
+  "description": "Get detailed failure output",
+  "timeout": 300000
+}
+
+uuid: 44907a29-ab92-4bdc-bcad-a5747ea2b8b2
+parent: 9ec23bdb-72c0-4ab5-9428-40430cff8d38
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:49:43.949Z","phase":null} -->
+## Claude tool result: toolu_01HauKhV96kYwj9tbffpVYsA · 2026-08-04T11:49:43.949Z
+
+```text
+params: 
+   × createQueuedConversationMessage > mints a fresh id rather than colliding with an existing queue row 0ms
+     → Failed query: delete from "runs"
+params: 
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/server/conversations/client-message-id.test.ts > createQueuedConversationMessage > mints its own id when no client id is supplied
+Error: Failed query: delete from "runs"
+params: 
+ ❯ LibSQLPreparedQuery.queryWithCache node_modules/.pnpm/drizzle-orm@0.45.2_@libsql+client@0.17.3_@types+better-sqlite3@7.6.13_better-sqlite3@12.9.0/node_modules/src/sqlite-core/session.ts:80:11
+ ❯ LibSQLPreparedQuery.run node_modules/.pnpm/drizzle-orm@0.45.2_@libsql+client@0.17.3_@types+better-sqlite3@7.6.13_better-sqlite3@12.9.0/node_modules/src/libsql/session.ts:197:10
+ ❯ seedRun tests/server/conversations/client-message-id.test.ts:84:5
+     82|     await db.delete(queuedConversationMessages);
+     83|     await db.delete(messages);
+     84|     await db.delete(runs);
+       |     ^
+     85|     await db.delete(plans);
+     86|     await db.insert(plans).values({
+ ❯ tests/server/conversations/client-message-id.test.ts:119:19
+
+Caused by: LibsqlError: SQLITE_CONSTRAINT: FOREIGN KEY constraint failed
+ ❯ mapSqliteError node_modules/.pnpm/@libsql+client@0.17.3/node_modules/@libsql/client/lib-esm/sqlite3.js:434:16
+ ❯ executeStmt node_modules/.pnpm/@libsql+client@0.17.3/node_modules/@libsql/client/lib-esm/sqlite3.js:337:15
+
+uuid: de637556-f809-4047-a412-f8cbeaa484ca
+parent: 44907a29-ab92-4bdc-bcad-a5747ea2b8b2
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:49:49.266Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:49:49.266Z
+
+I see the issue—the foreign key constraint from `executionEvents` to `runId` is blocking the deletion. I need to include `executionEvents` in the cleanup process to remove those records first.
+
+uuid: 9c0a61d0-6917-432c-88f5-7c14b3a9258f
+parent: de637556-f809-4047-a412-f8cbeaa484ca
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:49:51.289Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:49:51.289Z
+
+```json
+{
+  "command": "python3 - <<'PY'\np='tests/server/conversations/client-message-id.test.ts'\ns=open(p).read()\ns=s.replace('import { messages, plans, queuedConversationMessages, runs } from \"@/server/db/schema\";','import { executionEvents, messages, plans, queuedConversationMessages, runs } from \"@/server/db/schema\";')\ns=s.replace(\"\"\"    await db.delete(queuedConversationMessages);\n    await db.delete(messages);\n    await db.delete(runs);\n    await db.delete(plans);\"\"\",\"\"\"    await db.delete(executionEvents);\n    await db.delete(queuedConversationMessages);\n    await db.delete(messages);\n    await db.delete(runs);\n    await db.delete(plans);\"\"\")\nopen(p,'w').write(s)\nPY\npnpm test tests/server/conversations/client-message-id.test.ts 2>&1 | tail -10",
+  "description": "Add execution event cleanup and re-run",
+  "timeout": 300000
+}
+
+uuid: 5673b248-86a3-40f3-8d79-dca7bdda6812
+parent: 9c0a61d0-6917-432c-88f5-7c14b3a9258f
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:49:52.808Z","phase":null} -->
+## Claude tool result: toolu_01YbQ6fW9y2ETJur6RWnykWN · 2026-08-04T11:49:52.808Z
+
+```text
+stdout | tests/server/conversations/client-message-id.test.ts
+[db] schema ready in 8ms
+
+ ✓ tests/server/conversations/client-message-id.test.ts (10 tests) 34ms
+
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+   Start at  13:49:51
+   Duration  965ms (transform 300ms, setup 10ms, collect 750ms, tests 34ms, environment 0ms, prepare 29ms)
+
+uuid: 28c0b37d-c715-4ec0-b32b-edf2b759f883
+parent: 5673b248-86a3-40f3-8d79-dca7bdda6812
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:49:52.809Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:49:52.809Z
+
+```text
+{
+  "type": "task_reminder",
+  "content": [],
+  "itemCount": 0
+}
+
+binary omitted from archive
+
+uuid: 4ebfae9e-6d32-43bb-9016-026fc6c608c6
+parent: 28c0b37d-c715-4ec0-b32b-edf2b759f883
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:49:56.868Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:49:56.868Z
+
+```json
+{
+  "command": "pnpm typecheck 2>&1 | tail -3; pnpm lint 2>&1 | grep -E \"^✖\" ; pnpm test 2>&1 | grep -E \"FAIL |Test Files|Tests \" | head -6",
+  "description": "Final typecheck, lint and full test run",
+  "timeout": 900000
+}
+
+uuid: d1b5b8c9-aea5-46b9-ad74-eb0d5b3e52b8
+parent: 4ebfae9e-6d32-43bb-9016-026fc6c608c6
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:51:59.021Z","phase":null} -->
+## Claude tool result: toolu_01L7FiEQ6fq6FhgZ4992Tq9T · 2026-08-04T11:51:59.021Z
+
+```text
+$ tsc -p tsconfig.shared.json --noEmit && tsc -p tsconfig.runner.json --noEmit && tsc -p tsconfig.interface.json --noEmit && tsc --noEmit
+✖ 33 problems (0 errors, 33 warnings)
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/scripts/install-restarter.test.ts > install-restarter.sh > installs a boot-time launchd daemon by default
+ FAIL  tests/server/conversations-sync.test.ts > syncConversationSessions > redelivers a queued answer as a normal prompt when the elicitation is already gone
+ FAIL  tests/server/queued-messages.test.ts > queued conversation messages > answers a live worker question without waiting for the active turn to end
+ FAIL  tests/server/accounts/account-migration.test.ts > account inventory migration > stores Claude local session email metadata when auth status is available
+ FAIL  tests/server/agent-runtime/claude-model-pin.test.ts > Claude worker model pinning > passes an exact requested version instead of inheriting the CLI's selection
+
+uuid: 990e6f83-4c72-4f67-8cdb-02f0c16e48e6
+parent: d1b5b8c9-aea5-46b9-ad74-eb0d5b3e52b8
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:52:04.175Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:52:04.175Z
+
+I'm seeing 8 test failures now—some of them look like environment-related flakiness with the install-restarter, account-migration, and claude-model-pin tests, but the queued-messages test is probably something I broke. Let me re-run these to check which ones are actually flaky and focus on the queued-messages issue.
+
+uuid: 664dbdd9-ed88-4b68-8729-baeb5245ad38
+parent: 990e6f83-4c72-4f67-8cdb-02f0c16e48e6
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:52:04.266Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:52:04.266Z
+
+```json
+{
+  "command": "pnpm test tests/server/queued-messages.test.ts 2>&1 | tail -20",
+  "description": "Run queued messages test in isolation",
+  "timeout": 300000
+}
+
+uuid: d049932c-8680-4d91-a27c-61f2dfb5e054
+parent: 664dbdd9-ed88-4b68-8729-baeb5245ad38
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:52:09.470Z","phase":null} -->
+## Claude tool result: toolu_01RfyFfVWVBTcazXpiBVHukH · 2026-08-04T11:52:09.470Z
+
+```text
+$ vitest run tests/server/queued-messages.test.ts
+
+ RUN  v3.2.4 /Users/masterman/NLP/omniharness
+
+stdout | tests/server/queued-messages.test.ts
+[db] schema ready in 28ms
+
+ ✓ tests/server/queued-messages.test.ts (14 tests) 719ms
+
+ Test Files  1 passed (1)
+      Tests  14 passed (14)
+   Start at  13:52:05
+   Duration  3.50s (transform 829ms, setup 43ms, collect 2.06s, tests 719ms, environment 0ms, prepare 167ms)
+
+uuid: 78b54fcd-4bcb-4812-bbb8-260664d4d84c
+parent: d049932c-8680-4d91-a27c-61f2dfb5e054
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:52:20.711Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:52:20.711Z
+
+The test failures are due to cross-test database interference — my new test file is aggressively deleting from shared tables while vitest runs tests in parallel against the same SQLite database. The issue stems from my `beforeEach` cleanup logic racing with other server tests, and I'm realizing the earlier full run had fewer failures before I added the queued describe block with its own delete calls.
+
+Looking at how other server tests handle isolation, I should scope cleanup to only the rows I create rather than deleting entire shared tables. Since everything uses fresh UUIDs, I can actually avoid deletes entirely — for the collision test I just need to insert a message with a known ID, and for the queued conversation message test I just create a run and queued rows without needing to wipe anything. Let me check the test setup to understand the database isolation strategy, then rewrite the test file to remove all the broad delete calls.
+
+uuid: 50f13239-582e-4c5e-8f37-5a3b09ea2331
+parent: 78b54fcd-4bcb-4812-bbb8-260664d4d84c
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:52:20.727Z","phase":null} -->
+## Claude · 2026-08-04T11:52:20.727Z
+
+Passes in isolation — my new test file's broad `db.delete` calls are racing other server tests. Let me check the DB isolation model.
+
+uuid: fa455a25-fdd8-44c7-a040-3b0965c5404d
+parent: 50f13239-582e-4c5e-8f37-5a3b09ea2331
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:52:20.795Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:52:20.795Z
+
+```json
+{
+  "command": "cat tests/setup.ts | head -40; echo \"=== vitest config pool ===\"; grep -n \"pool\\|isolate\\|fileParallelism\\|threads\" vitest.config.ts 2>/dev/null | head",
+  "description": "Inspect test DB isolation setup"
+}
+
+uuid: 7171589e-ffc1-452f-a3d3-32fcb589efb7
+parent: fa455a25-fdd8-44c7-a040-3b0965c5404d
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:52:20.852Z","phase":null} -->
+## Claude tool result: toolu_013XmVDvgiyLvt2wkddsTyho · 2026-08-04T11:52:20.852Z
+
+```text
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { beforeEach } from "vitest";
+
+// Never trust an inherited runner root here. Agent processes launched by a
+// live OmniHarness runner inherit its OMNIHARNESS_ROOT; respecting that value
+// would let ordinary test cleanup operate on the production database.
+const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "omniharness-tests-"));
+process.env.OMNIHARNESS_ROOT = testRoot;
+
+// Same hazard, one variable family further out. `applyProjectScopedCliStorage`
+// deliberately yields to a caller-supplied CLI storage dir, and Claude worker
+// startup yields to a caller-supplied ANTHROPIC_MODEL. Tests that assert the
+// runtime pins storage under the project root, or pins an exact model, spread
+// `...process.env` into the runtime they spawn — so whenever the suite runs
+// from a shell that exports these (notably inside an agent CLI, which sets
+// CLAUDE_CONFIG_DIR and ANTHROPIC_MODEL for its own session), the runtime took
+// the yield branch and those tests failed on the developer's machine while
+// passing in CI. Scrub them once, here, so no test can inherit them.
+for (const key of [
+  "ANTHROPIC_MODEL",
+  "CLAUDE_CODE_SUBAGENT_MODEL",
+  "CLAUDE_CONFIG_DIR",
+  "CODEX_HOME",
+  "CODEX_SQLITE_HOME",
+  "GEMINI_CLI_HOME",
+  "OPENCODE_CONFIG_DIR",
+  "XDG_CACHE_HOME",
+  "XDG_DATA_HOME",
+  "XDG_STATE_HOME",
+]) {
+  delete process.env[key];
+}
+
+// Keep plan-readiness LLM judge off by default in tests. Individual tests can
+// opt in by stubbing the module.
+if (process.env.MOCK_LLM === undefined) {
+  process.env.MOCK_LLM = "true";
+}
+=== vitest config pool ===
+
+uuid: ef43e88f-4081-46a0-881e-a9dffaa4f725
+parent: 7171589e-ffc1-452f-a3d3-32fcb589efb7
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:52:28.803Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:52:28.803Z
+
+Each test file gets its own temporary directory root created at module setup, so if multiple files run in the same worker process they'd share the database and cause cross-file interference. The safest approach is to avoid deleting shared tables and instead rely on fresh UUIDs for isolation. Though I'm noticing the earlier version with `beforeEach` deletes ran cleanly, so the flakiness might be coming from something else entirely.
+
+The jump from 8 failures to 1 is significant, and some of the failing tests like install-restarter, account-migration, and claude-model-pin look unrelated and could be genuinely flaky or environment-dependent. I should run the full suite again to see if these 8 failures are consistent or just noise.
+
+uuid: 7e1ab4c0-08dd-4efb-81c8-5fa0e9b922a4
+parent: ef43e88f-4081-46a0-881e-a9dffaa4f725
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:52:28.910Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:52:28.910Z
+
+```json
+{
+  "command": "pnpm test 2>&1 | grep -E \"FAIL |Tests \" | head -12",
+  "description": "Re-run full suite to check failure stability",
+  "timeout": 900000
+}
+
+uuid: b5f78f44-002c-4d40-bcd4-dbfac72105d7
+parent: 7e1ab4c0-08dd-4efb-81c8-5fa0e9b922a4
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:53:16.541Z","phase":null} -->
+## Claude tool result: toolu_01BHKoG87JuYeLwfPRtQ2PRS · 2026-08-04T11:53:16.541Z
+
+```text
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/server/conversations-sync.test.ts > syncConversationSessions > redelivers a queued answer as a normal prompt when the elicitation is already gone
+      Tests  1 failed | 2471 passed | 5 skipped (2477)
+
+uuid: 231107ee-e3ba-4dfc-9b89-35fe7e417283
+parent: b5f78f44-002c-4d40-bcd4-dbfac72105d7
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T11:53:21.861Z","phase":null} -->
+## Claude thinking · 2026-08-04T11:53:21.861Z
+
+The second run came back clean with only the pre-existing failure, so those 8 failures were likely from resource contention during parallel database access. I should still remove the table deletion logic from my tests since they use fresh UUIDs anyway and don't actually need to clean up shared tables — that's probably contributing to the flakiness.
+
+uuid: fd1cd95f-8e98-4738-a82a-a242ffaba24b
+parent: 231107ee-e3ba-4dfc-9b89-35fe7e417283
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:53:21.863Z","phase":null} -->
+## Claude · 2026-08-04T11:53:21.863Z
+
+Second run is clean — that was a flaky run. Still, my broad deletes are a plausible contributor, so let me remove them since the tests don't need them.
+
+uuid: c4c15b78-ae49-4fff-a4d1-62de4e837911
+parent: fd1cd95f-8e98-4738-a82a-a242ffaba24b
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:53:34.980Z","phase":null} -->
+## Claude tool call: Write · 2026-08-04T11:53:34.980Z
+
+```json
+{
+  "file_path": "/Users/masterman/NLP/omniharness/tests/server/conversations/client-message-id.test.ts",
+  "content": "import { describe, expect, it } from \"vitest\";\nimport { randomUUID } from \"crypto\";\nimport { db } from \"@/server/db\";\nimport { messages, plans, runs } from \"@/server/db/schema\";\nimport { resolveUserMessageId } from \"@/server/conversations/send-message\";\nimport { createQueuedConversationMessage } from \"@/server/conversations/queued-messages\";\n\nconst UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;\n\n// Every row here is keyed by a fresh uuid, so nothing needs clearing between\n// tests. Truncating the shared tables would race the other server suites.\nasync function seedRun() {\n  const planId = randomUUID();\n  const runId = randomUUID();\n  const now = new Date();\n  await db.insert(plans).values({\n    id: planId,\n    path: `vibes/ad-hoc/${planId}.md`,\n    status: \"running\",\n    createdAt: now,\n    updatedAt: now,\n  });\n  await db.insert(runs).values({\n    id: runId,\n    planId,\n    mode: \"direct\",\n    status: \"running\",\n    createdAt: now,\n    updatedAt: now,\n  });\n  return runId;\n}\n\ndescribe(\"resolveUserMessageId\", () => {\n  it(\"adopts a well-formed client id so the optimistic row and the persisted row are one row\", async () => {\n    const clientMessageId = randomUUID();\n\n    await expect(resolveUserMessageId(clientMessageId)).resolves.toBe(clientMessageId);\n  });\n\n  it(\"normalises case so the id the client rendered under matches the one it gets back\", async () => {\n    const clientMessageId = randomUUID().toUpperCase();\n\n    await expect(resolveUserMessageId(clientMessageId)).resolves.toBe(clientMessageId.toLowerCase());\n  });\n\n  it.each([\n    [\"absent\", null],\n    [\"empty\", \"\"],\n    [\"not a uuid\", \"optimistic-42\"],\n    [\"uuid-shaped but not hex\", \"zzzzzzzz-2222-4333-8444-555555555555\"],\n  ])(\"mints its own id when the client id is %s\", async (_label, clientMessageId) => {\n    const resolved = await resolveUserMessageId(clientMessageId);\n\n    expect(resolved).toMatch(UUID_PATTERN);\n    expect(resolved).not.toBe(clientMessageId);\n  });\n\n  it(\"mints a fresh id when the client id is already taken, rather than colliding\", async () => {\n    const runId = await seedRun();\n    const clientMessageId = randomUUID();\n    await db.insert(messages).values({\n      id: clientMessageId,\n      runId,\n      role: \"user\",\n      kind: \"checkpoint\",\n      content: \"already landed\",\n      createdAt: new Date(),\n    });\n\n    const resolved = await resolveUserMessageId(clientMessageId);\n\n    expect(resolved).toMatch(UUID_PATTERN);\n    expect(resolved).not.toBe(clientMessageId);\n  });\n});\n\ndescribe(\"createQueuedConversationMessage\", () => {\n  it(\"adopts the client id so the optimistic queue row and the server row are one row\", async () => {\n    const runId = await seedRun();\n    const clientMessageId = randomUUID();\n\n    const queued = await createQueuedConversationMessage({\n      runId,\n      action: \"queue\",\n      content: \"queue this while the worker is busy\",\n      clientMessageId,\n    });\n\n    expect(queued.id).toBe(clientMessageId);\n  });\n\n  it(\"mints its own id when no client id is supplied\", async () => {\n    const runId = await seedRun();\n\n    const queued = await createQueuedConversationMessage({\n      runId,\n      action: \"queue\",\n      content: \"queue this while the worker is busy\",\n    });\n\n    expect(queued.id).toMatch(UUID_PATTERN);\n  });\n\n  it(\"mints a fresh id rather than colliding with an existing queue row\", async () => {\n    const runId = await seedRun();\n    const clientMessageId = randomUUID();\n    await createQueuedConversationMessage({\n      runId,\n      action: \"queue\",\n      content: \"first\",\n      clientMessageId,\n    });\n\n    const resent = await createQueuedConversationMessage({\n      runId,\n      action: \"queue\",\n      content: \"resend after a partial failure\",\n      clientMessageId,\n    });\n\n    expect(resent.id).toMatch(UUID_PATTERN);\n    expect(resent.id).not.toBe(clientMessageId);\n  });\n});\n"
+}
+
+uuid: e588c2f6-3efb-4194-80dd-0cb023cbd556
+parent: c4c15b78-ae49-4fff-a4d1-62de4e837911
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:53:34.997Z","phase":null} -->
+## Claude tool result: toolu_01MgNBLRvB973p16graJXSJ6 · 2026-08-04T11:53:34.997Z
+
+```text
+<tool_use_error>File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.</tool_use_error>
+
+uuid: d76ec6ee-ec5f-46f0-ad52-af7188f16628
+parent: e588c2f6-3efb-4194-80dd-0cb023cbd556
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:53:40.211Z","phase":null} -->
+## Claude tool call: Read · 2026-08-04T11:53:40.211Z
+
+```json
+{
+  "file_path": "/Users/masterman/NLP/omniharness/tests/server/conversations/client-message-id.test.ts",
+  "offset": 1,
+  "limit": 20
+}
+
+uuid: 41af07b9-5813-4033-afa7-7b01782aa6f3
+parent: d76ec6ee-ec5f-46f0-ad52-af7188f16628
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:53:40.226Z","phase":null} -->
+## Claude tool result: toolu_01QWcstmdddQdsx4LvsXVGmw · 2026-08-04T11:53:40.226Z
+
+```text
+1	import { beforeEach, describe, expect, it } from "vitest";
+2	import { randomUUID } from "crypto";
+3	import { db } from "@/server/db";
+4	import { executionEvents, messages, plans, queuedConversationMessages, runs } from "@/server/db/schema";
+5	import { resolveUserMessageId } from "@/server/conversations/send-message";
+6	import { createQueuedConversationMessage } from "@/server/conversations/queued-messages";
+7	
+8	const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+9	
+10	describe("resolveUserMessageId", () => {
+11	  beforeEach(async () => {
+12	    await db.delete(executionEvents);
+13	    await db.delete(queuedConversationMessages);
+14	    await db.delete(messages);
+15	    await db.delete(runs);
+16	    await db.delete(plans);
+17	  });
+18	
+19	  it("adopts a well-formed client id so the optimistic row and the persisted row are one row", () => {
+20	    const clientMessageId = randomUUID();
+
+uuid: 39a4ed59-6a6a-44b2-9f35-8adac9f43bbc
+parent: 41af07b9-5813-4033-afa7-7b01782aa6f3
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:53:55.241Z","phase":null} -->
+## Claude tool call: Write · 2026-08-04T11:53:55.241Z
+
+```json
+{
+  "file_path": "/Users/masterman/NLP/omniharness/tests/server/conversations/client-message-id.test.ts",
+  "content": "import { describe, expect, it } from \"vitest\";\nimport { randomUUID } from \"crypto\";\nimport { db } from \"@/server/db\";\nimport { messages, plans, runs } from \"@/server/db/schema\";\nimport { resolveUserMessageId } from \"@/server/conversations/send-message\";\nimport { createQueuedConversationMessage } from \"@/server/conversations/queued-messages\";\n\nconst UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;\n\n// Every row here is keyed by a fresh uuid, so nothing needs clearing between\n// tests. Truncating the shared tables would race the other server suites.\nasync function seedRun() {\n  const planId = randomUUID();\n  const runId = randomUUID();\n  const now = new Date();\n  await db.insert(plans).values({\n    id: planId,\n    path: `vibes/ad-hoc/${planId}.md`,\n    status: \"running\",\n    createdAt: now,\n    updatedAt: now,\n  });\n  await db.insert(runs).values({\n    id: runId,\n    planId,\n    mode: \"direct\",\n    status: \"running\",\n    createdAt: now,\n    updatedAt: now,\n  });\n  return runId;\n}\n\ndescribe(\"resolveUserMessageId\", () => {\n  it(\"adopts a well-formed client id so the optimistic row and the persisted row are one row\", async () => {\n    const clientMessageId = randomUUID();\n\n    await expect(resolveUserMessageId(clientMessageId)).resolves.toBe(clientMessageId);\n  });\n\n  it(\"normalises case so the id the client rendered under matches the one it gets back\", async () => {\n    const clientMessageId = randomUUID().toUpperCase();\n\n    await expect(resolveUserMessageId(clientMessageId)).resolves.toBe(clientMessageId.toLowerCase());\n  });\n\n  it.each([\n    [\"absent\", null],\n    [\"empty\", \"\"],\n    [\"not a uuid\", \"optimistic-42\"],\n    [\"uuid-shaped but not hex\", \"zzzzzzzz-2222-4333-8444-555555555555\"],\n  ])(\"mints its own id when the client id is %s\", async (_label, clientMessageId) => {\n    const resolved = await resolveUserMessageId(clientMessageId);\n\n    expect(resolved).toMatch(UUID_PATTERN);\n    expect(resolved).not.toBe(clientMessageId);\n  });\n\n  it(\"mints a fresh id when the client id is already taken, rather than colliding\", async () => {\n    const runId = await seedRun();\n    const clientMessageId = randomUUID();\n    await db.insert(messages).values({\n      id: clientMessageId,\n      runId,\n      role: \"user\",\n      kind: \"checkpoint\",\n      content: \"already landed\",\n      createdAt: new Date(),\n    });\n\n    const resolved = await resolveUserMessageId(clientMessageId);\n\n    expect(resolved).toMatch(UUID_PATTERN);\n    expect(resolved).not.toBe(clientMessageId);\n  });\n});\n\ndescribe(\"createQueuedConversationMessage\", () => {\n  it(\"adopts the client id so the optimistic queue row and the server row are one row\", async () => {\n    const runId = await seedRun();\n    const clientMessageId = randomUUID();\n\n    const queued = await createQueuedConversationMessage({\n      runId,\n      action: \"queue\",\n      content: \"queue this while the worker is busy\",\n      clientMessageId,\n    });\n\n    expect(queued.id).toBe(clientMessageId);\n  });\n\n  it(\"mints its own id when no client id is supplied\", async () => {\n    const runId = await seedRun();\n\n    const queued = await createQueuedConversationMessage({\n      runId,\n      action: \"queue\",\n      content: \"queue this while the worker is busy\",\n    });\n\n    expect(queued.id).toMatch(UUID_PATTERN);\n  });\n\n  it(\"mints a fresh id rather than colliding with an existing queue row\", async () => {\n    const runId = await seedRun();\n    const clientMessageId = randomUUID();\n    await createQueuedConversationMessage({\n      runId,\n      action: \"queue\",\n      content: \"first\",\n      clientMessageId,\n    });\n\n    const resent = await createQueuedConversationMessage({\n      runId,\n      action: \"queue\",\n      content: \"resend after a partial failure\",\n      clientMessageId,\n    });\n\n    expect(resent.id).toMatch(UUID_PATTERN);\n    expect(resent.id).not.toBe(clientMessageId);\n  });\n});\n"
+}
+
+uuid: e5489271-a0c6-4a16-9654-46c2e0a78810
+parent: 39a4ed59-6a6a-44b2-9f35-8adac9f43bbc
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:53:55.269Z","phase":null} -->
+## Claude tool result: toolu_01RGK3PDQ3xwwvVMSDVTvH7P · 2026-08-04T11:53:55.269Z
+
+```text
+The file /Users/masterman/NLP/omniharness/tests/server/conversations/client-message-id.test.ts has been updated successfully. (file state is current in your context — no need to Read it back)
+
+uuid: 0de4f0bf-c325-4533-a4f7-e72685ed03fb
+parent: e5489271-a0c6-4a16-9654-46c2e0a78810
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T11:53:58.384Z","phase":null} -->
+## Claude tool call: Bash · 2026-08-04T11:53:58.384Z
+
+```json
+{
+  "command": "pnpm typecheck 2>&1 | tail -3; pnpm lint 2>&1 | grep -E \"^✖\"; pnpm test 2>&1 | grep -E \"FAIL |Tests \" | head -8",
+  "description": "Final verification",
+  "timeout": 900000
+}
+
+uuid: 8b221928-6ffd-4a88-ac24-61c06ca66d43
+parent: 0de4f0bf-c325-4533-a4f7-e72685ed03fb
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"tool-result","timestamp":"2026-08-04T11:54:58.363Z","phase":null} -->
+## Claude tool result: toolu_01XAmmtcW2iHx1XvBupghmd6 · 2026-08-04T11:54:58.363Z
+
+```text
+$ tsc -p tsconfig.shared.json --noEmit && tsc -p tsconfig.runner.json --noEmit && tsc -p tsconfig.interface.json --noEmit && tsc --noEmit
+✖ 33 problems (0 errors, 33 warnings)
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/server/conversations-sync.test.ts > syncConversationSessions > redelivers a queued answer as a normal prompt when the elicitation is already gone
+      Tests  1 failed | 2471 passed | 5 skipped (2477)
+
+uuid: b5e95b89-e5e4-4cff-97a3-6ef70dbbc06e
+parent: 8b221928-6ffd-4a88-ac24-61c06ca66d43
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"state","timestamp":"2026-08-04T11:54:58.365Z","phase":null} -->
+## Claude attachment · 2026-08-04T11:54:58.365Z
+
+```text
+{
+  "type": "task_reminder",
+  "content": [],
+  "itemCount": 0
+}
+
+binary omitted from archive
+
+uuid: 0b7a7747-4ee5-468d-8838-5eb0a166c9f1
+parent: b5e95b89-e5e4-4cff-97a3-6ef70dbbc06e
+```
+
+<!-- /codex-event -->
+
+<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T11:55:20.212Z","phase":null} -->
+## Claude · 2026-08-04T11:55:20.212Z
+
+Fixed. Typecheck clean, lint 0 errors, full suite green except the pre-existing `conversations-sync` failure I isolated earlier.
+
+## The cause
+
+`onMutate` built an optimistic *sent message* unconditionally, regardless of `busyAction`. So a queued send rendered a transcript bubble immediately, and `onSuccess` then removed it (`settleSend` with no `data.message`) and inserted the row into the queue instead. The ~200ms you saw is the POST round trip.
+
+The prediction was available all along: `sendConversationMessageUnlocked` returns `{ ok: true, queuedMessage }` for `busyAction === "queue"` on both the supervised (`send-message.ts:1071`) and direct (`send-message.ts:1091`) paths, and never returns a `message`. So "queue" ⟹ queued row, deterministically — the client can commit to it at send time with no risk of guessing wrong.
+
+## What changed
+
+**`onMutate` branches on `busyAction`.** A queued send now goes straight to `busyMessageQueueManager.beginQueueSend(...)` and never touches `state.messages`. It also skips `scrollConversationToBottom` — the row lands in the composer drawer, so there's nothing below to scroll to.
+
+**The queue row survives the round trip.** `setQueuedMessages` replaces the list from each SSE frame, so an optimistic row absent from the server's list would have been dropped — the same disappear-and-return bug I fixed for messages last time, just relocated. Added `pendingQueuedMessageIds` to `BusyMessageQueueManager`: in-flight rows are retained across frames and excluded from the `serverAbsentMessageUpdatedAtById` staleness bookkeeping, so the real row isn't later rejected as stale.
+
+**The queue row keeps one identity.** Extended the `clientMessageId` pattern to `createQueuedConversationMessage`, so the optimistic row and the persisted row share an id and the swap is in place rather than a remount. Same graceful degradation as the message path: malformed or already-taken ids fall back to a fresh UUID rather than failing the send.
+
+`busyAction === "steer"` is untouched — steering actually delivers the message to the worker, so a sent bubble is correct there.
+
+## Tests
+
+- `tests/app/busy-message-queue-manager.test.ts` — 5 new cases: row appears at send time, survives an event frame that lands before the POST returns, swaps in place on the shared id, drops the optimistic row if the server mints its own, and clears on failure.
+- `tests/server/conversations/client-message-id.test.ts` — 3 new cases for queue-row id adoption, plus the collision fallback.
+
+I verified the retention test fails when the retention is removed.
+
+One note: my first version of that server test truncated shared tables in `beforeEach`, and a full run came back with 8 failures across unrelated suites. A re-run was clean, so it was flaky rather than caused by the deletes — but the test suites share a SQLite DB, so I rewrote the file to key everything by fresh UUIDs and truncate nothing. Two consecutive full runs are now clean at the usual single pre-existing failure.
+
+uuid: cee4b32b-2bda-4ead-99cb-f52528d1675a
+parent: 0b7a7747-4ee5-468d-8838-5eb0a166c9f1
 
 <!-- /codex-event -->
