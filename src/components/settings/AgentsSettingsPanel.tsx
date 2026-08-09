@@ -153,7 +153,9 @@ export function AgentsSettingsPanel({
         cliType: worker.type,
         provider: workerProvider(worker.type),
         type: "external",
-        label: t("settings.agents.localAccountLabel", { worker: worker.label }),
+        label: worker.type === "codex"
+          ? t("settings.agents.codexSubscriptionLabel")
+          : t("settings.agents.localAccountLabel", { worker: worker.label }),
         authMode: "local_session",
         authRef: `local:${worker.type}`,
     }) as AccountRecord;
@@ -213,7 +215,6 @@ export function AgentsSettingsPanel({
 
   return (
     <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
-      <ClaudeModelGatewaySettings settings={settings} setSetting={setSetting} dirtyKeys={settingsDirtyKeys} secretStates={secretStates} />
       <div className="flex items-center gap-3">
         <label className="shrink-0 text-xs font-semibold text-muted-foreground" htmlFor="WORKER_DEFAULT_TYPE">
           {t("settings.agents.defaultWorker")}
@@ -491,6 +492,8 @@ export function AgentsSettingsPanel({
           })}
         />
       ) : null}
+
+      <ClaudeModelGatewaySettings settings={settings} setSetting={setSetting} dirtyKeys={settingsDirtyKeys} secretStates={secretStates} />
     </div>
   );
 }

@@ -71,6 +71,28 @@ test("general settings owns language and local text-size preferences without the
   expect(generalSettingsSource).not.toContain("setThemeMode");
 });
 
+test("general settings exposes a dedicated project commit agent", () => {
+  expect(generalSettingsSource).toContain('t("settings.commitAgent.title")');
+  expect(generalSettingsSource).toContain('t("settings.commitAgent.description")');
+  expect(generalSettingsSource).toContain("GIT_COMMIT_WORKER_TYPE_SETTING");
+  expect(generalSettingsSource).toContain("GIT_COMMIT_WORKER_MODEL_SETTING");
+  expect(generalSettingsSource).toContain("GIT_COMMIT_WORKER_EFFORT_SETTING");
+  expect(generalSettingsSource).toContain("workerModels");
+  expect(generalSettingsSource).toContain("getWorkerModelOptions");
+  expect(settingsSource).toContain("workerModels={workerCatalogQuery.data?.workerModels}");
+});
+
+test("project commit model picker uses the native select path", () => {
+  const modelControl = generalSettingsSource.match(
+    /<Select\s+id=\{GIT_COMMIT_WORKER_MODEL_SETTING\}[\s\S]*?\n\s*\/>/,
+  )?.[0];
+
+  expect(modelControl).toBeTruthy();
+  expect(modelControl).toContain("native");
+  expect(settingsSource).toContain("native?: boolean");
+  expect(settingsSource).toContain("<select");
+});
+
 test("models, agents, and runtime panels preserve server-backed settings", () => {
   expect(settingsSource).toContain('t("settings.models.supervisorTitle")');
   expect(settingsSource).toContain('t("settings.models.fallbackTitle")');
@@ -134,8 +156,6 @@ test("models, agents, and runtime panels preserve server-backed settings", () =>
   expect(settingsSource).not.toContain("Only currently available bridge workers can be enabled for new conversations.");
   expect(settingsSource).not.toContain("Default new workers to the runtime");
   expect(settingsSource).not.toContain('type="checkbox"');
-  expect(settingsSource).not.toContain("<select");
-  expect(settingsSource).not.toContain("<option");
   expect(settingsSource).not.toContain("Queue messages until the next safe turn");
   expect(settingsSource).not.toContain("Steer immediately, queue if the worker is busy");
   expect(settingsSource).not.toContain("Control how OmniHarness handles active work.");

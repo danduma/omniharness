@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect } from "react";
-import { ExternalLink, RefreshCw } from "lucide-react";
+import { ChevronDown, ExternalLink, RefreshCw } from "lucide-react";
 import { claudeModelGatewayManager } from "@/interface/home/ClaudeModelGatewayManager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { t, useI18nSnapshot } from "@/lib/i18n";
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
 
 type Props = {
@@ -57,16 +58,20 @@ export function ClaudeModelGatewaySettings({ settings, setSetting, dirtyKeys, se
   };
 
   return (
-    <section className="space-y-4 rounded-xl border border-border/60 bg-background/70 p-4" aria-labelledby="claude-model-gateway-title">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <h3 id="claude-model-gateway-title" className="text-sm font-semibold">{t("settings.claudeGateway.title")}</h3>
-          <p className="max-w-xl text-xs text-muted-foreground">{t("settings.claudeGateway.description")}</p>
-        </div>
-        <Badge variant="outline" aria-live="polite">{t(statusKey)}</Badge>
-      </div>
+    <Collapsible defaultOpen={false}>
+      <CollapsibleTrigger className="group flex w-full items-center justify-between gap-3 rounded-xl border border-border/60 bg-background/70 p-4 text-left">
+        <h3 id="claude-model-gateway-title" className="text-sm font-semibold">{t("settings.claudeGateway.title")}</h3>
+        <span className="flex items-center gap-2">
+          <Badge variant="outline" aria-live="polite">{t(statusKey)}</Badge>
+          <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-data-[panel-open]:rotate-180" aria-hidden="true" />
+        </span>
+      </CollapsibleTrigger>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <CollapsibleContent>
+        <section className="space-y-4 rounded-b-xl border-x border-b border-border/60 bg-background/70 p-4" aria-labelledby="claude-model-gateway-title">
+          <p className="max-w-xl text-xs text-muted-foreground">{t("settings.claudeGateway.description")}</p>
+
+          <div className="grid gap-3 sm:grid-cols-2">
         <label className="space-y-1.5 text-xs font-medium">
           <span>{t("settings.claudeGateway.mode")}</span>
           <Select
@@ -104,9 +109,9 @@ export function ClaudeModelGatewaySettings({ settings, setSetting, dirtyKeys, se
             placeholder={secretStates?.CLAUDE_MODEL_GATEWAY_MANAGEMENT_TOKEN?.configured ? t("settings.claudeGateway.secretConfigured") : t("settings.claudeGateway.secretPlaceholder")}
           />
         </label>
-      </div>
+          </div>
 
-      <label className="block space-y-1.5 text-xs font-medium">
+          <label className="block space-y-1.5 text-xs font-medium">
         <span>{t("settings.claudeGateway.customModels")}</span>
         <Textarea
           rows={3}
@@ -115,9 +120,9 @@ export function ClaudeModelGatewaySettings({ settings, setSetting, dirtyKeys, se
           placeholder={t("settings.claudeGateway.customModelsPlaceholder")}
         />
         <span className="block text-[11px] font-normal text-muted-foreground">{t("settings.claudeGateway.customModelsHelp")}</span>
-      </label>
+          </label>
 
-      <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
         {serverMode === "managed" && status?.installation !== "installed" ? (
           <Button type="button" disabled={actionsDisabled} onClick={() => void claudeModelGatewayManager.installAndStart()}>
             {t("settings.claudeGateway.installAndStart")}
@@ -142,25 +147,27 @@ export function ClaudeModelGatewaySettings({ settings, setSetting, dirtyKeys, se
             {t("settings.claudeGateway.stop")}
           </Button>
         ) : null}
-      </div>
+          </div>
 
-      {gatewaySettingsDirty ? (
-        <p className="text-xs text-muted-foreground">{t("settings.claudeGateway.saveBeforeActions")}</p>
-      ) : null}
+          {gatewaySettingsDirty ? (
+            <p className="text-xs text-muted-foreground">{t("settings.claudeGateway.saveBeforeActions")}</p>
+          ) : null}
 
-      {state.oauthUrl ? (
+          {state.oauthUrl ? (
         <a className="inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-4 hover:underline" href={state.oauthUrl} target="_blank" rel="noopener noreferrer">
           {t("settings.claudeGateway.openSignIn")}
           <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
         </a>
-      ) : null}
-      {state.error ? <p className="text-xs text-destructive" role="alert">{state.error}</p> : null}
-      {status?.operation?.error?.message && status.operation.error.message !== state.error ? (
-        <p className="text-xs text-destructive" role="alert">{status.operation.error.message}</p>
-      ) : null}
-      {status?.models.discovered.length ? (
-        <p className="text-xs text-muted-foreground">{t("settings.claudeGateway.discoveredCount", { count: status.models.discovered.length })}</p>
-      ) : null}
-    </section>
+          ) : null}
+          {state.error ? <p className="text-xs text-destructive" role="alert">{state.error}</p> : null}
+          {status?.operation?.error?.message && status.operation.error.message !== state.error ? (
+            <p className="text-xs text-destructive" role="alert">{status.operation.error.message}</p>
+          ) : null}
+          {status?.models.discovered.length ? (
+            <p className="text-xs text-muted-foreground">{t("settings.claudeGateway.discoveredCount", { count: status.models.discovered.length })}</p>
+          ) : null}
+        </section>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }

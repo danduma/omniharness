@@ -150,6 +150,31 @@ describe("account resolver", () => {
     expect(resolved.allowGlobalCredentialBridge).toBe(false);
   });
 
+  it("clears OpenAI API env and bridges Codex auth for subscription accounts", async () => {
+    const accountId = await insertAccount({
+      cliType: "codex",
+      provider: "openai",
+      type: "external",
+      authMode: "local_session",
+      authRef: "local:codex",
+    });
+
+    const resolved = await resolveAccountCredentials({
+      workerType: "codex",
+      cwd: process.cwd(),
+      env: {
+        HOME: "/Users/tester",
+        OPENAI_API_KEY: "api-key-should-not-win",
+        OPENAI_BASE_URL: "https://api.example.test",
+      },
+      accountId,
+    });
+
+    expect(resolved.account?.id).toBe(accountId);
+    expect(resolved.unset).toEqual(["OPENAI_API_KEY", "OPENAI_BASE_URL"]);
+    expect(resolved.allowGlobalCredentialBridge).toBe(true);
+  });
+
   it("resolves API-key accounts from hydrated runtime env settings", async () => {
     const accountId = await insertAccount({
       cliType: "gemini",

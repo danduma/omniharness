@@ -68,6 +68,7 @@ function emptyCredentialProfile(): CredentialProfileResolution {
 }
 
 function localSessionUnsetKeys(workerType: string) {
+  if (workerType === "codex") return ["OPENAI_API_KEY", "OPENAI_BASE_URL"];
   if (workerType !== "claude") return [];
   return ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"];
 }
@@ -192,7 +193,7 @@ export async function resolveAccountCredentials(input: {
       env: account.authMode === "local_session" ? localSessionEnv(input.workerType, input.env) : credentialProfile.env,
       unset: account.authMode === "local_session" ? localSessionUnsetKeys(input.workerType) : credentialProfile.unset,
       credentialProfile,
-      allowGlobalCredentialBridge: account.authMode !== "local_session",
+      allowGlobalCredentialBridge: account.authMode !== "local_session" || input.workerType === "codex",
     };
   }
 

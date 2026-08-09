@@ -4,7 +4,16 @@ import { db } from "@/server/db";
 import { eq } from "drizzle-orm";
 import { accounts, artifactStreams, executionEvents, messages, plans, queuedConversationMessages, runs, settings, supervisorInterventions, workerCounters, workerCredentialAllocations, workerTokenUsage, workers } from "@/server/db/schema";
 import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
-import { GIT_AUTO_COMMIT_MILESTONES_SETTING, GIT_PUSH_ON_COMMIT_SETTING } from "@/lib/commit-workflow";
+import {
+  DEFAULT_COMMIT_WORKER_EFFORT,
+  DEFAULT_COMMIT_WORKER_MODEL,
+  DEFAULT_COMMIT_WORKER_TYPE,
+  GIT_AUTO_COMMIT_MILESTONES_SETTING,
+  GIT_COMMIT_WORKER_EFFORT_SETTING,
+  GIT_COMMIT_WORKER_MODEL_SETTING,
+  GIT_COMMIT_WORKER_TYPE_SETTING,
+  GIT_PUSH_ON_COMMIT_SETTING,
+} from "@/lib/commit-workflow";
 import { getAppDataPath, getAppRoot } from "@/server/app-root";
 import type { GitWorkspaceSnapshot, GitWorkspaceTarget } from "@/lib/git-workspace";
 import {
@@ -23,7 +32,6 @@ import { __resetArtifactStreamCachesForTests } from "@/server/artifacts/stream-m
 
 const {
   mockStartSupervisorRun,
-  mockQueueConversationTitleGeneration,
   mockEnsureSupervisorRuntimeStarted,
   mockSpawnAgent,
   mockAskAgent,
@@ -35,7 +43,6 @@ const {
   mockLoadExternalClaudeSession,
 } = vi.hoisted(() => ({
   mockStartSupervisorRun: vi.fn(),
-  mockQueueConversationTitleGeneration: vi.fn().mockResolvedValue(undefined),
   mockEnsureSupervisorRuntimeStarted: vi.fn().mockResolvedValue(undefined),
   mockNotifyEventStreamSubscribers: vi.fn(),
   mockValidateWorkspaceTarget: vi.fn(),
@@ -79,10 +86,6 @@ const {
 
 vi.mock("@/server/supervisor/start", () => ({
   startSupervisorRun: mockStartSupervisorRun,
-}));
-
-vi.mock("@/server/conversation-title", () => ({
-  queueConversationTitleGeneration: mockQueueConversationTitleGeneration,
 }));
 
 vi.mock("@/server/supervisor/runtime-watchdog", () => ({
@@ -196,7 +199,6 @@ describe("POST /api/conversations", () => {
   beforeEach(async () => {
     await waitForConversationBackgroundTasksForTests();
     mockStartSupervisorRun.mockClear();
-    mockQueueConversationTitleGeneration.mockClear();
     mockEnsureSupervisorRuntimeStarted.mockClear();
     mockSpawnAgent.mockClear();
     mockAskAgent.mockClear();
@@ -703,7 +705,6 @@ describe("POST /api/conversations", () => {
 
     expect(payload.run.title).toBe("Fix the composer send button when attachments are present");
     expect(run?.title).toBe("Fix the composer send button when attachments are present");
-    expect(mockQueueConversationTitleGeneration).toHaveBeenCalledWith({ runId: payload.runId, command });
   });
 
   it("stores the app root as the project path when no project is selected", async () => {
@@ -1134,7 +1135,7 @@ describe("POST /api/conversations", () => {
     expect(storedMessages).toHaveLength(0);
   });
 
-  it("queues title generation for direct Claude conversations", async () => {
+  it("seeds a direct Claude conversation with the first prompt line as its title", async () => {
     const command = [
       "session ef25debddace keeps showing a spinner even tho it finishd",
       "and we can see that on clicking on it to load it",
@@ -1157,7 +1158,6 @@ describe("POST /api/conversations", () => {
 
     expect(payload.run.mode).toBe("direct");
     expect(payload.run.title).toBe("session ef25debddace keeps showing a spinner even tho it finishd and we can s...");
-    expect(mockQueueConversationTitleGeneration).toHaveBeenCalledWith({ runId: payload.runId, command });
   });
 
   it("passes runtime credential settings into direct worker spawns", async () => {
@@ -1366,7 +1366,79 @@ describe("POST /api/conversations", () => {
     expect(payload.run.mode).toBe("commit");
     expect(createdRun?.title).toBe("Commit");
     expect(createdRun?.mode).toBe("commit");
-    expect(mockQueueConversationTitleGeneration).not.toHaveBeenCalled();
+  });
+
+  it("uses the dedicated saved agent for project commit runs", async () => {
+    await db.insert(settings).values([
+      { key: GIT_COMMIT_WORKER_TYPE_SETTING, value: "claude", updatedAt: new Date() },
+      { key: GIT_COMMIT_WORKER_MODEL_SETTING, value: "custom-commit-model", updatedAt: new Date() },
+      { key: GIT_COMMIT_WORKER_EFFORT_SETTING, value: "extra high", updatedAt: new Date() },
+    ]);
+
+    const response = await POST(new Request("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "commit",
+        command: AUTO_COMMIT_PROJECT_PROMPT,
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+        preferredWorkerModel: "latest-composer-model",
+        preferredWorkerEffort: "low",
+        allowedWorkerTypes: ["codex"],
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+    const createdWorker = await db.select().from(workers).where(eq(workers.runId, payload.runId)).get();
+    const commitAgentEvent = getNamedEventsSince(0).events.find((entry) => entry.event.kind === "conversation.commit_agent_selected");
+
+    expect(createdRun).toMatchObject({
+      mode: "commit",
+      preferredWorkerType: "claude",
+      preferredWorkerModel: "custom-commit-model",
+      preferredWorkerEffort: "extra high",
+      allowedWorkerTypes: JSON.stringify(["claude"]),
+      preferredWorkerAccountId: null,
+    });
+    expect(createdWorker).toMatchObject({
+      type: "claude",
+      effectiveLaunchModel: "custom-commit-model",
+      effectiveLaunchEffort: "extra high",
+    });
+    expect(commitAgentEvent?.event).toEqual({
+      kind: "conversation.commit_agent_selected",
+      runId: payload.runId,
+      workerType: "claude",
+      model: "custom-commit-model",
+      effort: "extra high",
+    });
+  });
+
+  it("uses deterministic defaults for commit runs when the settings are absent", async () => {
+    const response = await POST(new Request("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "commit",
+        command: AUTO_COMMIT_PROJECT_PROMPT,
+        projectPath: "/workspace/app",
+        preferredWorkerType: "gemini",
+        preferredWorkerModel: "latest-composer-model",
+        preferredWorkerEffort: "max",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+
+    expect(createdRun).toMatchObject({
+      preferredWorkerType: DEFAULT_COMMIT_WORKER_TYPE,
+      preferredWorkerModel: DEFAULT_COMMIT_WORKER_MODEL,
+      preferredWorkerEffort: DEFAULT_COMMIT_WORKER_EFFORT,
+      allowedWorkerTypes: JSON.stringify([DEFAULT_COMMIT_WORKER_TYPE]),
+    });
   });
 
   it("returns a direct conversation before the first worker turn completes", async () => {

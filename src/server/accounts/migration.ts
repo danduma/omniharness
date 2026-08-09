@@ -316,6 +316,14 @@ async function normalizeExistingAccounts(now: Date) {
       patch.authMode = "local_session";
       patch.authRef = "local-session:claude";
     }
+    if (
+      row.id === "local-session-codex"
+      && row.cliType === "codex"
+      && row.authMode === "local_session"
+      && row.label === "Codex local session"
+    ) {
+      patch.label = "Codex subscription";
+    }
     const rowAfterAuthPatch = {
       ...row,
       ...patch,

@@ -7,7 +7,6 @@ import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { createAdHocPlan } from "@/server/runs/ad-hoc-plan";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { askAgent, cancelAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
-import { queueConversationTitleGeneration } from "@/server/conversation-title";
 import { resolveOmniRequest, type ConversationMode } from "./modes";
 import { normalizeWorkerType, parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
 import { buildPlannerSystemPrompt } from "@/server/prompts";
@@ -25,6 +24,7 @@ import { getAppDataPath, getAppRoot } from "@/server/app-root";
 import { appendAttachmentContext, normalizeChatAttachments, resolveImageAttachments, serializeChatAttachments, type ChatAttachment, type ResolvedImageAttachment } from "@/lib/chat-attachments";
 import {
   GIT_AUTO_COMMIT_MILESTONES_SETTING,
+  normalizeCommitWorkerSettings,
   GIT_PUSH_ON_COMMIT_SETTING,
   parseBooleanSetting,
 } from "@/lib/commit-workflow";
@@ -277,15 +277,6 @@ function getDefaultConversationTitle(mode: ConversationMode, command: string) {
   return buildInitialConversationTitle(command);
 }
 
-function shouldGenerateConversationTitle(mode: ConversationMode, command: string) {
-  // Commit conversations have a stable product label; other modes can replace
-  // the first-line fallback with a generated sidebar title.
-  if (mode === "commit") {
-    return false;
-  }
-  return Boolean(command.trim());
-}
-
 function shouldCaptureCommitWorkflowForMode(mode: ConversationMode) {
   return mode === "implementation" || mode === "direct";
 }
@@ -296,6 +287,7 @@ async function readCommitWorkflowSettings() {
   return {
     autoCommitMilestones: parseBooleanSetting(values[GIT_AUTO_COMMIT_MILESTONES_SETTING], false),
     pushOnCommit: parseBooleanSetting(values[GIT_PUSH_ON_COMMIT_SETTING], false),
+    commitWorker: normalizeCommitWorkerSettings(values),
   };
 }
 
@@ -742,21 +734,31 @@ export async function createConversation(args: {
   const mode = isExternalClaudeResume ? "direct" : resolvedRequest.runMode;
   const phase = isExternalClaudeResume ? null : resolvedRequest.phase;
   const usePlanner = !isExternalClaudeResume && (phase === "planning" || mode === "planning");
+  const commitWorkerSettings = mode === "commit"
+    ? (await readCommitWorkflowSettings()).commitWorker
+    : null;
+  const effectivePreferredWorkerType = commitWorkerSettings?.workerType ?? args.preferredWorkerType;
+  const effectivePreferredWorkerModel = commitWorkerSettings?.model ?? args.preferredWorkerModel;
+  const effectivePreferredWorkerEffort = commitWorkerSettings?.effort ?? args.preferredWorkerEffort;
+  const effectivePreferredWorkerAccountId = commitWorkerSettings ? null : args.preferredWorkerAccountId;
+  const effectiveAllowedWorkerTypes = commitWorkerSettings
+    ? [commitWorkerSettings.workerType]
+    : args.allowedWorkerTypes;
   const requestedProjectPath = args.projectPath?.trim() || getAppRoot();
-  const requestedModel = args.preferredWorkerModel?.trim() || null;
+  const requestedModel = effectivePreferredWorkerModel?.trim() || null;
   const isGatewayRoute = decodeClaudeGatewayModel(requestedModel) !== null;
   if (isGatewayRoute) {
-    const requestedWorkerType = args.preferredWorkerType?.trim()
-      ? normalizeWorkerType(args.preferredWorkerType)
+    const requestedWorkerType = effectivePreferredWorkerType?.trim()
+      ? normalizeWorkerType(effectivePreferredWorkerType)
       : isExternalClaudeResume
         ? "claude"
         : parseAllowedWorkerTypes(
-          Array.isArray(args.allowedWorkerTypes) ? JSON.stringify(args.allowedWorkerTypes) : args.allowedWorkerTypes ?? null,
+          Array.isArray(effectiveAllowedWorkerTypes) ? JSON.stringify(effectiveAllowedWorkerTypes) : effectiveAllowedWorkerTypes ?? null,
         )[0] || "codex";
     await prepareClaudeGatewayLaunch({
       type: requestedWorkerType,
       model: requestedModel,
-      accountId: args.preferredWorkerAccountId?.trim() || null,
+      accountId: effectivePreferredWorkerAccountId?.trim() || null,
     });
   }
   let createdWorktree: { projectPath: string; target: GitWorkspaceTarget } | null = null;
@@ -777,22 +779,25 @@ export async function createConversation(args: {
       imagesInlined: true,
     });
     const workerImageAttachments = resolveImageAttachments(attachments, getAppDataPath);
-    const preferredWorkerType = args.preferredWorkerType?.trim()
-      ? normalizeWorkerType(args.preferredWorkerType)
+    const preferredWorkerType = effectivePreferredWorkerType?.trim()
+      ? normalizeWorkerType(effectivePreferredWorkerType)
       : isExternalClaudeResume
         ? "claude"
         : null;
+    // A placeholder until the agent reports the title it generated for itself
+    // (see `adoptAgentGeneratedTitle`). OmniHarness used to spend a supervisor
+    // LLM call re-summarising this same text, which is both worse than the
+    // agent's own title and a second provider to keep working.
     const defaultTitle = externalClaudeSession?.title?.trim() || getDefaultConversationTitle(mode, command);
-    const generateTitle = shouldGenerateConversationTitle(mode, command);
     const allowedWorkerTypes = parseAllowedWorkerTypes(
-      Array.isArray(args.allowedWorkerTypes)
-        ? JSON.stringify(args.allowedWorkerTypes)
-        : typeof args.allowedWorkerTypes === "string"
-          ? args.allowedWorkerTypes
+      Array.isArray(effectiveAllowedWorkerTypes)
+        ? JSON.stringify(effectiveAllowedWorkerTypes)
+        : typeof effectiveAllowedWorkerTypes === "string"
+          ? effectiveAllowedWorkerTypes
           : null,
     );
 
-    const explicitAccountId = args.preferredWorkerAccountId?.trim() || null;
+    const explicitAccountId = effectivePreferredWorkerAccountId?.trim() || null;
     if (explicitAccountId) {
       await validateExplicitWorkerAccount({
         workerType: preferredWorkerType || allowedWorkerTypes[0] || "codex",
@@ -833,9 +838,9 @@ export async function createConversation(args: {
       projectPath,
       title: defaultTitle,
       preferredWorkerType,
-      preferredWorkerModel: args.preferredWorkerModel?.trim() || null,
-      preferredWorkerEffort: args.preferredWorkerEffort?.trim().toLowerCase() || null,
-      preferredWorkerAccountId: args.preferredWorkerAccountId?.trim() || null,
+      preferredWorkerModel: effectivePreferredWorkerModel?.trim() || null,
+      preferredWorkerEffort: effectivePreferredWorkerEffort?.trim().toLowerCase() || null,
+      preferredWorkerAccountId: effectivePreferredWorkerAccountId?.trim() || null,
       allowedWorkerTypes: JSON.stringify(allowedWorkerTypes),
       autoCommitMilestones: commitWorkflowSettings.autoCommitMilestones,
       pushOnCommit: commitWorkflowSettings.pushOnCommit,
@@ -847,6 +852,16 @@ export async function createConversation(args: {
       updatedAt: new Date(),
     });
     runCreated = true;
+
+    if (commitWorkerSettings) {
+      emitNamedEvent({
+        kind: "conversation.commit_agent_selected",
+        runId,
+        workerType: commitWorkerSettings.workerType,
+        model: commitWorkerSettings.model,
+        effort: commitWorkerSettings.effort,
+      });
+    }
 
     if (resolvedWorkspace.runSnapshot) {
       await recordExecutionEvent({
@@ -906,7 +921,7 @@ export async function createConversation(args: {
         // truth, leaving direct conversations with no recoverable transcript.
         initialPrompt: command,
         effectiveLaunchModel: requestedModel,
-        effectiveLaunchEffort: args.preferredWorkerEffort?.trim().toLowerCase() || null,
+        effectiveLaunchEffort: effectivePreferredWorkerEffort?.trim().toLowerCase() || null,
         launchCredentialSource: isGatewayRoute ? "gateway" : "account",
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -924,8 +939,8 @@ export async function createConversation(args: {
           workerType,
           runId,
           workerId,
-          explicitAccountId: args.preferredWorkerAccountId?.trim() || null,
-          strategy: args.preferredWorkerAccountId?.trim() ? "manual" : "subscription_then_api",
+          explicitAccountId: effectivePreferredWorkerAccountId?.trim() || null,
+          strategy: effectivePreferredWorkerAccountId?.trim() ? "manual" : "subscription_then_api",
           env: allocationEnvParams,
         });
       const workerAccountId = accountAllocation?.account?.id ?? null;
@@ -1051,18 +1066,7 @@ export async function createConversation(args: {
         void trackConversationBackgroundTask(initialPlanningTurn, { runId });
       }
 
-      if (generateTitle) {
-        queueConversationTitleGeneration({ runId, command }).catch((error) => {
-          console.error("Conversation title generation failed:", error);
-        });
-      }
       return response;
-    }
-
-    if (generateTitle) {
-      queueConversationTitleGeneration({ runId, command }).catch((error) => {
-        console.error("Conversation title generation failed:", error);
-      });
     }
 
     return buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });

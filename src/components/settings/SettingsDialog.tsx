@@ -140,7 +140,11 @@ export function SettingsDialog({
             </div>
 
             {activeSettingsTab === "general" ? (
-              <GeneralSettingsPanel />
+              <GeneralSettingsPanel
+                settings={settingsDraft.draft}
+                setSetting={setSetting}
+                workerModels={workerCatalogQuery.data?.workerModels}
+              />
             ) : null}
             {activeSettingsTab === "models" ? (
               <ModelsSettingsPanel

@@ -20,6 +20,7 @@ interface SelectProps {
   ariaLabel?: string;
   className?: string;
   contentClassName?: string;
+  native?: boolean;
 }
 
 export function Select({
@@ -32,8 +33,38 @@ export function Select({
   ariaLabel,
   className,
   contentClassName,
+  native = false,
 }: SelectProps) {
   const selectedOption = options.find((option) => option.value === value);
+
+  if (native) {
+    return (
+      <span className="relative block w-full min-w-0">
+        <select
+          id={id}
+          aria-label={ariaLabel}
+          disabled={disabled}
+          value={value}
+          onChange={(event) => onValueChange(event.target.value)}
+          className={cn(
+            "flex h-8 w-full min-w-0 appearance-none items-center rounded-lg border border-border bg-background px-2.5 pr-8 text-left text-xs text-foreground shadow-sm outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50",
+            className,
+          )}
+        >
+          {!selectedOption && placeholder ? <option value="">{placeholder}</option> : null}
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <ChevronDownIcon
+          className="pointer-events-none absolute top-1/2 right-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
+          aria-hidden="true"
+        />
+      </span>
+    );
+  }
 
   return (
     <DropdownMenu>

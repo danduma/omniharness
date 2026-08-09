@@ -86,6 +86,25 @@ describe("account inventory migration", () => {
     });
   });
 
+  it("renames the existing Codex local session account as a subscription", async () => {
+    await db.insert(accounts).values({
+      id: "local-session-codex",
+      cliType: "codex",
+      provider: "openai",
+      type: "external",
+      label: "Codex local session",
+      authMode: "local_session",
+      authRef: "local:codex",
+      enabled: true,
+      createdAt: now,
+    });
+
+    await runAccountInventoryMigration({ now });
+
+    const row = await db.select().from(accounts).where(eq(accounts.id, "local-session-codex")).get();
+    expect(row?.label).toBe("Codex subscription");
+  });
+
   it("stores Claude local session email metadata when auth status is available", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omni-claude-auth-status-"));
     const binDir = join(dir, "bin");

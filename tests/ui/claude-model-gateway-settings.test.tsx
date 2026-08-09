@@ -3,6 +3,16 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 describe("Claude model gateway settings", () => {
+  test("is collapsed by default and follows the CLI agents setup", () => {
+    const gatewaySource = fs.readFileSync(path.resolve("src/components/settings/ClaudeModelGatewaySettings.tsx"), "utf8");
+    const agentsSource = fs.readFileSync(path.resolve("src/components/settings/AgentsSettingsPanel.tsx"), "utf8");
+
+    expect(gatewaySource).toContain("<Collapsible defaultOpen={false}");
+    expect(agentsSource.indexOf("{workerCatalogQuery.isError ? (")).toBeLessThan(
+      agentsSource.indexOf("      <ClaudeModelGatewaySettings"),
+    );
+  });
+
   test("renders managed setup controls and secure draft fields at narrow widths", () => {
     const source = fs.readFileSync(path.resolve("src/components/settings/ClaudeModelGatewaySettings.tsx"), "utf8");
     expect(source).toContain('t("settings.claudeGateway.installAndStart")');

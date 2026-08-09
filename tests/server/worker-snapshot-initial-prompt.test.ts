@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
 import { db } from "@/server/db";
 import {
   clarifications,
@@ -25,6 +29,7 @@ import {
 } from "@/server/db/schema";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { __resetOutputStoreCachesForTests, readWorkerOutputEntries } from "@/server/workers/output-store";
+import { __resetAgentTranscriptTitleCacheForTests } from "@/server/conversations/agent-transcript-title";
 
 describe("persistWorkerSnapshot initial direct prompt ordering", () => {
   beforeEach(async () => {
@@ -118,6 +123,133 @@ describe("persistWorkerSnapshot initial direct prompt ordering", () => {
       { id: messageId, type: "user_input", text: initialPrompt, seq: 1 },
       { id: "bridge-entry", type: "message", text: "Worker response", seq: 2 },
     ]);
+  });
+
+  // Claude Code records the title it generated in its own session transcript,
+  // keyed by the session id OmniHarness already stores as
+  // `workers.bridgeSessionId`. Before this, the conversation kept the title
+  // derived from the user's first message however good the agent's was.
+  it("adopts the title Claude Code recorded in its session transcript", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const sessionId = randomUUID();
+    const configDir = mkdtempSync(join(tmpdir(), "omni-claude-home-"));
+    const cwd = "/workspace/app";
+    const projectDir = join(configDir, "projects", cwd.replace(/\//g, "-"));
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, `${sessionId}.jsonl`),
+      `${JSON.stringify({ type: "ai-title", aiTitle: "Debug duplicate sent message race condition", sessionId })}\n`,
+    );
+    vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
+    __resetAgentTranscriptTitleCacheForTests();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/transcript-title.md",
+      status: "running",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Sometimes I Send A Message And",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "working",
+      cwd,
+      bridgeSessionId: sessionId,
+      initialPrompt: "",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    await persistWorkerSnapshot(workerId, {
+      currentText: "",
+      lastText: "",
+      outputEntries: [
+        {
+          id: "bridge-entry-title",
+          type: "message",
+          text: "Worker response",
+          timestamp: new Date(1000).toISOString(),
+        },
+      ],
+    });
+
+    const run = await db.select({ title: runs.title }).from(runs).where(eq(runs.id, runId)).get();
+    expect(run?.title).toBe("Debug duplicate sent message race condition");
+    vi.unstubAllEnvs();
+  });
+
+  // The agent reports its own session title over ACP. It used to be appended
+  // to the worker output and never read, leaving the conversation stuck with
+  // the title derived from the user's first message.
+  it("adopts the session title the agent reported", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/title.md",
+      status: "running",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Sometimes I Send A Message And",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "working",
+      cwd: "/workspace",
+      initialPrompt: "",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    await persistWorkerSnapshot(workerId, {
+      currentText: "",
+      lastText: "",
+      outputEntries: [
+        {
+          id: "session-info-entry",
+          type: "session_info",
+          text: "Duplicate sent-message race condition",
+          timestamp: new Date(1000).toISOString(),
+          raw: { title: "Duplicate sent-message race condition" },
+        },
+      ],
+    });
+
+    const run = await db.select({ title: runs.title }).from(runs).where(eq(runs.id, runId)).get();
+    expect(run?.title).toBe("Duplicate sent-message race condition");
   });
 
   it("does not seed initial prompts for implementation workers", async () => {
