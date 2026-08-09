@@ -17,7 +17,7 @@ import {
 import { operationalClientCapabilities } from "./acp/capability-registry";
 import { invokeAgentRequest, sendAgentNotification } from "./acp/agent-methods";
 import { sanitizeAcpStream } from "./acp-stream-sanitizer";
-import { applyCodexBridgeEnv, buildCodexConfigArgs, shouldSetRequestedMode } from "./codex";
+import { applyCodexBridgeEnv, buildCodexConfigArgs, resolveCodexSessionMode, shouldSetRequestedMode } from "./codex";
 import { buildGeminiArgs, isFullAccessAgentMode, resolveFullGeminiUuid } from "./gemini";
 import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
 import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, stripRunnerControlEnv, withCodexStandardTooling, withManagedPath } from "./tool-env";
@@ -1769,15 +1769,18 @@ export class AgentRuntimeManager {
 
     const modesRecord = asRecord(sessionRecord?.modes);
     const currentModeId = asNonEmptyString(modesRecord?.currentModeId);
-    if (connection && shouldSetRequestedMode(requestedMode, currentModeId, modesRecord?.availableModes)) {
+    const requestedSessionMode = type === "codex"
+      ? resolveCodexSessionMode(requestedMode, modesRecord?.availableModes)
+      : requestedMode;
+    if (connection && shouldSetRequestedMode(requestedSessionMode, currentModeId, modesRecord?.availableModes)) {
       try {
         const setModeParams = {
           sessionId,
-          modeId: requestedMode,
+          modeId: requestedSessionMode,
         } as Parameters<acp.ClientSideConnection["setSessionMode"]>[0];
         await connection.setSessionMode(setModeParams);
       } catch (modeError: unknown) {
-        process.stderr.write(`[${name}] setSessionMode("${requestedMode}") failed: ${describeUnknownError(modeError)}\n`);
+        process.stderr.write(`[${name}] setSessionMode("${requestedSessionMode}") failed: ${describeUnknownError(modeError)}\n`);
       }
     }
 
@@ -2293,7 +2296,11 @@ export class AgentRuntimeManager {
       throw new RuntimeHttpError(404, "not_found");
     }
     assertAgentCanReceiveRequest(record);
-    const setModeParams = { sessionId: record.sessionId, modeId: mode } as Parameters<acp.ClientSideConnection["setSessionMode"]>[0];
+    const requestedSessionMode = record.type === "codex" ? resolveCodexSessionMode(mode) : mode;
+    const setModeParams = {
+      sessionId: record.sessionId,
+      modeId: requestedSessionMode,
+    } as Parameters<acp.ClientSideConnection["setSessionMode"]>[0];
     await this.runAgentRequest(record, () => record.connection.setSessionMode(setModeParams));
     record.sessionMode = mode;
     record.updatedAt = nowIso();
