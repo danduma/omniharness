@@ -1538,6 +1538,12 @@ export function describeAgentActivity(agent: AgentSnapshot) {
   return `${agent.name}: ${agent.state}`;
 }
 
+// Picker labels dropped the "Claude " prefix, but selections persisted before
+// that change (and any user typing the vendor name) still carry it.
+function isClaudeDisplayLabel(normalizedLower: string, bareLabel: string) {
+  return normalizedLower === bareLabel || normalizedLower === `claude ${bareLabel}`;
+}
+
 export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel: string) {
   const normalized = selectedModel.trim();
   if (!normalized) {
@@ -1557,8 +1563,8 @@ export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel
     if (selectedModel === "GPT-5.4" || normalizedLower === "gpt-5.4") return "openai/gpt-5.4";
     if (selectedModel === "GPT-5.4 Mini" || normalizedLower === "gpt-5.4-mini") return "openai/gpt-5.4-mini";
     if (selectedModel === "GPT-5.3 Codex" || normalizedLower === "gpt-5.3-codex") return "openai/gpt-5.3-codex";
-    if (selectedModel === "Claude Sonnet 4" || normalizedLower === "claude-sonnet-4") return "anthropic/claude-sonnet-4";
-    if (selectedModel === "Claude Sonnet 5" || normalizedLower === "claude-sonnet-5") return "anthropic/claude-sonnet-5";
+    if (isClaudeDisplayLabel(normalizedLower, "sonnet 4") || normalizedLower === "claude-sonnet-4") return "anthropic/claude-sonnet-4";
+    if (isClaudeDisplayLabel(normalizedLower, "sonnet 5") || normalizedLower === "claude-sonnet-5") return "anthropic/claude-sonnet-5";
   }
 
   if (workerType === "codex") {
@@ -1566,8 +1572,8 @@ export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel
     if (selectedModel === "GPT-5.4" || normalizedLower === "openai/gpt-5.4") return "gpt-5.4";
     if (selectedModel === "GPT-5.4 Mini" || normalizedLower === "openai/gpt-5.4-mini") return "gpt-5.4-mini";
     if (selectedModel === "GPT-5.3 Codex" || normalizedLower === "openai/gpt-5.3-codex") return "gpt-5.3-codex";
-    if (selectedModel === "Claude Sonnet 4" || normalizedLower === "anthropic/claude-sonnet-4") return "claude-sonnet-4";
-    if (selectedModel === "Claude Sonnet 5" || normalizedLower === "anthropic/claude-sonnet-5") return "claude-sonnet-5";
+    if (isClaudeDisplayLabel(normalizedLower, "sonnet 4") || normalizedLower === "anthropic/claude-sonnet-4") return "claude-sonnet-4";
+    if (isClaudeDisplayLabel(normalizedLower, "sonnet 5") || normalizedLower === "anthropic/claude-sonnet-5") return "claude-sonnet-5";
   }
 
   return normalized;

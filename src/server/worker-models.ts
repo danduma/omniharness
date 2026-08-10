@@ -36,18 +36,18 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "gpt-5.4", label: "GPT-5.4" },
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
-    { value: "claude-sonnet-5", label: "Claude Sonnet 5" },
-    { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
+    { value: "claude-sonnet-5", label: "Sonnet 5" },
+    { value: "claude-sonnet-4", label: "Sonnet 4" },
   ],
   claude: [
-    { value: "claude-opus-5", label: "Claude Opus 5" },
-    { value: "claude-fable-5", label: "Claude Fable 5" },
-    { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
-    { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
-    { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
-    { value: "claude-sonnet-5", label: "Claude Sonnet 5" },
-    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
-    { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
+    { value: "claude-opus-5", label: "Opus 5" },
+    { value: "claude-fable-5", label: "Fable 5" },
+    { value: "claude-opus-4-8", label: "Opus 4.8" },
+    { value: "claude-opus-4-7", label: "Opus 4.7" },
+    { value: "claude-opus-4-6", label: "Opus 4.6" },
+    { value: "claude-sonnet-5", label: "Sonnet 5" },
+    { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+    { value: "claude-sonnet-4", label: "Sonnet 4" },
   ],
   gemini: [
     { value: "gemini-3", label: "Gemini 3" },
@@ -61,8 +61,8 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "openai/gpt-5.4", label: "GPT-5.4" },
     { value: "openai/gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },
-    { value: "anthropic/claude-sonnet-5", label: "Claude Sonnet 5" },
-    { value: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4" },
+    { value: "anthropic/claude-sonnet-5", label: "Sonnet 5" },
+    { value: "anthropic/claude-sonnet-4", label: "Sonnet 4" },
   ],
 };
 
@@ -79,9 +79,16 @@ async function defaultRunCommand(command: string, args: string[]) {
   return result.stdout;
 }
 
+// "Claude Opus 5" reads as "Opus 5" in the picker: the vendor prefix is noise
+// next to the worker name. Only dropped when a word follows, so an id like
+// "claude-3" still labels as "Claude 3" rather than a bare "3".
+function dropClaudePrefix(label: string) {
+  return label.replace(/^claude\s+(?=[A-Za-z])/i, "");
+}
+
 function labelFromModelId(id: string) {
   const bareId = id.includes("/") ? id.split("/").at(-1) ?? id : id;
-  return bareId
+  return dropClaudePrefix(bareId
     .split("-")
     .map((part) => {
       const lower = part.toLowerCase();
@@ -90,7 +97,7 @@ function labelFromModelId(id: string) {
       if (/^\d+(?:\.\d+)*$/.test(part)) return part;
       return part.charAt(0).toUpperCase() + part.slice(1);
     })
-    .join(" ");
+    .join(" "));
 }
 
 function normalizeLabel(id: string, label?: string) {
@@ -108,7 +115,7 @@ function normalizeLabel(id: string, label?: string) {
     return labelFromModelId(id);
   }
 
-  return label.trim()
+  return dropClaudePrefix(label.trim())
     .replace(/^gpt\b/i, "GPT")
     .replace(/\bcodex\b/i, "Codex")
     .replace(/\bcli\b/i, "CLI");
