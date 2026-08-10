@@ -20,8 +20,7 @@ async function call(method: string, body?: unknown, id = runId) {
 
 describe("run goal API", () => {
   beforeEach(async () => {
-    delete process.env.OMNIHARNESS_AUTH_PASSWORD;
-    delete process.env.OMNIHARNESS_AUTH_PASSWORD_HASH;
+    process.env.OMNIHARNESS_TEST_BYPASS_AUTH = "true";
     await db.delete(runGoalOutbox);
     await db.delete(runGoalOperations);
     await db.delete(runGoals);
@@ -34,8 +33,7 @@ describe("run goal API", () => {
   });
 
   afterEach(() => {
-    delete process.env.OMNIHARNESS_AUTH_PASSWORD;
-    delete process.env.OMNIHARNESS_AUTH_PASSWORD_HASH;
+    delete process.env.OMNIHARNESS_TEST_BYPASS_AUTH;
   });
 
   it("returns an absent goal without disclosing missing runs as present", async () => {
