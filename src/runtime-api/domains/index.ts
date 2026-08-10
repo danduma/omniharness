@@ -213,6 +213,15 @@ export function createRuntimeDomains({
           options,
         );
       },
+      getPlan(input, options) {
+        return get(
+          `/api/workers/${encodeURIComponent(input.workerId)}/entries${buildRuntimeQuery({
+            runId: input.runId,
+            view: "plan",
+          })}`,
+          options,
+        ) as Promise<import("@/shared/acp-plan").WorkerPlanReadResponse>;
+      },
       get(input, options) {
         return get(`/api/agents/${encode(input.workerId)}${buildRuntimeQuery({
           history: input.history,

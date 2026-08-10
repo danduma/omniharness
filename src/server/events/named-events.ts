@@ -86,6 +86,12 @@ export type SurfacedErrorCode =
   | "worker.poll.failed"
   | "worker.resume.failed"
   | "worker.snapshot.invalid"
+  | "worker.plan.boundary_append_failed"
+  | "worker.plan.append_failed"
+  | "worker.plan.diagnostic_append_failed"
+  | "worker.plan.snapshot_failed"
+  | "worker.plan.event_publish_failed"
+  | "worker.plan.binding_hydration_failed"
   | "worker.prompt.image_attachment_unreadable"
   | "worker.model.version_unavailable"
   // The requested model's *family* is not offered at all. Substituting another
@@ -318,6 +324,38 @@ export type WorkerEvent =
   // GET /api/workers/:workerId/entries?afterSeq=. See
   // docs/architecture/worker-conversation-stream.md.
   | { kind: "worker.entry_appended"; runId: string; workerId: string; seq: number }
+  | {
+      kind: "worker.plan_boundary_started";
+      runId: string;
+      workerId: string;
+      seq: number;
+      acpSessionId: string;
+    }
+  | {
+      kind: "worker.plan_updated";
+      runId: string;
+      workerId: string;
+      seq: number;
+      acpSessionId: string;
+    }
+  | {
+      kind: "worker.plan_rejected";
+      runId: string;
+      workerId: string;
+      reason:
+        | "unsupported"
+        | "unbound"
+        | "hydrating"
+        | "stale_session"
+        | "missing_session"
+        | "startup_session_mismatch"
+        | "startup_buffer_overflow"
+        | "malformed"
+        | "oversized";
+      sessionId: string | null;
+      seq: number | null;
+      measuredBytes?: number;
+    }
   // Emitted when a write would have resumed numbering above a transcript head
   // that is not on disk. `healed` means the head was recovered from a fallback
   // source; `unrecoverable` means it is gone and the cursor was reset to 0.
@@ -779,6 +817,9 @@ function append(event: NamedEvent | SnapshotMarker, runIdOverride?: string | nul
  */
 const DELTA_ONLY_EVENT_KINDS = new Set<string>([
   "worker.entry_appended",
+  "worker.plan_boundary_started",
+  "worker.plan_updated",
+  "worker.plan_rejected",
 ]);
 
 export function emitNamedEvent(event: NamedEvent): BufferedEntry {

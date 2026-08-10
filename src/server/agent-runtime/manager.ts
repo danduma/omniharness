@@ -15,6 +15,11 @@ import {
   RuntimeClient as ExtractedRuntimeClient,
 } from "./acp/runtime-client";
 import { operationalClientCapabilities } from "./acp/capability-registry";
+import {
+  handleAcpSessionUpdateForWorker,
+  initializeWorkerPlanSession,
+  isAcpPlanNotification,
+} from "./acp/plan-stream";
 import { invokeAgentRequest, sendAgentNotification } from "./acp/agent-methods";
 import { sanitizeAcpStream } from "./acp-stream-sanitizer";
 import { applyCodexBridgeEnv, buildCodexConfigArgs, resolveCodexSessionMode, shouldSetRequestedMode } from "./codex";
@@ -941,6 +946,7 @@ class _RuntimeClient implements acp.Client {
   constructor(
     private readonly getRecord: () => AgentRecord | undefined,
     private readonly publishChunk: (name: string, chunk: string) => void,
+    private readonly startupWorkerId: string | null = null,
   ) {}
 
   async requestPermission(params: acp.RequestPermissionRequest): Promise<acp.RequestPermissionResponse> {
@@ -1034,6 +1040,18 @@ class _RuntimeClient implements acp.Client {
 
   async sessionUpdate(params: acp.SessionNotification): Promise<void> {
     const record = this.getRecord();
+    const workerId = record?.name ?? this.startupWorkerId;
+    if (workerId && isAcpPlanNotification(params.update)) {
+      const planResult = await handleAcpSessionUpdateForWorker({
+        workerId,
+        sessionId: params.sessionId,
+        update: params.update,
+      });
+      if (planResult.kind !== "ignored") {
+        if (record) record.updatedAt = nowIso();
+        return;
+      }
+    }
     if (!record) {
       return;
     }
@@ -1697,7 +1715,14 @@ export class AgentRuntimeManager {
     } else {
       recordRef = { current: undefined };
       stderrBuffer = [];
-      client = new ExtractedRuntimeClient(() => recordRef.current, (agentName, chunk) => this.publishChunk(agentName, chunk), [cwd, ...additionalDirectories]);
+      client = new ExtractedRuntimeClient(
+        () => recordRef.current,
+        (agentName, chunk) => this.publishChunk(agentName, chunk),
+        [cwd, ...additionalDirectories],
+        undefined,
+        undefined,
+        name,
+      );
       const candidates = (useCodexFallback
         ? [{ command: "codex-acp", args: [] as string[] }]
         : useClaudeDefault
@@ -2021,6 +2046,13 @@ export class AgentRuntimeManager {
     }
     recordRef.current = record;
     this.agents.set(name, record);
+
+    try {
+      await initializeWorkerPlanSession(name, sessionId);
+    } catch {
+      // Plan binding failures are surfaced by the plan stream; ordinary ACP
+      // output remains usable while the worker lifecycle continues.
+    }
 
     child.on("exit", (code, signal) => {
       const target = this.agents.get(name);
@@ -2456,7 +2488,14 @@ export class AgentRuntimeManager {
     try {
       const recordRef: { current?: AgentRecord } = {};
       const stderrBuffer: string[] = [];
-      const client = new ExtractedRuntimeClient(() => recordRef.current, (agentName, chunk) => this.publishChunk(agentName, chunk), cwd);
+      const client = new ExtractedRuntimeClient(
+        () => recordRef.current,
+        (agentName, chunk) => this.publishChunk(agentName, chunk),
+        cwd,
+        undefined,
+        undefined,
+        null,
+      );
 
       const result = await this.spawnAgentConnection({
         cwd,
