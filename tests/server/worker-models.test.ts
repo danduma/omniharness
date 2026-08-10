@@ -107,10 +107,25 @@ describe("worker model catalog", () => {
     });
 
     expect(catalog.claude.slice(0, 3)).toEqual([
-      { value: "claude-opus-5", label: "Claude Opus 5" },
-      { value: "claude-fable-5", label: "Claude Fable 5" },
-      { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
+      { value: "claude-opus-5", label: "Opus 5" },
+      { value: "claude-fable-5", label: "Fable 5" },
+      { value: "claude-opus-4-8", label: "Opus 4.8" },
     ]);
+  });
+
+  it("drops the Claude vendor prefix from cached labels", async () => {
+    const manager = new WorkerModelCatalogManager({
+      loadCachedCatalog: async () => ({
+        claude: [{ value: "claude-opus-4-9", label: "Claude Opus 4.9" }],
+      }),
+      runCommand: async () => "",
+    });
+
+    const snapshot = await manager.getCatalogSnapshot();
+
+    expect(snapshot.catalog.claude).toEqual(expect.arrayContaining([
+      { value: "claude-opus-4-9", label: "Opus 4.9" },
+    ]));
   });
 
   it("returns the cached catalog immediately while refreshing models in the background", async () => {

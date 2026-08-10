@@ -36,7 +36,7 @@ describe("GET /api/agents/catalog", () => {
           { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
         ],
         claude: [
-          { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
+          { value: "claude-sonnet-4", label: "Sonnet 4" },
         ],
         gemini: [
           { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
@@ -126,7 +126,7 @@ describe("GET /api/agents/catalog", () => {
       { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     ]));
     expect(payload.workerModels.claude).toEqual(expect.arrayContaining([
-      { value: "claude-sonnet-4", label: "Claude Sonnet 4" },
+      { value: "claude-sonnet-4", label: "Sonnet 4" },
     ]));
     expect(mockGetWorkerInstallationInfo).toHaveBeenCalledWith(
       "codex",

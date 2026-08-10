@@ -77,9 +77,9 @@ function useRenderViewModel(
 describe("useHomeViewModel", () => {
   it("offers Claude Opus 5 as the frontend fallback default", () => {
     expect(getWorkerModelOptions(undefined, "claude").slice(0, 3)).toEqual([
-      { value: "claude-opus-5", label: "Claude Opus 5" },
-      { value: "claude-fable-5", label: "Claude Fable 5" },
-      { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
+      { value: "claude-opus-5", label: "Opus 5" },
+      { value: "claude-fable-5", label: "Fable 5" },
+      { value: "claude-opus-4-8", label: "Opus 4.8" },
     ]);
   });
 

@@ -45,7 +45,7 @@ describe("portable GET /api/agents/catalog", () => {
         { value: "gpt-5.5", label: "GPT-5.5" },
       ],
       claude: [
-        { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
+        { value: "claude-opus-4-8", label: "Opus 4.8" },
       ],
       gemini: [],
       opencode: [],
@@ -158,7 +158,7 @@ describe("portable GET /api/agents/catalog", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual(expect.objectContaining({
       workerModels: expect.objectContaining({
-        claude: [{ value: "claude-opus-4-8", label: "Claude Opus 4.8" }],
+        claude: [{ value: "claude-opus-4-8", label: "Opus 4.8" }],
       }),
       workerModelsRefreshing: false,
     }));
