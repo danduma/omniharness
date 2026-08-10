@@ -93,4 +93,78 @@ describe("AcpPlanStream", () => {
     expect(entries[0]).toMatchObject({ diagnosticOnly: true, planProjection: "rejected" });
     expect(events.at(-1)).toMatchObject({ kind: "worker.plan_rejected", reason: "unbound" });
   });
+
+  it("buffers startup callbacks by generation and drains only the authoritative session", async () => {
+    const { stream, entries, events } = makeStream();
+    const startup = stream.beginWorkerPlanStartup("run-1", "worker-1", "session-1");
+
+    expect(stream.bufferWorkerPlanStartupUpdate(startup, {
+      sessionId: "session-1",
+      update: corePlan,
+    })).toBe("buffered");
+    expect(stream.bufferWorkerPlanStartupUpdate(startup, {
+      sessionId: "wrong-session",
+      update: corePlan,
+    })).toBe("buffered");
+
+    await stream.completeWorkerPlanStartup(startup, "session-1");
+
+    expect(entries.map((entry) => entry.planProjection)).toEqual([
+      "session_reset",
+      "accepted_core",
+      "rejected",
+    ]);
+    expect(events.filter((event) => event.kind === "worker.plan_rejected")).toContainEqual(
+      expect.objectContaining({ reason: "startup_session_mismatch", sessionId: "wrong-session" }),
+    );
+  });
+
+  it("discards buffered callbacks when startup is aborted", async () => {
+    const { stream, entries } = makeStream();
+    const startup = stream.beginWorkerPlanStartup("run-1", "worker-1", null);
+    stream.bufferWorkerPlanStartupUpdate(startup, { sessionId: "session-1", update: corePlan });
+
+    stream.abortWorkerPlanStartup(startup);
+
+    expect(entries).toEqual([]);
+  });
+
+  it("surfaces event publication failure after the durable append without appending twice", async () => {
+    const entries: WorkerEntry[] = [];
+    const events: NamedEvent[] = [];
+    let seq = 0;
+    let throwNextPlanEvent = true;
+    const stream = new AcpPlanStream({
+      append: async (_runId, _workerId, entry) => {
+        const persisted = { ...entry, seq: ++seq } as WorkerEntry;
+        entries.push(persisted);
+        return { entry: persisted, appended: true };
+      },
+      read: async () => ({ entries: [...entries], latestSeq: seq }),
+      emit: (event) => {
+        if (throwNextPlanEvent && event.kind === "worker.plan_updated") {
+          throwNextPlanEvent = false;
+          throw new Error("ring unavailable");
+        }
+        events.push(event);
+      },
+    });
+    await stream.hydrateWorkerPlanBinding("run-1", "worker-1");
+    await stream.beginWorkerPlanSession("run-1", "worker-1", "session-1");
+
+    await stream.handleAcpSessionUpdate({
+      runId: "run-1",
+      workerId: "worker-1",
+      sessionId: "session-1",
+      update: corePlan,
+    });
+
+    expect(entries).toHaveLength(2);
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: "error.surfaced",
+      code: "worker.plan.event_publish_failed",
+      runId: "run-1",
+      workerId: "worker-1",
+    }));
+  });
 });
