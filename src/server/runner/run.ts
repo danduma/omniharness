@@ -6,6 +6,8 @@ import {
   getClaudeModelGatewayService,
 } from "@/server/integrations/claude-model-gateway";
 import { reclaimOrphanedDeliveringMessages } from "@/server/conversations/queued-messages";
+import { repairLeakedConversationTitles } from "@/server/conversations/agent-session-title";
+import { recoverGoalOutboxAtStartup } from "@/server/runs/goal-outbox";
 import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
 import { getTerminalManager } from "@/server/terminal/terminal-manager";
 import { createOmniRuntime } from "@/runtime";
@@ -97,12 +99,27 @@ export async function startRunnerProcess(
 
   try {
     await dbReady;
+    await recoverGoalOutboxAtStartup();
     // Deliveries do not survive a restart; reclaim any row their death orphaned.
     await reclaimOrphanedDeliveringMessages().catch((error) => {
       process.stderr.write(
         `[runner] failed to reclaim orphaned queued messages: ${error instanceof Error ? error.message : String(error)}\n`,
       );
     });
+    // Titles poisoned before the guard existed cannot repair themselves: the
+    // agent that wrote one keeps echoing the prompt, so nothing clean ever
+    // overwrites it.
+    await repairLeakedConversationTitles()
+      .then((repaired) => {
+        if (repaired > 0) {
+          process.stdout.write(`[runner] repaired ${repaired} leaked conversation title(s)\n`);
+        }
+      })
+      .catch((error) => {
+        process.stderr.write(
+          `[runner] failed to repair leaked conversation titles: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      });
     await ensureSupervisorRuntimeStarted();
     await ensureClaudeModelGatewayStartedAtBoot();
     await bridge.start();

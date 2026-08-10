@@ -101,8 +101,12 @@ async function adoptAgentGeneratedTitle(
 ) {
   const streamTitle = extractAgentSessionTitle(snapshot.outputEntries);
   if (streamTitle) {
-    await applyAgentSessionTitle({ runId: worker.runId, title: streamTitle });
-    return;
+    // A rejected stream title (Codex echoes the prompt here rather than
+    // summarising it) is not an answer, so keep looking.
+    const outcome = await applyAgentSessionTitle({ runId: worker.runId, title: streamTitle });
+    if (outcome !== "rejected") {
+      return;
+    }
   }
 
   const sessionId = (snapshot.sessionId ?? worker.bridgeSessionId)?.trim();
