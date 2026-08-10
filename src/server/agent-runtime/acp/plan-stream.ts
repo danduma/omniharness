@@ -34,6 +34,27 @@ type PlanBinding = {
   hydrated: boolean;
 };
 
+export type WorkerPlanStartupContext = {
+  runId: string;
+  workerId: string;
+  connectionGeneration: number;
+  expectedSessionId: string | null;
+};
+
+type StartupBufferedCommand = {
+  sessionId: string | null;
+  update: unknown;
+  forcedReason?: "hydrating" | "oversized";
+  measuredBytes?: number;
+};
+
+type StartupState = {
+  context: WorkerPlanStartupContext;
+  phase: "starting" | "hydrating";
+  commands: StartupBufferedCommand[];
+  overflowCount: number;
+};
+
 export type PlanStreamResult = {
   kind: "ignored" | "accepted" | "rejected";
   entry: WorkerEntry | null;
@@ -46,6 +67,8 @@ const defaultDependencies: PlanStreamDependencies = {
   readPlan: readLatestWorkerPlanEntries,
   emit: emitNamedEvent,
 };
+
+const MAX_STARTUP_PLAN_UPDATES = 16;
 
 function key(runId: string, workerId: string) {
   return `${runId}/${workerId}`;
@@ -98,6 +121,8 @@ export function isAcpPlanNotification(update: unknown): update is acp.SessionUpd
 export class AcpPlanStream {
   private readonly bindings = new Map<string, PlanBinding>();
   private readonly chains = new Map<string, Promise<void>>();
+  private readonly startupStates = new Map<string, StartupState>();
+  private nextConnectionGeneration = 0;
   private readonly deps: PlanStreamDependencies;
 
   constructor(deps: Partial<PlanStreamDependencies> = {}) {
@@ -152,8 +177,10 @@ export class AcpPlanStream {
     update: unknown;
     reason: "unsupported" | "unbound" | "hydrating" | "stale_session" | "missing_session" | "startup_session_mismatch" | "startup_buffer_overflow" | "malformed" | "oversized";
     projection?: "rejected" | "unsupported" | "stale";
+    measuredBytes?: number;
   }): Promise<PlanStreamResult> {
     const envelope = boundedPreview(args.update);
+    const measuredBytes = args.measuredBytes ?? envelope.measuredBytes;
     const entry: Omit<WorkerEntry, "seq"> = {
       id: `acp-plan-diagnostic-${createHash("sha256")
         .update(`${args.sessionId ?? "missing"}\0${args.reason}\0${envelope.hash}`)
@@ -166,7 +193,7 @@ export class AcpPlanStream {
         sessionId: args.sessionId,
         preview: envelope.preview,
         hash: envelope.hash,
-        measuredBytes: envelope.measuredBytes,
+        measuredBytes,
       },
       acpSessionId: args.sessionId,
       planProjection: args.projection ?? projectionForReason(args.reason),
@@ -197,10 +224,153 @@ export class AcpPlanStream {
         reason: args.reason,
         sessionId: args.sessionId,
         seq: result.entry.seq || null,
-        measuredBytes: envelope.measuredBytes,
+        measuredBytes,
       }, { runId: args.runId, workerId: args.workerId });
     }
     return { kind: "rejected", entry: result.entry, reason: args.reason };
+  }
+
+  beginWorkerPlanStartup(
+    runId: string,
+    workerId: string,
+    expectedSessionId: string | null,
+  ): WorkerPlanStartupContext {
+    const context: WorkerPlanStartupContext = {
+      runId,
+      workerId,
+      connectionGeneration: ++this.nextConnectionGeneration,
+      expectedSessionId,
+    };
+    this.startupStates.set(key(runId, workerId), {
+      context,
+      phase: "starting",
+      commands: [],
+      overflowCount: 0,
+    });
+    return context;
+  }
+
+  bufferWorkerPlanStartupUpdate(
+    context: WorkerPlanStartupContext,
+    command: { sessionId: string | null | undefined; update: unknown },
+  ): "buffered" | "ignored" | "stale_generation" | "overflow" {
+    if (!isPlanLikeUpdate(command.update)) return "ignored";
+    const state = this.startupStates.get(key(context.runId, context.workerId));
+    if (!state || state.context.connectionGeneration !== context.connectionGeneration) {
+      return "stale_generation";
+    }
+    if (state.commands.length >= MAX_STARTUP_PLAN_UPDATES) {
+      state.overflowCount += 1;
+      return "overflow";
+    }
+
+    const sessionId = typeof command.sessionId === "string" && command.sessionId.trim()
+      ? command.sessionId.trim()
+      : null;
+    const envelope = boundedPreview(command.update);
+    if (envelope.measuredBytes > MAX_ACP_PLAN_BYTES) {
+      state.commands.push({
+        sessionId,
+        update: {
+          classification: "oversized_startup_plan",
+          preview: envelope.preview,
+          hash: envelope.hash,
+          measuredBytes: envelope.measuredBytes,
+        },
+        forcedReason: "oversized",
+        measuredBytes: envelope.measuredBytes,
+      });
+      return "buffered";
+    }
+
+    const captured = JSON.parse(JSON.stringify(command.update)) as unknown;
+    state.commands.push({
+      sessionId,
+      update: captured,
+      ...(state.phase === "hydrating" ? { forcedReason: "hydrating" as const } : {}),
+    });
+    return "buffered";
+  }
+
+  async completeWorkerPlanStartup(
+    context: WorkerPlanStartupContext,
+    authoritativeSessionId: string,
+  ): Promise<void> {
+    const operationKey = key(context.runId, context.workerId);
+    const state = this.startupStates.get(operationKey);
+    if (!state || state.context.connectionGeneration !== context.connectionGeneration) return;
+    state.phase = "hydrating";
+    try {
+      await this.hydrateWorkerPlanBinding(context.runId, context.workerId);
+      await this.beginWorkerPlanSession(context.runId, context.workerId, authoritativeSessionId);
+
+      while (true) {
+        const commands = state.commands.splice(0);
+        for (const command of commands) {
+          if (command.forcedReason) {
+            await this.appendDiagnostic({
+              runId: context.runId,
+              workerId: context.workerId,
+              sessionId: command.sessionId,
+              update: command.update,
+              reason: command.forcedReason,
+              measuredBytes: command.measuredBytes,
+            });
+          } else if (!command.sessionId) {
+            await this.appendDiagnostic({
+              runId: context.runId,
+              workerId: context.workerId,
+              sessionId: null,
+              update: command.update,
+              reason: "missing_session",
+            });
+          } else if (command.sessionId !== authoritativeSessionId) {
+            await this.appendDiagnostic({
+              runId: context.runId,
+              workerId: context.workerId,
+              sessionId: command.sessionId,
+              update: command.update,
+              reason: "startup_session_mismatch",
+            });
+          } else {
+            await this.handleAcpSessionUpdate({
+              runId: context.runId,
+              workerId: context.workerId,
+              sessionId: command.sessionId,
+              update: command.update,
+            });
+          }
+        }
+
+        if (state.overflowCount > 0) {
+          const droppedCount = state.overflowCount;
+          state.overflowCount = 0;
+          await this.appendDiagnostic({
+            runId: context.runId,
+            workerId: context.workerId,
+            sessionId: authoritativeSessionId,
+            update: { classification: "startup_buffer_overflow", droppedCount },
+            reason: "startup_buffer_overflow",
+          });
+        }
+
+        if (state.commands.length === 0 && state.overflowCount === 0) {
+          this.startupStates.delete(operationKey);
+          return;
+        }
+      }
+    } catch (error) {
+      this.startupStates.delete(operationKey);
+      throw error;
+    }
+  }
+
+  abortWorkerPlanStartup(context: WorkerPlanStartupContext): void {
+    const operationKey = key(context.runId, context.workerId);
+    const state = this.startupStates.get(operationKey);
+    if (state?.context.connectionGeneration === context.connectionGeneration) {
+      this.startupStates.delete(operationKey);
+    }
   }
 
   async hydrateWorkerPlanBinding(runId: string, workerId: string): Promise<PlanBinding> {
@@ -371,6 +541,7 @@ export class AcpPlanStream {
     const operationKey = key(runId, workerId);
     this.bindings.delete(operationKey);
     this.chains.delete(operationKey);
+    this.startupStates.delete(operationKey);
   }
 }
 
@@ -397,6 +568,33 @@ export async function initializeWorkerPlanSession(workerId: string, sessionId: s
   await hydrateWorkerPlanBinding(runId, workerId);
   await beginWorkerPlanSession(runId, workerId, sessionId);
   return runId;
+}
+
+export async function createWorkerPlanStartupContext(
+  workerId: string,
+  expectedSessionId: string | null,
+): Promise<WorkerPlanStartupContext | null> {
+  const runId = await resolveRunIdForWorker(workerId);
+  if (!runId) return null;
+  return acpPlanStream.beginWorkerPlanStartup(runId, workerId, expectedSessionId);
+}
+
+export function bufferWorkerPlanStartupUpdate(
+  context: WorkerPlanStartupContext,
+  command: { sessionId: string | null | undefined; update: unknown },
+) {
+  return acpPlanStream.bufferWorkerPlanStartupUpdate(context, command);
+}
+
+export async function completeWorkerPlanStartup(
+  context: WorkerPlanStartupContext,
+  authoritativeSessionId: string,
+) {
+  await acpPlanStream.completeWorkerPlanStartup(context, authoritativeSessionId);
+}
+
+export function abortWorkerPlanStartup(context: WorkerPlanStartupContext) {
+  acpPlanStream.abortWorkerPlanStartup(context);
 }
 
 export async function handleAcpSessionUpdateForWorker(args: {

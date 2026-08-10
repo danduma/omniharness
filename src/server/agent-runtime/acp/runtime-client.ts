@@ -12,8 +12,10 @@ import { TerminalService } from "./terminal-service";
 import { McpService, registeredAcpMcpHandlersSnapshot, type AcpMcpHandler } from "./mcp-service";
 import { emitNamedEvent } from "@/server/events/named-events";
 import {
+  bufferWorkerPlanStartupUpdate,
   handleAcpSessionUpdateForWorker,
   isAcpPlanNotification,
+  type WorkerPlanStartupContext,
 } from "./plan-stream";
 
 export type AcpExtensionHandler = {
@@ -273,6 +275,7 @@ export class RuntimeClient implements acp.Client {
   private readonly terminals: TerminalService;
   private readonly mcp: McpService;
   private readonly workspaceRoots: readonly string[];
+  private startupPlanContext: WorkerPlanStartupContext | null;
 
   constructor(
     private readonly getRecord: () => AgentRecord | undefined,
@@ -280,8 +283,9 @@ export class RuntimeClient implements acp.Client {
     workspaceRoots: string | readonly string[] | null = null,
     mcpHandlers: ReadonlyMap<string, AcpMcpHandler> = registeredAcpMcpHandlersSnapshot(),
     private readonly extensions: ReadonlyMap<string, AcpExtensionHandler> = new Map(),
-    private readonly startupWorkerId: string | null = null,
+    startupPlanContext: WorkerPlanStartupContext | null = null,
   ) {
+    this.startupPlanContext = startupPlanContext;
     this.workspaceRoots = typeof workspaceRoots === "string" ? [workspaceRoots] : workspaceRoots ?? [];
     this.mcp = new McpService(mcpHandlers, (action, resourceId) => {
       const record = this.getRecord();
@@ -315,6 +319,10 @@ export class RuntimeClient implements acp.Client {
         });
       },
     );
+  }
+
+  setWorkerPlanStartupContext(context: WorkerPlanStartupContext | null) {
+    this.startupPlanContext = context;
   }
 
   async requestPermission(params: acp.RequestPermissionRequest): Promise<acp.RequestPermissionResponse> {
@@ -473,7 +481,14 @@ export class RuntimeClient implements acp.Client {
 
   async sessionUpdate(params: acp.SessionNotification): Promise<void> {
     const record = this.getRecord();
-    const workerId = record?.name ?? this.startupWorkerId;
+    if (this.startupPlanContext && isAcpPlanNotification(params.update)) {
+      const admission = bufferWorkerPlanStartupUpdate(this.startupPlanContext, {
+        sessionId: params.sessionId,
+        update: params.update,
+      });
+      if (admission !== "ignored") return;
+    }
+    const workerId = record?.name ?? this.startupPlanContext?.workerId;
     if (workerId && isAcpPlanNotification(params.update)) {
       const planResult = await handleAcpSessionUpdateForWorker({
         workerId,
