@@ -1,22 +1,30 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type * as acp from "@agentclientprotocol/sdk";
 import {
-  isAcpCorePlanUpdate,
-  measureAcpPlanJsonBytes,
-  normalizeAcpCorePlan,
-  reduceWorkerPlanEntries,
+  MAX_ACP_PLAN_BYTES,
   MAX_ACP_PLAN_REJECTION_PREVIEW_BYTES,
   type AcpPlanValidationFailure,
   type WorkerPlanReadResponse,
 } from "@/shared/acp-plan";
+import {
+  classifyAcpPlanUpdate,
+  measureAcpPlanJsonBytes,
+  normalizeAcpCorePlan,
+  reduceWorkerPlanEntries,
+} from "./plan-state";
 import type { WorkerEntry } from "@/shared/worker-entries";
 import { emitNamedEvent, type NamedEvent } from "@/server/events/named-events";
-import { appendWorkerEntryWithResult, readWorkerEntriesSince } from "@/server/workers/output-store";
+import {
+  appendWorkerEntryWithResult,
+  readLatestWorkerPlanEntries,
+  readWorkerEntriesSince,
+} from "@/server/workers/output-store";
 
 type AppendResult = { entry: WorkerEntry; appended: boolean };
 type PlanStreamDependencies = {
   append: (runId: string, workerId: string, entry: Omit<WorkerEntry, "seq">) => Promise<AppendResult>;
   read: (runId: string, workerId: string, afterSeq: number) => Promise<{ entries: WorkerEntry[]; latestSeq: number }>;
+  readPlan: (runId: string, workerId: string) => Promise<{ entries: WorkerEntry[]; latestSeq: number }>;
   emit: (event: NamedEvent) => unknown;
 };
 
@@ -35,6 +43,7 @@ export type PlanStreamResult = {
 const defaultDependencies: PlanStreamDependencies = {
   append: appendWorkerEntryWithResult,
   read: readWorkerEntriesSince,
+  readPlan: readLatestWorkerPlanEntries,
   emit: emitNamedEvent,
 };
 
@@ -57,17 +66,18 @@ function rejectionReason(failure: AcpPlanValidationFailure): "malformed" | "over
 }
 
 function boundedPreview(update: unknown): { preview: string; hash: string; measuredBytes: number } {
-  const serialized = JSON.stringify(update);
+  const serialized = JSON.stringify(update) ?? "undefined";
   const measuredBytes = new TextEncoder().encode(serialized).byteLength;
   const bytes = new TextEncoder().encode(serialized).slice(0, MAX_ACP_PLAN_REJECTION_PREVIEW_BYTES);
   let preview = new TextDecoder().decode(bytes);
   while (preview.length > 0 && preview.endsWith("\uFFFD")) {
     preview = preview.slice(0, -1);
   }
-  // The preview is diagnostic only. Avoid pulling a hashing dependency into
-  // the browser-shared contract; a stable length/preview envelope is enough
-  // for the existing protocol-debug surface and stays bounded.
-  return { preview, hash: `${measuredBytes}:${serialized.length}`, measuredBytes };
+  return {
+    preview,
+    hash: createHash("sha256").update(serialized).digest("hex"),
+    measuredBytes,
+  };
 }
 
 function latestBoundary(entries: readonly WorkerEntry[]) {
@@ -78,9 +88,7 @@ function latestBoundary(entries: readonly WorkerEntry[]) {
 }
 
 function isPlanLikeUpdate(update: unknown): update is acp.SessionUpdate {
-  if (!update || typeof update !== "object") return false;
-  const sessionUpdate = (update as { sessionUpdate?: unknown }).sessionUpdate;
-  return sessionUpdate === "plan" || sessionUpdate === "plan_update" || sessionUpdate === "plan_removed";
+  return classifyAcpPlanUpdate(update) !== "not_plan";
 }
 
 export function isAcpPlanNotification(update: unknown): update is acp.SessionUpdate {
@@ -94,6 +102,7 @@ export class AcpPlanStream {
 
   constructor(deps: Partial<PlanStreamDependencies> = {}) {
     this.deps = { ...defaultDependencies, ...deps };
+    if (deps.read && !deps.readPlan) this.deps.readPlan = (runId, workerId) => deps.read!(runId, workerId, 0);
   }
 
   private serial<T>(runId: string, workerId: string, task: () => Promise<T>): Promise<T> {
@@ -107,18 +116,33 @@ export class AcpPlanStream {
     });
   }
 
-  private publish(event: NamedEvent) {
+  private publish(event: NamedEvent, subjects?: { runId: string; workerId: string }) {
     try {
       this.deps.emit(event);
-    } catch {
+    } catch (error) {
       // The durable entry is authoritative. The next cursor wake-up or plan
       // read recovers a client if the synchronous ring publication fails.
+      if (event.kind === "error.surfaced" || !subjects) return;
+      try {
+        this.deps.emit({
+          kind: "error.surfaced",
+          code: "worker.plan.event_publish_failed",
+          message: `Failed to publish an ACP plan event: ${error instanceof Error ? error.message : String(error)}`,
+          surface: "log",
+          runId: subjects.runId,
+          workerId: subjects.workerId,
+          cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+        });
+      } catch {
+        // The same failing publication boundary cannot report itself. Durable
+        // stream truth and periodic snapshot validation remain authoritative.
+      }
     }
   }
 
   private publishAppend(runId: string, workerId: string, entry: WorkerEntry) {
     if (!entry.seq || !Number.isFinite(entry.seq)) return;
-    this.publish({ kind: "worker.entry_appended", runId, workerId, seq: entry.seq });
+    this.publish({ kind: "worker.entry_appended", runId, workerId, seq: entry.seq }, { runId, workerId });
   }
 
   private async appendDiagnostic(args: {
@@ -131,7 +155,9 @@ export class AcpPlanStream {
   }): Promise<PlanStreamResult> {
     const envelope = boundedPreview(args.update);
     const entry: Omit<WorkerEntry, "seq"> = {
-      id: randomUUID(),
+      id: `acp-plan-diagnostic-${createHash("sha256")
+        .update(`${args.sessionId ?? "missing"}\0${args.reason}\0${envelope.hash}`)
+        .digest("hex")}`,
       type: args.reason === "unsupported" ? "plan_update" : "system_note",
       text: `ACP plan update rejected: ${args.reason}`,
       timestamp: nowIso(),
@@ -162,16 +188,18 @@ export class AcpPlanStream {
       });
       return { kind: "rejected", entry: null, reason: args.reason };
     }
-    if (result.appended) this.publishAppend(args.runId, args.workerId, result.entry);
-    this.publish({
-      kind: "worker.plan_rejected",
-      runId: args.runId,
-      workerId: args.workerId,
-      reason: args.reason,
-      sessionId: args.sessionId,
-      seq: result.entry.seq || null,
-      measuredBytes: envelope.measuredBytes,
-    });
+    if (result.appended) {
+      this.publishAppend(args.runId, args.workerId, result.entry);
+      this.publish({
+        kind: "worker.plan_rejected",
+        runId: args.runId,
+        workerId: args.workerId,
+        reason: args.reason,
+        sessionId: args.sessionId,
+        seq: result.entry.seq || null,
+        measuredBytes: envelope.measuredBytes,
+      }, { runId: args.runId, workerId: args.workerId });
+    }
     return { kind: "rejected", entry: result.entry, reason: args.reason };
   }
 
@@ -179,7 +207,7 @@ export class AcpPlanStream {
     return this.serial(runId, workerId, async () => {
       const operationKey = key(runId, workerId);
       try {
-        const result = await this.deps.read(runId, workerId, 0);
+        const result = await this.deps.readPlan(runId, workerId);
         const boundary = latestBoundary(result.entries);
         const binding = {
           sessionId: boundary?.acpSessionId ?? null,
@@ -212,7 +240,9 @@ export class AcpPlanStream {
       }
 
       const entry: Omit<WorkerEntry, "seq"> = {
-        id: randomUUID(),
+        id: `acp-plan-boundary-${createHash("sha256")
+          .update(`${runId}\0${workerId}\0${sessionId}`)
+          .digest("hex")}`,
         type: "system_note",
         text: "",
         timestamp: nowIso(),
@@ -240,7 +270,9 @@ export class AcpPlanStream {
       const binding = { sessionId, boundarySeq, hydrated: true } satisfies PlanBinding;
       this.bindings.set(operationKey, binding);
       if (result.appended) this.publishAppend(runId, workerId, result.entry);
-      this.publish({ kind: "worker.plan_boundary_started", runId, workerId, seq: boundarySeq, acpSessionId: sessionId });
+      if (result.appended) {
+        this.publish({ kind: "worker.plan_boundary_started", runId, workerId, seq: boundarySeq }, { runId, workerId });
+      }
       return binding;
     });
   }
@@ -269,7 +301,7 @@ export class AcpPlanStream {
         return this.appendDiagnostic({ ...args, sessionId, reason: "stale_session", projection: "stale" });
       }
 
-      if (!isAcpCorePlanUpdate(args.update)) {
+      if (classifyAcpPlanUpdate(args.update) !== "core") {
         return this.appendDiagnostic({ ...args, sessionId, reason: "unsupported", projection: "unsupported" });
       }
 
@@ -280,7 +312,9 @@ export class AcpPlanStream {
       }
 
       const entry: Omit<WorkerEntry, "seq"> = {
-        id: randomUUID(),
+        id: `acp-plan-${createHash("sha256")
+          .update(`${sessionId}\0${JSON.stringify(args.update)}`)
+          .digest("hex")}`,
         type: "plan",
         text: normalized.items.map((item) => item.content).join("\n"),
         timestamp: nowIso(),
@@ -289,7 +323,7 @@ export class AcpPlanStream {
         planProjection: "accepted_core",
         normalizedPlan: normalized.items,
       };
-      if (measureAcpPlanJsonBytes(entry) > 64 * 1024) {
+      if (measureAcpPlanJsonBytes(entry) > MAX_ACP_PLAN_BYTES) {
         return this.appendDiagnostic({ ...args, sessionId, reason: "oversized" });
       }
 
@@ -309,17 +343,28 @@ export class AcpPlanStream {
         return { kind: "rejected", entry: null, reason: "append_failed" };
       }
       if (result.appended) this.publishAppend(args.runId, args.workerId, result.entry);
-      this.publish({ kind: "worker.plan_updated", runId: args.runId, workerId: args.workerId, seq: result.entry.seq, acpSessionId: sessionId });
+      if (result.appended) {
+        this.publish({
+          kind: "worker.plan_updated",
+          runId: args.runId,
+          workerId: args.workerId,
+          seq: result.entry.seq,
+        }, { runId: args.runId, workerId: args.workerId });
+      }
       return { kind: "accepted", entry: result.entry };
     });
   }
 
   async readWorkerPlan(runId: string, workerId: string): Promise<WorkerPlanReadResponse> {
-    const result = await this.deps.read(runId, workerId, 0);
-    return {
+    const result = await this.deps.readPlan(runId, workerId);
+    const response = {
       plan: reduceWorkerPlanEntries(result.entries, runId, workerId),
       latestSeq: result.latestSeq,
     };
+    if (measureAcpPlanJsonBytes(response) > MAX_ACP_PLAN_BYTES) {
+      throw new Error(`ACP plan snapshot exceeds ${MAX_ACP_PLAN_BYTES} bytes`);
+    }
+    return response;
   }
 
   clear(runId: string, workerId: string) {

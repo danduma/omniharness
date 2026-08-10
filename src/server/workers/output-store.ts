@@ -1531,6 +1531,170 @@ export async function readWorkerEntriesTail(
   return expandTailToMessageFragmentBoundary(runId, workerId, tail);
 }
 
+const PLAN_BOUNDARY_TAIL_WINDOW = 200;
+const PLAN_BOUNDARY_SCAN_CHUNK_BYTES = 64 * 1024;
+
+function latestPlanBoundary(entries: readonly WorkerEntry[]): WorkerEntry | null {
+  let latest: WorkerEntry | null = null;
+  for (const entry of entries) {
+    if (
+      entry.planProjection === "session_reset"
+      && typeof entry.acpSessionId === "string"
+      && entry.acpSessionId.length > 0
+      && typeof entry.seq === "number"
+      && entry.seq > 0
+      && (!latest || entry.seq > latest.seq)
+    ) {
+      latest = entry;
+    }
+  }
+  return latest;
+}
+
+/**
+ * Scan backward until the newest durable ACP session boundary is found.
+ * The common path is handled by the sparse-index tail reader above; this
+ * deeper scan is only used when a plan session has outlived the tail window.
+ */
+async function scanLatestPlanBoundaryFromJsonl(filePath: string): Promise<WorkerEntry | null | undefined> {
+  let size: number;
+  try {
+    size = (await fs.stat(filePath)).size;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  if (size === 0) return null;
+
+  const handle = await fs.open(filePath, "r");
+  try {
+    let offset = size;
+    let leadingFragment = "";
+    while (offset > 0) {
+      const readSize = Math.min(PLAN_BOUNDARY_SCAN_CHUNK_BYTES, offset);
+      offset -= readSize;
+      const buffer = Buffer.alloc(readSize);
+      await handle.read(buffer, 0, readSize, offset);
+      const lines = `${buffer.toString("utf8")}${leadingFragment}`.split("\n");
+      const nextLeadingFragment = lines.shift() ?? "";
+
+      for (let index = lines.length - 1; index >= 0; index -= 1) {
+        const line = lines[index]?.trim();
+        if (!line) continue;
+        try {
+          const entry = JSON.parse(line) as WorkerEntry;
+          if (typeof entry.seq !== "number" || !Number.isFinite(entry.seq) || entry.seq <= 0) {
+            return undefined;
+          }
+          if (entry.planProjection === "session_reset" && entry.acpSessionId) return entry;
+        } catch {
+          // A malformed line inside the stream means sequence boundaries cannot
+          // be proven. Fall back to the canonical legacy/recovery reader.
+          return undefined;
+        }
+      }
+
+      if (offset === 0) {
+        const firstLine = nextLeadingFragment.trim();
+        if (!firstLine) return null;
+        try {
+          const entry = JSON.parse(firstLine) as WorkerEntry;
+          if (typeof entry.seq !== "number" || !Number.isFinite(entry.seq) || entry.seq <= 0) {
+            return undefined;
+          }
+          return entry.planProjection === "session_reset" && entry.acpSessionId ? entry : null;
+        } catch {
+          return undefined;
+        }
+      }
+      leadingFragment = nextLeadingFragment;
+    }
+    return null;
+  } finally {
+    await handle.close();
+  }
+}
+
+function retainCurrentPlanProjection(
+  boundary: WorkerEntry,
+  entries: readonly WorkerEntry[],
+): WorkerEntry[] {
+  let accepted: WorkerEntry | null = null;
+  for (const entry of entries) {
+    if (
+      entry.planProjection === "accepted_core"
+      && entry.acpSessionId === boundary.acpSessionId
+      && entry.seq > boundary.seq
+      && (!accepted || entry.seq > accepted.seq)
+    ) {
+      accepted = entry;
+    }
+  }
+  return accepted ? [boundary, accepted] : [boundary];
+}
+
+/**
+ * Bounded derived reader for the current ACP plan. It finds the newest
+ * session boundary via the existing sparse-index tail path (or a backward
+ * scan when the boundary is older), then pages forward with the existing
+ * 200-entry cap while retaining only the newest accepted projection.
+ */
+export async function readLatestWorkerPlanEntries(
+  runId: string,
+  workerId: string,
+): Promise<{ entries: WorkerEntry[]; latestSeq: number }> {
+  const paths = await workerStreamPaths(runId, workerId, "read");
+  const tail = await readWorkerEntriesTailJsonl(runId, workerId, PLAN_BOUNDARY_TAIL_WINDOW);
+  let boundary = tail ? latestPlanBoundary(tail.entries) : null;
+
+  if (!boundary && tail?.hasOlder) {
+    const scanned = await scanLatestPlanBoundaryFromJsonl(paths.filePath);
+    if (scanned === undefined) {
+      const canonical = await readCanonicalPersistedEntries(runId, workerId);
+      const canonicalBoundary = latestPlanBoundary(canonical);
+      return {
+        entries: canonicalBoundary ? retainCurrentPlanProjection(canonicalBoundary, canonical) : [],
+        latestSeq: canonical.reduce((latest, entry) => Math.max(latest, entry.seq || 0), 0),
+      };
+    }
+    boundary = scanned;
+  }
+
+  if (!tail) {
+    const canonical = await readCanonicalPersistedEntries(runId, workerId);
+    const canonicalBoundary = latestPlanBoundary(canonical);
+    return {
+      entries: canonicalBoundary ? retainCurrentPlanProjection(canonicalBoundary, canonical) : [],
+      latestSeq: canonical.reduce((latest, entry) => Math.max(latest, entry.seq || 0), 0),
+    };
+  }
+
+  const latestSeq = tail.latestSeq;
+  if (!boundary) return { entries: [], latestSeq };
+
+  let cursor = boundary.seq;
+  let accepted: WorkerEntry | null = null;
+  while (cursor < latestSeq) {
+    const page = await readWorkerEntriesSince(runId, workerId, cursor);
+    if (page.entries.length === 0) break;
+    for (const entry of page.entries) {
+      if (
+        entry.planProjection === "accepted_core"
+        && entry.acpSessionId === boundary.acpSessionId
+        && entry.seq > boundary.seq
+        && (!accepted || entry.seq > accepted.seq)
+      ) {
+        accepted = entry;
+      }
+    }
+    const nextCursor = page.entries.reduce((latest, entry) => Math.max(latest, entry.seq || 0), cursor);
+    if (nextCursor <= cursor) break;
+    cursor = nextCursor;
+  }
+
+  return { entries: accepted ? [boundary, accepted] : [boundary], latestSeq };
+}
+
 function isWorkerMessageFragmentCandidate(entry: WorkerEntry | null | undefined) {
   if (!entry || entry.type !== "message" || entry.toolCallId || entry.status) {
     return false;
