@@ -199,6 +199,7 @@
   "conversation.sidebar.showMoreSessions": "Mostrar {count} sesiones más en {project}",
   "conversation.sidebar.status.completedAttention": "Finalizada con mensajes sin leer",
   "conversation.sidebar.status.awaitingUser": "Esperando tu respuesta",
+  "conversation.sidebar.status.unread": "Mensajes sin leer",
   "conversation.preflightConfirmation.yes": "Sí, continuar",
   "conversation.preflightConfirmation.no": "No, quiero aclarar",
   "conversation.mode.direct.label": "Control directo",

@@ -130,14 +130,25 @@ test("conversation rows show left-side status attention indicators", () => {
   expect(sidebarSource).toContain("const runIsUnread = isRunUnread({");
   expect(sidebarSource).toContain('const showCompletedAttentionIndicator = normalizedRunStatus === "done" && runIsUnread;');
   expect(sidebarSource).toContain('const showAwaitingUserIndicator = normalizedRunStatus === "awaiting_user";');
+  expect(sidebarSource).toContain('const showUnreadIndicator = runIsUnread && !showAwaitingUserIndicator;');
   expect(sidebarSource).toContain('conversation.sidebar.status.completedAttention');
   expect(sidebarSource).toContain('conversation.sidebar.status.awaitingUser');
+  expect(sidebarSource).toContain('conversation.sidebar.status.unread');
   expect(sidebarSource).toContain("bg-sky-300");
   expect(sidebarSource).toContain("text-amber-500");
-  expect(sidebarSource).toContain("{runIsUnread && !showCompletedAttentionIndicator ? (");
+  expect(sidebarSource).toContain("{showUnreadIndicator && statusIndicatorLabel ? (");
   expect(sidebarSource).toContain('<TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />');
   expect(localeSource).toContain('"conversation.sidebar.status.completedAttention": "Finished with unread messages"');
   expect(localeSource).toContain('"conversation.sidebar.status.awaitingUser": "Waiting for your input"');
+  expect(localeSource).toContain('"conversation.sidebar.status.unread": "Unread messages"');
+});
+
+test("conversation rows render exactly one unread indicator", () => {
+  const sidebarSource = readSource("src/components/home/ConversationSidebar.tsx");
+
+  // The unread dot lives only in the left status column; no second dot on the right.
+  expect(sidebarSource).not.toContain("bg-blue-500");
+  expect(sidebarSource.match(/bg-sky-300/g) ?? []).toHaveLength(1);
 });
 
 test("top bar exposes an auto commit action for the selected chat", () => {

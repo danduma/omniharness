@@ -132,6 +132,8 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('onPointerDown={layout.handleLeftSidebarResizeStart}');
   expect(pageSource).toContain('leftSidebarOpen ? "translate-x-0" : "-translate-x-3"');
   expect(pageSource).toContain('onCollapse={() => setLeftSidebarOpen(false)}');
+  expect(pageSource).toContain('onCollapse={() => setMobileNavOpen(false)}');
+  expect(conversationSidebarSource).toContain('runnerControlsMode === "mobile" ? "ml-auto inline-flex" : "hidden lg:inline-flex"');
   expect(pageSource).toContain('t("conversation.sidebar.collapseAria")');
   expect(pageSource).toContain('title="Open conversations sidebar"');
   expect(pageSource).toContain('<PanelLeftClose');
@@ -141,7 +143,7 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('space-y-1 px-3 pb-3 pt-2 lg:px-3 lg:pb-3 lg:pt-2');
   expect(pageSource).toContain('space-y-3 pb-4 pt-0.5');
   expect(pageSource).not.toContain('space-y-4 py-4');
-  expect(pageSource).toContain('hidden min-w-0 flex-1 items-center gap-2 lg:flex');
+  expect(pageSource).toContain('className="flex min-w-0 flex-1 items-center gap-2"');
   expect(pageSource).toContain('h-9 min-w-0 flex-1 justify-start px-2 text-sm text-[#333333]');
   expect(pageSource).toContain('min-h-0 flex-1 overflow-hidden');
   expect(pageSource).toContain('mt-auto shrink-0 border-t border-border/60 bg-background/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-background/80');
@@ -213,6 +215,12 @@ test("mobile conversation sidebar width overrides the sheet default width", () =
   expect(homeHeaderSource).toContain('!w-[min(var(--omni-mobile-sidebar-width),calc(100vw-1rem))]');
 });
 
+test("mobile conversation sidebar keeps the brand and close control on one top row", () => {
+  expect(homeHeaderSource).toContain('<SheetTitle className="sr-only">{PRODUCT_NAME}</SheetTitle>');
+  expect(homeHeaderSource).not.toContain('<SheetHeader className="border-b border-border/60">');
+  expect(conversationSidebarSource).toContain('className="flex min-w-0 flex-1 items-center gap-2"');
+});
+
 test("folder picker exposes stable path identity for local browser journeys", () => {
   expect(folderPickerSource).toContain('data-testid="folder-picker-current-path"');
   expect(folderPickerSource).toContain('data-parent-path={data?.parent || ""}');
@@ -263,14 +271,14 @@ test("workers sidebar is conversation-scoped and resizable", () => {
   expect(pageSource).toContain('onPointerDown={layout.handleRightSidebarResizeStart}');
   expect(pageSource).not.toContain('h-14 w-1 rounded-full bg-border/80 transition-colors hover:bg-foreground/30');
   expect(pageSource).toContain('export const PRODUCT_NAME = "OmniHarness";');
-  expect(pageSource).toContain('<SheetTitle className="flex items-center gap-2 text-left">');
-  expect(pageSource).toContain('<span>{PRODUCT_NAME}</span>');
+  expect(pageSource).toContain('<SheetTitle className="sr-only">{PRODUCT_NAME}</SheetTitle>');
+  expect(conversationSidebarSource).toContain("{PRODUCT_NAME}");
   expect(pageSource).not.toContain("<SheetTitle>Navigation</SheetTitle>");
   expect(pageSource).toContain('<Sheet open={mobileWorkersOpen} onOpenChange={setMobileWorkersOpen} disablePointerDismissal>');
   expect(pageSource).toContain('className="!inset-0 h-[100dvh] !w-screen !max-w-none gap-0 !border-0 p-0 sm:!max-w-none lg:hidden"');
   expect(pageSource).toContain('<SheetTitle className="sr-only">Workspace tools</SheetTitle>');
   expect(pageSource).not.toContain('<SheetTitle>Workspace side window</SheetTitle>');
-  expect(pageSource).toContain('className="hidden min-w-0 flex-1 items-center gap-2 lg:flex"');
+  expect(pageSource).toContain('className="flex min-w-0 flex-1 items-center gap-2"');
   expect(pageSource).not.toContain('queryClient.removeQueries({ queryKey: ["conversation-agent", workerId], exact: true })');
   expect(workerCardSource).toContain('function renderContextMeter(fullnessPercent: number | null | undefined)');
   expect(workerCardSource).toContain('{runtimeDurationLabel ? (');
@@ -337,6 +345,8 @@ test("workspace side window owns workers and file tabs", () => {
   expect(pageSource).toContain("fileViewerPanelManager.toggleWordWrap()");
   expect(pageSource).toContain("void fileQuery.refetch()");
   expect(pageSource).toContain('className="omni-conversation-text-scale min-h-0 flex-1 overflow-auto bg-muted/15 [scrollbar-width:thin]"');
+  expect(pageSource).toContain('"min-w-0 overflow-hidden break-words [overflow-wrap:anywhere] leading-relaxed"');
+  expect(pageSource).not.toContain('"overflow-x-auto leading-relaxed"');
   expect(pageSource).toContain('"syntax-highlight py-3 font-mono text-[length:var(--omni-conversation-font-size)] leading-[var(--omni-conversation-line-height)]"');
   expect(pageSource).toContain('t("fileViewer.menu.wordWrap")');
   expect(pageSource).toContain('t("fileViewer.menu.refresh")');

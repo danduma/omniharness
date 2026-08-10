@@ -18,9 +18,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
-import { OmniHarnessMark } from "@/components/OmniHarnessMark";
 import { requestBugDropOpen } from "@/components/BugDropBootstrap";
 import { PRODUCT_NAME } from "@/interface/home/constants";
 import type { ProjectDropPlacement } from "@/interface/home/utils";
@@ -345,12 +344,7 @@ const HomeHeader = memo(function HomeHeader({
         </Button>
         {mobileNavOpen ? (
           <SheetContent side="left" className="!w-[min(var(--omni-mobile-sidebar-width),calc(100vw-1rem))] p-0 lg:hidden" showCloseButton={false}>
-            <SheetHeader className="border-b border-border/60">
-              <SheetTitle className="flex items-center gap-2 text-left">
-                <OmniHarnessMark className="h-8 w-8 p-1" />
-                <span>{PRODUCT_NAME}</span>
-              </SheetTitle>
-            </SheetHeader>
+            <SheetTitle className="sr-only">{PRODUCT_NAME}</SheetTitle>
             <ConversationSidebar
               runnerControlsMode="mobile"
               filteredProjects={filteredProjects as SidebarGroup[]}
@@ -400,6 +394,7 @@ const HomeHeader = memo(function HomeHeader({
               logout={logout}
               themeMode={themeMode}
               setThemeMode={setThemeMode}
+              onCollapse={() => setMobileNavOpen(false)}
               onOpenExternalSessions={onOpenExternalSessions}
             />
           </SheetContent>

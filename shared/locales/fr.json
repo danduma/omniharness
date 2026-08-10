@@ -199,6 +199,7 @@
   "conversation.sidebar.showMoreSessions": "Afficher {count} sessions de plus dans {project}",
   "conversation.sidebar.status.completedAttention": "Terminée avec des messages non lus",
   "conversation.sidebar.status.awaitingUser": "En attente de votre réponse",
+  "conversation.sidebar.status.unread": "Messages non lus",
   "conversation.preflightConfirmation.yes": "Oui, continuer",
   "conversation.preflightConfirmation.no": "Non, je veux clarifier",
   "conversation.mode.direct.label": "Contrôle direct",
