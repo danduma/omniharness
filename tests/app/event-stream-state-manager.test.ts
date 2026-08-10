@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { EventStreamSnapshotCacheManager } from "@/interface/home/EventStreamSnapshotCacheManager";
 import { EventStreamStateManager } from "@/interface/home/EventStreamStateManager";
+import { applyStopSupervisorOptimisticUpdate } from "@/interface/home/mutations/optimistic-state";
+import { resolveSelectedRecoveryState } from "@/interface/home/useRunRecoveryState";
 import type { EventStreamState } from "@/interface/home/types";
 
 function state(runId: string, message: string, checksum: string): EventStreamState {
@@ -343,6 +345,98 @@ describe("EventStreamStateManager", () => {
     expect(manager.getSnapshot().runs[0]?.status).toBe("done");
     expect(manager.getSnapshot().runs[0]?.updatedAt).toBe("2026-05-20T09:59:59.000Z");
     expect(manager.getSnapshot().snapshotSource).toBe("server");
+  });
+
+  it("does not reopen quota recovery while an optimistic stop awaits server confirmation", () => {
+    const quotaWaiting = state("run-quota", "waiting for quota", "sha256:quota-waiting");
+    quotaWaiting.runs = [{
+      ...quotaWaiting.runs[0],
+      status: "quota_waiting",
+      updatedAt: "2026-08-10T10:00:00.000Z",
+    }];
+    quotaWaiting.recoveryState = {
+      kind: "quota_waiting",
+      status: "open",
+      workerId: "worker-quota",
+      recommendedAction: "wait_for_quota_reset",
+      resumeAt: "2026-08-10T11:00:00.000Z",
+    };
+    const manager = new EventStreamStateManager(quotaWaiting, {
+      deferCacheHydration: true,
+      initialSnapshotSource: "server",
+    });
+
+    manager.updateLocal((current) => applyStopSupervisorOptimisticUpdate(current, "run-quota"));
+    expect(resolveSelectedRecoveryState(manager.getSnapshot(), "run-quota")).toBeNull();
+
+    manager.updateFromServer({
+      ...quotaWaiting,
+      snapshotChecksum: "sha256:stale-quota-waiting-1",
+    });
+    expect(manager.getSnapshot().runs[0]?.status).toBe("cancelled");
+    expect(resolveSelectedRecoveryState(manager.getSnapshot(), "run-quota")).toBeNull();
+
+    manager.updateFromServer({
+      ...quotaWaiting,
+      snapshotChecksum: "sha256:stale-quota-waiting-2",
+    });
+    expect(manager.getSnapshot().runs[0]?.status).toBe("cancelled");
+    expect(resolveSelectedRecoveryState(manager.getSnapshot(), "run-quota")).toBeNull();
+
+    manager.updateFromServer({
+      ...quotaWaiting,
+      runs: [{
+        ...quotaWaiting.runs[0],
+        status: "cancelled",
+        updatedAt: "2026-08-10T10:00:01.000Z",
+      }],
+      recoveryState: null,
+      snapshotChecksum: "sha256:quota-stop-confirmed",
+    });
+    expect(manager.getSnapshot().runs[0]?.status).toBe("cancelled");
+    expect(resolveSelectedRecoveryState(manager.getSnapshot(), "run-quota")).toBeNull();
+
+    manager.updateFromServer({
+      ...quotaWaiting,
+      runs: [{
+        ...quotaWaiting.runs[0],
+        status: "running",
+        updatedAt: "2026-08-10T10:00:02.000Z",
+      }],
+      recoveryState: null,
+      snapshotChecksum: "sha256:later-authoritative-state",
+    });
+    expect(manager.getSnapshot().runs[0]?.status).toBe("running");
+  });
+
+  it("releases optimistic stop ownership when the mutation rolls back", () => {
+    const quotaWaiting = state("run-quota", "waiting for quota", "sha256:quota-waiting");
+    quotaWaiting.runs = [{
+      ...quotaWaiting.runs[0],
+      status: "quota_waiting",
+      updatedAt: "2026-08-10T10:00:00.000Z",
+    }];
+    quotaWaiting.recoveryState = {
+      kind: "quota_waiting",
+      status: "open",
+      workerId: "worker-quota",
+      recommendedAction: "wait_for_quota_reset",
+      resumeAt: "2026-08-10T11:00:00.000Z",
+    };
+    const manager = new EventStreamStateManager(quotaWaiting, {
+      deferCacheHydration: true,
+      initialSnapshotSource: "server",
+    });
+
+    manager.updateLocal((current) => applyStopSupervisorOptimisticUpdate(current, "run-quota"));
+    manager.updateLocal(quotaWaiting);
+    manager.updateFromServer({
+      ...quotaWaiting,
+      snapshotChecksum: "sha256:quota-after-rollback",
+    });
+
+    expect(manager.getSnapshot().runs[0]?.status).toBe("quota_waiting");
+    expect(resolveSelectedRecoveryState(manager.getSnapshot(), "run-quota")).toBe(quotaWaiting.recoveryState);
   });
 
   it("does not let selected-run snapshots erase the sidebar run catalog", () => {

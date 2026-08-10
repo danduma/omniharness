@@ -1,5 +1,6 @@
 import type { EventStreamState, MessageRecord } from "./types";
 import { EventStreamSnapshotCacheManager } from "./EventStreamSnapshotCacheManager";
+import { isTerminalRunStatus } from "@/lib/run-status";
 
 type EventStreamStateListener = (state: EventStreamState) => void;
 type EventStreamStateAction = EventStreamState | ((current: EventStreamState) => EventStreamState);
@@ -299,6 +300,10 @@ function authoritativeCatalogExcludesScope(state: EventStreamState, scope: strin
 export class EventStreamStateManager {
   private state: EventStreamState;
   private readonly listeners = new Set<EventStreamStateListener>();
+  // A stop click is immediately terminal in the local UI. Keep that owned
+  // result until the server confirms a terminal state; otherwise an in-flight
+  // quota_waiting snapshot can reopen the recovery notice for one frame.
+  private readonly pendingOptimisticStopRunIds = new Set<string>();
   private readonly snapshotCache: EventStreamSnapshotCacheManager;
   private snapshotCacheScope: string | null;
 
@@ -386,12 +391,49 @@ export class EventStreamStateManager {
 
   update(action: EventStreamStateAction, options: { snapshotSource?: EventStreamSnapshotSource } = {}) {
     const incoming = typeof action === "function" ? action(this.state) : action;
+    const isServerUpdate = options.snapshotSource === "server";
     const snapshotSource = options.snapshotSource
       ?? incoming.snapshotSource
       ?? this.state.snapshotSource;
-    const incomingWithRuns = mergeScopedRuns(this.state, incoming, {
+    let incomingWithRuns = mergeScopedRuns(this.state, incoming, {
       serverAuthoritative: snapshotSource === "server",
     });
+    if (isServerUpdate && this.pendingOptimisticStopRunIds.size > 0) {
+      const currentRunsById = new Map(this.state.runs.map((run) => [run.id, run]));
+      const incomingRunsById = new Map(incoming.runs.map((run) => [run.id, run]));
+      const protectedRunIds = new Set<string>();
+
+      for (const runId of this.pendingOptimisticStopRunIds) {
+        const serverRun = incomingRunsById.get(runId);
+        // Terminal server truth acknowledges the stop and retires the overlay.
+        if (isTerminalRunStatus(serverRun?.status)) {
+          this.pendingOptimisticStopRunIds.delete(runId);
+          continue;
+        }
+        if (!serverRun) {
+          const catalogIsComplete = !incoming.snapshotRunId
+            && incoming.snapshotScope?.catalog?.complete === true;
+          if (catalogIsComplete) {
+            this.pendingOptimisticStopRunIds.delete(runId);
+          }
+          continue;
+        }
+
+        const currentRun = currentRunsById.get(runId);
+        if (currentRun?.status === "cancelled") {
+          protectedRunIds.add(runId);
+        }
+      }
+
+      if (protectedRunIds.size > 0) {
+        incomingWithRuns = {
+          ...incomingWithRuns,
+          runs: incomingWithRuns.runs.map((run) => (
+            protectedRunIds.has(run.id) ? currentRunsById.get(run.id) ?? run : run
+          )),
+        };
+      }
+    }
     const incomingWithAgents = mergeDegradedAgentHumanInput(this.state, incomingWithRuns);
     const nextState = {
       ...mergeScopedMessages(this.state, incomingWithAgents),
@@ -421,6 +463,23 @@ export class EventStreamStateManager {
    */
   updateLocal(action: EventStreamStateAction) {
     const incoming = typeof action === "function" ? action(this.state) : action;
+    const currentRunsById = new Map(this.state.runs.map((run) => [run.id, run]));
+    const incomingRunIds = new Set(incoming.runs.map((run) => run.id));
+    for (const run of incoming.runs) {
+      const currentRun = currentRunsById.get(run.id);
+      if (run.status === "cancelled" && currentRun && currentRun.status !== "cancelled") {
+        this.pendingOptimisticStopRunIds.add(run.id);
+      } else if (run.status !== "cancelled") {
+        // Mutation error handlers restore their captured pre-stop state through
+        // updateLocal, which explicitly releases the optimistic ownership.
+        this.pendingOptimisticStopRunIds.delete(run.id);
+      }
+    }
+    for (const runId of this.pendingOptimisticStopRunIds) {
+      if (!incomingRunIds.has(runId)) {
+        this.pendingOptimisticStopRunIds.delete(runId);
+      }
+    }
     const nextState = {
       ...incoming,
       snapshotSource: this.state.snapshotSource,
