@@ -4,7 +4,7 @@ import * as schema from './schema';
 import { getAppDataPath } from '@/server/app-root';
 
 const dbPath = getAppDataPath('sqlite.db');
-const DB_SCHEMA_VERSION = 6;
+const DB_SCHEMA_VERSION = 7;
 export type DbClient = ReturnType<typeof createClient>;
 
 async function tableColumns(client: DbClient, table: string): Promise<Set<string>> {
@@ -67,6 +67,69 @@ CREATE TABLE IF NOT EXISTS runs (
   last_activity_at integer,
   updated_at integer NOT NULL,
   FOREIGN KEY (plan_id) REFERENCES plans(id) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE IF NOT EXISTS run_goals (
+  run_id text PRIMARY KEY NOT NULL,
+  goal_id text NOT NULL,
+  objective text NOT NULL,
+  status text NOT NULL,
+  revision integer NOT NULL,
+  lease_generation integer NOT NULL DEFAULT 0,
+  plan_json text NOT NULL DEFAULT '[]',
+  plan_source_json text NOT NULL DEFAULT '{"kind":"none"}',
+  worker_id text,
+  acp_session_id text,
+  capabilities_json text NOT NULL DEFAULT '{}',
+  validation_state_json text,
+  last_error text,
+  control_method text,
+  transition_source text NOT NULL DEFAULT 'api',
+  visible integer NOT NULL DEFAULT 1,
+  started_at integer NOT NULL,
+  paused_at integer,
+  resumed_at integer,
+  completed_at integer,
+  cleared_at integer,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE CASCADE,
+  FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS run_goal_operations (
+  run_id text NOT NULL,
+  operation_id text NOT NULL,
+  principal_id text NOT NULL,
+  endpoint text NOT NULL,
+  action text NOT NULL,
+  fingerprint text NOT NULL,
+  status text NOT NULL,
+  result_json text NOT NULL,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  PRIMARY KEY (run_id, operation_id),
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS run_goal_outbox (
+  id text PRIMARY KEY NOT NULL,
+  run_id text NOT NULL,
+  goal_id text NOT NULL,
+  lease_generation integer NOT NULL,
+  revision integer NOT NULL,
+  event_key text NOT NULL,
+  event_kind text NOT NULL,
+  payload_json text NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  claim_token text,
+  claim_expires_at integer,
+  attempt_count integer NOT NULL DEFAULT 0,
+  next_attempt_at integer NOT NULL,
+  last_error text,
+  published_at integer,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS workers (
@@ -945,6 +1008,11 @@ CREATE INDEX IF NOT EXISTS account_usage_snapshots_account_window_idx ON account
 CREATE INDEX IF NOT EXISTS runs_created_idx ON runs(created_at);
 CREATE INDEX IF NOT EXISTS runs_archived_created_id_desc_idx ON runs(archived_at, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS runs_archived_activity_id_desc_idx ON runs(archived_at, last_activity_at DESC, id DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS run_goals_goal_id_idx ON run_goals(goal_id);
+CREATE INDEX IF NOT EXISTS run_goals_status_updated_idx ON run_goals(status, updated_at);
+CREATE INDEX IF NOT EXISTS run_goal_operations_created_idx ON run_goal_operations(created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS run_goal_outbox_event_key_idx ON run_goal_outbox(event_key);
+CREATE INDEX IF NOT EXISTS run_goal_outbox_delivery_idx ON run_goal_outbox(status, next_attempt_at, run_id, revision);
 CREATE INDEX IF NOT EXISTS plans_created_idx ON plans(created_at);
 CREATE INDEX IF NOT EXISTS plans_created_id_desc_idx ON plans(created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS notification_subscriptions_revoked_idx ON notification_subscriptions(revoked_at);
@@ -1062,3 +1130,4 @@ dbReady.catch((error) => {
 });
 
 export const db = dbState.db;
+export const dbClient = dbState.client;
