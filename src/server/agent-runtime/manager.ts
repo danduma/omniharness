@@ -274,35 +274,68 @@ function applyClaudeKeychainOAuthToken(env: EnvLike) {
   // as CLAUDE_CODE_OAUTH_TOKEN (the env var Claude Code 2.x reads at startup)
   // so OAuth-only users can talk to claude through ACP without configuring an
   // explicit ANTHROPIC_API_KEY.
-  if (process.platform !== "darwin") {
-    return;
-  }
   if (env.ANTHROPIC_API_KEY?.trim() || env.ANTHROPIC_AUTH_TOKEN?.trim() || env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) {
     return;
   }
-  let raw: string;
+
+  // Not every install keeps its OAuth tokens in the Keychain — plenty of
+  // machines only have ~/.claude/.credentials.json. Reading the Keychain alone
+  // made this a silent no-op there, so a scoped-config-dir worker launched with
+  // no credential at all and the API answered "403 Account suspended", which
+  // reads as a billing problem rather than a missing token.
+  const token = readClaudeKeychainAccessToken() ?? readClaudeCredentialsFileAccessToken(env);
+  if (token) {
+    env.CLAUDE_CODE_OAUTH_TOKEN = token;
+  }
+}
+
+function parseClaudeOAuthAccessToken(raw: string) {
+  let parsed: { claudeAiOauth?: { accessToken?: string; expiresAt?: number } };
   try {
-    raw = String(execFileSync("security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], {
+    parsed = JSON.parse(raw) as typeof parsed;
+  } catch {
+    return null;
+  }
+  const token = parsed.claudeAiOauth?.accessToken?.trim();
+  if (!token) {
+    return null;
+  }
+  // An env-supplied token is static: Claude Code will not refresh it. Injecting
+  // one that has already expired only trades "no credential" for "dead
+  // credential", so leave it out and let the real config dir handle refresh.
+  const expiresAt = parsed.claudeAiOauth?.expiresAt;
+  if (typeof expiresAt === "number" && expiresAt <= Date.now()) {
+    return null;
+  }
+  return token;
+}
+
+function readClaudeKeychainAccessToken() {
+  if (process.platform !== "darwin") {
+    return null;
+  }
+  try {
+    const raw = String(execFileSync("security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], {
       encoding: "utf8",
       timeout: 1_500,
       maxBuffer: 64 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
     })).trim();
+    return raw ? parseClaudeOAuthAccessToken(raw) : null;
   } catch {
-    return;
+    return null;
   }
-  if (!raw) {
-    return;
-  }
-  let token: string | undefined;
+}
+
+function readClaudeCredentialsFileAccessToken(env: EnvLike) {
   try {
-    const parsed = JSON.parse(raw) as { claudeAiOauth?: { accessToken?: string } };
-    token = parsed.claudeAiOauth?.accessToken?.trim();
+    const credentialsPath = join(userHomeFromEnv(env), ".claude", ".credentials.json");
+    if (!existsSync(credentialsPath)) {
+      return null;
+    }
+    return parseClaudeOAuthAccessToken(readFileSync(credentialsPath, "utf8"));
   } catch {
-    return;
-  }
-  if (token) {
-    env.CLAUDE_CODE_OAUTH_TOKEN = token;
+    return null;
   }
 }
 
