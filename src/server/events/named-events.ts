@@ -341,14 +341,12 @@ export type WorkerEvent =
       runId: string;
       workerId: string;
       seq: number;
-      acpSessionId: string;
     }
   | {
       kind: "worker.plan_updated";
       runId: string;
       workerId: string;
       seq: number;
-      acpSessionId: string;
     }
   | {
       kind: "worker.plan_rejected";
@@ -568,7 +566,20 @@ export type ConversationEvent =
     }
   | { kind: "conversation.awaiting_user"; runId: string; workerId?: string; reason: "worker_requested_input" }
   | { kind: "conversation.read"; runId: string; lastReadAt: string }
-  | { kind: "conversation.title_updated"; runId: string; source: "agent_session"; title: string }
+  | {
+      kind: "conversation.title_updated";
+      runId: string;
+      source: "agent_session" | "leak_repair";
+      title: string;
+    }
+  | {
+      kind: "conversation.title_rejected";
+      runId: string;
+      source: "agent_session";
+      reason: "prompt_leak" | "too_long";
+      titleLength: number;
+      titlePreview: string;
+    }
   | { kind: "conversation.project_moved"; runId: string; previousProjectPath: string | null; projectPath: string }
   | { kind: "conversation.deleted"; runId: string }
   | { kind: "conversation.delete_failed"; runId: string; blockingTable: string | null }

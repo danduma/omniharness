@@ -4,6 +4,7 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 import { promisify } from "util";
+import { TRANSCRIPT_REPLAY_INSTRUCTION } from "@/server/conversations/harness-prompt-preambles";
 import { isBridgeOutputEntry, type WorkerEntry } from "@/server/workers/entries-types";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
 
@@ -73,8 +74,7 @@ export async function buildTranscriptReplayPrompt(args: {
     : transcript;
 
   return [
-    "You are continuing an OmniHarness direct-control worker turn after the provider ACP session could not be resumed.",
-    "The authoritative conversation transcript captured by OmniHarness is below. Treat it as prior context, do not repeat completed work, and continue from the latest useful point.",
+    TRANSCRIPT_REPLAY_INSTRUCTION,
     "",
     "Saved transcript:",
     trimmedTranscript || "(No transcript text was captured.)",

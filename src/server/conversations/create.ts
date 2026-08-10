@@ -30,6 +30,7 @@ import {
 } from "@/lib/commit-workflow";
 import { captureGitBaseline } from "@/server/git/auto-commit";
 import { serializeMessageRecord } from "./message-records";
+import { buildInitialConversationTitle } from "./initial-title";
 import {
   isConversationDeletionRequested,
   isWorkerTurnAbortedError,
@@ -381,24 +382,6 @@ function persistWorkspaceDefaultTarget(projectPath: string, target: GitWorkspace
     return;
   }
   setProjectGitWorkspaceDefaultTarget(projectPath, target);
-}
-
-function buildInitialConversationTitle(command: string) {
-  const firstLine = command
-    .split(/\r?\n/)
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .find(Boolean);
-
-  if (!firstLine) {
-    return "New conversation";
-  }
-
-  const maxLength = 80;
-  if (firstLine.length <= maxLength) {
-    return firstLine;
-  }
-
-  return `${firstLine.slice(0, maxLength - 3).trimEnd()}...`;
 }
 
 async function buildCreatedConversationResponse(args: {
