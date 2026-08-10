@@ -18,6 +18,7 @@
  */
 import { notifyEventStreamSubscribers } from "./live-updates";
 import type { ClaudeSessionModelReason } from "@/lib/claude-session-model";
+import type { GoalAction, GoalSnapshot } from "@/shared/goal-plan";
 import { randomBytes } from "node:crypto";
 import {
   formatEventStreamId,
@@ -98,6 +99,17 @@ export type SurfacedErrorCode =
   // family is never correct, so the launch is refused instead.
   | "worker.model.family_unavailable"
   | "worker.model.pin_unsupported"
+  | "goal.objective.invalid"
+  | "goal.revision_conflict"
+  | "goal.action.unsupported"
+  | "goal.transition.invalid"
+  | "goal.lease.stale"
+  | "goal.acp.transport_failed"
+  | "goal.reconciliation.failed"
+  | "goal.validation.failed"
+  | "goal.persistence.failed"
+  | "goal.outbox.poisoned"
+  | "goal.payload.invalid"
   | "codex_auth_missing"
   | "codex_auth_refresh_failed"
   | "codex_auth_unavailable"
@@ -464,6 +476,51 @@ export type PlanEvent =
   | { kind: "plan.review.finished"; runId: string; reviewRunId: string; status: string }
   | { kind: "plan.review.blocked"; runId: string; reason: string };
 
+export type GoalPublishedEventKind =
+  | "goal.set.completed"
+  | "goal.updated"
+  | "goal.paused"
+  | "goal.resumed"
+  | "goal.cleared"
+  | "goal.plan.updated"
+  | "goal.plan.removed"
+  | "goal.validation.started"
+  | "goal.validation.completed"
+  | "goal.validation.failed"
+  | "goal.blocked"
+  | "goal.limited"
+  | "goal.completed"
+  | "goal.reconciled"
+  | "goal.reconciliation.started";
+
+export type GoalEvent =
+  | {
+      kind: GoalPublishedEventKind;
+      eventKey: string;
+      runId: string;
+      goalId: string;
+      revision: number;
+      leaseGeneration: number;
+      snapshot: GoalSnapshot;
+    }
+  | { kind: "goal.set.started"; runId: string; goalId: string; operationId: string }
+  | { kind: "goal.set.refused"; runId: string; goalId: string; operationId: string; reason: string }
+  | { kind: "goal.set.failed"; runId: string; goalId: string; operationId: string; reason: string }
+  | { kind: "goal.action.started"; runId: string; goalId: string; operationId: string; action: GoalAction }
+  | { kind: "goal.action.completed"; runId: string; goalId: string; operationId: string; action: GoalAction; revision: number }
+  | { kind: "goal.action.refused"; runId: string; goalId: string; operationId: string; action: GoalAction; reason: string }
+  | { kind: "goal.action.failed"; runId: string; goalId: string; operationId: string; action: GoalAction; reason: string }
+  | { kind: "goal.reconciliation.completed"; runId: string; goalId: string; workerId: string; revision: number; leaseGeneration: number }
+  | { kind: "goal.reconciliation.refused"; runId: string; goalId: string; workerId: string | null; reason: string }
+  | { kind: "goal.reconciliation.failed"; runId: string; goalId: string; workerId: string | null; reason: string }
+  | { kind: "goal.worker_transferred"; runId: string; goalId: string; previousWorkerId: string | null; workerId: string; leaseGeneration: number }
+  | { kind: "goal.stale_lease_ignored"; runId: string; goalId: string; workerId: string; leaseGeneration: number; currentLeaseGeneration: number }
+  | { kind: "goal.payload_rejected"; runId: string; goalId: string; workerId: string; reason: string }
+  | { kind: "goal.outbox.recovery_started"; pendingCount: number }
+  | { kind: "goal.outbox.recovery_completed"; publishedCount: number; poisonedCount: number }
+  | { kind: "goal.outbox.retry_scheduled"; runId: string; goalId: string; revision: number; attempt: number; nextAttemptAt: string }
+  | { kind: "goal.outbox.poisoned"; runId: string; goalId: string; revision: number; attempt: number; reason: string };
+
 export type RecoveryEvent =
   | { kind: "recovery.opened"; runId: string; incidentId: string; recoveryKind: string }
   | { kind: "recovery.attempt"; runId: string; incidentId: string; attempt: number }
@@ -737,6 +794,7 @@ export type NamedEvent =
   | WorkerEvent
   | SupervisorEvent
   | PlanEvent
+  | GoalEvent
   | RecoveryEvent
   | AccountEvent
   | ConversationEvent
