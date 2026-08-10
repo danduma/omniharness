@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
+import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const plans = sqliteTable('plans', {
   id: text('id').primaryKey(),
@@ -50,6 +50,73 @@ export const runs = sqliteTable('runs', {
   lastActivityAt: integer('last_activity_at', { mode: 'timestamp' }),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });
+
+export const runGoals = sqliteTable('run_goals', {
+  runId: text('run_id').primaryKey().references(() => runs.id, { onDelete: 'cascade' }),
+  goalId: text('goal_id').notNull(),
+  objective: text('objective').notNull(),
+  status: text('status').notNull(),
+  revision: integer('revision').notNull(),
+  leaseGeneration: integer('lease_generation').notNull().default(0),
+  planJson: text('plan_json').notNull().default('[]'),
+  planSourceJson: text('plan_source_json').notNull().default('{"kind":"none"}'),
+  workerId: text('worker_id').references(() => workers.id, { onDelete: 'set null' }),
+  acpSessionId: text('acp_session_id'),
+  capabilitiesJson: text('capabilities_json').notNull().default('{}'),
+  validationStateJson: text('validation_state_json'),
+  lastError: text('last_error'),
+  controlMethod: text('control_method'),
+  transitionSource: text('transition_source').notNull().default('api'),
+  visible: integer('visible', { mode: 'boolean' }).notNull().default(true),
+  startedAt: integer('started_at', { mode: 'timestamp' }).notNull(),
+  pausedAt: integer('paused_at', { mode: 'timestamp' }),
+  resumedAt: integer('resumed_at', { mode: 'timestamp' }),
+  completedAt: integer('completed_at', { mode: 'timestamp' }),
+  clearedAt: integer('cleared_at', { mode: 'timestamp' }),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+}, (table) => [
+  uniqueIndex('run_goals_goal_id_idx').on(table.goalId),
+  index('run_goals_status_updated_idx').on(table.status, table.updatedAt),
+]);
+
+export const runGoalOperations = sqliteTable('run_goal_operations', {
+  runId: text('run_id').notNull().references(() => runs.id, { onDelete: 'cascade' }),
+  operationId: text('operation_id').notNull(),
+  principalId: text('principal_id').notNull(),
+  endpoint: text('endpoint').notNull(),
+  action: text('action').notNull(),
+  fingerprint: text('fingerprint').notNull(),
+  status: text('status').notNull(),
+  resultJson: text('result_json').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.runId, table.operationId] }),
+  index('run_goal_operations_created_idx').on(table.createdAt),
+]);
+
+export const runGoalOutbox = sqliteTable('run_goal_outbox', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').notNull().references(() => runs.id, { onDelete: 'cascade' }),
+  goalId: text('goal_id').notNull(),
+  leaseGeneration: integer('lease_generation').notNull(),
+  revision: integer('revision').notNull(),
+  eventKey: text('event_key').notNull(),
+  eventKind: text('event_kind').notNull(),
+  payloadJson: text('payload_json').notNull(),
+  status: text('status').notNull().default('pending'),
+  claimToken: text('claim_token'),
+  claimExpiresAt: integer('claim_expires_at', { mode: 'timestamp' }),
+  attemptCount: integer('attempt_count').notNull().default(0),
+  nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp' }).notNull(),
+  lastError: text('last_error'),
+  publishedAt: integer('published_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+}, (table) => [
+  uniqueIndex('run_goal_outbox_event_key_idx').on(table.eventKey),
+  index('run_goal_outbox_delivery_idx').on(table.status, table.nextAttemptAt, table.runId, table.revision),
+]);
 
 export const workers = sqliteTable('workers', {
   id: text('id').primaryKey(),
