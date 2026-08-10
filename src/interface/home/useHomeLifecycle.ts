@@ -18,6 +18,7 @@ import {
 import { conversationNotificationManager } from "./ConversationNotificationManager";
 import { claudeModelGatewayManager } from "./ClaudeModelGatewayManager";
 import { LiveEventConnectionManager, LiveEventCursorManager } from "./LiveEventConnectionManager";
+import { acpPlanManager } from "./AcpPlanManager";
 import type { ComposerWorkerOption, EventStreamState } from "./types";
 import { buildConversationPath, buildInlineError, parseBrowserConversationRoute, parseCollapsedProjectPaths, resolveSavedComposerModel } from "./utils";
 import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
@@ -126,6 +127,7 @@ export function useHomeLifecycle({
   runnerConnection,
 }: UseHomeLifecycleProps) {
   const runtimeApis = useRuntimeAPIs();
+  acpPlanManager.configure(runtimeApis.workers.getPlan);
   const didMountThemeEffectRef = useRef(false);
   const didHydrateCollapsedProjectsRef = useRef(false);
   const didSkipCollapsedProjectsInitialPersistRef = useRef(false);
@@ -191,6 +193,7 @@ export function useHomeLifecycle({
       initialLastEventId,
       cursor: liveEventCursor,
       getSnapshotChecksum,
+      planManager: acpPlanManager,
       applyUpdate: applyEventStreamUpdate,
       onStreamResync: () => claudeModelGatewayManager.resetRevisionAuthority(),
       reportError: (error) => {

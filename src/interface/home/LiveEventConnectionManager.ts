@@ -12,6 +12,7 @@ import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
 import type { EventStreamState } from "./types";
 import { workerEntriesManager } from "./WorkerEntriesManager";
 import { sidebarWorkerActivityManager, type SidebarWorkerActivityManager } from "./SidebarWorkerActivityManager";
+import { acpPlanManager, type AcpPlanManager } from "./AcpPlanManager";
 
 export { buildEventStreamUrl };
 
@@ -40,6 +41,7 @@ interface LiveEventConnectionManagerOptions {
   ) => Promise<SnapshotPollResult>;
   getSnapshotChecksum?: () => string | null | undefined;
   workerEntries?: Pick<typeof workerEntriesManager, "onKnownSeqs" | "onStreamResync" | "onWakeUp">;
+  planManager?: Pick<AcpPlanManager, "onKnownSeqs" | "onStreamResync" | "onWakeUp">;
   sidebarWorkerActivity?: Pick<SidebarWorkerActivityManager, "onKnownSeqs" | "onWakeUp">;
   applyUpdate: (state: EventStreamState) => void;
   reportError: (error: AppErrorDescriptor) => void;
@@ -171,6 +173,7 @@ export class LiveEventConnectionManager {
   private readonly events: Pick<RuntimeAPIs["events"], "snapshot" | "open">;
   private readonly getSnapshotChecksum?: () => string | null | undefined;
   private readonly workerEntries: Pick<typeof workerEntriesManager, "onKnownSeqs" | "onStreamResync" | "onWakeUp">;
+  private readonly planManager: Pick<AcpPlanManager, "onKnownSeqs" | "onStreamResync" | "onWakeUp">;
   private readonly sidebarWorkerActivity: Pick<SidebarWorkerActivityManager, "onKnownSeqs" | "onWakeUp">;
   private readonly applyUpdate: (state: EventStreamState) => void;
   private readonly reportError: (error: AppErrorDescriptor) => void;
@@ -200,6 +203,7 @@ export class LiveEventConnectionManager {
     });
     this.getSnapshotChecksum = options.getSnapshotChecksum;
     this.workerEntries = options.workerEntries ?? workerEntriesManager;
+    this.planManager = options.planManager ?? acpPlanManager;
     this.sidebarWorkerActivity = options.sidebarWorkerActivity ?? sidebarWorkerActivityManager;
     this.applyUpdate = options.applyUpdate;
     this.reportError = options.reportError;
@@ -244,6 +248,8 @@ export class LiveEventConnectionManager {
           this.handleUpdateErrorEvent(streamEvent.payload);
         } else if (streamEvent.kind === "worker.entry_appended") {
           this.handleWorkerEntryAppended(streamEvent.payload);
+        } else if (streamEvent.kind === "worker.plan_updated" || streamEvent.kind === "worker.plan_boundary_started") {
+          this.handlePlanWakeUp(streamEvent.payload);
         } else if (streamEvent.kind === "stream.resync_required") {
           void this.handleStreamResyncRequired();
         }
@@ -276,6 +282,7 @@ export class LiveEventConnectionManager {
       this.stopFallbackPolling();
       this.applyUpdate(data);
       this.workerEntries.onKnownSeqs(data.workerEntrySeqs);
+      this.planManager.onKnownSeqs(data.workerEntrySeqs);
       this.sidebarWorkerActivity.onKnownSeqs(data.workerEntrySeqs);
     } catch {
       this.reportError({
@@ -304,6 +311,16 @@ export class LiveEventConnectionManager {
     }
   }
 
+  private handlePlanWakeUp(payload: unknown) {
+    const data = payload as { workerId?: unknown; runId?: unknown; seq?: unknown };
+    if (typeof data.workerId !== "string" || typeof data.seq !== "number") return;
+    this.planManager.onWakeUp({
+      workerId: data.workerId,
+      runId: typeof data.runId === "string" ? data.runId : null,
+      seq: data.seq,
+    });
+  }
+
   private handleUpdateErrorEvent(payload: unknown) {
     try {
       this.reportError(withFallbackErrorContext(payload, {
@@ -324,6 +341,7 @@ export class LiveEventConnectionManager {
 
   private async handleStreamResyncRequired() {
     this.workerEntries.onStreamResync();
+    this.planManager.onStreamResync();
     this.onStreamResync?.();
     if (!this.active || this.reconnectingAfterResync) {
       return;
