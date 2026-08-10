@@ -7,6 +7,13 @@ CRITICAL!!:
 - When the user gives a UUID and asks what is going on with it, treat it as an OmniHarness conversation/session lookup: check `sqlite.db`, starting with the `runs` row for that UUID, then inspect related `workers`, `messages`, `execution_events`, queued messages, and validation/plan records as needed.
 - To delete all conversations and associated persisted artifacts, use `scripts/delete-conversations.sh`
 
+Planning artifacts:
+- When the user says “write the plan”, “write a full plan”, or “write the implementation plan”, treat that as a request to persist the complete plan to a file, not merely display it in chat.
+- If the user gives a path, write the plan there. Otherwise use `docs/superpowers/plans/YYYY-MM-DD-<kebab-case-feature-name>.md`, using the current date and a non-colliding filename.
+- The saved file is the canonical full plan. The final response should link to it and summarize the result rather than replacing the file with a chat-only plan.
+- This convention applies even when the current message omits the destination because “write the plan” is the project’s established shorthand for creating the plan artifact.
+- If the same request explicitly says not to change the workspace or not to create a file, obey that more specific prohibition and ask for a destination when needed.
+
 Testing:
 - When testing the app, use the already-running process if one exists instead of starting another server.
 - The normal runner URL is `http://localhost:3050`; the Vite development interface is usually at `http://localhost:5173`.
