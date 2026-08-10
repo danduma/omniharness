@@ -666,7 +666,7 @@ export function renderMarkdownContent({
   onOpenProjectFile,
 }: MarkdownContentProps) {
   return (
-    <div className={cn("max-w-none space-y-2 break-words text-sm leading-6", className)}>
+    <div className={cn("max-w-none space-y-2 break-words [overflow-wrap:anywhere] text-sm leading-6", className)}>
       {parseMarkdownBlocks({ content, inheritTextColor, projectRoot, onOpenProjectFile })}
     </div>
   );
@@ -686,7 +686,7 @@ export const MarkdownContent = memo(function MarkdownContent(props: MarkdownCont
   );
 
   return (
-    <div className={cn("max-w-none space-y-2 break-words text-sm leading-6", className)}>
+    <div className={cn("max-w-none space-y-2 break-words [overflow-wrap:anywhere] text-sm leading-6", className)}>
       {blocks}
     </div>
   );

@@ -1391,7 +1391,7 @@ const ConversationMain = memo(function ConversationMain({
                   />
                 ) : (
                   <div className={cn(
-                    "overflow-x-auto leading-relaxed",
+                    "min-w-0 overflow-hidden break-words [overflow-wrap:anywhere] leading-relaxed",
                     msg.role !== "supervisor" && "whitespace-pre-wrap",
                     msg.kind === "error"
                       ? "rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-destructive"

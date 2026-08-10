@@ -247,6 +247,7 @@
   "conversation.sidebar.showMoreSessions": "Show {count} more sessions in {project}",
   "conversation.sidebar.status.completedAttention": "Finished with unread messages",
   "conversation.sidebar.status.awaitingUser": "Waiting for your input",
+  "conversation.sidebar.status.unread": "Unread messages",
   "conversation.preflightConfirmation.yes": "Yes, implement it",
   "conversation.preflightConfirmation.no": "No, let me clarify",
   "conversation.mode.direct.label": "Direct control",

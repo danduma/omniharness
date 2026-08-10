@@ -199,6 +199,7 @@
   "conversation.sidebar.showMoreSessions": "{count} weitere Sitzungen in {project} anzeigen",
   "conversation.sidebar.status.completedAttention": "Fertig mit ungelesenen Nachrichten",
   "conversation.sidebar.status.awaitingUser": "Wartet auf deine Eingabe",
+  "conversation.sidebar.status.unread": "Ungelesene Nachrichten",
   "conversation.preflightConfirmation.yes": "Ja, fortfahren",
   "conversation.preflightConfirmation.no": "Nein, ich möchte klarstellen",
   "conversation.mode.direct.label": "Direkte Steuerung",

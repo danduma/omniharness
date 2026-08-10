@@ -41,9 +41,9 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('themeMode === "night"');
   expect(pageSource).toContain('rounded-[2rem] border border-[#dededd] bg-[#fdfdfc]');
   expect(pageSource).toContain('focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc]');
-  expect(pageSource).toContain("px-4 pb-0 pt-5");
+  expect(pageSource).toContain("px-4 pb-0 pt-4");
   expect(pageSource).toContain('"omni-composer-input w-full resize-none bg-transparent outline-none"');
-  expect(pageSource).toContain('hasAttachments ? "min-h-[152px] sm:min-h-[112px]" : "min-h-[112px] sm:min-h-[72px]"');
+  expect(pageSource).toContain('"min-h-[56px] sm:min-h-[72px] max-h-[100px] sm:max-h-[120px] overflow-y-hidden"');
   expect(globalsSource).toContain(".omni-composer-input");
   expect(globalsSource).toContain("line-height: var(--omni-composer-line-height, 20px);");
   expect(pageSource).toContain("rows={1}");
@@ -67,6 +67,22 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('codex: "gpt-5.6-sol"');
   expect(pageSource).toContain('bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/[0.45]');
   expect(pageSource).toContain('placeholder:text-[#c4c4c2]');
+});
+
+test("mobile composer keeps the summary in one bounded controls row and caps text growth", () => {
+  expect(pageSource).toContain('data-composer-controls="true"');
+  expect(pageSource).toContain('className="mt-0 flex min-w-0 items-end gap-1 pb-2 sm:gap-2"');
+  expect(pageSource).not.toContain('className="mt-0 flex flex-wrap items-center gap-1 pb-2 sm:flex-nowrap sm:gap-2"');
+  expect(pageSource).toContain("COMPOSER_MAX_LINES = 5");
+  expect(pageSource).toContain("resizeComposerTextarea");
+  expect(pageSource).toContain('min-h-[56px] sm:min-h-[72px]');
+  expect(pageSource).toContain('focus:min-h-[100px] sm:focus:min-h-[120px]');
+  expect(pageSource).toContain('max-h-[100px] sm:max-h-[120px]');
+  expect(mobileComposerSettingsSource).toContain('data-composer-settings-summary="true"');
+  expect(mobileComposerSettingsSource).toContain("flex-1 basis-0");
+  expect(mobileComposerSettingsSource).toContain("truncate");
+  expect(mobileComposerSettingsSource).not.toContain("whitespace-normal");
+  expect(mobileComposerSettingsSource).not.toContain("overflow-wrap:anywhere");
 });
 
 test("composer supports auto agent selection while pinning explicit agent choices", () => {
@@ -161,35 +177,41 @@ test("composer mention picker anchors above the typing shell on mobile", () => {
 });
 
 test("composer settings stay readable without clipping on either viewport", () => {
-  expect(pageSource).toContain('className="mt-0 flex items-center gap-1 pb-2 sm:gap-2"');
+  expect(pageSource).toContain('className="mt-0 flex min-w-0 items-end gap-1 pb-2 sm:gap-2"');
   expect(pageSource).toContain('data-composer-settings="true"');
   expect(pageSource).toContain("flex-wrap");
-  expect(pageSource).toContain('className="ml-auto sm:hidden"');
   expect(composerSelectSource).toContain("shrink-0");
   expect(composerModelPickerSource).toContain("shrink-0");
   expect(pageSource).toContain('"h-8 w-8 shrink-0 rounded-full transition-all"');
 });
 
-test("workspace control floats above the typing shell instead of joining settings", () => {
+test("workspace control floats over the top-left of the typing shell", () => {
   const workspaceIndex = pageSource.indexOf("<BranchWorkspaceButton");
   const textareaIndex = pageSource.indexOf('data-composer-input="true"');
   const settingsIndex = pageSource.indexOf('data-composer-settings="true"');
 
   expect(workspaceIndex).toBeGreaterThan(-1);
   expect(workspaceIndex).toBeLessThan(textareaIndex);
-  expect(settingsIndex).toBeGreaterThan(textareaIndex);
+  expect(settingsIndex).toBeGreaterThan(workspaceIndex);
+  expect(pageSource).toContain('className="pointer-events-none absolute inset-x-0 -top-5 z-30 hidden justify-start px-3 sm:flex sm:px-4"');
+  expect(pageSource).toContain("pointer-events-auto rounded-full border border-border/70");
   expect(pageSource).toContain('data-composer-workspace="true"');
 });
 
-test("mobile composer settings expose one unlabeled summary chip in an upward-wrapping rail", () => {
+test("mobile composer settings expose one unlabeled summary chip inside the input row", () => {
   expect(mobileComposerSettingsSource).toContain('data-composer-mobile-settings="true"');
-  expect(mobileComposerSettingsSource).toContain("bottom-full");
+  expect(mobileComposerSettingsSource).toContain("contents sm:hidden");
+  expect(mobileComposerSettingsSource).not.toContain("bottom-full");
   expect(mobileComposerSettingsSource).toContain("max-w-full");
   expect(mobileComposerSettingsSource).toContain("min-w-0");
-  expect(mobileComposerSettingsSource).toContain("pointer-events-auto");
-  expect(mobileComposerSettingsSource).toContain("flex-wrap");
   expect(mobileComposerSettingsSource).toContain("sm:hidden");
   expect(mobileComposerSettingsSource).toContain('data-composer-settings-chip="true"');
+  expect(mobileComposerSettingsSource).toContain("h-8 min-w-0 max-w-full flex-1 basis-0");
+  expect(mobileComposerSettingsSource).toContain("rounded-[0.85rem]");
+  expect(mobileComposerSettingsSource).toContain("px-3 py-1.5");
+  expect(mobileComposerSettingsSource).toContain("text-[11px]");
+  expect(mobileComposerSettingsSource).toContain("overflow-hidden");
+  expect(mobileComposerSettingsSource).toContain("truncate");
   expect(mobileComposerSettingsSource).toContain('data-composer-settings-dialog="true"');
   expect(mobileComposerSettingsSource).toContain("SlidersHorizontal");
   expect(mobileComposerSettingsSource).toContain('<SheetContent data-composer-settings-dialog="true" side="bottom"');

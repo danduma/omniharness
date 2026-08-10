@@ -178,8 +178,6 @@ function getMobileSettingsSummary({
   lockedDirectWorkerLabel,
   selectedCliAgent,
   composerWorkerOptions,
-  selectedWorkerAccountId,
-  composerAccountOptions,
   selectedModel,
   activeWorkerModelOptions,
   selectedEffort,
@@ -187,10 +185,8 @@ function getMobileSettingsSummary({
   const selectedHarnessLabel = shouldLockDirectWorker
     ? lockedDirectWorkerLabel
     : composerWorkerOptions.find((option) => option.value === selectedCliAgent)?.label ?? selectedCliAgent;
-  const selectedAccountLabel = composerAccountOptions.find((option) => option.value === selectedWorkerAccountId)?.label
-    ?? t("conversation.composer.account.auto");
   const selectedModelLabel = activeWorkerModelOptions.find((option) => option.value === selectedModel)?.label ?? selectedModel;
-  return `${selectedHarnessLabel} · ${selectedModelLabel} · ${selectedEffort} · ${selectedAccountLabel}`;
+  return `${selectedHarnessLabel} · ${selectedModelLabel} · ${selectedEffort}`;
 }
 
 export function MobileComposerSettings({
@@ -209,10 +205,10 @@ export function MobileComposerSettings({
     <>
       <div
         data-composer-mobile-settings="true"
-        className="pointer-events-none absolute inset-x-0 bottom-full z-30 flex max-w-full flex-wrap items-center gap-1.5 px-3 pb-2 sm:hidden"
+        className="contents sm:hidden"
       >
         {!selectedRunId ? (
-          <div data-composer-workspace="true" className="pointer-events-auto min-w-0 max-w-full">
+          <div data-composer-workspace="true" className="min-w-0 max-w-full shrink">
             <BranchWorkspaceButton
               projectPath={workspaceProjectPath}
               disabled={descriptorArgs.disabled}
@@ -223,10 +219,11 @@ export function MobileComposerSettings({
         <Button
           type="button"
           data-composer-settings-chip="true"
+          data-composer-settings-summary="true"
           variant="ghost"
           onClick={() => onSettingsOpenChange(true)}
           className={cn(
-            "pointer-events-auto flex h-8 min-w-0 max-w-full items-center gap-1.5 rounded-full border border-border/70 bg-background/95 px-2 text-xs font-medium shadow-sm backdrop-blur-sm dark:bg-[#2f2f2f]/95",
+            "flex h-8 min-w-0 max-w-full flex-1 basis-0 items-center gap-1.5 overflow-hidden rounded-[0.85rem] border border-border/70 bg-background/95 px-3 py-1.5 text-[11px] font-medium leading-4 shadow-sm backdrop-blur-sm dark:bg-[#2f2f2f]/95",
             themeMode === "night"
               ? "text-muted-foreground hover:bg-background/45 hover:text-foreground"
               : "text-[#959595] hover:bg-black/[0.04] hover:text-[#666666] dark:text-muted-foreground dark:hover:bg-background/45 dark:hover:text-foreground",
@@ -234,8 +231,8 @@ export function MobileComposerSettings({
           aria-label={t("conversation.composer.settings.title")}
           title={settingsSummary}
         >
-          <SlidersHorizontal className="h-[18px] w-[18px] shrink-0" />
-          <span className="min-w-0 max-w-full break-words text-left">{settingsSummary}</span>
+          <SlidersHorizontal className="h-4 w-4 shrink-0" />
+          <span className="min-w-0 flex-1 truncate text-left">{settingsSummary}</span>
         </Button>
       </div>
 
@@ -245,14 +242,12 @@ export function MobileComposerSettings({
             <SheetTitle>{t("conversation.composer.settings.title")}</SheetTitle>
           </SheetHeader>
           <div className="flex flex-col gap-5">
-            {descriptors
-              .filter((descriptor) => descriptor.key !== "account" || descriptor.options.length > 1)
-              .map((descriptor) => (
-                <div key={descriptor.key} className="flex items-center justify-between">
-                  <span className="text-sm font-medium">{descriptor.label}</span>
-                  {renderSettingControl(descriptor, themeMode)}
-                </div>
-              ))}
+            {descriptors.map((descriptor) => (
+              <div key={descriptor.key} className="flex items-center justify-between">
+                <span className="text-sm font-medium">{descriptor.label}</span>
+                {renderSettingControl(descriptor, themeMode)}
+              </div>
+            ))}
           </div>
         </SheetContent>
       </Sheet>

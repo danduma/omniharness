@@ -53,6 +53,16 @@ describe("MarkdownContent - Horizontal Rule rendering", () => {
   });
 });
 
+describe("MarkdownContent - unbroken text wrapping", () => {
+  it("allows long paths and other unbroken tokens to wrap inside the conversation", () => {
+    const tree = renderMarkdownContent({
+      content: "`/Users/masterman/NLP/omniharness/docs/superpowers/plans/2026-08-10-very-long-file-name.md`",
+    });
+
+    expect(tree.props.className).toContain("[overflow-wrap:anywhere]");
+  });
+});
+
 describe("MarkdownContent - List rendering", () => {
   it("keeps loose ordered items in one sequence and nests indented bullets under their parent item", () => {
     const content = [

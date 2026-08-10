@@ -47,7 +47,7 @@ function renderSettings(overrides: Partial<React.ComponentProps<typeof MobileCom
 }
 
 describe("mobile composer settings", () => {
-  it("renders the branch separately and one unlabeled settings chip", () => {
+  it("renders one unlabeled settings chip without account in its summary", () => {
     const html = renderSettings();
 
     expect(fs.existsSync(sourcePath)).toBe(true);
@@ -56,7 +56,7 @@ describe("mobile composer settings", () => {
     expect(html).toContain("Codex");
     expect(html).toContain("gpt-5.6-sol");
     expect(html).toContain("High");
-    expect(html).toContain("Auto account");
+    expect(html).not.toContain("Auto account");
     expect(html).not.toContain(">CLI<");
     expect(html).not.toContain(">Model<");
     expect(html).not.toContain(">Effort<");
@@ -76,7 +76,6 @@ describe("mobile composer settings", () => {
       />,
     );
 
-    expect(html).toContain('data-composer-workspace="true"');
     expect(html).toContain('data-composer-settings-chip="true"');
   });
 
@@ -92,20 +91,37 @@ describe("mobile composer settings", () => {
     expect(source).toContain("settingsOpen");
   });
 
-  it("keeps locked CLI, Auto account, gateway account, and disabled states visible", () => {
+  it("keeps locked CLI and disabled states visible while retaining account in settings descriptors", () => {
+    const source = fs.readFileSync(sourcePath, "utf8");
+    expect(source).toContain("{descriptors.map((descriptor) => (");
+
     const lockedHtml = renderSettings({
       shouldLockDirectWorker: true,
       disabled: true,
     });
     expect(lockedHtml).toContain("Claude Code");
     expect(lockedHtml).not.toContain('aria-label="Agent"');
-    expect(lockedHtml).toContain('title="Claude Code · gpt-5.6-sol · High · Auto account"');
+    expect(lockedHtml).toContain('title="Claude Code · gpt-5.6-sol · High"');
 
     const gatewayHtml = renderSettings({
       composerAccountOptions: [{ value: "auto", label: "Gateway provider connection" }],
     });
-    expect(gatewayHtml).toContain("Gateway provider connection");
-    expect(renderSettings()).toContain("Auto account");
+    expect(gatewayHtml).not.toContain("Gateway provider connection");
+    const descriptors = getMobileComposerSettingDescriptors({
+      ...baseArgs,
+      composerAccountOptions: [
+        { value: "auto", label: "Auto account" },
+        { value: "gateway", label: "Gateway provider connection" },
+      ],
+    });
+    const account = descriptors.find((descriptor) => descriptor.key === "account");
+    if (!account || account.kind !== "select") {
+      throw new Error("Expected the account setting descriptor to remain selectable");
+    }
+    expect(account.options).toEqual([
+      { value: "auto", label: "Auto account" },
+      { value: "gateway", label: "Gateway provider connection" },
+    ]);
   });
 
   it("wires every selectable descriptor to the existing setter", () => {

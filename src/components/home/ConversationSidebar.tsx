@@ -425,11 +425,14 @@ function ConversationProjectGroupList({
                   });
                   const showCompletedAttentionIndicator = normalizedRunStatus === "done" && runIsUnread;
                   const showAwaitingUserIndicator = normalizedRunStatus === "awaiting_user";
+                  const showUnreadIndicator = runIsUnread && !showAwaitingUserIndicator;
                   const statusIndicatorLabel = showAwaitingUserIndicator
                     ? t("conversation.sidebar.status.awaitingUser")
                     : showCompletedAttentionIndicator
                       ? t("conversation.sidebar.status.completedAttention")
-                      : null;
+                      : runIsUnread
+                        ? t("conversation.sidebar.status.unread")
+                        : null;
                   const visualConfig = CONVERSATION_VISUAL_CONFIG[visualKind];
                   const ConversationIcon = visualConfig.Icon;
 
@@ -467,7 +470,7 @@ function ConversationProjectGroupList({
                                   <TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />
                                 </span>
                               ) : null}
-                              {showCompletedAttentionIndicator && statusIndicatorLabel && !showAwaitingUserIndicator ? (
+                              {showUnreadIndicator && statusIndicatorLabel ? (
                                 <span
                                   className="h-2 w-2 rounded-full bg-sky-300"
                                   aria-label={statusIndicatorLabel}
@@ -513,9 +516,6 @@ function ConversationProjectGroupList({
                           <div className="flex shrink-0 items-center gap-1">
                             {run.status === "running" ? (
                               <LoaderCircle className="h-3.5 w-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" />
-                            ) : null}
-                            {runIsUnread && !showCompletedAttentionIndicator ? (
-                              <div className="h-2 w-2 shrink-0 rounded-full bg-blue-500" />
                             ) : null}
                             {canArchiveConversation && isCommitConversation ? (
                               <Button
@@ -895,7 +895,7 @@ const ConversationSidebar = memo(function ConversationSidebar({
     <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f1f1f0] dark:bg-muted/30">
       <div className="space-y-1 px-3 pb-3 pt-2 lg:px-3 lg:pb-3 lg:pt-2">
         <div className="flex items-center gap-1.5">
-          <div className="hidden min-w-0 flex-1 items-center gap-2 lg:flex">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
             <OmniHarnessMark className="h-8 w-8" />
             <span className="min-w-0 truncate text-sm font-semibold text-[#333333] dark:text-zinc-100">
               {PRODUCT_NAME}
@@ -905,7 +905,10 @@ const ConversationSidebar = memo(function ConversationSidebar({
             <Button
               variant="ghost"
               size="icon"
-              className="hidden h-9 w-9 text-[#333333]/75 transition-all duration-150 ease-out hover:bg-[#deddda] hover:text-[#1f1f1f] lg:inline-flex dark:text-zinc-300 dark:hover:bg-muted/70 dark:hover:text-zinc-100 motion-reduce:transition-none"
+              className={cn(
+                "h-9 w-9 text-[#333333]/75 transition-all duration-150 ease-out hover:bg-[#deddda] hover:text-[#1f1f1f] dark:text-zinc-300 dark:hover:bg-muted/70 dark:hover:text-zinc-100 motion-reduce:transition-none",
+                runnerControlsMode === "mobile" ? "ml-auto inline-flex" : "hidden lg:inline-flex",
+              )}
               aria-label={t("conversation.sidebar.collapseAria")}
               title={t("conversation.sidebar.collapseAria")}
               onClick={onCollapse}

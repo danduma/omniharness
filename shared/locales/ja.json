@@ -199,6 +199,7 @@
   "conversation.sidebar.showMoreSessions": "{project} のセッションをさらに {count} 件表示",
   "conversation.sidebar.status.completedAttention": "未読メッセージがある完了済み",
   "conversation.sidebar.status.awaitingUser": "入力を待っています",
+  "conversation.sidebar.status.unread": "未読メッセージ",
   "conversation.preflightConfirmation.yes": "はい、続行",
   "conversation.preflightConfirmation.no": "いいえ、補足します",
   "conversation.mode.direct.label": "直接操作",
