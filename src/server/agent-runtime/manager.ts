@@ -16,9 +16,14 @@ import {
 } from "./acp/runtime-client";
 import { operationalClientCapabilities } from "./acp/capability-registry";
 import {
+  abortWorkerPlanStartup,
+  bufferWorkerPlanStartupUpdate,
+  completeWorkerPlanStartup,
+  createWorkerPlanStartupContext,
   handleAcpSessionUpdateForWorker,
   initializeWorkerPlanSession,
   isAcpPlanNotification,
+  type WorkerPlanStartupContext,
 } from "./acp/plan-stream";
 import { invokeAgentRequest, sendAgentNotification } from "./acp/agent-methods";
 import { sanitizeAcpStream } from "./acp-stream-sanitizer";
@@ -976,11 +981,19 @@ function readCachedEndpointCheck(urlString: string): EndpointCheckResult | null 
 }
 
 class _RuntimeClient implements acp.Client {
+  private startupPlanContext: WorkerPlanStartupContext | null;
+
   constructor(
     private readonly getRecord: () => AgentRecord | undefined,
     private readonly publishChunk: (name: string, chunk: string) => void,
-    private readonly startupWorkerId: string | null = null,
-  ) {}
+    startupPlanContext: WorkerPlanStartupContext | null = null,
+  ) {
+    this.startupPlanContext = startupPlanContext;
+  }
+
+  setWorkerPlanStartupContext(context: WorkerPlanStartupContext | null) {
+    this.startupPlanContext = context;
+  }
 
   async requestPermission(params: acp.RequestPermissionRequest): Promise<acp.RequestPermissionResponse> {
     const record = this.getRecord();
@@ -1073,7 +1086,14 @@ class _RuntimeClient implements acp.Client {
 
   async sessionUpdate(params: acp.SessionNotification): Promise<void> {
     const record = this.getRecord();
-    const workerId = record?.name ?? this.startupWorkerId;
+    if (this.startupPlanContext && isAcpPlanNotification(params.update)) {
+      const admission = bufferWorkerPlanStartupUpdate(this.startupPlanContext, {
+        sessionId: params.sessionId,
+        update: params.update,
+      });
+      if (admission !== "ignored") return;
+    }
+    const workerId = record?.name ?? this.startupPlanContext?.workerId;
     if (workerId && isAcpPlanNotification(params.update)) {
       const planResult = await handleAcpSessionUpdateForWorker({
         workerId,
@@ -1727,6 +1747,9 @@ export class AgentRuntimeManager {
       : null;
     const pooledMember = poolKey ? this.workerPool.checkout(poolKey) : null;
 
+    const planStartupContext = await createWorkerPlanStartupContext(name, resumeSessionId);
+    try {
+
     let recordRef: { current?: AgentRecord };
     let stderrBuffer: string[];
     let client: ExtractedRuntimeClient;
@@ -1740,6 +1763,7 @@ export class AgentRuntimeManager {
       recordRef = pooledMember.recordRef;
       stderrBuffer = pooledMember.stderrBuffer;
       client = pooledMember.client as ExtractedRuntimeClient;
+      client.setWorkerPlanStartupContext(planStartupContext);
       child = pooledMember.child;
       connection = pooledMember.connection;
       init = pooledMember.init;
@@ -1754,7 +1778,7 @@ export class AgentRuntimeManager {
         [cwd, ...additionalDirectories],
         undefined,
         undefined,
-        name,
+        planStartupContext,
       );
       const candidates = (useCodexFallback
         ? [{ command: "codex-acp", args: [] as string[] }]
@@ -2081,10 +2105,17 @@ export class AgentRuntimeManager {
     this.agents.set(name, record);
 
     try {
-      await initializeWorkerPlanSession(name, sessionId);
+      if (planStartupContext) {
+        await completeWorkerPlanStartup(planStartupContext, sessionId);
+      } else {
+        await initializeWorkerPlanSession(name, sessionId);
+      }
     } catch {
       // Plan binding failures are surfaced by the plan stream; ordinary ACP
       // output remains usable while the worker lifecycle continues.
+      if (planStartupContext) abortWorkerPlanStartup(planStartupContext);
+    } finally {
+      client.setWorkerPlanStartupContext(null);
     }
 
     child.on("exit", (code, signal) => {
@@ -2118,6 +2149,10 @@ export class AgentRuntimeManager {
     }
 
     return this.toStatus(record);
+    } catch (error) {
+      if (planStartupContext) abortWorkerPlanStartup(planStartupContext);
+      throw error;
+    }
   }
 
   async stopAgent(name: string) {
