@@ -48,6 +48,7 @@ import { handleSupervisorRequest } from "./supervisor";
 import { handleRunAnswerRequest } from "./run-answer";
 import { handleRunResumeRequest } from "./run-resume";
 import { handleRunDeleteRequest, handleRunPatchRequest, handleRunPostRequest } from "./runs";
+import { handleGoalRequest } from "./goals";
 import { handleExternalSessionsRequest } from "./external-sessions";
 import {
   handleTerminalCreateRequest,
@@ -143,6 +144,9 @@ export function createOmniRuntimeHttpRegistry() {
     .route("PATCH", "/api/runs/:id", handleRunPatchRequest)
     .route("POST", "/api/runs/:id", handleRunPostRequest)
     .route("DELETE", "/api/runs/:id", handleRunDeleteRequest)
+    .route("GET", "/api/runs/:id/goal", handleGoalRequest)
+    .route("PUT", "/api/runs/:id/goal", handleGoalRequest)
+    .route("POST", "/api/runs/:id/goal/actions", handleGoalRequest)
     .route("POST", "/api/runs/:id/answer", handleRunAnswerRequest)
     .route("POST", "/api/runs/:id/resume", handleRunResumeRequest)
     .route("GET", "/api/external-sessions", handleExternalSessionsRequest)
@@ -202,6 +206,7 @@ export { handleSupervisorRequest } from "./supervisor";
 export { handleRunAnswerRequest } from "./run-answer";
 export { handleRunResumeRequest } from "./run-resume";
 export { handleRunDeleteRequest, handleRunPatchRequest, handleRunPostRequest } from "./runs";
+export { handleGoalRequest } from "./goals";
 export { handleExternalSessionsRequest } from "./external-sessions";
 export {
   handleTerminalCreateRequest,
