@@ -129,6 +129,10 @@ export interface RuntimeAPIs {
       beforeSeq?: number;
       limit?: number;
     }, options?: RuntimeCallOptions): Promise<unknown>;
+    getPlan(input: {
+      runId?: string;
+      workerId: string;
+    }, options?: RuntimeCallOptions): Promise<import("@/shared/acp-plan").WorkerPlanReadResponse>;
     get(input: { workerId: string; history?: "full" }, options?: RuntimeCallOptions): Promise<unknown>;
     prewarm(input?: unknown, options?: RuntimeCallOptions): Promise<unknown>;
     answerElicitation(input: {

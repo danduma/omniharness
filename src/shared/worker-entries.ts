@@ -48,6 +48,13 @@ export type ServerWorkerEntryType =
 
 export type WorkerEntryType = BridgeWorkerEntryType | ServerWorkerEntryType;
 
+export type WorkerPlanProjection =
+  | "accepted_core"
+  | "session_reset"
+  | "rejected"
+  | "unsupported"
+  | "stale";
+
 export interface WorkerEntry {
   /** Stable id from the bridge for bridge entries; uuid for server-produced entries. */
   id: string;
@@ -64,6 +71,14 @@ export interface WorkerEntry {
   authorRole?: WorkerEntryAuthorRole;
   channel?: WorkerEntryChannel;
   attachments?: WorkerEntryAttachment[];
+  /** ACP session identity for plan-bearing and plan-boundary entries. */
+  acpSessionId?: string | null;
+  /** Explicit projection classification; payload shape never implies acceptance. */
+  planProjection?: WorkerPlanProjection;
+  /** Protocol/debug rows and session boundaries never enter ordinary conversation UI. */
+  diagnosticOnly?: boolean;
+  /** Normalized complete-list core plan, present only for accepted_core entries. */
+  normalizedPlan?: import("./acp-plan").AcpPlanItem[];
 }
 
 const BRIDGE_TYPES: ReadonlySet<WorkerEntryType> = new Set<WorkerEntryType>([

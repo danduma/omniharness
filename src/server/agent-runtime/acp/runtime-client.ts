@@ -11,6 +11,10 @@ import { normalizeSessionUpdate } from "./session-updates";
 import { TerminalService } from "./terminal-service";
 import { McpService, registeredAcpMcpHandlersSnapshot, type AcpMcpHandler } from "./mcp-service";
 import { emitNamedEvent } from "@/server/events/named-events";
+import {
+  handleAcpSessionUpdateForWorker,
+  isAcpPlanNotification,
+} from "./plan-stream";
 
 export type AcpExtensionHandler = {
   request?(params: Record<string, unknown>): Promise<Record<string, unknown>>;
@@ -276,6 +280,7 @@ export class RuntimeClient implements acp.Client {
     workspaceRoots: string | readonly string[] | null = null,
     mcpHandlers: ReadonlyMap<string, AcpMcpHandler> = registeredAcpMcpHandlersSnapshot(),
     private readonly extensions: ReadonlyMap<string, AcpExtensionHandler> = new Map(),
+    private readonly startupWorkerId: string | null = null,
   ) {
     this.workspaceRoots = typeof workspaceRoots === "string" ? [workspaceRoots] : workspaceRoots ?? [];
     this.mcp = new McpService(mcpHandlers, (action, resourceId) => {
@@ -468,6 +473,18 @@ export class RuntimeClient implements acp.Client {
 
   async sessionUpdate(params: acp.SessionNotification): Promise<void> {
     const record = this.getRecord();
+    const workerId = record?.name ?? this.startupWorkerId;
+    if (workerId && isAcpPlanNotification(params.update)) {
+      const planResult = await handleAcpSessionUpdateForWorker({
+        workerId,
+        sessionId: params.sessionId,
+        update: params.update,
+      });
+      if (planResult.kind !== "ignored") {
+        if (record) record.updatedAt = nowIso();
+        return;
+      }
+    }
     if (!record) {
       return;
     }

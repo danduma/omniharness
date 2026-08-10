@@ -10,6 +10,8 @@
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { readWorkerEntriesBefore, readWorkerEntriesSince, readWorkerEntriesTail } from "@/server/workers/output-store";
+import { readWorkerPlan } from "@/server/agent-runtime/acp/plan-stream";
+import { emitNamedEvent } from "@/server/events/named-events";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { startSlowProbe } from "@/server/slow-probe";
 
@@ -94,6 +96,26 @@ export const handleWorkerEntriesRequest: OmniHttpHandler = async (request, conte
   }
 
   const url = new URL(request.url);
+  if (url.searchParams.get("view") === "plan") {
+    try {
+      probe.mark("readPlan");
+      return Response.json(await readWorkerPlan(runId, workerId));
+    } catch (error) {
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "worker.plan.snapshot_failed",
+        message: `Failed to read the worker ACP plan: ${error instanceof Error ? error.message : String(error)}`,
+        surface: "log",
+        runId,
+        workerId,
+        cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+      });
+      return Response.json({ error: "Worker plan unavailable" }, { status: 503 });
+    } finally {
+      probe.end();
+    }
+  }
+
   const afterSeq = parseAfterSeq(url.searchParams.get("afterSeq"));
   const beforeSeq = parsePositiveInt(url.searchParams.get("beforeSeq"));
   const limitRaw = parsePositiveInt(url.searchParams.get("limit"));
