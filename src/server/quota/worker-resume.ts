@@ -18,6 +18,7 @@ import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { appendSupervisorInputOnDelivery } from "@/server/workers/stream-writer";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
+import { readWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import {
@@ -205,7 +206,9 @@ export async function resumeQuotaExhaustedWorkers(args: {
     }
 
     const workerMode = resolveWorkerLaunchMode(worker.bridgeSessionMode, yoloModeEnabled);
-    const launchSelection = resolveWorkerLaunchSelection(worker, args.run);
+    const launchSelection = resolveWorkerLaunchSelection(worker, args.run, {
+      accountId: await readWorkerAllocatedAccountId(worker.id),
+    });
     try {
       let resumedWorker;
       try {

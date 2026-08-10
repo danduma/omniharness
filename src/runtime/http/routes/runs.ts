@@ -15,6 +15,7 @@ import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { GitWorkspaceError } from "@/server/git/workspaces";
 import { getRunLatestUnreadTimestamp } from "@/lib/conversation-state";
+import { isPermanentAccountFailure } from "@/lib/provider-account-failures";
 import { compactRunOutputs } from "@/server/workers/output-store";
 import { cleanupRunArtifacts } from "@/server/artifacts/cleanup";
 import { pauseForClarifications } from "@/server/clarifications/loop";
@@ -90,9 +91,10 @@ function isSupervisorStopAlreadySettled(status: string | null | undefined) {
   return normalized !== "running" && normalized !== "quota_waiting";
 }
 
-function isPermanentAccountFailure(message: string | null | undefined) {
-  return /\b(?:api key|authentication required|auth(?:entication)? failed|billing required|api billing|cap_exceeded|insufficient quota|resource exhausted)\b/i.test(message ?? "");
-}
+// Classification lives in @/lib/provider-account-failures so this route, the
+// supervisor retry gate and the frontend auto-resume gate cannot drift apart
+// again — they previously disagreed about whether "403 Account suspended"
+// was permanent.
 
 function actionLabelForPostAction(action: unknown) {
   switch (action) {

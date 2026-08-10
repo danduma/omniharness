@@ -51,6 +51,7 @@ import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallba
 import { updateDirectRunStatusFromWorkerOutput } from "@/server/conversations/direct-run-status";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
+import { readWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { createBranchWorktree } from "@/server/git/workspaces";
@@ -591,7 +592,9 @@ async function resumeDirectRunFromSavedSession(
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
   const { env: envParams } = await readRuntimeEnvFromSettings();
-  const launchSelection = resolveWorkerLaunchSelection(worker, run);
+  const launchSelection = resolveWorkerLaunchSelection(worker, run, {
+    accountId: await readWorkerAllocatedAccountId(worker.id),
+  });
   let resumedWorker: AgentRecord | null = null;
   let recreatedFromRejectedEmptySession = false;
   let replayPrompt: string | null = null;

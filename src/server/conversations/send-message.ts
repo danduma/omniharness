@@ -24,6 +24,7 @@ import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
+import { readWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { appendAttachmentContext, normalizeChatAttachments, parseChatAttachmentsJson, resolveImageAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { getAppDataPath } from "@/server/app-root";
@@ -50,6 +51,8 @@ import {
 } from "@/server/workers/session-recovery";
 import { recreateWorkerFromTranscript, type WorkerRecreationSelection } from "@/server/workers/provider-session-recovery";
 import { decodeClaudeGatewayModel } from "@/lib/claude-model-gateway";
+import { annotateVerifiedLiveCredential, isAuthShapedProviderFailure } from "@/lib/provider-account-failures";
+import { supportsCredentialLivenessProbe, verifyAccountCredentialLiveness } from "@/server/accounts/credential-verification";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
@@ -480,7 +483,9 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
   const { env: envParams } = await readRuntimeEnvFromSettings();
-  const launchSelection = resolveWorkerLaunchSelection(worker, run);
+  const launchSelection = resolveWorkerLaunchSelection(worker, run, {
+    accountId: await readWorkerAllocatedAccountId(worker.id),
+  });
   const spawnParams = {
     type: worker.type,
     cwd: worker.cwd,
@@ -656,6 +661,86 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
   return { ...resumedWorker, transcriptReplayRequired };
 }
 
+// A provider that blames the credential is usually just having a bad second.
+// Retry the turn a couple of times before anyone concludes the account is dead.
+const AUTH_RETRY_BACKOFF_MS = [2_000, 6_000];
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+async function resolveWorkerAccountId(run: RunRecord, worker: WorkerRecord) {
+  const allocation = await db
+    .select()
+    .from(workerCredentialAllocations)
+    .where(eq(workerCredentialAllocations.workerId, worker.id))
+    .get();
+  return allocation?.accountId ?? run.preferredWorkerAccountId?.trim() ?? null;
+}
+
+/**
+ * Decide whether an auth-shaped failure is really the account's fault.
+ *
+ * Returns the message to persist: annotated as verified-live when the
+ * credential provably still works (so recovery stays armed), or untouched when
+ * the credential is dead or the probe was inconclusive (so the run latches and
+ * the user is told to re-authenticate).
+ */
+async function resolveAuthFailureMessage(run: RunRecord, worker: WorkerRecord, message: string) {
+  if (!isAuthShapedProviderFailure(message) || !supportsCredentialLivenessProbe(worker.type)) {
+    return message;
+  }
+
+  const accountId = await resolveWorkerAccountId(run, worker);
+  const verification = await verifyAccountCredentialLiveness({
+    workerType: worker.type,
+    accountId,
+    cwd: worker.cwd || run.projectPath || process.cwd(),
+  });
+
+  await recordExecutionEvent({
+    runId: run.id,
+    workerId: worker.id,
+    eventType: "worker_credential_verified",
+    details: {
+      summary: verification.liveness === "live"
+        ? "Provider reported an auth failure but the credential still works; treating it as transient."
+        : `Credential verification returned "${verification.liveness}"; the failure stands.`,
+      accountId,
+      liveness: verification.liveness,
+      detail: verification.detail,
+      providerError: message,
+    },
+  });
+
+  return verification.liveness === "live" ? annotateVerifiedLiveCredential(message) : message;
+}
+
+/**
+ * A 403/401 on a prompt aborts the turn before any work happens, so replaying
+ * it is safe — and it is the single cheapest way to shake off the provider's
+ * intermittent "Account suspended" answers.
+ */
+async function askAgentWithAuthRetry(
+  workerId: string,
+  prompt: string,
+  imageAttachments?: Array<{ path: string; mimeType: string }>,
+) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await (imageAttachments?.length
+        ? askAgent(workerId, prompt, imageAttachments)
+        : askAgent(workerId, prompt));
+    } catch (error) {
+      const exhausted = attempt >= AUTH_RETRY_BACKOFF_MS.length;
+      if (exhausted || !isAuthShapedProviderFailure(formatErrorMessage(error))) {
+        throw error;
+      }
+      await sleep(AUTH_RETRY_BACKOFF_MS[attempt]);
+    }
+  }
+}
+
 async function askDirectWorkerWithResume(
   run: RunRecord,
   worker: WorkerRecord,
@@ -665,9 +750,7 @@ async function askDirectWorkerWithResume(
 ) {
   const workerPrompt = promptOverride ?? (isDirectRunMode(run.mode) ? buildDirectWorkerPrompt(content) : content);
   try {
-    return await (imageAttachments?.length
-      ? askAgent(worker.id, workerPrompt, imageAttachments)
-      : askAgent(worker.id, workerPrompt));
+    return await askAgentWithAuthRetry(worker.id, workerPrompt, imageAttachments);
   } catch (error) {
     if (isProviderSessionDiagnosticErrorMessage(formatErrorMessage(error))) {
       const currentWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
@@ -924,7 +1007,11 @@ async function continueWorkerConversation({
       return;
     }
 
-    const surfacedErrorMessage = userFacingProviderSessionErrorMessage(formatErrorMessage(error));
+    const surfacedErrorMessage = await resolveAuthFailureMessage(
+      run,
+      worker,
+      userFacingProviderSessionErrorMessage(formatErrorMessage(error)),
+    );
     await db.update(workers).set({
       status: "error",
       updatedAt: new Date(),

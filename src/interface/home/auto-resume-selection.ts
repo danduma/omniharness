@@ -1,3 +1,5 @@
+import { isPermanentAccountFailure, isPoisonedSessionFailure } from "@/lib/provider-account-failures";
+
 export type RecoverRunAction = "retry" | "edit" | "fork";
 
 export function shouldSelectRecoveredRunAfterSuccess({
@@ -44,13 +46,16 @@ export function cancelInactiveAutoResumeTimers<TEntry extends { timerId: ReturnT
   return cancelled;
 }
 
-// Match how adapters actually word a dead credential, not just the tidy forms.
-// "Failed to authenticate. API Error: 403 Account suspended" matched none of the
-// original patterns ("auth failed" is the reverse word order), so opening a
-// permanently-dead session re-fired auto-resume against an account that can
-// never answer.
+// Delegates to the shared gate in @/lib/provider-account-failures. Widening a
+// local regex here is what made this bug recur: each round added more dead-
+// credential wording, which only made a *live* account latch harder when the
+// provider returned a spurious "403 Account suspended". Permanence for auth
+// wording is now decided by probing the credential server-side, and the verdict
+// travels in the failure text.
 export function isPermanentAutoResumeFailure(failureKey: string | null | undefined) {
-  return /\b(?:api key|authentication required|auth(?:entication)? failed|failed to auth(?:enticate)?|authentication_failed|account suspended|account (?:is )?(?:disabled|banned)|(?:access |refresh )?token (?:has been |was )?revoked|billing required|api billing|cap_exceeded|insufficient quota|resource exhausted|system resources are low|worker\.spawn\.resource_exhausted|ede_diagnostic)\b/i.test(failureKey ?? "");
+  // A poisoned session is not an account problem, but re-asking it on a timer
+  // just replays the broken state, so auto-resume must stay off for it too.
+  return isPermanentAccountFailure(failureKey) || isPoisonedSessionFailure(failureKey);
 }
 
 export function shouldFireAutoResumeTimer<TEntry extends {

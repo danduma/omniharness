@@ -181,6 +181,35 @@ describe("auto-resume selection guards", () => {
     }
   });
 
+  it("auto-resumes an auth failure whose credential was verified live", () => {
+    // The provider blamed the credential, but a probe proved the account still
+    // answers. Suppressing auto-resume here is what pinned live conversations
+    // in a permanently failed state.
+    const timer = setTimeout(() => undefined, 10_000);
+    const failureKey = ":Internal error: Failed to authenticate. API Error: 403 Account suspended [credential_verified_live]";
+    const entries = new Map([
+      ["failed-run", { failureKey, targetMessageId: "message-a", timerId: timer }],
+    ]);
+
+    try {
+      expect(isPermanentAutoResumeFailure(failureKey)).toBe(false);
+      expect(shouldFireAutoResumeTimer({
+        entries,
+        runId: "failed-run",
+        failureKey,
+        targetMessageId: "message-a",
+        activeRunId: "failed-run",
+        isAutoResumableConversation: true,
+        selectedRunStatus: "failed",
+        failedWorkerAvailabilityStatus: "ok",
+        hasWorkerFailureDetail: false,
+        recoverRunIsPending: false,
+      })).toBe(true);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
   it("still auto-resumes transient connection failures", () => {
     expect(isPermanentAutoResumeFailure(":Ask failed: read ECONNRESET")).toBe(false);
     expect(isPermanentAutoResumeFailure(":Ask failed: API Error: 429 rate limit reached")).toBe(false);

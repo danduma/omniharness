@@ -1,3 +1,4 @@
+import { stripProviderFailureMarkers } from "@/lib/provider-account-failures";
 import type { RecoveryIncidentRecord, RunRecoveryState } from "./types";
 
 export function recoveryTone(state: RunRecoveryState | null | undefined) {
@@ -22,8 +23,10 @@ export function recoveryTitleKey(state: RunRecoveryState | null | undefined) {
 export function recoveryDescriptionKey(state: RunRecoveryState | null | undefined) {
   if (!state) return "recovery.notice.description.empty";
   if (state.kind === "quota_waiting") return "recovery.notice.description.quotaWaiting";
-  if (state.message?.trim()) return state.message.trim();
-  if (state.lastError?.trim()) return state.lastError.trim();
+  // Strip internal classification markers: the user should read the provider's
+  // wording, not our bookkeeping.
+  if (state.message?.trim()) return stripProviderFailureMarkers(state.message);
+  if (state.lastError?.trim()) return stripProviderFailureMarkers(state.lastError);
   if (state.status === "recovering") return "recovery.notice.description.recovering";
   if (state.kind === "lost_worker_resumable") return "recovery.notice.description.lostWorkerResumable";
   if (state.kind === "lost_worker_rerunnable") return "recovery.notice.description.lostWorkerRerunnable";

@@ -1,3 +1,5 @@
+import { isPermanentAccountFailure, isPoisonedSessionFailure } from "@/lib/provider-account-failures";
+
 const RETRYABLE_STATUS_CODES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 const RETRYABLE_ERROR_CODES = new Set([
   "ECONNABORTED",
@@ -55,27 +57,18 @@ const RETRYABLE_MESSAGE_PATTERNS = [
 // the bridge surfaces as HTTP 500 — a retryable status. Without these patterns a
 // revoked OAuth token looks transient, so recovery spins on it indefinitely and
 // the user is never told to re-authenticate.
+// Account, billing and credential wording is classified by the shared
+// @/lib/provider-account-failures gate so this list cannot drift away from the
+// recover-run route and the frontend auto-resume gate. That gate also honours
+// the verified-live marker: an auth failure whose credential was probed and
+// found working stays retryable, because the provider intermittently answers a
+// healthy account with "403 Account suspended".
 const PERMANENT_MESSAGE_PATTERNS = [
   // A user stop or steer aborted this turn. Retrying it would resurrect exactly
   // the work the user just cancelled.
   /\bworker turn aborted\b/i,
   /\bthis operation was aborted\b/i,
   /\bworker binary is not installed\b/i,
-  /\bAPI key not valid\b/i,
-  /\bauthentication required\b/i,
-  /\bfailed to authenticate\b/i,
-  /\bauthentication[ _]failed\b/i,
-  /\b(?:access |refresh )?token (?:has been |was )?revoked\b/i,
-  /\binvalid[ _]api[ _]key\b/i,
-  /\bbilling required\b/i,
-  /\bcap_exceeded\b/i,
-  /\binsufficient quota\b/i,
-  /\bresource exhausted\b/i,
-  // ACP can return an incomplete user-result diagnostic when a resumed
-  // session is stuck at an interrupted tool/permission boundary. Retrying the
-  // same session only repeats the broken state; recovery must stop and surface
-  // it for a fresh-session/manual path.
-  /\[ede_diagnostic\]/i,
 ];
 
 export interface RetrySupervisorRequestOptions {
@@ -177,7 +170,9 @@ export function isTransientSupervisorError(error: unknown) {
 
   if (chain.some((entry) => {
     const message = typeof entry.message === "string" ? entry.message : "";
-    return PERMANENT_MESSAGE_PATTERNS.some((pattern) => pattern.test(message));
+    return isPermanentAccountFailure(message)
+      || isPoisonedSessionFailure(message)
+      || PERMANENT_MESSAGE_PATTERNS.some((pattern) => pattern.test(message));
   })) {
     return false;
   }

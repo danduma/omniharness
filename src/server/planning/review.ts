@@ -33,6 +33,7 @@ import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
+import { readWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
 
 const processBootTime = new Date();
 
@@ -388,7 +389,9 @@ async function orchestratePlanningReview(reviewRunId: string) {
           if (!isRecoverablePlannerAgentMissingError(error)) {
             throw error;
           }
-          const launchSelection = resolveWorkerLaunchSelection(plannerWorker, run);
+          const launchSelection = resolveWorkerLaunchSelection(plannerWorker, run, {
+            accountId: await readWorkerAllocatedAccountId(plannerWorker.id),
+          });
           const spawnParams = {
             type: plannerWorker.type,
             cwd: plannerWorker.cwd,
