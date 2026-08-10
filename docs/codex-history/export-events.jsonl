@@ -619,3 +619,11 @@
 {"at":"2026-08-09T10:00:16.407Z","type":"archive.conversation.written","provider":"claude","threadId":"d7916621-84e1-445a-8f26-c928bce410cf","parts":1,"redactions":0,"malformedLines":0}
 {"at":"2026-08-09T10:00:16.409Z","type":"archive.conversation.unchanged","count":85}
 {"at":"2026-08-09T10:00:16.409Z","type":"archive.export.completed","conversations":177,"failed":0}
+{"at":"2026-08-09T22:00:23.210Z","type":"archive.export.started","projectRoot":"/Users/masterman/NLP/omniharness"}
+{"at":"2026-08-09T22:00:23.250Z","type":"archive.conversation.written","provider":"claude","threadId":"2de57847-cbf5-4d73-b59c-90f2e544d885","parts":1,"redactions":3,"malformedLines":0}
+{"at":"2026-08-09T22:00:23.252Z","type":"archive.conversation.unchanged","count":86}
+{"at":"2026-08-09T22:00:23.252Z","type":"archive.export.completed","conversations":177,"failed":0}
+{"at":"2026-08-10T10:00:19.166Z","type":"archive.export.started","projectRoot":"/Users/masterman/NLP/omniharness"}
+{"at":"2026-08-10T10:00:19.207Z","type":"archive.conversation.written","provider":"claude","threadId":"2de57847-cbf5-4d73-b59c-90f2e544d885","parts":1,"redactions":3,"malformedLines":0}
+{"at":"2026-08-10T10:00:19.211Z","type":"archive.conversation.unchanged","count":86}
+{"at":"2026-08-10T10:00:19.211Z","type":"archive.export.completed","conversations":177,"failed":0}

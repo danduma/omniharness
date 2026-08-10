@@ -1,7 +1,7 @@
 {
   "version": 2,
   "projectRoot": "/Users/masterman/NLP/omniharness",
-  "generatedAt": "2026-08-09T10:00:16.407Z",
+  "generatedAt": "2026-08-10T10:00:19.210Z",
   "conversations": [
     {
       "provider": "claude",
@@ -917,7 +917,7 @@
       "workingDirectory": "/Users/masterman/NLP/omniharness",
       "sourcePresent": true,
       "resolution": "repository",
-      "sourceFingerprint": "12db05db3553b67583c1b3d1571364998656a8562eef9cf78a30bf2f20800b0f",
+      "sourceFingerprint": "fab8f36d26a7aae61d5e38a7f911b02de9669b8697cc6d5bedae1b7741a8bdfb",
       "parts": [
         "conversations/2026/08/2026-08-03-claude-investigate-stuck-worker-recovery-session-2de57847-cbf5-4d73-b59c-90f2e544d885-part-001.md"
       ],
