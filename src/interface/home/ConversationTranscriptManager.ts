@@ -65,6 +65,7 @@ export class ConversationTranscriptManager {
   private readonly stateByRunId = new Map<string, ConversationTranscriptState>();
   private readonly listenersByRunId = new Map<string, Set<() => void>>();
   private readonly inFlightByRunId = new Map<string, Promise<void>>();
+  private readonly olderLoadInFlightByRunId = new Set<string>();
   private transcript: RuntimeAPIs["conversations"]["transcript"] | null;
 
   constructor(options: ConversationTranscriptManagerOptions = {}) {
@@ -118,18 +119,32 @@ export class ConversationTranscriptManager {
 
   loadOlder(runId: string, limit: number = DEFAULT_TRANSCRIPT_LIMIT): Promise<void> {
     if (this.inFlightByRunId.has(runId)) {
-      return this.inFlightByRunId.get(runId)!;
+      const existing = this.inFlightByRunId.get(runId)!;
+      if (this.olderLoadInFlightByRunId.has(runId)) {
+        return existing;
+      }
+      // A refresh may already be occupying the single-flight slot when the
+      // user reaches the top of the viewport. Preserve that scroll-back
+      // intent and start the older-page request after the refresh settles.
+      return existing.then(
+        () => this.loadOlder(runId, limit),
+        () => this.loadOlder(runId, limit),
+      );
     }
     const state = this.getState(runId);
     if (!state.hasOlder || !state.oldestToken) {
       return Promise.resolve();
     }
-    return this.fetchOlder(runId, state.oldestToken, limit);
+    this.olderLoadInFlightByRunId.add(runId);
+    return this.fetchOlder(runId, state.oldestToken, limit).finally(() => {
+      this.olderLoadInFlightByRunId.delete(runId);
+    });
   }
 
   reset(): void {
     this.stateByRunId.clear();
     this.inFlightByRunId.clear();
+    this.olderLoadInFlightByRunId.clear();
     this.listenersByRunId.clear();
   }
 
