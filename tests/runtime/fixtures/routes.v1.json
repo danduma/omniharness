@@ -59,6 +59,7 @@
     "POST /api/conversations/:id/messages",
     "POST /api/conversations/:id/queued-messages/:messageId/interrupt",
     "POST /api/conversations/:id/queued-messages/interrupt-next",
+    "POST /api/fs/directories",
     "POST /api/git",
     "POST /api/integrations/claude-model-gateway",
     "POST /api/llm-models",

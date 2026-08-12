@@ -269,6 +269,7 @@ async function callEveryDomainMethod(apis: RuntimeAPIs) {
   await apis.workers.answerPermission({ workerId: "worker/1", body: { decision: "allow" } });
   await apis.workers.catalog({ refresh: true });
   await apis.files.browse({ path: "/tmp/a b" });
+  await apis.files.createDirectory({ parentPath: "/tmp/a", name: "new project" });
   await apis.files.list({ root: "/tmp/a", file: "a b.ts" });
   const formData = new FormData();
   formData.append("projectPath", "/tmp/a");
@@ -309,7 +310,7 @@ describe.each([
     const { apis, calls } = createHarness();
     await callEveryDomainMethod(apis);
 
-    expect(calls).toHaveLength(59);
+    expect(calls).toHaveLength(60);
     expect(calls.map(({ method, path }) => `${method} ${path}`)).toEqual(
       expect.arrayContaining([
         "GET /api/auth/session",
@@ -320,6 +321,7 @@ describe.each([
         "GET /api/conversations/run%2F1/transcript?beforeSeq=4&limit=2",
         "GET /api/external-sessions?projectPath=%2Ftmp%2Fa",
         "GET /api/workers/worker%2F1/entries?afterSeq=3",
+        "POST /api/fs/directories",
         "POST /api/attachments",
         "POST /api/git",
         "POST /api/planning/run%2F1/review",

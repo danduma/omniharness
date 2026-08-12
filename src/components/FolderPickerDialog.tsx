@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useRef, type FormEvent } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
-import { Folder, ArrowUpCircle } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { Folder, ArrowUpCircle, FolderPlus, Loader2 } from "lucide-react";
 import { normalizeAppError } from "@/lib/app-errors";
 import { folderPickerManager } from "@/components/component-state-managers";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
@@ -24,7 +25,16 @@ export function FolderPickerDialog({
 }) {
   useI18nSnapshot();
   const runtimeApis = useRuntimeAPIs();
-  const { currentPath, search } = useManagerSnapshot(folderPickerManager);
+  const queryClient = useQueryClient();
+  const newFolderInputRef = useRef<HTMLInputElement>(null);
+  const {
+    currentPath,
+    search,
+    isCreatingDirectory,
+    creationParentPath,
+    creationOperationId,
+    newFolderName,
+  } = useManagerSnapshot(folderPickerManager);
 
   const { data, error } = useQuery({
     queryKey: ["fs", currentPath],
@@ -39,6 +49,20 @@ export function FolderPickerDialog({
     staleTime: 30_000,
   });
 
+  const createDirectory = useMutation({
+    mutationFn: (input: { creationOperationId: number; parentPath: string; name: string }) => (
+      runtimeApis.files.createDirectory({ parentPath: input.parentPath, name: input.name })
+    ),
+    onSuccess: ({ path: createdPath }, input) => {
+      void queryClient.invalidateQueries({ queryKey: ["fs"] });
+      folderPickerManager.completeDirectoryCreation(
+        input.creationOperationId,
+        input.parentPath,
+        createdPath,
+      );
+    },
+  });
+
   const directories = useMemo(() => {
     const items = data?.directories ?? [];
     const term = search.trim().toLowerCase();
@@ -47,12 +71,46 @@ export function FolderPickerDialog({
   }, [data?.directories, search]);
 
   const handleNavigate = (path: string) => {
+    createDirectory.reset();
     folderPickerManager.navigate(path);
   };
 
+  const handleStartDirectoryCreation = () => {
+    if (!data?.current) return;
+    createDirectory.reset();
+    folderPickerManager.startDirectoryCreation(data.current);
+    requestAnimationFrame(() => newFolderInputRef.current?.focus());
+  };
+
+  const handleCancelDirectoryCreation = () => {
+    createDirectory.reset();
+    folderPickerManager.cancelDirectoryCreation();
+  };
+
+  const handleCreateDirectory = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = newFolderName.trim();
+    if (creationOperationId === null || !creationParentPath || !name || createDirectory.isPending) return;
+    createDirectory.mutate({ creationOperationId, parentPath: creationParentPath, name });
+  };
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      createDirectory.reset();
+      folderPickerManager.cancelDirectoryCreation();
+    }
+    onOpenChange(nextOpen);
+  };
+
+  const handleSelect = () => {
+    if (!data?.current) return;
+    onSelect(data.current);
+    handleOpenChange(false);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[500px] max-w-md flex-col overflow-hidden p-0">
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="flex h-[min(500px,calc(100dvh-2rem))] w-[calc(100vw-2rem)] max-w-md flex-col overflow-hidden p-0">
         <DialogHeader className="shrink-0 gap-3 border-b bg-muted/20 p-4">
           <div className="min-w-0">
             <DialogTitle>{t("folder.picker.title")}</DialogTitle>
@@ -80,6 +138,51 @@ export function FolderPickerDialog({
         </DialogHeader>
         
         <ScrollArea className="min-h-0 flex-1 p-2">
+          {isCreatingDirectory ? (
+            <form onSubmit={handleCreateDirectory} className="mb-2 space-y-2 border-b px-2 pb-3 pt-1">
+              <Label htmlFor="folder-picker-new-folder-name" className="text-xs">
+                {t("folder.picker.nameLabel")}
+              </Label>
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+                <Input
+                  ref={newFolderInputRef}
+                  id="folder-picker-new-folder-name"
+                  value={newFolderName}
+                  onChange={(event) => folderPickerManager.setNewFolderName(event.target.value)}
+                  placeholder={t("folder.picker.namePlaceholder")}
+                  aria-invalid={createDirectory.isError}
+                  aria-describedby={createDirectory.isError ? "folder-picker-create-error" : undefined}
+                  disabled={createDirectory.isPending}
+                  className="col-span-2 h-9 min-w-0 sm:flex-1"
+                />
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={!newFolderName.trim() || createDirectory.isPending}
+                  className="shrink-0"
+                >
+                  {createDirectory.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : null}
+                  {t(createDirectory.isPending ? "folder.picker.creating" : "folder.picker.create")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCancelDirectoryCreation}
+                  disabled={createDirectory.isPending}
+                >
+                  {t("folder.picker.cancel")}
+                </Button>
+              </div>
+              {createDirectory.error ? (
+                <div id="folder-picker-create-error" role="alert" className="text-xs text-destructive">
+                  {normalizeAppError(createDirectory.error).message}
+                </div>
+              ) : null}
+            </form>
+          ) : null}
           {error ? (
             <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm">
               <div className="font-semibold text-destructive">{t("folder.picker.errorTitle")}</div>
@@ -97,8 +200,7 @@ export function FolderPickerDialog({
                   <ArrowUpCircle className="h-4 w-4 mr-2" /> ..
                 </Button>
               )}
-              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-              {directories.map((dir: any) => (
+              {directories.map((dir) => (
                  <Button
                    key={dir.path}
                    data-folder-path={dir.path}
@@ -113,14 +215,26 @@ export function FolderPickerDialog({
           )}
         </ScrollArea>
         
-        <div className="p-4 border-t bg-muted/20 shrink-0 flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>{t("folder.picker.cancel")}</Button>
-          <Button size="sm" onClick={() => {
-            if (data?.current) onSelect(data.current);
-            onOpenChange(false);
-          }}>
-            {t("folder.picker.select")}
+        <div className="flex shrink-0 flex-col items-stretch gap-2 border-t bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleStartDirectoryCreation}
+            disabled={!data?.current || isCreatingDirectory}
+          >
+            <FolderPlus className="h-4 w-4" aria-hidden="true" />
+            {t("folder.picker.newFolder")}
           </Button>
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+            <Button variant="outline" size="sm" onClick={() => handleOpenChange(false)}>{t("folder.picker.cancel")}</Button>
+            <Button
+              size="sm"
+              onClick={handleSelect}
+              disabled={!data?.current || createDirectory.isPending}
+            >
+              {t("folder.picker.select")}
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
