@@ -15,6 +15,7 @@ Planning artifacts:
 - If the same request explicitly says not to change the workspace or not to create a file, obey that more specific prohibition and ask for a destination when needed.
 
 Testing:
+- After any UI/frontend change, always run `pnpm build:interface:web` before considering the work complete.
 - When testing the app, use the already-running process if one exists instead of starting another server.
 - The normal runner URL is `http://localhost:3050`; the Vite development interface is usually at `http://localhost:5173`.
 - Clean up any test sessions/conversations and their associated persisted artifacts before finishing.
