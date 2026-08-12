@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
@@ -15,7 +15,9 @@ import {
   handleSupervisorQuotaExhaustion,
   handleWorkerQuotaExhaustion,
 } from "@/server/quota/recovery";
-import { resetDurableSupervisorWakeSchedulerForTests } from "@/server/supervisor/wake-schedule";
+import * as wakeSchedule from "@/server/supervisor/wake-schedule";
+import * as recoveryPolicy from "@/server/runs/recovery-policy";
+import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
 
 const now = new Date("2026-05-10T10:00:00.000Z");
 
@@ -67,7 +69,7 @@ describe("quota recovery handlers", () => {
   beforeEach(async () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
-    resetDurableSupervisorWakeSchedulerForTests();
+    wakeSchedule.resetDurableSupervisorWakeSchedulerForTests();
     await db.delete(supervisorScheduledWakes);
     await db.delete(recoveryIncidents);
     await db.delete(executionEvents);
@@ -75,6 +77,10 @@ describe("quota recovery handlers", () => {
     await db.delete(workers);
     await db.delete(runs);
     await db.delete(plans);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("persists a schedulable supervisor quota wait without failing the run", async () => {
@@ -132,6 +138,122 @@ describe("quota recovery handlers", () => {
     expect(worker?.bridgeSessionId).toBe("session-1");
     expect(queued?.status).toBe("queued");
     expect(wake?.wakeAt.getTime()).toBe(now.getTime() + 30 * 60_000 + 1_000);
+  });
+
+  it("serializes Stop behind an in-flight wake mutation and then removes the wake", async () => {
+    const runId = await insertRun();
+    const workerId = await insertWorker(runId);
+    const scheduleWake = wakeSchedule.scheduleDurableSupervisorWakeAt;
+    let stopMutation: Promise<void> | null = null;
+    vi.spyOn(wakeSchedule, "scheduleDurableSupervisorWakeAt").mockImplementationOnce(async (args) => {
+      stopMutation = runQuotaRecoveryMutation(runId, async () => {
+        await db.update(runs).set({ status: "cancelled", updatedAt: now }).where(eq(runs.id, runId));
+        await db.update(workers).set({ status: "cancelled", updatedAt: now }).where(eq(workers.id, workerId));
+        await wakeSchedule.cancelDurableSupervisorWake(runId, "quota_wait");
+        await db.update(recoveryIncidents).set({
+          status: "resolved",
+          resolvedAt: now,
+          updatedAt: now,
+        }).where(eq(recoveryIncidents.runId, runId));
+      });
+      return scheduleWake(args);
+    });
+
+    const result = await handleWorkerQuotaExhaustion({
+      runId,
+      workerId,
+      text: "try again in 30 minutes; quota exhausted",
+      now,
+    });
+    await stopMutation;
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
+    const wake = await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get();
+
+    expect(result).toMatchObject({ state: "quota_wait" });
+    expect(run?.status).toBe("cancelled");
+    expect(incident?.status).toBe("resolved");
+    expect(wake).toBeUndefined();
+  });
+
+  it("does not overwrite a worker or open an incident when Stop wins before quota-block recording", async () => {
+    const runId = await insertRun();
+    const workerId = await insertWorker(runId);
+    const loadPolicy = recoveryPolicy.getRecoveryPolicy;
+    vi.spyOn(recoveryPolicy, "getRecoveryPolicy").mockImplementationOnce(async () => {
+      await db.update(runs).set({ status: "cancelled", updatedAt: now }).where(eq(runs.id, runId));
+      await db.update(workers).set({ status: "cancelled", updatedAt: now }).where(eq(workers.id, workerId));
+      return loadPolicy();
+    });
+
+    const result = await handleWorkerQuotaExhaustion({
+      runId,
+      workerId,
+      text: "try again in 30 minutes; quota exhausted",
+      now,
+    });
+
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const incidents = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(result).toMatchObject({ state: "ignored", reason: "run_terminal" });
+    expect(worker?.status).toBe("cancelled");
+    expect(incidents).toHaveLength(0);
+    expect(events.some((event) => event.eventType === "recovery_incident_opened")).toBe(false);
+    expect(events.some((event) => event.eventType === "quota_block_recorded")).toBe(false);
+  });
+
+  it("does not emit needs-user state when Stop wins before unschedulable parking", async () => {
+    const runId = await insertRun();
+    const workerId = await insertWorker(runId);
+    const loadPolicy = recoveryPolicy.getRecoveryPolicy;
+    let policyCallCount = 0;
+    let releaseParkingPolicy: () => void = () => undefined;
+    let parkingPolicyReached: () => void = () => undefined;
+    const parkingPolicyGate = new Promise<void>((resolve) => {
+      parkingPolicyReached = resolve;
+    });
+    const parkingPolicyRelease = new Promise<void>((resolve) => {
+      releaseParkingPolicy = resolve;
+    });
+    vi.spyOn(recoveryPolicy, "getRecoveryPolicy").mockImplementation(async () => {
+      policyCallCount += 1;
+      if (policyCallCount === 2) {
+        parkingPolicyReached();
+        await parkingPolicyRelease;
+      }
+      return loadPolicy();
+    });
+
+    const handling = handleWorkerQuotaExhaustion({
+      runId,
+      workerId,
+      text: "quota exceeded for the account",
+      now,
+    });
+    await parkingPolicyGate;
+    await runQuotaRecoveryMutation(runId, async () => {
+      await db.update(runs).set({ status: "cancelled", updatedAt: now }).where(eq(runs.id, runId));
+      await db.update(workers).set({ status: "cancelled", updatedAt: now }).where(eq(workers.id, workerId));
+      await db.update(recoveryIncidents).set({
+        status: "resolved",
+        resolvedAt: now,
+        updatedAt: now,
+      }).where(eq(recoveryIncidents.runId, runId));
+    });
+    releaseParkingPolicy();
+
+    const result = await handling;
+
+    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
+    const wake = await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get();
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(result).toMatchObject({ state: "ignored", reason: "run_terminal" });
+    expect(incident?.status).toBe("resolved");
+    expect(wake).toBeUndefined();
+    expect(events.some((event) => event.eventType === "recovery_needs_user")).toBe(false);
+    expect(events.some((event) => event.eventType === "quota_wait_unschedulable")).toBe(false);
   });
 
   it("parks Claude session-limit errors with a scheduled auto-resume instead of failing the run", async () => {

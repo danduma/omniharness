@@ -251,6 +251,21 @@ describe("bridge client", () => {
     expect(mockIsWorkerTurnGenerationCurrent).toHaveBeenCalledTimes(2);
   });
 
+  it("refuses delivery when a caller's captured turn generation was retired before ask", async () => {
+    const fetchMock = vi.fn();
+    mockIsWorkerTurnGenerationCurrent.mockResolvedValueOnce(false);
+    global.fetch = fetchMock as typeof fetch;
+
+    const { askAgent } = await import("@/server/bridge-client");
+    await expect(askAgent("worker-1", "late recovery prompt", undefined, {
+      expectedTurnGeneration: 7,
+    })).rejects.toThrow(/newer worker turn/i);
+
+    expect(mockCaptureWorkerTurnGeneration).not.toHaveBeenCalled();
+    expect(mockIsWorkerTurnGenerationCurrent).toHaveBeenCalledWith("worker-1", 7);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("preserves structured bridge error messages instead of collapsing them to status text", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ error: "claude-code binary not found on PATH." }), {

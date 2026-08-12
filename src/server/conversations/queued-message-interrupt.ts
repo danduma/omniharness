@@ -429,6 +429,7 @@ async function deliverInterruptedQueuedMessage(args: {
           filename: attachment.name,
           mimeType: attachment.mimeType,
           sizeBytes: attachment.size,
+          storagePath: attachment.storagePath,
         })),
       });
       await db.insert(messages).values(userMessage);

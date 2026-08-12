@@ -177,6 +177,153 @@ describe("attemptWorkerFailover", () => {
     )).toBe(true);
   });
 
+  it("abandons a replacement without prompting it when Stop wins during spawn", async () => {
+    const runId = await seedRun(["codex", "claude"]);
+    const workerId = await seedWorker(runId, "codex");
+
+    mockAskAgent.mockResolvedValueOnce({
+      response: "```omniharness-handoff\nTASK: x\nPROGRESS: y\nNEXT_STEPS: z\n```",
+      state: "stopped",
+      stopReason: "end_turn",
+    });
+    mockCancelAgent.mockResolvedValue(undefined);
+    mockSpawnAgent.mockImplementationOnce(async () => {
+      const { db } = await import("@/server/db");
+      const schema = await import("@/server/db/schema");
+      await db.update(schema.runs).set({ status: "cancelled", updatedAt: new Date() })
+        .where(eq(schema.runs.id, runId));
+      await db.update(schema.workers).set({ status: "cancelled", updatedAt: new Date() })
+        .where(eq(schema.workers.runId, runId));
+      return {
+        sessionId: "session-claude-stopped",
+        sessionMode: "full-access",
+        state: "starting",
+      };
+    });
+
+    const { attemptWorkerFailover } = await import("@/server/supervisor/worker-failover");
+    const result = await attemptWorkerFailover({
+      runId,
+      outgoingWorkerId: workerId,
+      outgoingWorkerType: "codex",
+      quotaText: "quota exhausted; try again in 30 minutes",
+      originalPrompt: "Refactor the auth module",
+      allowedTypes: ["codex", "claude"],
+      env: {},
+      cwd: "/tmp",
+      title: "Test worker",
+    });
+
+    expect(result).toMatchObject({ state: "ignored", reason: "run_terminal" });
+    expect(mockAskAgent).toHaveBeenCalledTimes(1);
+    const { db } = await import("@/server/db");
+    const schema = await import("@/server/db/schema");
+    const run = await db.select().from(schema.runs).where(eq(schema.runs.id, runId)).get();
+    const runWorkers = await db.select().from(schema.workers).where(eq(schema.workers.runId, runId));
+    const incident = await db.select().from(schema.recoveryIncidents).where(eq(schema.recoveryIncidents.runId, runId)).get();
+    expect(run?.status).toBe("cancelled");
+    expect(runWorkers.every((worker) => worker.status === "cancelled")).toBe(true);
+    expect(incident?.status).toBe("resolved");
+  });
+
+  it("does not reserve or announce a replacement when Stop wins before reservation", async () => {
+    const runId = await seedRun(["codex", "claude"]);
+    const workerId = await seedWorker(runId, "codex");
+    mockAskAgent.mockImplementationOnce(async () => {
+      const { db } = await import("@/server/db");
+      const schema = await import("@/server/db/schema");
+      const { runQuotaRecoveryMutation } = await import("@/server/quota/recovery-mutation");
+      await runQuotaRecoveryMutation(runId, async () => {
+        await db.update(schema.runs).set({ status: "cancelled", updatedAt: new Date() })
+          .where(eq(schema.runs.id, runId));
+        await db.update(schema.workers).set({ status: "cancelled", updatedAt: new Date() })
+          .where(eq(schema.workers.runId, runId));
+      });
+      return {
+        response: "```omniharness-handoff\nTASK: x\nPROGRESS: y\nNEXT_STEPS: z\n```",
+        state: "stopped",
+        stopReason: "end_turn",
+      };
+    });
+
+    const { attemptWorkerFailover } = await import("@/server/supervisor/worker-failover");
+    const result = await attemptWorkerFailover({
+      runId,
+      outgoingWorkerId: workerId,
+      outgoingWorkerType: "codex",
+      quotaText: "quota exhausted; try again in 30 minutes",
+      originalPrompt: "Refactor the auth module",
+      allowedTypes: ["codex", "claude"],
+      env: {},
+      cwd: "/tmp",
+      title: "Test worker",
+    });
+
+    const { __getRingForTests } = await import("@/server/events/named-events");
+    const events = __getRingForTests().map((entry) => entry.event);
+    expect(result).toMatchObject({ state: "ignored", reason: "run_terminal" });
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(events.some((event) => event.kind === "worker.spawned")).toBe(false);
+  });
+
+  it("does not restore running state when Stop wins after replacement delivery", async () => {
+    const runId = await seedRun(["codex", "claude"]);
+    const workerId = await seedWorker(runId, "codex");
+
+    mockAskAgent.mockResolvedValueOnce({
+      response: "```omniharness-handoff\nTASK: x\nPROGRESS: y\nNEXT_STEPS: z\n```",
+      state: "stopped",
+      stopReason: "end_turn",
+    }).mockResolvedValueOnce({
+      response: "Replacement continued from handoff.",
+      state: "idle",
+      stopReason: "end_turn",
+    });
+    mockCancelAgent.mockResolvedValue(undefined);
+    mockSpawnAgent.mockResolvedValueOnce({
+      sessionId: "session-claude-final-race",
+      sessionMode: "full-access",
+      state: "starting",
+    });
+    mockGetAgent.mockImplementationOnce(async () => {
+      const { db } = await import("@/server/db");
+      const schema = await import("@/server/db/schema");
+      await db.update(schema.runs).set({ status: "cancelled", updatedAt: new Date() })
+        .where(eq(schema.runs.id, runId));
+      await db.update(schema.workers).set({
+        status: "cancelled",
+        turnGeneration: 1,
+        updatedAt: new Date(),
+      }).where(eq(schema.workers.runId, runId));
+      return { outputEntries: [], currentText: "", lastText: "" };
+    });
+
+    const { attemptWorkerFailover } = await import("@/server/supervisor/worker-failover");
+    const result = await attemptWorkerFailover({
+      runId,
+      outgoingWorkerId: workerId,
+      outgoingWorkerType: "codex",
+      quotaText: "quota exhausted; try again in 30 minutes",
+      originalPrompt: "Refactor the auth module",
+      allowedTypes: ["codex", "claude"],
+      env: {},
+      cwd: "/tmp",
+      title: "Test worker",
+    });
+
+    const { db } = await import("@/server/db");
+    const schema = await import("@/server/db/schema");
+    const run = await db.select().from(schema.runs).where(eq(schema.runs.id, runId)).get();
+    const runWorkers = await db.select().from(schema.workers).where(eq(schema.workers.runId, runId));
+    const { __getRingForTests } = await import("@/server/events/named-events");
+    const kinds = __getRingForTests().map((entry) => entry.event.kind);
+
+    expect(result).toMatchObject({ state: "ignored", reason: "run_terminal" });
+    expect(run?.status).toBe("cancelled");
+    expect(runWorkers.every((worker) => worker.status === "cancelled")).toBe(true);
+    expect(kinds).not.toContain("worker.failover_completed");
+  });
+
   it("parks the run when no replacement worker is available", async () => {
     const runId = await seedRun(["codex"]);
     const workerId = await seedWorker(runId, "codex");

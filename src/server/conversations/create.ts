@@ -939,6 +939,7 @@ export async function createConversation(args: {
             filename: attachment.name,
             mimeType: attachment.mimeType,
             sizeBytes: attachment.size,
+            storagePath: attachment.storagePath,
           })),
         });
         await db.insert(dbMessages).values(initialMessage);

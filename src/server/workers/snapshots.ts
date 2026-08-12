@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import type { AgentRecord } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { messages, runs, workers } from "@/server/db/schema";
@@ -82,6 +82,7 @@ async function seedInitialDirectUserPrompt(worker: typeof workers.$inferSelect) 
       filename: attachment.name,
       mimeType: attachment.mimeType,
       sizeBytes: attachment.size,
+      storagePath: attachment.storagePath,
     })),
   });
 }
@@ -122,9 +123,14 @@ async function adoptAgentGeneratedTitle(
 export async function persistWorkerSnapshot(
   workerId: string,
   snapshot: PersistableWorkerSnapshot,
+  options: { expectedTurnGeneration?: number } = {},
 ) {
   const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
-  if (!worker) {
+  if (
+    !worker
+    || (options.expectedTurnGeneration !== undefined
+      && worker.turnGeneration !== options.expectedTurnGeneration)
+  ) {
     return;
   }
 
@@ -144,7 +150,12 @@ export async function persistWorkerSnapshot(
     currentText: snapshot.currentText,
     lastText: snapshot.lastText || worker.lastText,
     updatedAt: new Date(),
-  }).where(eq(workers.id, workerId));
+  }).where(options.expectedTurnGeneration === undefined
+    ? eq(workers.id, workerId)
+    : and(
+      eq(workers.id, workerId),
+      eq(workers.turnGeneration, options.expectedTurnGeneration),
+    ));
 }
 
 export { readWorkerOutputEntries };

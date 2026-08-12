@@ -43,6 +43,7 @@ import { stopRunObserver } from "@/server/supervisor/observer";
 import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
 import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
+import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
 import { reconcileRecoveredHumanInputEntries } from "@/server/workers/human-input-entries";
 import { resolveRecoveryIncidentsAfterHealthyTurn } from "@/server/runs/recovery-incidents";
 import {
@@ -117,6 +118,18 @@ function normalizeWorkerStatus(status: string | null | undefined) {
 function isWorkerCancelled(worker: WorkerRecord | null | undefined) {
   const status = normalizeWorkerStatus(worker?.status);
   return status === "cancelled" || status === "canceled";
+}
+
+function isRunCancelled(run: RunRecord | null | undefined) {
+  const status = normalizeWorkerStatus(run?.status);
+  return status === "cancelled" || status === "canceled";
+}
+
+function workerTurnSupersededError(workerId: string) {
+  return Object.assign(
+    new Error(`Worker turn superseded by a newer worker turn: ${workerId}`),
+    { code: "WORKER_TURN_SUPERSEDED", status: 409, retryable: false },
+  );
 }
 
 function isStoppableRunStatus(status: string | null | undefined) {
@@ -225,6 +238,7 @@ async function reconcileDirectWorkerSelection(args: {
       source: "direct-follow-up",
       reason: "direct_worker_selection_changed",
       selection,
+      expectedTurnGeneration: args.worker.turnGeneration,
     });
     await recordExecutionEvent({
       runId: args.run.id,
@@ -249,6 +263,9 @@ async function reconcileDirectWorkerSelection(args: {
       replayPrompt: recreated.replayPrompt,
     };
   } catch (error) {
+    if (isWorkerTurnSupersededError(error)) {
+      throw error;
+    }
     await db.update(workers).set({
       status: "error",
       updatedAt: new Date(),
@@ -308,34 +325,44 @@ async function answerDirectWorkerElicitation(args: {
     createdAt,
   };
 
-  await appendUserInputOnDelivery({
-    id: userMessage.id,
-    runId: args.run.id,
-    workerId: args.worker.id,
-    text: args.userText,
-    deliveredAt: createdAt,
-    attachments: args.attachments.map((attachment) => ({
-      id: attachment.id,
-      filename: attachment.name,
-      mimeType: attachment.mimeType,
-      sizeBytes: attachment.size,
-    })),
+  await activateRunAndPersistMessage({
+    run: args.run,
+    nextStatus: "running",
+    activatedAt: createdAt,
+    workerFence: {
+      workerId: args.worker.id,
+      expectedTurnGeneration: args.worker.turnGeneration,
+      allowCancelled: false,
+    },
+    persist: async () => {
+      await appendUserInputOnDelivery({
+        id: userMessage.id,
+        runId: args.run.id,
+        workerId: args.worker.id,
+        text: args.userText,
+        deliveredAt: createdAt,
+        attachments: args.attachments.map((attachment) => ({
+          id: attachment.id,
+          filename: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.size,
+          storagePath: attachment.storagePath,
+        })),
+      });
+      await db.insert(messages).values(userMessage);
+      await respondElicitation(args.worker.id, {
+        action: "accept",
+        content: elicitationAnswerContent(args.workerText || args.userText, elicitation.requestedSchema),
+      });
+      await db.update(workers).set({
+        status: "working",
+        updatedAt: createdAt,
+      }).where(and(
+        eq(workers.id, args.worker.id),
+        eq(workers.turnGeneration, args.worker.turnGeneration),
+      ));
+    },
   });
-  await db.insert(messages).values(userMessage);
-  await respondElicitation(args.worker.id, {
-    action: "accept",
-    content: elicitationAnswerContent(args.workerText || args.userText, elicitation.requestedSchema),
-  });
-  await db.update(workers).set({
-    status: "working",
-    updatedAt: createdAt,
-  }).where(eq(workers.id, args.worker.id));
-  await db.update(runs).set({
-    status: "running",
-    failedAt: null,
-    lastError: null,
-    updatedAt: createdAt,
-  }).where(eq(runs.id, args.run.id));
   emitNamedEvent({
     kind: "worker.status",
     runId: args.run.id,
@@ -437,6 +464,13 @@ export async function reconcileWorkerUserMessagesInStream(runId: string, workerI
         deliveredAt: message.createdAt instanceof Date
           ? message.createdAt
           : new Date(message.createdAt as unknown as string | number),
+        attachments: parseChatAttachmentsJson(message.attachmentsJson).map((attachment) => ({
+          id: attachment.id,
+          filename: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.size,
+          storagePath: attachment.storagePath,
+        })),
       });
     } catch (error) {
       process.stderr.write(
@@ -446,7 +480,17 @@ export async function reconcileWorkerUserMessagesInStream(runId: string, workerI
   }
 }
 
-export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRecord) {
+export async function resumeMissingDirectWorker(
+  run: RunRecord,
+  worker: WorkerRecord,
+  expectedTurnGeneration?: number,
+) {
+  const workerPredicate = expectedTurnGeneration === undefined
+    ? eq(workers.id, worker.id)
+    : and(
+      eq(workers.id, worker.id),
+      eq(workers.turnGeneration, expectedTurnGeneration),
+    );
   let sessionId = worker.bridgeSessionId?.trim();
   let sessionMode = worker.bridgeSessionMode?.trim();
   if (!sessionId) {
@@ -458,7 +502,7 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
         bridgeSessionId: metadata.sessionId,
         bridgeSessionMode: metadata.sessionMode ?? worker.bridgeSessionMode,
         updatedAt: new Date(),
-      }).where(eq(workers.id, worker.id));
+      }).where(workerPredicate);
       emitNamedEvent({
         kind: "worker.session_metadata_repaired",
         runId: worker.runId,
@@ -522,12 +566,15 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
           reason: formatErrorMessage(error),
         },
       });
-      await db.update(workers).set({
+      const startingWorker = await db.update(workers).set({
         status: "starting",
         bridgeSessionId: null,
         bridgeSessionMode: null,
         updatedAt: new Date(),
-      }).where(eq(workers.id, worker.id));
+      }).where(workerPredicate).returning({ id: workers.id }).get();
+      if (!startingWorker) {
+        throw workerTurnSupersededError(worker.id);
+      }
       resumedWorker = await spawnAgent(spawnParams);
       recreatedFromRejectedEmptySession = true;
     } else if (isRejectedSavedSessionErrorMessage(formatErrorMessage(error))) {
@@ -588,12 +635,15 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
             transcriptReplay: true,
           },
         });
-        await db.update(workers).set({
+        const startingWorker = await db.update(workers).set({
           status: "starting",
           bridgeSessionId: null,
           bridgeSessionMode: null,
           updatedAt: new Date(),
-        }).where(eq(workers.id, worker.id));
+        }).where(workerPredicate).returning({ id: workers.id }).get();
+        if (!startingWorker) {
+          throw workerTurnSupersededError(worker.id);
+        }
         resumedWorker = await spawnAgent(spawnParams);
         transcriptReplayRequired = true;
       }
@@ -609,6 +659,23 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
       });
       throw error;
     }
+  }
+
+  const persistedWorker = await runQuotaRecoveryMutation(run.id, async () => {
+    const currentRun = await db.select().from(runs).where(eq(runs.id, run.id)).get();
+    if (!currentRun || isRunCancelled(currentRun)) {
+      return false;
+    }
+    return Boolean(await db.update(workers).set({
+      status: resumedWorker.state,
+      bridgeSessionId: resumedWorker.sessionId ?? (recreatedFromRejectedEmptySession ? null : sessionId),
+      bridgeSessionMode: resumedWorker.sessionMode ?? sessionMode ?? null,
+      updatedAt: new Date(),
+    }).where(workerPredicate).returning({ id: workers.id }).get());
+  });
+  if (!persistedWorker) {
+    await cancelAgent(worker.id).catch(() => undefined);
+    throw workerTurnSupersededError(worker.id);
   }
 
   await recordExecutionEvent({
@@ -642,12 +709,6 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
     workerId: worker.id,
   });
 
-  await db.update(workers).set({
-    status: resumedWorker.state,
-    bridgeSessionId: resumedWorker.sessionId ?? (recreatedFromRejectedEmptySession ? null : sessionId),
-    bridgeSessionMode: resumedWorker.sessionMode ?? sessionMode ?? null,
-    updatedAt: new Date(),
-  }).where(eq(workers.id, worker.id));
   await appendWorkerSessionMetadata({
     runId: run.id,
     workerId: worker.id,
@@ -656,7 +717,7 @@ export async function resumeMissingDirectWorker(run: RunRecord, worker: WorkerRe
     source: "direct-follow-up",
   });
 
-  await persistWorkerSnapshot(worker.id, resumedWorker);
+  await persistWorkerSnapshot(worker.id, resumedWorker, { expectedTurnGeneration });
   notifyEventStreamSubscribers();
   return { ...resumedWorker, transcriptReplayRequired };
 }
@@ -725,12 +786,13 @@ async function askAgentWithAuthRetry(
   workerId: string,
   prompt: string,
   imageAttachments?: Array<{ path: string; mimeType: string }>,
+  expectedTurnGeneration?: number,
 ) {
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await (imageAttachments?.length
-        ? askAgent(workerId, prompt, imageAttachments)
-        : askAgent(workerId, prompt));
+        ? askAgent(workerId, prompt, imageAttachments, { expectedTurnGeneration })
+        : askAgent(workerId, prompt, undefined, { expectedTurnGeneration }));
     } catch (error) {
       const exhausted = attempt >= AUTH_RETRY_BACKOFF_MS.length;
       if (exhausted || !isAuthShapedProviderFailure(formatErrorMessage(error))) {
@@ -747,10 +809,11 @@ async function askDirectWorkerWithResume(
   content: string,
   imageAttachments?: Array<{ path: string; mimeType: string }>,
   promptOverride?: string | null,
+  expectedTurnGeneration?: number,
 ) {
   const workerPrompt = promptOverride ?? (isDirectRunMode(run.mode) ? buildDirectWorkerPrompt(content) : content);
   try {
-    return await askAgentWithAuthRetry(worker.id, workerPrompt, imageAttachments);
+    return await askAgentWithAuthRetry(worker.id, workerPrompt, imageAttachments, expectedTurnGeneration);
   } catch (error) {
     if (isProviderSessionDiagnosticErrorMessage(formatErrorMessage(error))) {
       const currentWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
@@ -760,6 +823,7 @@ async function askDirectWorkerWithResume(
         nextUserPrompt: workerPrompt,
         source: "direct-follow-up",
         reason: "provider_session_diagnostic_after_direct_follow_up",
+        expectedTurnGeneration,
       });
       await db.update(workers).set({
         status: "working",
@@ -775,8 +839,8 @@ async function askDirectWorkerWithResume(
 
       try {
         return imageAttachments?.length
-          ? await askAgent(worker.id, recreated.replayPrompt, imageAttachments)
-          : await askAgent(worker.id, recreated.replayPrompt);
+          ? await askAgent(worker.id, recreated.replayPrompt, imageAttachments, { expectedTurnGeneration })
+          : await askAgent(worker.id, recreated.replayPrompt, undefined, { expectedTurnGeneration });
       } catch (retryError) {
         if (isProviderSessionDiagnosticErrorMessage(formatErrorMessage(retryError))) {
           throw new Error(userFacingProviderSessionErrorMessage(formatErrorMessage(retryError)));
@@ -827,8 +891,8 @@ async function askDirectWorkerWithResume(
       : null;
     try {
       return imageAttachments?.length
-        ? await askAgent(worker.id, replayPrompt ?? workerPrompt, imageAttachments)
-        : await askAgent(worker.id, replayPrompt ?? workerPrompt);
+        ? await askAgent(worker.id, replayPrompt ?? workerPrompt, imageAttachments, { expectedTurnGeneration })
+        : await askAgent(worker.id, replayPrompt ?? workerPrompt, undefined, { expectedTurnGeneration });
     } catch (retryError) {
       if (isProviderSessionDiagnosticErrorMessage(formatErrorMessage(retryError))) {
         throw new Error(userFacingProviderSessionErrorMessage(formatErrorMessage(retryError)));
@@ -848,6 +912,7 @@ async function continueWorkerConversation({
   appendUserInputBeforeAsk = false,
   allowCancelledWorkerResume = false,
   promptOverride = null,
+  expectedTurnGeneration,
   onUserInputAppended,
 }: {
   run: RunRecord;
@@ -859,6 +924,7 @@ async function continueWorkerConversation({
   appendUserInputBeforeAsk?: boolean;
   allowCancelledWorkerResume?: boolean;
   promptOverride?: string | null;
+  expectedTurnGeneration: number;
   onUserInputAppended?: () => void;
 }) {
   try {
@@ -868,10 +934,17 @@ async function continueWorkerConversation({
       return;
     }
 
-    await db.update(workers).set({
+    const activatedWorker = await db.update(workers).set({
       status: "working",
       updatedAt: new Date(),
-    }).where(eq(workers.id, worker.id));
+    }).where(and(
+      eq(workers.id, worker.id),
+      eq(workers.turnGeneration, expectedTurnGeneration),
+    )).returning({ id: workers.id }).get();
+    if (!activatedWorker) {
+      onUserInputAppended?.();
+      return;
+    }
     notifyEventStreamSubscribers();
 
     let userInputAppended = false;
@@ -887,6 +960,7 @@ async function continueWorkerConversation({
           filename: attachment.name,
           mimeType: attachment.mimeType,
           sizeBytes: attachment.size,
+          storagePath: attachment.storagePath,
         })),
       });
       userInputAppended = true;
@@ -899,7 +973,14 @@ async function continueWorkerConversation({
     }
 
     const imageAttachments = resolveImageAttachments(attachments, getAppDataPath);
-    const response = await askDirectWorkerWithResume(run, worker, content, imageAttachments, promptOverride);
+    const response = await askDirectWorkerWithResume(
+      run,
+      worker,
+      content,
+      imageAttachments,
+      promptOverride,
+      expectedTurnGeneration,
+    );
     if (!userInputAppended) {
       // Append user_input on delivery — `askDirectWorkerWithResume` has
       // resolved successfully, so the prompt definitely reached the
@@ -1141,6 +1222,83 @@ async function applyWorkerPreferenceForMessage(args: {
     allowedWorkerTypes: JSON.stringify(nextAllowedWorkerTypes),
     updatedAt: now,
   };
+}
+
+async function activateRunAndPersistMessage<T>(args: {
+  run: RunRecord;
+  nextStatus: string;
+  activatedAt: Date;
+  workerFence?: { workerId: string; expectedTurnGeneration: number; allowCancelled: boolean };
+  persist: () => Promise<T>;
+}) {
+  return runQuotaRecoveryMutation(args.run.id, async () => {
+    if (args.workerFence) {
+      const currentWorker = await db.select().from(workers).where(eq(workers.id, args.workerFence.workerId)).get();
+      const workerOwnershipLost = !currentWorker
+        || currentWorker.turnGeneration !== args.workerFence.expectedTurnGeneration
+        || (isWorkerCancelled(currentWorker) && !args.workerFence.allowCancelled);
+      if (workerOwnershipLost) {
+        const reason = "Worker ownership changed before the message could be delivered.";
+        emitNamedEvent({
+          kind: "session.input.refused",
+          runId: args.run.id,
+          sessionType: args.run.sessionType,
+          code: "worker_changed_before_delivery",
+          reason,
+        });
+        emitNamedEvent({
+          kind: "error.surfaced",
+          code: "conversation.delivery_refused",
+          message: reason,
+          surface: "toast",
+          runId: args.run.id,
+          workerId: args.workerFence.workerId,
+          conversationId: args.run.id,
+        });
+        throw Object.assign(new Error(reason), { status: 409 });
+      }
+    }
+
+    // The status observed when this send began is its ownership token. Stop
+    // writes `cancelled` under this same fence. A send that began before Stop
+    // therefore loses this CAS, while a deliberate new send that begins after
+    // Stop observes `cancelled` and may explicitly resume the conversation.
+    const activatedRun = await db.update(runs).set({
+      status: args.nextStatus,
+      failedAt: null,
+      lastError: null,
+      updatedAt: args.activatedAt,
+    }).where(and(
+      eq(runs.id, args.run.id),
+      eq(runs.status, args.run.status),
+    )).returning().get();
+
+    if (!activatedRun) {
+      const currentRun = await db.select().from(runs).where(eq(runs.id, args.run.id)).get();
+      const reason = currentRun
+        ? `Conversation changed from ${args.run.status} to ${currentRun.status} before the message could be delivered.`
+        : "Conversation was removed before the message could be delivered.";
+      emitNamedEvent({
+        kind: "session.input.refused",
+        runId: args.run.id,
+        sessionType: args.run.sessionType,
+        code: "run_changed_before_delivery",
+        reason,
+      });
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "conversation.delivery_refused",
+        message: reason,
+        surface: "toast",
+        runId: args.run.id,
+        conversationId: args.run.id,
+      });
+      throw Object.assign(new Error(reason), { status: 409 });
+    }
+
+    const persisted = await args.persist();
+    return { run: activatedRun, persisted };
+  });
 }
 
 async function stopConversationFromManualStopCommand(run: RunRecord) {
@@ -1391,7 +1549,13 @@ async function sendConversationMessageUnlocked({
       createdAt,
     };
 
-    await db.insert(messages).values(message);
+    const activation = await activateRunAndPersistMessage({
+      run,
+      nextStatus: "running",
+      activatedAt: createdAt,
+      persist: () => db.insert(messages).values(message),
+    });
+    run = activation.run;
 
     if (pendingClarification) {
       await answerClarification(pendingClarification.id, trimmedContent);
@@ -1404,12 +1568,6 @@ async function sendConversationMessageUnlocked({
       };
     }
 
-    await db.update(runs).set({
-      status: "running",
-      failedAt: null,
-      lastError: null,
-      updatedAt: new Date(),
-    }).where(eq(runs.id, runId));
     startSupervisorRun(runId);
     notifyEventStreamSubscribers();
     return {
@@ -1422,6 +1580,10 @@ async function sendConversationMessageUnlocked({
   if (!worker) {
     throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
   }
+  // This is user intent captured before Stop can change the worker. A worker
+  // already cancelled when the request began may be resumed; one cancelled by
+  // a later Stop may not.
+  const allowCancelledWorkerResume = isWorkerCancelled(worker);
   if (isDirectRunMode(run.mode) || isPlanningRun(run)) {
     await reconcileWorkerUserMessagesInStream(runId, worker.id);
   }
@@ -1473,35 +1635,35 @@ async function sendConversationMessageUnlocked({
     createdAt: userMessageCreatedAt,
   };
 
-  // Stream-first: append the user_input entry BEFORE the DB insert so that
-  // a crash between the two writes leaves at most a harmless orphan stream
-  // entry rather than a DB row the worker can never see. The stream entry
-  // is keyed by message id so the write is idempotent — if a retry lands on
-  // a row that already exists in the stream, appendUserInputOnDelivery
-  // dedups instead of double-appending.
-  if (isDirectRunMode(run.mode)) {
-    await appendUserInputOnDelivery({
-      id: userMessage.id,
-      runId: run.id,
-      workerId: worker.id,
-      text: trimmedContent,
-      deliveredAt: userMessageCreatedAt,
-      attachments: normalizedAttachments.map((attachment) => ({
-        id: attachment.id,
-        filename: attachment.name,
-        mimeType: attachment.mimeType,
-        sizeBytes: attachment.size,
-      })),
-    });
-  }
-
-  await db.insert(messages).values(userMessage);
-  await db.update(runs).set({
-    status: isPlanningRun(run) ? "working" : "running",
-    failedAt: null,
-    lastError: null,
-    updatedAt: userMessageCreatedAt,
-  }).where(eq(runs.id, runId));
+  const activation = await activateRunAndPersistMessage({
+    run,
+    nextStatus: isPlanningRun(run) ? "working" : "running",
+    activatedAt: userMessageCreatedAt,
+    persist: async () => {
+      // Stream-first: append the user_input entry BEFORE the DB insert so that
+      // a crash between the two writes leaves at most a harmless orphan stream
+      // entry rather than a DB row the worker can never see. The stream entry
+      // is keyed by message id so retries remain idempotent.
+      if (isDirectRunMode(run.mode)) {
+        await appendUserInputOnDelivery({
+          id: userMessage.id,
+          runId: run.id,
+          workerId: worker.id,
+          text: trimmedContent,
+          deliveredAt: userMessageCreatedAt,
+          attachments: normalizedAttachments.map((attachment) => ({
+            id: attachment.id,
+            filename: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.size,
+            storagePath: attachment.storagePath,
+          })),
+        });
+      }
+      await db.insert(messages).values(userMessage);
+    },
+  });
+  run = activation.run;
   notifyEventStreamSubscribers();
 
   if (isDirectRunMode(run.mode)) {
@@ -1515,7 +1677,7 @@ async function sendConversationMessageUnlocked({
       worker = selectedWorker.worker;
     }
     notifyEventStreamSubscribers();
-    const allowCancelledWorkerResume = isWorkerCancelled(worker);
+    const expectedTurnGeneration = worker.turnGeneration;
 
     if (busyAction === "steer") {
       try {
@@ -1530,6 +1692,7 @@ async function sendConversationMessageUnlocked({
           appendUserInputBeforeAsk: false,
           allowCancelledWorkerResume,
           promptOverride,
+          expectedTurnGeneration,
         }));
       } catch (error) {
         if (isAgentBusyError(error)) {
@@ -1570,6 +1733,7 @@ async function sendConversationMessageUnlocked({
       appendUserInputBeforeAsk: false,
       allowCancelledWorkerResume,
       promptOverride,
+      expectedTurnGeneration,
     })), { runId });
     turn.catch((error) => {
       if (isAgentBusyError(error)) {
@@ -1593,6 +1757,7 @@ async function sendConversationMessageUnlocked({
       userInputText: trimmedContent,
       userInputId: userMessage.id,
       attachments: normalizedAttachments,
+      expectedTurnGeneration: worker.turnGeneration,
     }));
   } catch (error) {
     if (busyAction === "steer" && isAgentBusyError(error)) {

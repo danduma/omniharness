@@ -13,7 +13,9 @@ import {
   resumeQuotaExhaustedWorkers,
 } from "@/server/quota/worker-resume";
 import { clearResolvedQuotaIncidents } from "@/server/quota/type-blocking";
+import { refuseLateQuotaRecovery } from "@/server/quota/recovery";
 import { isRunPendingFailover } from "@/server/supervisor/worker-failover";
+import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
 import { stopRunObserver } from "./observer";
 import { acquireSupervisorWakeLease, clearSupervisorWakeLease, releaseSupervisorWakeLease } from "./lease";
 import {
@@ -374,15 +376,28 @@ export async function executeSupervisorWake(runId: string) {
     await clearResolvedQuotaIncidents(runId);
   }
   if (run.status === "quota_waiting" && dueDurableWake) {
-    await db.update(runs).set({
-      status: "running",
-      failedAt: null,
-      lastError: null,
-      updatedAt: new Date(),
-    }).where(eq(runs.id, runId));
+    const wakeRefusal = await runQuotaRecoveryMutation(runId, async () => {
+      const refused = await refuseLateQuotaRecovery({ runId, now: new Date() });
+      if (refused) return refused;
+      await db.update(runs).set({
+        status: "running",
+        failedAt: null,
+        lastError: null,
+        updatedAt: new Date(),
+      }).where(eq(runs.id, runId));
+      return null;
+    });
+    if (wakeRefusal) {
+      await releaseSupervisorWakeLease(runId, leaseId);
+      return;
+    }
     if (dueDurableWake.reason === "quota_wait") {
       const quotaResumeResult = await resumeQuotaExhaustedWorkers({ run });
-      if (quotaResumeResult.state === "quota_wait" || quotaResumeResult.state === "needs_recovery") {
+      if (
+        quotaResumeResult.state === "quota_wait"
+        || quotaResumeResult.state === "needs_recovery"
+        || quotaResumeResult.state === "ignored"
+      ) {
         await releaseSupervisorWakeLease(runId, leaseId);
         return;
       }

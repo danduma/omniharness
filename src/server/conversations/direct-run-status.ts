@@ -1,10 +1,12 @@
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
-import { runs } from "@/server/db/schema";
+import { recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { runMilestoneAutoCommit } from "@/server/git/run-auto-commit";
+
+const ACTIVE_QUOTA_INCIDENT_STATUSES = ["open", "recovering"] as const;
 
 type OutputEntryLike = {
   type?: string | null;
@@ -172,6 +174,65 @@ export async function updateDirectRunStatusFromWorkerOutput(args: WorkerOutputSo
   const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
   if (!run || (run.mode !== "direct" && run.mode !== "commit")) {
     return null;
+  }
+
+  const quotaIncident = await db.select({ id: recoveryIncidents.id })
+    .from(recoveryIncidents)
+    .where(and(
+      eq(recoveryIncidents.runId, args.runId),
+      eq(recoveryIncidents.kind, "quota_exhausted"),
+      inArray(recoveryIncidents.status, [...ACTIVE_QUOTA_INCIDENT_STATUSES]),
+    ))
+    .limit(1)
+    .get();
+  const quotaWorker = args.workerId
+    ? await db.select({ status: workers.status }).from(workers).where(eq(workers.id, args.workerId)).get()
+    : null;
+  const quotaRecoveryOwnsPersistedState = Boolean(
+    quotaIncident
+    && (
+      run.status === "quota_waiting"
+      || normalizeWorkerStatus(quotaWorker?.status) === "cred-exhausted"
+    ),
+  );
+  if (quotaIncident && quotaRecoveryOwnsPersistedState) {
+    const normalizedRunStatus = run.status.trim().toLowerCase();
+    if (normalizedRunStatus === "cancelled" || normalizedRunStatus === "canceled" || normalizedRunStatus === "done") {
+      return run.status;
+    }
+
+    if (run.status !== "quota_waiting" || run.failedAt || run.lastError) {
+      const updated = await db.update(runs).set({
+        status: "quota_waiting",
+        failedAt: null,
+        lastError: null,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(runs.id, args.runId),
+        eq(runs.status, run.status),
+      )).returning({ id: runs.id });
+      if (updated.length > 0) {
+        emitNamedEvent({
+          kind: "recovery.quota_wait_preserved",
+          runId: args.runId,
+          incidentId: quotaIncident.id,
+          previousStatus: run.status,
+        });
+        await recordExecutionEvent({
+          runId: args.runId,
+          workerId: args.workerId ?? null,
+          planItemId: null,
+          eventType: "quota_wait_preserved",
+          details: {
+            summary: "Kept quota recovery authoritative over a stale direct-run status.",
+            incidentId: quotaIncident.id,
+            previousStatus: run.status,
+          },
+        });
+        notifyEventStreamSubscribers();
+      }
+    }
+    return "quota_waiting";
   }
 
   const nextStatus = resolveDirectRunStatusFromWorkerOutput(args);

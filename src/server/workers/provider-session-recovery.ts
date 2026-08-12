@@ -10,7 +10,7 @@ import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
 import { readWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
 import { buildTranscriptReplayPrompt } from "./session-recovery";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 export type WorkerRecreationSelection = {
   type: string;
@@ -27,7 +27,18 @@ export async function recreateWorkerFromTranscript(args: {
   source: "steer" | "direct-follow-up" | "direct-retry";
   reason: string;
   selection?: WorkerRecreationSelection;
+  expectedTurnGeneration?: number;
 }) {
+  const workerPredicate = args.expectedTurnGeneration === undefined
+    ? eq(workers.id, args.worker.id)
+    : and(
+      eq(workers.id, args.worker.id),
+      eq(workers.turnGeneration, args.expectedTurnGeneration),
+    );
+  const superseded = () => Object.assign(
+    new Error(`Worker turn superseded by a newer worker turn: ${args.worker.id}`),
+    { code: "WORKER_TURN_SUPERSEDED", status: 409, retryable: false },
+  );
   const oldSessionId = args.worker.bridgeSessionId?.trim() || null;
   try {
     await cancelAgent(args.worker.id);
@@ -63,13 +74,16 @@ export async function recreateWorkerFromTranscript(args: {
     ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
   };
 
-  await db.update(workers).set({
+  const startingWorker = await db.update(workers).set({
     status: "starting",
     bridgeSessionId: null,
     bridgeSessionMode: null,
     currentText: "",
     updatedAt: new Date(),
-  }).where(eq(workers.id, args.worker.id));
+  }).where(workerPredicate).returning({ id: workers.id }).get();
+  if (!startingWorker) {
+    throw superseded();
+  }
 
   let freshWorker: AgentRecord;
   try {
@@ -90,7 +104,7 @@ export async function recreateWorkerFromTranscript(args: {
   }
 
   const now = new Date();
-  await db.update(workers).set({
+  const persistedWorker = await db.update(workers).set({
     type: freshWorker.type || args.selection?.type || args.worker.type,
     status: freshWorker.state,
     cwd: freshWorker.cwd || args.worker.cwd,
@@ -104,7 +118,14 @@ export async function recreateWorkerFromTranscript(args: {
       launchCredentialSource: launchSelection.credentialSource,
     } : {}),
     updatedAt: now,
-  }).where(eq(workers.id, args.worker.id));
+  }).where(workerPredicate).returning({ id: workers.id }).get();
+  if (!persistedWorker) {
+    // Stop may have won while the remote spawn was in flight. Tear down the
+    // stale runtime that appeared after Stop, but never rewrite its terminal
+    // persisted row.
+    await cancelAgent(args.worker.id).catch(() => undefined);
+    throw superseded();
+  }
 
   if (args.selection?.accountId) {
     const existingAllocation = await db
@@ -130,7 +151,9 @@ export async function recreateWorkerFromTranscript(args: {
     sessionMode: freshWorker.sessionMode ?? workerMode ?? null,
     source: args.source,
   });
-  await persistWorkerSnapshot(args.worker.id, freshWorker);
+  await persistWorkerSnapshot(args.worker.id, freshWorker, {
+    expectedTurnGeneration: args.expectedTurnGeneration,
+  });
 
   const replayPrompt = await buildTranscriptReplayPrompt({
     runId: args.run.id,

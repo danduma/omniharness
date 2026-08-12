@@ -61,6 +61,7 @@ import {
   requestConversationDeletion,
   waitForConversationBackgroundTasks,
 } from "@/server/conversations/worker-turn-gate";
+import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
 
 function normalizeTitle(input: unknown) {
   return String(input ?? "").trim().replace(/\s+/g, " ");
@@ -83,12 +84,11 @@ function normalizeWorkerStatus(status: string | null | undefined) {
 }
 
 function isActiveWorkerStatus(status: string | null | undefined) {
-  return ["starting", "working", "idle", "stuck"].includes(normalizeWorkerStatus(status));
+  return ["starting", "working", "idle", "stuck", "cred-exhausted"].includes(normalizeWorkerStatus(status));
 }
 
 function isSupervisorStopAlreadySettled(status: string | null | undefined) {
-  const normalized = normalizeWorkerStatus(status);
-  return normalized !== "running" && normalized !== "quota_waiting";
+  return isTerminalRunStatus(status) || normalizeWorkerStatus(status) === "canceled";
 }
 
 // Classification lives in @/lib/provider-account-failures so this route, the
@@ -568,46 +568,52 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
     }
 
     if (action === "stop_supervisor") {
-      const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-      if (!run) {
-        return errorResponse("Run not found", {
-          status: 404,
-          source: "Runs",
-          action: "Stop supervisor",
+      return runQuotaRecoveryMutation(runId, async () => {
+        const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+        if (!run) {
+          return errorResponse("Run not found", {
+            status: 404,
+            source: "Runs",
+            action: "Stop supervisor",
+          });
+        }
+
+        if (isSupervisorStopAlreadySettled(run.status)) {
+          return Response.json({
+            ok: true,
+            runId,
+            alreadyStopped: true,
+            status: run.status,
+          });
+        }
+
+        stopRunObserver(runId);
+
+        // Persist the terminal ownership barrier while holding the same
+        // per-run mutation fence used by quota recovery. A recovery callback
+        // can finish before Stop or refuse after it, never interleave halfway.
+        await db.update(runs).set({
+          status: "cancelled",
+          updatedAt: new Date(),
+        }).where(eq(runs.id, runId));
+
+        const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+        const activeWorkers = runWorkers.filter((worker) => isActiveWorkerStatus(worker.status));
+        for (const worker of activeWorkers) {
+          await cancelWorker(worker);
+        }
+
+        await settleRunRecoveryAfterUserStop(runId);
+        await insertExecutionEvent(runId, "supervisor_stopped", {
+          summary: "Stopped supervisor and cancelled active workers.",
+          reason: "User stopped the supervisor.",
+          userInitiated: true,
+          cancelledWorkerIds: activeWorkers.map((worker) => worker.id),
         });
-      }
+        notifyEventStreamSubscribers();
 
-      if (isSupervisorStopAlreadySettled(run.status)) {
-        return Response.json({
-          ok: true,
-          runId,
-          alreadyStopped: true,
-          status: run.status,
-        });
-      }
-
-      stopRunObserver(runId);
-      await settleRunRecoveryAfterUserStop(runId);
-
-      const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
-      const activeWorkers = runWorkers.filter((worker) => isActiveWorkerStatus(worker.status));
-      for (const worker of activeWorkers) {
-        await cancelWorker(worker);
-      }
-
-      await db.update(runs).set({
-        status: "cancelled",
-        updatedAt: new Date(),
-      }).where(eq(runs.id, runId));
-      await insertExecutionEvent(runId, "supervisor_stopped", {
-        summary: "Stopped supervisor and cancelled active workers.",
-        reason: "User stopped the supervisor.",
-        userInitiated: true,
-        cancelledWorkerIds: activeWorkers.map((worker) => worker.id),
+        return Response.json({ ok: true, runId });
       });
-      notifyEventStreamSubscribers();
-
-      return Response.json({ ok: true, runId });
     }
 
     if (action === "stop_worker") {
@@ -620,41 +626,43 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
         });
       }
 
-      const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
-      if (!worker || worker.runId !== runId) {
-        return errorResponse("Worker not found", {
-          status: 404,
-          source: "Runs",
-          action: "Stop worker",
-        });
-      }
+      return runQuotaRecoveryMutation(runId, async () => {
+        const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+        if (!worker || worker.runId !== runId) {
+          return errorResponse("Worker not found", {
+            status: 404,
+            source: "Runs",
+            action: "Stop worker",
+          });
+        }
 
-      const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-      if (run?.mode === "implementation") {
-        await pauseImplementationRunAfterWorkerStop(runId, workerId);
+        const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+        if (run?.mode === "implementation") {
+          await pauseImplementationRunAfterWorkerStop(runId, workerId);
+          notifyEventStreamSubscribers();
+
+          return Response.json({ ok: true, runId, workerId, paused: true });
+        }
+
+        await cancelWorker(worker);
+        const updatedRunWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+        const hasActiveWorker = updatedRunWorkers.some((candidate) => isActiveWorkerStatus(candidate.status));
+        if (!hasActiveWorker) {
+          await db.update(runs).set({
+            status: "cancelled",
+            updatedAt: new Date(),
+          }).where(eq(runs.id, runId));
+          await settleRunRecoveryAfterUserStop(runId);
+        }
+        await insertExecutionEvent(runId, "worker_cancelled", {
+          summary: `Stopped ${workerId}`,
+          reason: "User stopped this worker.",
+          runCancelled: !hasActiveWorker,
+        }, workerId);
         notifyEventStreamSubscribers();
 
-        return Response.json({ ok: true, runId, workerId, paused: true });
-      }
-
-      await cancelWorker(worker);
-      const updatedRunWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
-      const hasActiveWorker = updatedRunWorkers.some((candidate) => isActiveWorkerStatus(candidate.status));
-      if (!hasActiveWorker) {
-        await settleRunRecoveryAfterUserStop(runId);
-        await db.update(runs).set({
-          status: "cancelled",
-          updatedAt: new Date(),
-        }).where(eq(runs.id, runId));
-      }
-      await insertExecutionEvent(runId, "worker_cancelled", {
-        summary: `Stopped ${workerId}`,
-        reason: "User stopped this worker.",
-        runCancelled: !hasActiveWorker,
-      }, workerId);
-      notifyEventStreamSubscribers();
-
-      return Response.json({ ok: true, runId, workerId });
+        return Response.json({ ok: true, runId, workerId });
+      });
     }
 
     if (action === "stop_worker_terminal") {

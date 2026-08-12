@@ -647,12 +647,13 @@ export async function askAgent(
   name: string,
   prompt: string,
   imageAttachments?: Array<{ path: string; mimeType: string }>,
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; expectedTurnGeneration?: number } = {},
 ) {
   // Ambient by default: `runWorkerTurn` publishes the turn's signal, so stop and
   // steer reach this fetch without every intermediate caller threading it.
   const signal = options.signal ?? currentWorkerTurnSignal();
-  const capturedTurnGeneration = await captureWorkerTurnGeneration(name);
+  const capturedTurnGeneration = options.expectedTurnGeneration
+    ?? await captureWorkerTurnGeneration(name);
   const assertTurnIsCurrent = async () => {
     if (
       capturedTurnGeneration !== null
