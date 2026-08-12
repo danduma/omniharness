@@ -30,7 +30,7 @@ import { handlePlansRequest } from "./plans";
 import { handleProjectMemoryRequest } from "./project-memory";
 import { handleAttachmentsRequest } from "./attachments";
 import { handlePlanningPromoteRequest, handlePlanningReviewRequest } from "./planning";
-import { handleBrowseFilesystemRequest, handleProjectFilesRequest } from "./filesystem";
+import { handleBrowseFilesystemRequest, handleCreateDirectoryRequest, handleProjectFilesRequest } from "./filesystem";
 import { handleGitRequest } from "./git";
 import { handleMessagesRequest } from "./messages";
 import { handleConversationsRequest } from "./conversations";
@@ -127,6 +127,10 @@ export function createOmniRuntimeHttpRegistry() {
     .route("POST", "/api/planning/:id/review", handlePlanningReviewRequest)
     .route("POST", "/api/planning/:id/promote", handlePlanningPromoteRequest)
     .route("GET", "/api/fs", handleBrowseFilesystemRequest)
+    .route("POST", "/api/fs/directories", handleCreateDirectoryRequest, {
+      auth: "same-origin-session",
+      responseKind: "json",
+    })
     .route("GET", "/api/fs/files", handleProjectFilesRequest)
     .route("POST", "/api/git", handleGitRequest)
     .route("GET", "/api/messages", handleMessagesRequest)
@@ -188,7 +192,7 @@ export { handlePlansRequest } from "./plans";
 export { handleProjectMemoryRequest } from "./project-memory";
 export { handleAttachmentsRequest } from "./attachments";
 export { handlePlanningPromoteRequest, handlePlanningReviewRequest } from "./planning";
-export { handleBrowseFilesystemRequest, handleProjectFilesRequest } from "./filesystem";
+export { handleBrowseFilesystemRequest, handleCreateDirectoryRequest, handleProjectFilesRequest } from "./filesystem";
 export { handleGitRequest } from "./git";
 export { handleMessagesRequest } from "./messages";
 export { handleConversationsRequest } from "./conversations";

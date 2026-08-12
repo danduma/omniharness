@@ -9,14 +9,78 @@ export const loginShellManager = new class extends StateManager<{ password: stri
   setPassword = (password: string) => this.setKey("password", password);
 }();
 
-export const folderPickerManager = new class extends StateManager<{ currentPath: string; search: string }> {
+type FolderPickerState = {
+  currentPath: string;
+  search: string;
+  isCreatingDirectory: boolean;
+  creationParentPath: string | null;
+  creationOperationId: number | null;
+  newFolderName: string;
+};
+
+export const folderPickerManager = new class extends StateManager<FolderPickerState> {
+  private creationOperationSequence = 0;
+
   constructor() {
-    super({ currentPath: "", search: "" });
+    super({
+      currentPath: "",
+      search: "",
+      isCreatingDirectory: false,
+      creationParentPath: null,
+      creationOperationId: null,
+      newFolderName: "",
+    });
   }
 
   setSearch = (search: string) => this.setKey("search", search);
 
-  navigate = (currentPath: string) => this.patch({ currentPath, search: "" });
+  setNewFolderName = (newFolderName: string) => this.setKey("newFolderName", newFolderName);
+
+  startDirectoryCreation = (creationParentPath: string) => {
+    const creationOperationId = ++this.creationOperationSequence;
+    this.patch({
+      isCreatingDirectory: true,
+      creationParentPath,
+      creationOperationId,
+      newFolderName: "",
+    });
+    return creationOperationId;
+  };
+
+  cancelDirectoryCreation = () => this.patch({
+    isCreatingDirectory: false,
+    creationParentPath: null,
+    creationOperationId: null,
+    newFolderName: "",
+  });
+
+  completeDirectoryCreation = (
+    creationOperationId: number,
+    creationParentPath: string,
+    currentPath: string,
+  ) => this.patch((current) => (
+    current.isCreatingDirectory
+      && current.creationOperationId === creationOperationId
+      && current.creationParentPath === creationParentPath
+      ? {
+          currentPath,
+          search: "",
+          isCreatingDirectory: false,
+          creationParentPath: null,
+          creationOperationId: null,
+          newFolderName: "",
+        }
+      : {}
+  ));
+
+  navigate = (currentPath: string) => this.patch({
+    currentPath,
+    search: "",
+    isCreatingDirectory: false,
+    creationParentPath: null,
+    creationOperationId: null,
+    newFolderName: "",
+  });
 }();
 
 export const fileAttachmentPickerManager = new class extends StateManager<{ search: string; selectedFiles: string[] }> {

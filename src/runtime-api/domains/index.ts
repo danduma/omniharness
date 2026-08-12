@@ -246,6 +246,9 @@ export function createRuntimeDomains({
       browse(input = {}, options) {
         return get(`/api/fs${buildRuntimeQuery({ path: input.path })}`, options);
       },
+      createDirectory(input, options) {
+        return post("/api/fs/directories", input, options) as Promise<{ path: string }>;
+      },
       list(input, options) {
         return get(`/api/fs/files${buildRuntimeQuery({
           root: input.root,

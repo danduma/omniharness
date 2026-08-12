@@ -149,6 +149,10 @@ export interface RuntimeAPIs {
   };
   files: {
     browse(input?: { path?: string | null }, options?: RuntimeCallOptions): Promise<unknown>;
+    createDirectory(input: {
+      parentPath: string;
+      name: string;
+    }, options?: RuntimeCallOptions): Promise<{ path: string }>;
     list(input: {
       root: string;
       file?: string;

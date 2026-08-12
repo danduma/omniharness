@@ -8,6 +8,8 @@ export const RUNNER_API_REVISION = {
 export const RUNNER_CAPABILITIES = [
   "browser_authorization_pkce",
   "cross_origin_stream_tickets",
+  "filesystem_directory_creation",
+  "goal_control",
   "runner_administration",
   "unified_worker_stream",
 ] as const;
@@ -31,12 +33,12 @@ export type ApiContractChangeClassification =
 
 export const ROUTE_CONTRACT_DECLARATION = {
   fixtureSchemaVersion: 1,
-  // Bumped by adding POST /api/runner/restart. Purely additive under the
-  // existing `runner_administration` capability, so the revision window is
-  // unchanged: an older client simply never calls the new route.
-  fingerprint: "fnv1a32:e6778bd5",
+  // Bumped by adding the scriptable run-goal routes and folder creation.
+  // Both are additive capabilities, so the revision window is unchanged:
+  // an older client simply never calls the new routes.
+  fingerprint: "fnv1a32:bd4cc4ed",
   classification: "additive-capability",
-  capability: "runner_administration",
+  capability: "filesystem_directory_creation",
   apiRevision: 1,
 } as const;
 

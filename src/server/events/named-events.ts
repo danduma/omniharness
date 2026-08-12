@@ -110,6 +110,9 @@ export type SurfacedErrorCode =
   | "goal.persistence.failed"
   | "goal.outbox.poisoned"
   | "goal.payload.invalid"
+  | "goal.not_found"
+  | "goal.rate_limited"
+  | "filesystem.directory_create_failed"
   | "codex_auth_missing"
   | "codex_auth_refresh_failed"
   | "codex_auth_unavailable"
@@ -690,8 +693,18 @@ export type ErrorSurfacedEvent = {
   workerId?: string;
   conversationId?: string;
   accountId?: string;
+  path?: string;
   cause?: { name: string; message: string } | null;
 };
+
+export type FilesystemEvent =
+  | { kind: "filesystem.directory_created"; parentPath: string; path: string }
+  | {
+      kind: "filesystem.directory_create_failed";
+      parentPath: string | null;
+      path: string | null;
+      reason: string;
+    };
 
 export type StreamControlEvent = {
   kind: "stream.resync_required";
@@ -810,6 +823,7 @@ export type NamedEvent =
   | AccountEvent
   | ConversationEvent
   | SessionEvent
+  | FilesystemEvent
   | ErrorSurfacedEvent
   | StreamControlEvent
   | StreamHeartbeatEvent
@@ -885,6 +899,8 @@ function append(event: NamedEvent | SnapshotMarker, runIdOverride?: string | nul
  * from afterSeq" — the snapshot carries cursors, not bodies.
  */
 const DELTA_ONLY_EVENT_KINDS = new Set<string>([
+  "filesystem.directory_created",
+  "filesystem.directory_create_failed",
   "worker.entry_appended",
   "worker.plan_boundary_started",
   "worker.plan_updated",
