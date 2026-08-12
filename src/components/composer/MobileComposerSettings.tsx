@@ -208,12 +208,17 @@ export function MobileComposerSettings({
         className="contents sm:hidden"
       >
         {!selectedRunId ? (
-          <div data-composer-workspace="true" className="min-w-0 max-w-full shrink">
-            <BranchWorkspaceButton
-              projectPath={workspaceProjectPath}
-              disabled={descriptorArgs.disabled}
-              themeMode={themeMode}
-            />
+          <div
+            data-composer-workspace="true"
+            className="pointer-events-none absolute inset-x-0 bottom-full z-30 flex max-w-full items-center justify-start px-3 pb-2 sm:hidden"
+          >
+            <div className="pointer-events-auto min-w-0 max-w-full rounded-full border border-border/70 bg-background/95 shadow-sm backdrop-blur-sm dark:bg-[#2f2f2f]/95">
+              <BranchWorkspaceButton
+                projectPath={workspaceProjectPath}
+                disabled={descriptorArgs.disabled}
+                themeMode={themeMode}
+              />
+            </div>
           </div>
         ) : null}
         <Button
