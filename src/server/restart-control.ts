@@ -31,6 +31,7 @@ export type RestartControlConfig = {
   host: string;
   port: number;
   token: string | null;
+  restoreOnStartup: boolean;
   managedPorts: number[];
   pidFile: string;
   logFile: string;
@@ -67,6 +68,10 @@ function parseManagedPorts(value: string | undefined) {
   return Array.from(new Set(ports));
 }
 
+function parseBoolean(value: string | undefined) {
+  return ["1", "true", "yes", "on"].includes(value?.trim().toLowerCase() ?? "");
+}
+
 function parseCommand(value: string | undefined, fallback: { command: string; args: string[] }) {
   const parts = value?.trim().split(/\s+/g).filter(Boolean) ?? [];
   if (parts.length === 0) {
@@ -93,6 +98,7 @@ export function resolveRestartControlConfig(repoRoot: string, env: Record<string
     host: env.OMNIHARNESS_REMOTE_RESTART_HOST || "0.0.0.0",
     port: parsePort(env.OMNIHARNESS_REMOTE_RESTART_PORT, 3099),
     token: env.OMNIHARNESS_REMOTE_RESTART_TOKEN?.trim() || null,
+    restoreOnStartup: parseBoolean(env.OMNIHARNESS_REMOTE_RESTART_RESTORE_ON_STARTUP),
     managedPorts: parseManagedPorts(env.OMNIHARNESS_REMOTE_RESTART_PORTS),
     pidFile: path.join(repoRoot, ".omniharness", "remote-restart.pid.json"),
     logFile: path.join(repoRoot, ".omniharness", "remote-restart.log"),
@@ -224,6 +230,36 @@ export function createRestartController({ config, system }: {
     async restartCurrent(reason = "manual") {
       const pidEntry = await system.readPidFile();
       return this.restart(reason, pidEntry?.mode ?? "dev");
+    },
+    async restorePreviousOnStartup() {
+      const pidEntry = await system.readPidFile();
+      if (!pidEntry) {
+        await system.appendLog("startup restore skipped: no previous mode recorded");
+        return { status: "skipped" as const, reason: "no_previous_mode" as const };
+      }
+
+      const [pidRunning, listenerPids] = await Promise.all([
+        system.isProcessAlive(pidEntry.pid),
+        system.findListenerPids(config.managedPorts),
+      ]);
+      if (pidRunning) {
+        await system.appendLog(`${pidEntry.mode} startup restore skipped: recorded process ${pidEntry.pid} is still alive`);
+        return { status: "skipped" as const, reason: "already_running" as const };
+      }
+      if (listenerPids.length > 0) {
+        await system.appendLog(`${pidEntry.mode} startup restore skipped: managed listener already exists`);
+        return { status: "skipped" as const, reason: "already_running" as const };
+      }
+
+      await system.appendLog(`${pidEntry.mode} startup restore requested`);
+      try {
+        const entry = await start(pidEntry.mode, "controller startup restore");
+        await system.appendLog(`${pidEntry.mode} startup restore completed: spawned pid ${entry.pid}`);
+        return { status: "restored" as const, entry };
+      } catch (error) {
+        await system.appendLog(`${pidEntry.mode} startup restore failed: ${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+      }
     },
     start,
     async getStatus(options: { logLines?: number } = {}) {

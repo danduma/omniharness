@@ -12,6 +12,12 @@ processes:
 Clients connect only to the API server. Electron, iOS, Android, VS Code, and
 browser/PWA clients never connect directly to the bridge.
 
+The optional macOS restart controller is a separate launchd-owned service. Its
+installer enables startup restoration: if the controller finds a saved runner
+mode whose recorded process and managed listeners are gone, it starts that mode
+again. An intentional controller Stop removes the saved mode and disables that
+restoration until the next manual start.
+
 `pnpm runner` starts the API server and starts or adopts a loopback bridge. The
 API remains available in a degraded state while a failed bridge retries. All
 start, adopt, retry, refusal, failure, and shutdown choices emit named events.

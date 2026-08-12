@@ -24,8 +24,18 @@ describe("restart control config", () => {
     expect(config.managedPorts).toEqual([3050, 5173, 7800]);
     expect(config.pidFile).toBe("/repo/.omniharness/remote-restart.pid.json");
     expect(config.logFile).toBe("/repo/.omniharness/remote-restart.log");
+    expect(config.restoreOnStartup).toBe(false);
     expect(config.commands.dev).toEqual({ command: "pnpm", args: ["run", "dev"] });
     expect(config.commands.prod).toEqual({ command: "pnpm", args: ["run", "start"] });
+  });
+
+  it("enables startup restoration only when explicitly configured", () => {
+    expect(resolveRestartControlConfig("/repo", {
+      OMNIHARNESS_REMOTE_RESTART_RESTORE_ON_STARTUP: "1",
+    }).restoreOnStartup).toBe(true);
+    expect(resolveRestartControlConfig("/repo", {
+      OMNIHARNESS_REMOTE_RESTART_RESTORE_ON_STARTUP: "false",
+    }).restoreOnStartup).toBe(false);
   });
 });
 
@@ -255,6 +265,75 @@ describe("restart controller", () => {
     expect(result.mode).toBe("prod");
     expect(actions).toContain("spawn:pnpm run start");
     expect(actions).toContain("write:prod:999");
+  });
+
+  it("restores the recorded production mode when its old process is gone", async () => {
+    const actions: string[] = [];
+    const controller = createRestartController({
+      config: resolveRestartControlConfig("/repo", {
+        OMNIHARNESS_REMOTE_RESTART_TOKEN: "secret-token",
+      }),
+      system: {
+        appendLog: (message) => {
+          actions.push(`log:${message}`);
+        },
+        ensureDir: () => undefined,
+        findListenerPids: async () => [],
+        isProcessAlive: async () => false,
+        readPidFile: async () => ({ pid: 777, startedAt: 1, command: ["pnpm", "run", "start"], mode: "prod" }),
+        readRecentLog: async () => "",
+        removePidFile: async () => undefined,
+        signalProcess: async () => undefined,
+        spawnDetached: async (command, args) => {
+          actions.push(`spawn:${command} ${args.join(" ")}`);
+          return 999;
+        },
+        waitForExit: async () => undefined,
+        writePidFile: async (entry) => {
+          actions.push(`write:${entry.mode}:${entry.pid}`);
+        },
+      },
+    });
+
+    await expect(controller.restorePreviousOnStartup()).resolves.toMatchObject({
+      status: "restored",
+      entry: { pid: 999, mode: "prod" },
+    });
+    expect(actions).toContain("spawn:pnpm run start");
+    expect(actions).toContain("write:prod:999");
+    expect(actions).toContain("log:prod startup restore completed: spawned pid 999");
+  });
+
+  it("does not duplicate a recorded runner that is still alive", async () => {
+    const actions: string[] = [];
+    const controller = createRestartController({
+      config: resolveRestartControlConfig("/repo", {}),
+      system: {
+        appendLog: (message) => {
+          actions.push(`log:${message}`);
+        },
+        ensureDir: () => undefined,
+        findListenerPids: async () => [],
+        isProcessAlive: async (pid) => pid === 777,
+        readPidFile: async () => ({ pid: 777, startedAt: 1, command: ["pnpm", "run", "start"], mode: "prod" }),
+        readRecentLog: async () => "",
+        removePidFile: async () => undefined,
+        signalProcess: async () => undefined,
+        spawnDetached: async () => {
+          actions.push("spawn");
+          return 999;
+        },
+        waitForExit: async () => undefined,
+        writePidFile: async () => undefined,
+      },
+    });
+
+    await expect(controller.restorePreviousOnStartup()).resolves.toEqual({
+      status: "skipped",
+      reason: "already_running",
+    });
+    expect(actions).not.toContain("spawn");
+    expect(actions).toContain("log:prod startup restore skipped: recorded process 777 is still alive");
   });
 
   it("reports running status, listener pids, and recent logs", async () => {

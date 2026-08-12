@@ -177,6 +177,8 @@ ${USER_NAME_BLOCK}
         <string>${TARGET_HOME}</string>
         <key>OMNIHARNESS_REMOTE_RESTART_PORT</key>
         <string>${PORT}</string>
+        <key>OMNIHARNESS_REMOTE_RESTART_RESTORE_ON_STARTUP</key>
+        <string>1</string>
     </dict>
 
     <key>RunAtLoad</key>

@@ -45,3 +45,10 @@ describe("remote-restart /restart-current ordering", () => {
     expect(restartCurrentHandler()).toContain("onFailure:");
   });
 });
+
+describe("remote-restart startup restoration", () => {
+  it("restores the previously recorded runner when launchd enables it", () => {
+    expect(source).toContain("if (config.restoreOnStartup)");
+    expect(source).toContain("controller.restorePreviousOnStartup()");
+  });
+});
