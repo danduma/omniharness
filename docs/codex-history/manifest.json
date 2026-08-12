@@ -1,8 +1,188 @@
 {
   "version": 2,
   "projectRoot": "/Users/masterman/NLP/omniharness",
-  "generatedAt": "2026-08-10T10:00:19.210Z",
+  "generatedAt": "2026-08-11T22:01:17.674Z",
   "conversations": [
+    {
+      "provider": "codex",
+      "id": "019fed3e-3051-7c53-9359-77cf8a924cd0",
+      "title": "Investigate large temp folder",
+      "startedAt": "2026-08-10T19:55:03.691Z",
+      "updatedAt": "2026-08-10T20:49:40.130Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "c41b89bb16a58138c3dddcd5f8a3cf77aacd684abc6f22e91916b288c8515ec4",
+      "parts": [
+        "conversations/2026/08/2026-08-10-investigate-large-temp-folder-019fed3e-3051-7c53-9359-77cf8a924cd0-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 272,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "520896bd-327c-40d7-9d43-c45f1f3cef17",
+      "title": "Review ACP V1 plan blockers and architecture",
+      "startedAt": "2026-08-10T12:10:28.365Z",
+      "updatedAt": "2026-08-10T12:11:33.501Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "53d3547714033c4d6fef6fc9e26dffd832f0cf2a542be94b7abe0e5a15f298ce",
+      "parts": [
+        "conversations/2026/08/2026-08-10-claude-review-acp-v1-plan-blockers-and-architecture-520896bd-327c-40d7-9d43-c45f1f3cef17-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 47,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "f52a7e77-759a-458d-9d4e-9739e8a96721",
+      "title": "Debug recurring authentication API error",
+      "startedAt": "2026-08-10T10:27:16.635Z",
+      "updatedAt": "2026-08-10T11:56:35.518Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "37c87de95aca03bb49f7de6367f11576859a243be169127a8b72f1fe88b32720",
+      "parts": [
+        "conversations/2026/08/2026-08-10-claude-debug-recurring-authentication-api-error-f52a7e77-759a-458d-9d4e-9739e8a96721-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 702,
+      "malformedLines": 0,
+      "redactions": 8,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "6c12b1a0-7d0d-45ef-a4a3-f74f1dc12c7e",
+      "title": "Fix malformed session titles bug",
+      "startedAt": "2026-08-10T11:13:22.313Z",
+      "updatedAt": "2026-08-10T11:22:51.786Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "c5e18a7a3946b7075c9c7f2e6e533e430abfefd208125dd1134a95e88a676d8e",
+      "parts": [
+        "conversations/2026/08/2026-08-10-claude-fix-malformed-session-titles-bug-6c12b1a0-7d0d-45ef-a4a3-f74f1dc12c7e-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 283,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "ed52e34f-2c96-48d4-b29a-15e6bb7364f1",
+      "title": "Remove Claude prefix from model names",
+      "startedAt": "2026-08-10T11:07:52.036Z",
+      "updatedAt": "2026-08-10T11:10:25.380Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "71175437b8d9a30c14fb17ee84c504888ab8a99fccc3be7e0737e2f137b4d7f8",
+      "parts": [
+        "conversations/2026/08/2026-08-10-claude-remove-claude-prefix-from-model-names-ed52e34f-2c96-48d4-b29a-15e6bb7364f1-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 82,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "8fdafed0-4a6a-4cf4-b303-3742ff4f7a74",
+      "title": "Clarify blue circle indicators in session list",
+      "startedAt": "2026-08-10T11:04:40.910Z",
+      "updatedAt": "2026-08-10T11:10:21.870Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "1916cb03d8a97c047fdaf6d4d544805182c9669f1490c7e4e8bb6cd90e5f158c",
+      "parts": [
+        "conversations/2026/08/2026-08-10-claude-clarify-blue-circle-indicators-in-session-list-8fdafed0-4a6a-4cf4-b303-3742ff4f7a74-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 149,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "a5157066-6151-4fd0-9a04-39eba62eb9fe",
+      "title": "Claude conversation a5157066",
+      "startedAt": "2026-08-10T11:00:26.203Z",
+      "updatedAt": "2026-08-10T11:00:26.535Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "1dde4d2763bee429340070ad7cffd879307126c4d334499f8c7760a26498014f",
+      "parts": [
+        "conversations/2026/08/2026-08-10-claude-claude-conversation-a5157066-a5157066-6151-4fd0-9a04-39eba62eb9fe-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 6,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "dc57f20b-de1a-4672-aaf8-95d1e554e5be",
+      "title": "Claude conversation dc57f20b",
+      "startedAt": "2026-08-10T11:00:05.702Z",
+      "updatedAt": "2026-08-10T11:00:07.918Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "cc0a1f0559c8a69ac83048ba21fcb67c08ec1b9788a4565ce3497693c7b6968f",
+      "parts": [
+        "conversations/2026/08/2026-08-10-claude-claude-conversation-dc57f20b-dc57f20b-de1a-4672-aaf8-95d1e554e5be-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 7,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "2aa86483-3bcd-4be9-9a87-08dd1e93a66c",
+      "title": "Fix mobile sidebar collapse control",
+      "startedAt": "2026-08-10T10:27:55.566Z",
+      "updatedAt": "2026-08-10T10:37:28.966Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "d52688c8291178d1c85d5919f4a6c2b1986e3621d56e302ffc71cb96186d20d6",
+      "parts": [
+        "conversations/2026/08/2026-08-10-claude-fix-mobile-sidebar-collapse-control-2aa86483-3bcd-4be9-9a87-08dd1e93a66c-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 239,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
     {
       "provider": "claude",
       "id": "d7916621-84e1-445a-8f26-c928bce410cf",
@@ -917,7 +1097,7 @@
       "workingDirectory": "/Users/masterman/NLP/omniharness",
       "sourcePresent": true,
       "resolution": "repository",
-      "sourceFingerprint": "fab8f36d26a7aae61d5e38a7f911b02de9669b8697cc6d5bedae1b7741a8bdfb",
+      "sourceFingerprint": "4ea4fe6e5034b040e8ae4bf581b8c15edd7a3666ae80e3bd0b7553d79dc1f2c8",
       "parts": [
         "conversations/2026/08/2026-08-03-claude-investigate-stuck-worker-recovery-session-2de57847-cbf5-4d73-b59c-90f2e544d885-part-001.md"
       ],
@@ -1868,7 +2048,7 @@
       "updatedAt": "2026-07-11T12:37:42.430Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "ac16d5c4488427319ee1c7d25cf66672aa88f460bdceabfe5cdff56fbd2d966a",
       "parts": [
@@ -1888,7 +2068,7 @@
       "updatedAt": "2026-07-11T12:14:52.738Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "360bc79114025a94df790204dc4a535c105cd697785ffe1255c8850a55041f5b",
       "parts": [
