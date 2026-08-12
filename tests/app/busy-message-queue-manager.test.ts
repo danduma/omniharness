@@ -46,6 +46,17 @@ describe("BusyMessageQueueManager", () => {
     expect(manager.getQueuedMessagesForRun(null)).toEqual([]);
   });
 
+  it("does not treat another run's empty snapshot as removal", () => {
+    const manager = new BusyMessageQueueManager();
+    const queuedMessage = buildQueuedMessage({ id: "run-a-queued", runId: "run-a" });
+
+    manager.setQueuedMessages([queuedMessage], { runId: "run-a", notify: false });
+    manager.setQueuedMessages([], { runId: "run-b", notify: false });
+    manager.setQueuedMessages([queuedMessage], { runId: "run-a", notify: false });
+
+    expect(manager.getQueuedMessagesForRun("run-a")).toEqual([queuedMessage]);
+  });
+
   it("keeps locally hidden queued messages hidden across stale server snapshots", () => {
     const manager = new BusyMessageQueueManager();
     const queuedMessage = buildQueuedMessage({ id: "queued-editing", runId: "run-a" });

@@ -100,3 +100,53 @@ describe("ConversationTranscriptManager.hasLoadedOnce", () => {
     expect(manager.getState("run-1").hasLoadedOnce).toBe(true);
   });
 });
+
+describe("ConversationTranscriptManager scroll-back scheduling", () => {
+  it("queues an older-page request when refresh is already in flight", async () => {
+    const tailToken = token("tail");
+    const oldestToken = token("oldest");
+    const olderOldestToken = token("older-oldest");
+    let resolveRefresh!: (value: unknown) => void;
+    const transcript = vi
+      .fn()
+      .mockResolvedValueOnce({
+        entries: [entry(152), entry(153)],
+        latestToken: tailToken,
+        oldestToken,
+        hasOlder: true,
+        workerIds: ["w1"],
+      })
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveRefresh = resolve;
+      }))
+      .mockResolvedValueOnce({
+        entries: [entry(150), entry(151)],
+        latestToken: tailToken,
+        oldestToken: olderOldestToken,
+        hasOlder: true,
+        workerIds: ["w1"],
+      });
+    const manager = new ConversationTranscriptManager({ transcript });
+
+    await manager.ensureLoaded("run-1");
+    const refresh = manager.refresh("run-1");
+    const older = manager.loadOlder("run-1");
+
+    expect(transcript).toHaveBeenCalledTimes(2);
+
+    resolveRefresh({
+      entries: [],
+      latestToken: tailToken,
+      workerIds: ["w1"],
+    });
+    await refresh;
+    await older;
+
+    expect(transcript).toHaveBeenLastCalledWith({
+      runId: "run-1",
+      beforeToken: oldestToken,
+      limit: 100,
+    });
+    expect(manager.getState("run-1").entries.map((item) => item.seq)).toEqual([150, 151, 152, 153]);
+  });
+});

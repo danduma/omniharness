@@ -19,6 +19,11 @@ type BusyMessageQueueState = {
   pendingQueuedMessageIds: Set<string>;
 };
 
+type QueueSnapshotOptions = {
+  runId?: string | null;
+  notify?: boolean;
+} | boolean;
+
 const initialBusyMessageQueueState: BusyMessageQueueState = {
   queuedMessages: [],
   cancellingMessageIds: new Set(),
@@ -117,9 +122,25 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
     super(initialBusyMessageQueueState);
   }
 
-  setQueuedMessages(messages: QueuedConversationMessageRecord[], notify = true) {
+  setQueuedMessages(messages: QueuedConversationMessageRecord[], options: QueueSnapshotOptions = {}) {
+    const hasRunScope = typeof options !== "boolean" && "runId" in options;
+    const scopedRunId = hasRunScope ? options.runId?.trim() || null : null;
+    const notify = typeof options === "boolean" ? options : options.notify ?? true;
+
+    // A scoped event snapshot with no run id is not authoritative for any
+    // queue. Legacy boolean callers retain the old whole-state behavior.
+    if (hasRunScope && !scopedRunId) {
+      return;
+    }
+
     this.update((current) => {
-      const incomingMessages = messages.filter(
+      const scopedIncomingMessages = scopedRunId
+        ? messages.filter((message) => message.runId === scopedRunId)
+        : messages;
+      const scopedCurrentMessages = scopedRunId
+        ? current.queuedMessages.filter((message) => message.runId === scopedRunId)
+        : current.queuedMessages;
+      const incomingMessages = scopedIncomingMessages.filter(
         (message) => !isStaleServerAbsentActiveMessage(message, current.serverAbsentMessageUpdatedAtById),
       );
       const incomingIds = new Set(incomingMessages.map((message) => message.id));
@@ -127,7 +148,7 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
       // has not reached the server yet. Leave it out of the absence
       // bookkeeping entirely so it is neither dropped now nor rejected as
       // stale when the real row arrives.
-      const newlyAbsentActiveIds = current.queuedMessages
+      const newlyAbsentActiveIds = scopedCurrentMessages
         .filter((message) => (
           isActiveQueuedMessage(message)
           && !incomingIds.has(message.id)
@@ -168,6 +189,9 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
         serverAbsentMessageUpdatedAtById.delete(message.id);
       }
       const queuedMessages = [
+        ...(scopedRunId
+          ? current.queuedMessages.filter((message) => message.runId !== scopedRunId)
+          : []),
         ...incomingMessages.filter((message) => !current.locallyHiddenMessageIds.has(message.id)),
         ...retainedPendingMessages,
       ].sort(compareOldestByCreatedAtThenId);
