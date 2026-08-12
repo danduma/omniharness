@@ -44,6 +44,32 @@ describe("ACP goal normalization", () => {
     });
   });
 
+  it("normalizes an explicit provider validation result", () => {
+    expect(normalizeAcpGoalMetadata({
+      _meta: {
+        goal: {
+          version: 1,
+          status: "completed",
+          validationState: {
+            status: "passed",
+            message: "All acceptance checks passed.",
+            updatedAt: "2026-08-10T10:00:00.000Z",
+          },
+        },
+      },
+    })).toMatchObject({
+      ok: true,
+      value: {
+        status: "completed",
+        validationState: {
+          status: "passed",
+          message: "All acceptance checks passed.",
+          updatedAt: "2026-08-10T10:00:00.000Z",
+        },
+      },
+    });
+  });
+
   it("normalizes core and experimental item plans with stable ids", () => {
     const context = { goalId: "goal-1", revision: 4 };
     const core = normalizeAcpGoalPlanUpdate({
@@ -68,15 +94,11 @@ describe("ACP goal normalization", () => {
         plan: [{ id: "provider-item", providerId: "provider-item", title: "Inspect", status: "completed" }],
       },
     });
-    expect(core.ok && core.value.plan[0]?.id).toBe(
-      normalizeAcpGoalPlanUpdate({
-        sessionUpdate: "plan",
-        entries: [{ content: "Inspect", priority: "high", status: "in_progress" }],
-      }, context).ok && (normalizeAcpGoalPlanUpdate({
-        sessionUpdate: "plan",
-        entries: [{ content: "Inspect", priority: "high", status: "in_progress" }],
-      }, context) as typeof core).value.plan[0]?.id,
-    );
+    const repeated = normalizeAcpGoalPlanUpdate({
+      sessionUpdate: "plan",
+      entries: [{ content: "Inspect", priority: "high", status: "in_progress" }],
+    }, context);
+    expect(core.ok && core.value.plan[0]?.id).toBe(repeated.ok && repeated.value.plan[0]?.id);
   });
 
   it("normalizes markdown, safe file URIs, and removal as atomic replacements", () => {

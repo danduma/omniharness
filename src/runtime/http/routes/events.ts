@@ -43,6 +43,7 @@ import {
   redeemStreamTicketRequest,
 } from "@/server/auth/stream-tickets";
 import { subscribeAuthSessionRevocations } from "@/server/auth/session-revocation";
+import { goalControl } from "@/server/runs/goal-control";
 
 const STREAM_REFRESH_INTERVAL_MS = 15_000;
 // Minimum wall-clock gap between full snapshot rebuilds on one stream. A
@@ -123,6 +124,7 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}, prob
     allReviewFindings,
     allProcessSessions,
     allReadMarkers,
+    selectedGoal,
   ] = await Promise.all([
     selectedRunId
       ? db.select().from(messages).where(inArray(messages.runId, transcriptRunIds)).orderBy(asc(messages.createdAt), asc(messages.id))
@@ -203,6 +205,7 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}, prob
       : [],
     db.select().from(processSessions),
     db.select().from(conversationReadMarkers).where(visibleRunIds.length > 0 ? inArray(conversationReadMarkers.runId, visibleRunIds) : eq(conversationReadMarkers.runId, "__none__")),
+    selectedRunId ? goalControl.getGoal(selectedRunId) : null,
   ]);
   probe?.mark("q.parallel15");
 
@@ -224,6 +227,7 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}, prob
     allReviewFindings,
     allProcessSessions,
     allReadMarkers,
+    selectedGoal,
   };
 }
 
@@ -574,6 +578,7 @@ function buildEventPayload(
       },
     },
     workerEntrySeqs,
+    goalsByRunId: records.selectedGoal ? { [records.selectedGoal.runId]: records.selectedGoal } : {},
     claudeModelGateway,
   });
 }
@@ -806,6 +811,12 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
   } satisfies EventPayloadOptions;
 
   if (isSnapshot) {
+    // Capture the transport boundary before reading SQLite/runtime state.
+    // Events emitted while the snapshot is being assembled are therefore
+    // replayed after this anchor. The snapshot may already contain their
+    // resulting revision, but revision/event-key merges make that harmless;
+    // anchoring after the build would silently skip an event the body missed.
+    const snapshotAnchor = getEventStreamCursor();
     const payload = persistedOnly
       // `persisted=1` is the canonical verification surface used after
       // lifecycle mutations. It must reflect SQLite now, even when a route
@@ -834,7 +845,7 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
         }
         : payload,
     );
-    response.headers.set("x-omni-last-event-id", getEventStreamCursor());
+    response.headers.set("x-omni-last-event-id", snapshotAnchor);
     if (payload.snapshotChecksum) {
       response.headers.set("x-omni-snapshot-checksum", payload.snapshotChecksum);
     }

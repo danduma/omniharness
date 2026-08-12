@@ -13,6 +13,7 @@ import type { EventStreamState } from "./types";
 import { workerEntriesManager } from "./WorkerEntriesManager";
 import { sidebarWorkerActivityManager, type SidebarWorkerActivityManager } from "./SidebarWorkerActivityManager";
 import { acpPlanManager, type AcpPlanManager } from "./AcpPlanManager";
+import type { GoalSnapshot } from "@/shared/goal-plan";
 
 export { buildEventStreamUrl };
 
@@ -44,6 +45,7 @@ interface LiveEventConnectionManagerOptions {
   planManager?: Pick<AcpPlanManager, "onKnownSeqs" | "onStreamResync" | "onWakeUp">;
   sidebarWorkerActivity?: Pick<SidebarWorkerActivityManager, "onKnownSeqs" | "onWakeUp">;
   applyUpdate: (state: EventStreamState) => void;
+  applyGoalEvent?: (snapshot: GoalSnapshot, eventKey: string | null) => boolean;
   reportError: (error: AppErrorDescriptor) => void;
   onStreamResync?: () => void;
   fallbackIntervalMs?: number;
@@ -176,6 +178,7 @@ export class LiveEventConnectionManager {
   private readonly planManager: Pick<AcpPlanManager, "onKnownSeqs" | "onStreamResync" | "onWakeUp">;
   private readonly sidebarWorkerActivity: Pick<SidebarWorkerActivityManager, "onKnownSeqs" | "onWakeUp">;
   private readonly applyUpdate: (state: EventStreamState) => void;
+  private readonly applyGoalEvent?: (snapshot: GoalSnapshot, eventKey: string | null) => boolean;
   private readonly reportError: (error: AppErrorDescriptor) => void;
   private readonly onStreamResync?: () => void;
   private readonly fallbackIntervalMs: number;
@@ -206,6 +209,7 @@ export class LiveEventConnectionManager {
     this.planManager = options.planManager ?? acpPlanManager;
     this.sidebarWorkerActivity = options.sidebarWorkerActivity ?? sidebarWorkerActivityManager;
     this.applyUpdate = options.applyUpdate;
+    this.applyGoalEvent = options.applyGoalEvent;
     this.reportError = options.reportError;
     this.onStreamResync = options.onStreamResync;
     this.fallbackIntervalMs = options.fallbackIntervalMs ?? SNAPSHOT_FALLBACK_INTERVAL_MS;
@@ -242,6 +246,9 @@ export class LiveEventConnectionManager {
           payload?: unknown;
           lastEventId?: string | null;
         };
+        if (streamEvent.kind !== "update" && streamEvent.lastEventId && !this.cursor.advance(streamEvent.lastEventId)) {
+          return;
+        }
         if (streamEvent.kind === "update") {
           this.handleUpdateEvent(streamEvent);
         } else if (streamEvent.kind === "update_error") {
@@ -250,6 +257,8 @@ export class LiveEventConnectionManager {
           this.handleWorkerEntryAppended(streamEvent.payload);
         } else if (streamEvent.kind === "worker.plan_updated" || streamEvent.kind === "worker.plan_boundary_started") {
           this.handlePlanWakeUp(streamEvent.payload);
+        } else if (streamEvent.kind?.startsWith("goal.")) {
+          this.handleGoalEvent(streamEvent.payload);
         } else if (streamEvent.kind === "stream.resync_required") {
           void this.handleStreamResyncRequired();
         }
@@ -304,6 +313,7 @@ export class LiveEventConnectionManager {
         return;
       }
       this.workerEntries.onWakeUp({ workerId, seq });
+      this.planManager.onWakeUp({ workerId, seq, runId });
       this.sidebarWorkerActivity.onWakeUp({ workerId, seq, runId });
     } catch {
       // Malformed frames are ignored — the next valid frame (or the
@@ -319,6 +329,24 @@ export class LiveEventConnectionManager {
       runId: typeof data.runId === "string" ? data.runId : null,
       seq: data.seq,
     });
+  }
+
+  private handleGoalEvent(payload: unknown) {
+    if (!this.applyGoalEvent || !payload || typeof payload !== "object") return;
+    const event = payload as { snapshot?: unknown; eventKey?: unknown };
+    if (!event.snapshot) return;
+    try {
+      this.applyGoalEvent(
+        event.snapshot as GoalSnapshot,
+        typeof event.eventKey === "string" ? event.eventKey : null,
+      );
+    } catch (error) {
+      this.reportError(withFallbackErrorContext(error, {
+        source: "Goals",
+        action: "Process goal update",
+      }));
+      void this.handleStreamResyncRequired();
+    }
   }
 
   private handleUpdateErrorEvent(payload: unknown) {
@@ -445,11 +473,13 @@ export class LiveEventConnectionManager {
       const data = result.data;
       if (isNotModifiedSnapshot(data)) {
         this.workerEntries.onKnownSeqs(data.workerEntrySeqs);
+        this.planManager.onKnownSeqs(data.workerEntrySeqs);
         this.sidebarWorkerActivity.onKnownSeqs(data.workerEntrySeqs);
         return true;
       }
       this.applyUpdate(data);
       this.workerEntries.onKnownSeqs(data?.workerEntrySeqs);
+      this.planManager.onKnownSeqs(data?.workerEntrySeqs);
       this.sidebarWorkerActivity.onKnownSeqs(data?.workerEntrySeqs);
       return true;
     } catch (error) {

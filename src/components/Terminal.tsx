@@ -16,6 +16,7 @@ import {
 } from "@/interface/home/AppearancePreferencesManager";
 import { buildAgentOutputActivity, formatActivityStatus, type AgentActivityItem, type AgentOutputEntry, type AgentToolGroupCounts } from "@/lib/agent-output";
 import type { WorkerEntry } from "@/shared/worker-entries";
+import type { PlanSurfaceOwner } from "@/shared/acp-plan";
 import type { ChatAttachment } from "@/lib/chat-attachments";
 import { parseProjectFileReference, type ProjectFileReference } from "@/lib/project-file-links";
 import { cn } from "@/lib/utils";
@@ -89,6 +90,7 @@ interface TerminalProps {
   onOpenProjectFile?: (file: ProjectFileReference) => void;
   scrollAnchorKey?: string | null;
   summarizeWorkBlocks?: boolean;
+  planSurfaceOwner?: PlanSurfaceOwner;
 }
 
 export interface TerminalUserMessage {
@@ -493,8 +495,9 @@ function assignActivityOrderKeys(
   return orderKeys;
 }
 
-function shouldRenderUnifiedStreamEntry(entry: WorkerEntry) {
-  return entry.type !== "lifecycle";
+export function shouldRenderUnifiedStreamEntry(entry: WorkerEntry, suppressAcceptedPlanRows = false) {
+  if (entry.diagnosticOnly || entry.type === "lifecycle") return false;
+  return !(suppressAcceptedPlanRows && entry.planProjection === "accepted_core");
 }
 
 function isTerminalToolStatus(status: string) {
@@ -2249,6 +2252,7 @@ export function Terminal({
   onOpenProjectFile,
   scrollAnchorKey = null,
   summarizeWorkBlocks = false,
+  planSurfaceOwner,
 }: TerminalProps) {
   useI18nSnapshot();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -2264,6 +2268,13 @@ export function Terminal({
   const previousScrollHeightRef = useRef(0);
   const { conversationTextSize, terminalTextSize, alwaysExpandThoughts } = useManagerSnapshot(appearancePreferencesManager);
   const thoughtsDefaultOpen = thoughtsDefaultOpenProp || alwaysExpandThoughts;
+  const suppressAcceptedPlanRows = Boolean(
+    planSurfaceOwner?.ready
+      && planSurfaceOwner.ownsWidget
+      && planSurfaceOwner.suppressAcceptedPlanRows
+      && planSurfaceOwner.runId
+      && planSurfaceOwner.workerId,
+  );
 
   const activity = useMemo(() => {
     // When the unified worker stream provides actual `entries`, the legacy
@@ -2275,7 +2286,7 @@ export function Terminal({
     // through to the agent activity builder as plain messages.
     const usingUnifiedStream = Array.isArray(entries) && entries.length > 0;
     const visibleEntries = usingUnifiedStream
-      ? (entries ?? []).filter(shouldRenderUnifiedStreamEntry)
+      ? (entries ?? []).filter((entry) => shouldRenderUnifiedStreamEntry(entry, suppressAcceptedPlanRows))
       : undefined;
     const bridgeEntries = usingUnifiedStream
       ? (visibleEntries ?? [])
@@ -2408,14 +2419,6 @@ export function Terminal({
             };
           }
 
-          const attachments = (entry.entry.attachments ?? []).map((attachment) => ({
-            id: attachment.id,
-            kind: attachment.mimeType.startsWith("image/") ? "image" as const : "file" as const,
-            name: attachment.filename,
-            mimeType: attachment.mimeType,
-            size: attachment.sizeBytes,
-          }));
-
           // Two different questions, two different answers:
           //
           //  - Where does this message belong in the thread? The stream entry
@@ -2431,6 +2434,24 @@ export function Terminal({
           const matchingUserMessage = entry.entry.type === "user_input"
             ? userMessages.find((m) => m.id === entry.entry.id)
             : null;
+          const mirroredAttachments = matchingUserMessage?.attachments ?? [];
+          const mirroredAttachmentsById = new Map(
+            mirroredAttachments.map((attachment) => [attachment.id, attachment]),
+          );
+          const streamAttachments = entry.entry.attachments ?? [];
+          // Stream content and ordering stay authoritative. The message mirror
+          // only fills durable attachment resolver metadata omitted by legacy
+          // stream rows written before `storagePath` joined the schema.
+          const attachments = streamAttachments.length > 0
+            ? streamAttachments.map((attachment) => ({
+                id: attachment.id,
+                kind: attachment.mimeType.startsWith("image/") ? "image" as const : "file" as const,
+                name: attachment.filename,
+                mimeType: attachment.mimeType,
+                size: attachment.sizeBytes,
+                storagePath: attachment.storagePath ?? mirroredAttachmentsById.get(attachment.id)?.storagePath,
+              }))
+            : mirroredAttachments;
           const authoritativeTimestamp = matchingUserMessage?.createdAt ?? entry.entry.timestamp;
 
           return {
@@ -2506,7 +2527,7 @@ export function Terminal({
       return activityKindOrder(a) - activityKindOrder(b) || a.id.localeCompare(b.id);
     });
     return summarizeWorkBlocks ? summarizeWorkIntervals(sorted) : sorted;
-  }, [agent, allowUserMessageFallback, entries, getUserMessageActions, hasMoreHistory, multiWorkerOrdering, pendingAssistantStatus, sendingUserMessageIds, showPendingAssistantIndicator, summarizeWorkBlocks, ungatedUserMessageIds, userMessages]);
+  }, [agent, allowUserMessageFallback, entries, getUserMessageActions, hasMoreHistory, multiWorkerOrdering, pendingAssistantStatus, sendingUserMessageIds, showPendingAssistantIndicator, summarizeWorkBlocks, suppressAcceptedPlanRows, ungatedUserMessageIds, userMessages]);
   const filteredActivity = useMemo(
     () => activityFilter ? activity.filter(activityFilter) : activity,
     [activity, activityFilter],

@@ -1,4 +1,5 @@
 import type { AgentSnapshot, EventStreamState } from "./types";
+import type { GoalSnapshot } from "@/shared/goal-plan";
 
 const DEFAULT_STORAGE_KEY = "omni-event-stream-snapshot-cache:v1";
 const DEFAULT_MAX_SNAPSHOTS = 8;
@@ -83,6 +84,22 @@ function isEventStreamState(value: unknown): value is EventStreamState {
   return Array.isArray(record.runs) && Array.isArray(record.messages);
 }
 
+function hydrateGoals(initialState: EventStreamState, cachedState: EventStreamState) {
+  if (initialState.snapshotSource === "server" && initialState.goalsByRunId) {
+    return initialState.goalsByRunId;
+  }
+  const goals: Record<string, GoalSnapshot> = Object.fromEntries(
+    Object.entries(cachedState.goalsByRunId ?? {}).map(([runId, goal]) => [runId, {
+      ...goal,
+      provenance: { ...goal.provenance, source: "cache" as const },
+    }]),
+  );
+  for (const [runId, goal] of Object.entries(initialState.goalsByRunId ?? {})) {
+    if (!goals[runId] || goal.revision >= goals[runId].revision) goals[runId] = goal;
+  }
+  return goals;
+}
+
 export class EventStreamSnapshotCacheManager {
   private readonly storage: SnapshotStorage | null;
   private readonly storageKey: string;
@@ -129,6 +146,7 @@ export class EventStreamSnapshotCacheManager {
       supervisorInterventions: preferInitialArray(initialState.supervisorInterventions, cachedState.supervisorInterventions, arrayMergeOptions),
       queuedMessages: preferInitialArray(initialState.queuedMessages, cachedState.queuedMessages, arrayMergeOptions),
       recoveryIncidents: preferInitialArray(initialState.recoveryIncidents, cachedState.recoveryIncidents, arrayMergeOptions),
+      goalsByRunId: hydrateGoals(initialState, cachedState),
       frontendErrors: [],
     };
   }

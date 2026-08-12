@@ -19,6 +19,7 @@ import { conversationNotificationManager } from "./ConversationNotificationManag
 import { claudeModelGatewayManager } from "./ClaudeModelGatewayManager";
 import { LiveEventConnectionManager, LiveEventCursorManager } from "./LiveEventConnectionManager";
 import { acpPlanManager } from "./AcpPlanManager";
+import { goalPlanManager } from "./GoalPlanManager";
 import type { ComposerWorkerOption, EventStreamState } from "./types";
 import { buildConversationPath, buildInlineError, parseBrowserConversationRoute, parseCollapsedProjectPaths, resolveSavedComposerModel } from "./utils";
 import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
@@ -34,6 +35,7 @@ interface UseHomeLifecycleProps {
   setHasReceivedInitialEventStreamPayload: React.Dispatch<React.SetStateAction<boolean>>;
   setState: React.Dispatch<React.SetStateAction<EventStreamState>>;
   applyServerEventStreamState?: React.Dispatch<React.SetStateAction<EventStreamState>>;
+  applyGoalEvent?: (snapshot: import("@/shared/goal-plan").GoalSnapshot, eventKey: string | null) => boolean;
   setRuntimeErrors: React.Dispatch<React.SetStateAction<AppErrorDescriptor[]>>;
   routeReady: boolean;
   setRouteReady: React.Dispatch<React.SetStateAction<boolean>>;
@@ -88,6 +90,7 @@ export function useHomeLifecycle({
   setHasReceivedInitialEventStreamPayload,
   setState,
   applyServerEventStreamState,
+  applyGoalEvent,
   setRuntimeErrors,
   routeReady,
   setRouteReady,
@@ -195,7 +198,11 @@ export function useHomeLifecycle({
       getSnapshotChecksum,
       planManager: acpPlanManager,
       applyUpdate: applyEventStreamUpdate,
-      onStreamResync: () => claudeModelGatewayManager.resetRevisionAuthority(),
+      applyGoalEvent,
+      onStreamResync: () => {
+        claudeModelGatewayManager.resetRevisionAuthority();
+        goalPlanManager.reconnect();
+      },
       reportError: (error) => {
         if (!isActive) {
           return;
@@ -216,6 +223,7 @@ export function useHomeLifecycle({
     filterEventStreamState,
     getSnapshotChecksum,
     applyServerEventStreamState,
+    applyGoalEvent,
     routeReady,
     runnerConnection,
     runtimeApis.events,

@@ -35,6 +35,14 @@ function createWorkerEntriesNotifier() {
   };
 }
 
+function createPlanNotifier() {
+  return {
+    onKnownSeqs: vi.fn(),
+    onStreamResync: vi.fn(),
+    onWakeUp: vi.fn(),
+  };
+}
+
 class MockEventSource {
   static instances: MockEventSource[] = [];
 
@@ -239,6 +247,7 @@ describe("LiveEventConnectionManager", () => {
     vi.useFakeTimers();
     MockEventSource.instances = [];
     const workerEntries = createWorkerEntriesNotifier();
+    const planManager = createPlanNotifier();
     const requestJson = vi.fn().mockResolvedValue(createState("persisted-initial"));
     const manager = new LiveEventConnectionManager({
       EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
@@ -246,6 +255,7 @@ describe("LiveEventConnectionManager", () => {
       applyUpdate: vi.fn(),
       reportError: vi.fn(),
       workerEntries,
+      planManager,
       fallbackCooldownMs: 0,
     });
 
@@ -256,6 +266,7 @@ describe("LiveEventConnectionManager", () => {
     });
 
     expect(workerEntries.onKnownSeqs).toHaveBeenCalledWith({ "worker-1": 7 });
+    expect(planManager.onKnownSeqs).toHaveBeenCalledWith({ "worker-1": 7 });
 
     manager.stop();
     vi.useRealTimers();
@@ -264,6 +275,7 @@ describe("LiveEventConnectionManager", () => {
   it("routes worker entry wake-ups and resync controls through the worker stream manager", () => {
     MockEventSource.instances = [];
     const workerEntries = createWorkerEntriesNotifier();
+    const planManager = createPlanNotifier();
     const onStreamResync = vi.fn();
     const manager = new LiveEventConnectionManager({
       EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
@@ -271,15 +283,34 @@ describe("LiveEventConnectionManager", () => {
       applyUpdate: vi.fn(),
       reportError: vi.fn(),
       workerEntries,
+      planManager,
       onStreamResync,
     });
 
     manager.start();
-    MockEventSource.instances[0]?.emit("worker.entry_appended", { workerId: "worker-1", seq: 3 });
+    MockEventSource.instances[0]?.emit("worker.entry_appended", { runId: "run-1", workerId: "worker-1", seq: 3 });
+    MockEventSource.instances[0]?.emit("worker.plan_updated", { runId: "run-1", workerId: "worker-1", seq: 4 });
+    MockEventSource.instances[0]?.emit("worker.plan_boundary_started", { runId: "run-1", workerId: "worker-1", seq: 5 });
     MockEventSource.instances[0]?.emit("stream.resync_required", { reason: "test" });
 
     expect(workerEntries.onWakeUp).toHaveBeenCalledWith({ workerId: "worker-1", seq: 3 });
     expect(workerEntries.onStreamResync).toHaveBeenCalledTimes(1);
+    expect(planManager.onWakeUp).toHaveBeenNthCalledWith(1, {
+      runId: "run-1",
+      workerId: "worker-1",
+      seq: 3,
+    });
+    expect(planManager.onWakeUp).toHaveBeenNthCalledWith(2, {
+      runId: "run-1",
+      workerId: "worker-1",
+      seq: 4,
+    });
+    expect(planManager.onWakeUp).toHaveBeenNthCalledWith(3, {
+      runId: "run-1",
+      workerId: "worker-1",
+      seq: 5,
+    });
+    expect(planManager.onStreamResync).toHaveBeenCalledTimes(1);
     expect(onStreamResync).toHaveBeenCalledTimes(1);
 
     manager.stop();

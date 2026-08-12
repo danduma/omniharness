@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DbClient } from "@/server/db";
 import { dbClient } from "@/server/db";
 import { emitNamedEvent, type NamedEvent } from "@/server/events/named-events";
+import { redactGoalErrorMessage } from "@/server/runs/goal-errors";
 
 export type GoalOutboxDrainResult = "idle" | "published" | "retryable" | "poisoned" | "stale_claim";
 
@@ -25,10 +26,11 @@ interface GoalOutboxOptions {
   claimLeaseMs?: number;
   maxAttempts?: number;
   maximumBackoffMs?: number;
+  onDiagnosticFailure?: (event: NamedEvent, error: unknown) => void;
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+  return redactGoalErrorMessage(error);
 }
 
 export class GoalOutboxDispatcher {
@@ -38,6 +40,9 @@ export class GoalOutboxDispatcher {
   private readonly claimLeaseMs: number;
   private readonly maxAttempts: number;
   private readonly maximumBackoffMs: number;
+  private readonly onDiagnosticFailure: (event: NamedEvent, error: unknown) => void;
+  private autoDeliveryEnabled = false;
+  private autoDeliveryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly client: DbClient, options: GoalOutboxOptions = {}) {
     this.emit = options.emit ?? emitNamedEvent;
@@ -46,6 +51,9 @@ export class GoalOutboxDispatcher {
     this.claimLeaseMs = options.claimLeaseMs ?? 30_000;
     this.maxAttempts = options.maxAttempts ?? 5;
     this.maximumBackoffMs = options.maximumBackoffMs ?? 60_000;
+    this.onDiagnosticFailure = options.onDiagnosticFailure ?? ((event, error) => {
+      console.error(`Failed to emit ${event.kind}:`, error);
+    });
   }
 
   async claimNext(): Promise<GoalOutboxClaim | null> {
@@ -89,7 +97,7 @@ export class GoalOutboxDispatcher {
                   (status IN ('pending', 'retryable') AND next_attempt_at <= ?)
                   OR (status = 'claimed' AND claim_expires_at <= ?)
                 )`,
-        args: [claimToken, now + this.claimLeaseMs, now, row.id, now, now],
+        args: [claimToken, now + this.claimLeaseMs, now, String(row.id), now, now],
       });
       if (updated.rowsAffected !== 1) {
         await transaction.rollback();
@@ -144,14 +152,64 @@ export class GoalOutboxDispatcher {
   async drainPending(limit = 100) {
     let publishedCount = 0;
     let poisonedCount = 0;
-    for (let index = 0; index < limit; index += 1) {
-      const result = await this.drainOnce();
-      if (result === "idle") break;
-      if (result === "published") publishedCount += 1;
-      if (result === "poisoned") poisonedCount += 1;
-      if (result === "retryable" || result === "stale_claim") break;
+    try {
+      for (let index = 0; index < limit; index += 1) {
+        const result = await this.drainOnce();
+        if (result === "idle") break;
+        if (result === "published") publishedCount += 1;
+        if (result === "poisoned") poisonedCount += 1;
+        if (result === "retryable" || result === "stale_claim") break;
+      }
+      return { publishedCount, poisonedCount };
+    } finally {
+      if (this.autoDeliveryEnabled) await this.scheduleNextAutoDelivery();
     }
-    return { publishedCount, poisonedCount };
+  }
+
+  async startAutoDelivery(limit = 1_000) {
+    this.autoDeliveryEnabled = true;
+    return this.drainPending(limit);
+  }
+
+  stopAutoDelivery() {
+    this.autoDeliveryEnabled = false;
+    if (this.autoDeliveryTimer) clearTimeout(this.autoDeliveryTimer);
+    this.autoDeliveryTimer = null;
+  }
+
+  private async scheduleNextAutoDelivery() {
+    if (!this.autoDeliveryEnabled) return;
+    if (this.autoDeliveryTimer) clearTimeout(this.autoDeliveryTimer);
+    this.autoDeliveryTimer = null;
+    const selected = await this.client.execute({
+      sql: `SELECT MIN(
+              CASE WHEN candidate.status = 'claimed'
+                THEN candidate.claim_expires_at
+                ELSE candidate.next_attempt_at
+              END
+            ) AS wake_at
+            FROM run_goal_outbox candidate
+            WHERE candidate.status IN ('pending', 'retryable', 'claimed')
+              AND NOT EXISTS (
+                SELECT 1 FROM run_goal_outbox earlier
+                WHERE earlier.run_id = candidate.run_id
+                  AND earlier.revision < candidate.revision
+                  AND earlier.status != 'published'
+              )`,
+      args: [],
+    });
+    const rawWakeAt = selected.rows[0]?.wake_at;
+    if (!this.autoDeliveryEnabled || rawWakeAt === null || rawWakeAt === undefined) return;
+    const wakeAt = Number(rawWakeAt);
+    if (!Number.isFinite(wakeAt)) return;
+    const delay = Math.max(0, wakeAt - this.now());
+    this.autoDeliveryTimer = setTimeout(() => {
+      this.autoDeliveryTimer = null;
+      void this.drainPending(1_000).catch((error) => {
+        console.error("Failed to drain the goal event outbox:", error);
+      });
+    }, Math.min(delay, 2_147_483_647));
+    this.autoDeliveryTimer.unref?.();
   }
 
   async recoverPoisoned(runId: string, goalId: string, revision: number) {
@@ -227,7 +285,7 @@ export class GoalOutboxDispatcher {
       message: `Goal event publication failed permanently: ${message}`,
       surface: "banner",
       runId: claim.runId,
-      cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+      cause: error instanceof Error ? { name: error.name, message } : null,
     });
     return "poisoned";
   }
@@ -236,7 +294,7 @@ export class GoalOutboxDispatcher {
     try {
       this.emit(event);
     } catch (error) {
-      console.error(`Failed to emit ${event.kind}:`, error);
+      this.onDiagnosticFailure(event, error);
     }
   }
 }
@@ -252,10 +310,61 @@ export async function recoverGoalOutboxAtStartup() {
     "SELECT COUNT(*) AS count FROM run_goal_outbox WHERE status != 'published'",
   );
   const pendingCount = Number(countResult.rows[0]?.count ?? 0);
-  if (pendingCount === 0) return { publishedCount: 0, poisonedCount: 0 };
+  if (pendingCount === 0) {
+    await goalOutboxDispatcher.startAutoDelivery(0);
+    return { publishedCount: 0, poisonedCount: 0 };
+  }
   emitNamedEvent({ kind: "goal.outbox.recovery_started", pendingCount });
-  const result = await goalOutboxDispatcher.drainPending(Math.min(1_000, pendingCount));
+  const result = await goalOutboxDispatcher.startAutoDelivery(Math.min(1_000, pendingCount));
   emitNamedEvent({ kind: "goal.outbox.recovery_completed", ...result });
+  return result;
+}
+
+export function stopGoalOutboxDelivery() {
+  goalOutboxDispatcher.stopAutoDelivery();
+}
+
+export async function compactGoalControlHistory(
+  client: DbClient = dbClient,
+  options: { now?: number; retentionMs?: number; emit?: (event: NamedEvent) => unknown } = {},
+) {
+  const now = options.now ?? Date.now();
+  const retentionMs = options.retentionMs ?? 30 * 24 * 60 * 60 * 1_000;
+  const cutoff = now - retentionMs;
+  const outbox = await client.execute({
+    sql: `DELETE FROM run_goal_outbox
+          WHERE status = 'published' AND published_at IS NOT NULL AND published_at < ?
+            AND EXISTS (
+              SELECT 1 FROM runs retained_run
+              WHERE retained_run.id = run_goal_outbox.run_id
+                AND (retained_run.archived_at IS NOT NULL OR retained_run.status IN ('done', 'failed', 'cancelled', 'canceled', 'promoted'))
+                AND retained_run.updated_at < ?
+            )`,
+    args: [cutoff, cutoff],
+  });
+  const operations = await client.execute({
+    sql: `DELETE FROM run_goal_operations
+          WHERE updated_at < ?
+            AND EXISTS (
+              SELECT 1 FROM runs retained_run
+              WHERE retained_run.id = run_goal_operations.run_id
+                AND (retained_run.archived_at IS NOT NULL OR retained_run.status IN ('done', 'failed', 'cancelled', 'canceled', 'promoted'))
+                AND retained_run.updated_at < ?
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM run_goal_outbox pending
+              WHERE pending.run_id = run_goal_operations.run_id AND pending.status != 'published'
+            )`,
+    args: [cutoff, cutoff],
+  });
+  const result = { operationCount: operations.rowsAffected, outboxCount: outbox.rowsAffected };
+  if (result.operationCount > 0 || result.outboxCount > 0) {
+    (options.emit ?? emitNamedEvent)({
+      kind: "goal.history.compacted",
+      ...result,
+      cutoff: new Date(cutoff).toISOString(),
+    });
+  }
   return result;
 }
 

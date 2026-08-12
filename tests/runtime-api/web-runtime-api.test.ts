@@ -90,6 +90,11 @@ describe("createWebRuntimeAPIs", () => {
       type: "runner.rekeyed",
       data: "{\"kind\":\"runner.rekeyed\",\"runnerInstanceId\":\"runner-2\"}",
     });
+    instances[0]?.listeners["goal.updated"]?.[0]?.({
+      type: "goal.updated",
+      data: "{\"eventKey\":\"run-1/2/goal.updated\",\"snapshot\":{\"runId\":\"run-1\",\"revision\":2}}",
+      lastEventId: "runner-1:43",
+    } as { data: string; type: string });
     instances[0]?.listeners.error?.[0]?.({ type: "error", data: "" });
     expect(instances[0]?.closed).toBe(false);
     expect(errors).toEqual([{
@@ -106,6 +111,14 @@ describe("createWebRuntimeAPIs", () => {
       { kind: "update", payload: { runs: [] }, lastEventId: null },
       { kind: "stream.resync_required", reason: "cursor_evicted" },
       { kind: "runner.rekeyed", runnerInstanceId: "runner-2" },
+      {
+        kind: "goal.updated",
+        payload: {
+          eventKey: "run-1/2/goal.updated",
+          snapshot: { runId: "run-1", revision: 2 },
+        },
+        lastEventId: "runner-1:43",
+      },
     ]);
     expect(errors).toEqual([
       { code: "runtime.events_reconnecting", message: "Event stream is reconnecting.", surface: "web" },

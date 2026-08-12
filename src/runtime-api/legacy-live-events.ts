@@ -3,7 +3,7 @@ import {
   parseErrorResponse,
   type AppErrorDescriptor,
 } from "@/lib/app-errors";
-import { normalizeRuntimeStreamEvent } from "./stream";
+import { GOAL_SNAPSHOT_EVENT_TYPES, normalizeRuntimeStreamEvent } from "./stream";
 import type {
   EventStreamHandlers,
   RuntimeAPIs,
@@ -109,7 +109,10 @@ export function createLegacyLiveEventAPIs(options: {
         "update",
         "update_error",
         "worker.entry_appended",
+        "worker.plan_updated",
+        "worker.plan_boundary_started",
         "stream.resync_required",
+        ...GOAL_SNAPSHOT_EVENT_TYPES,
       ];
       for (const type of eventTypes) {
         source.addEventListener(type, (event) => {

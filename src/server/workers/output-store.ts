@@ -420,6 +420,12 @@ type CompactableEntry = {
 };
 
 export function compactEntryForHistory<T extends CompactableEntry>(entry: T): T {
+  // Accepted ACP core plans are already ingress-bounded and their original raw
+  // notification is part of the durable replay contract. Generic history
+  // compaction must not silently rewrite that accepted evidence.
+  if (entry.planProjection === "accepted_core") {
+    return entry;
+  }
   const text = (entry.type === "tool_call" || entry.type === "tool_call_update") && typeof entry.text === "string"
     ? truncateHistoryString(entry.text)
     : entry.text;
@@ -1448,7 +1454,10 @@ export async function readWorkerEntriesSince(
       const filtered = afterSeq <= 0
         ? cached.entries
         : cached.entries.filter((entry) => typeof entry.seq === "number" && entry.seq > afterSeq);
-      return { entries: filtered, latestSeq: cached.latestSeq, _path: "cache.filtered" };
+      const capped = afterSeq > 0 && filtered.length > MAX_FORWARD_ENTRIES
+        ? filtered.slice(0, MAX_FORWARD_ENTRIES)
+        : filtered;
+      return { entries: capped, latestSeq: cached.latestSeq, _path: "cache.filtered" };
     }
   }
 

@@ -113,6 +113,10 @@ function earliestReturnedSeq(entries: WorkerEntry[]) {
   }, 0);
 }
 
+function excludeDiagnosticEntries(entries: WorkerEntry[]) {
+  return entries.filter((entry) => !entry.diagnosticOnly);
+}
+
 function sortTranscriptEntries(
   entries: ConversationTranscriptEntry[],
   workerCreationOrder: Map<string, number>,
@@ -191,7 +195,9 @@ export const handleConversationTranscriptRequest: OmniHttpHandler = async (reque
       supersededByWorker.set(worker.id, parseSupersededSeqRanges(worker.supersededSeqRanges));
     }
     const visibleEntriesFor = (workerId: string, entries: WorkerEntry[]) =>
-      withoutSupersededEntries(entries, supersededByWorker.get(workerId) ?? []);
+      excludeDiagnosticEntries(
+        withoutSupersededEntries(entries, supersededByWorker.get(workerId) ?? []),
+      );
 
     const url = new URL(request.url);
     const limit = parseLimit(url.searchParams.get("limit")) ?? DEFAULT_TRANSCRIPT_LIMIT;
@@ -340,4 +346,5 @@ export const __testInternals = {
   decodeAfterToken,
   encodeAfterToken,
   compareTranscriptEntries,
+  excludeDiagnosticEntries,
 };

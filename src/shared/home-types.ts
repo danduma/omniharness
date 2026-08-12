@@ -3,6 +3,7 @@ import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { ChatAttachment } from "@/lib/chat-attachments";
 import type { AgentOutputEntry } from "@/lib/agent-output";
 import type { WorkerEntry } from "@/shared/worker-entries";
+import type { GoalSnapshot } from "@/shared/goal-plan";
 
 export type ConversationModeOption = "omni" | "direct";
 export type BusyMessageAction = "queue" | "steer";
@@ -396,6 +397,7 @@ export type EventStreamState = {
   };
   workerEntrySeqs?: Record<string, number>;
   workerEntries?: Record<string, WorkerEntry[]>;
+  goalsByRunId?: Record<string, GoalSnapshot>;
   claudeModelGateway?: import("@/lib/claude-model-gateway").ClaudeModelGatewayStatus;
 };
 

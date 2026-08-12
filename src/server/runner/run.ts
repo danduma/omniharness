@@ -7,7 +7,8 @@ import {
 } from "@/server/integrations/claude-model-gateway";
 import { reclaimOrphanedDeliveringMessages } from "@/server/conversations/queued-messages";
 import { repairLeakedConversationTitles } from "@/server/conversations/agent-session-title";
-import { recoverGoalOutboxAtStartup } from "@/server/runs/goal-outbox";
+import { compactGoalControlHistory, recoverGoalOutboxAtStartup, stopGoalOutboxDelivery } from "@/server/runs/goal-outbox";
+import { recoverPendingGoalControlsAtStartup } from "@/server/runs/goal-control-dispatch";
 import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
 import { getTerminalManager } from "@/server/terminal/terminal-manager";
 import { createOmniRuntime } from "@/runtime";
@@ -100,6 +101,7 @@ export async function startRunnerProcess(
   try {
     await dbReady;
     await recoverGoalOutboxAtStartup();
+    await compactGoalControlHistory();
     // Deliveries do not survive a restart; reclaim any row their death orphaned.
     await reclaimOrphanedDeliveringMessages().catch((error) => {
       process.stderr.write(
@@ -123,6 +125,7 @@ export async function startRunnerProcess(
     await ensureSupervisorRuntimeStarted();
     await ensureClaudeModelGatewayStartedAtBoot();
     await bridge.start();
+    await recoverPendingGoalControlsAtStartup();
 
     const runtime = createOmniRuntime({
       surface: "web",
@@ -177,6 +180,7 @@ export async function startRunnerProcess(
         : null,
     });
     await bridge.stop().catch(() => undefined);
+    stopGoalOutboxDelivery();
     runnerLock.release();
     process.off("exit", releaseLockOnExit);
     configureRunnerReadinessSource(null);
@@ -195,6 +199,7 @@ export async function startRunnerProcess(
       try {
         await server?.stop();
       } finally {
+        stopGoalOutboxDelivery();
         await bridge.stop().catch(() => undefined);
         runnerLock.release();
         process.off("exit", releaseLockOnExit);

@@ -139,6 +139,19 @@ export function createRuntimeDomains({
         return post(`/api/runs/${encode(input.runId)}/answer`, input.body, options);
       },
     },
+    goals: {
+      get(input, options) {
+        return get(`/api/runs/${encode(input.runId)}/goal`, options) as Promise<{
+          goal: import("@/shared/goal-plan").GoalSnapshot | null;
+        }>;
+      },
+      put(input, options) {
+        return call("PUT", `/api/runs/${encode(input.runId)}/goal`, input.body, options);
+      },
+      act(input, options) {
+        return post(`/api/runs/${encode(input.runId)}/goal/actions`, input.body, options);
+      },
+    },
     conversations: {
       create(input, options) {
         return post("/api/conversations", input, options);

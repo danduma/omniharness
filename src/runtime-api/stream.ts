@@ -1,4 +1,5 @@
 import type { RuntimeApiError, RuntimeSubscription } from "./types";
+import { GOAL_PUBLISHED_EVENT_KINDS } from "@/shared/goal-plan";
 
 export type RuntimeStreamEvent = {
   type: string;
@@ -19,6 +20,12 @@ export type RuntimeEventStreamOpener = (
   },
   handlers: RuntimeStreamHandlers,
 ) => RuntimeSubscription;
+
+export const GOAL_SNAPSHOT_EVENT_TYPES = GOAL_PUBLISHED_EVENT_KINDS;
+
+function isGoalSnapshotEventType(type: string) {
+  return (GOAL_SNAPSHOT_EVENT_TYPES as readonly string[]).includes(type);
+}
 
 export function parseRuntimeStreamData(event: RuntimeStreamEvent) {
   if (!event.data) {
@@ -47,6 +54,9 @@ export function normalizeRuntimeStreamEvent(event: RuntimeStreamEvent) {
     || event.type === "exit"
     || event.type === "update_error"
     || event.type === "worker.entry_appended"
+    || event.type === "worker.plan_updated"
+    || event.type === "worker.plan_boundary_started"
+    || isGoalSnapshotEventType(event.type)
   ) {
     return {
       kind: event.type,

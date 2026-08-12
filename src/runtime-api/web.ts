@@ -1,6 +1,7 @@
 import type { RuntimeAPIs, RuntimeSubscription } from "./types";
 import { createFetchRuntimeRequest } from "./request";
 import {
+  GOAL_SNAPSHOT_EVENT_TYPES,
   normalizeRuntimeStreamEvent,
   type RuntimeStreamEvent,
 } from "./stream";
@@ -99,6 +100,11 @@ export function createWebRuntimeAPIs(options: WebRuntimeApiOptions = {}): Runtim
         nextSource.addEventListener("runner.stopping", emit);
         nextSource.addEventListener("runner.renamed", emit);
         nextSource.addEventListener("runner.rekeyed", emit);
+        nextSource.addEventListener("worker.plan_updated", emit);
+        nextSource.addEventListener("worker.plan_boundary_started", emit);
+        for (const eventType of GOAL_SNAPSHOT_EVENT_TYPES) {
+          nextSource.addEventListener(eventType, emit);
+        }
         nextSource.addEventListener("error", () => {
           if (closed || source !== nextSource) {
             return;

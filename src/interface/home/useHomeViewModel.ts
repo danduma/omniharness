@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { buildConversationGroups } from "@/lib/conversations";
 import { buildActiveConversationGroups, filterActiveConversationGroups } from "./sidebar-activity";
 import { sidebarWorkerActivityManager } from "./SidebarWorkerActivityManager";
@@ -22,6 +22,10 @@ import type { WorkerCatalogResponse } from "./types";
 import { sessionStateManager } from "./SessionStateManager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { isPermanentAutoResumeFailure } from "./auto-resume-selection";
+import {
+  acpPlanManager,
+  selectAcpPlanSurfaceOwner,
+} from "./AcpPlanManager";
 
 const EMPTY_RUNS: RunRecord[] = [];
 const EMPTY_PLANS: PlanRecord[] = [];
@@ -264,6 +268,22 @@ export function useHomeViewModel({
     return (state.workers || []).filter((worker: ConversationWorkerRecord) => worker.runId === selectedRunId);
   }, [selectedRunId, state.workers]);
 
+  const selectedPlanWorkerIds = useMemo(
+    () => selectedRunWorkers.map((worker) => worker.id),
+    [selectedRunWorkers],
+  );
+  const acpPlanState = useManagerSnapshot(acpPlanManager);
+  useEffect(() => {
+    acpPlanManager.setScope(
+      selectedRunId,
+      selectedPlanWorkerIds,
+      state.snapshotSource === "server",
+    );
+  }, [selectedPlanWorkerIds, selectedRunId, state.snapshotSource]);
+  useEffect(() => {
+    acpPlanManager.onKnownSeqs(state.workerEntrySeqs);
+  }, [state.workerEntrySeqs]);
+
   const conversationAgents = useMemo(() => {
     const liveAgentsById = new Map(
       ((state.agents || []) as AgentSnapshot[]).map((agent) => [agent.name, agent]),
@@ -305,6 +325,16 @@ export function useHomeViewModel({
     () => selectPrimaryConversationAgent(conversationAgents, isDirectConversation),
     [conversationAgents, isDirectConversation],
   );
+
+  const solePlanWorker = selectedRunWorkers.length === 1 ? selectedRunWorkers[0]! : null;
+  const planSurfaceOwner = selectAcpPlanSurfaceOwner({
+    runId: selectedRunId,
+    workerIds: selectedPlanWorkerIds,
+    primaryWorkerId: primaryConversationAgent?.name ?? null,
+    eligibleConversationMode: isDirectConversation || isPlanningConversation,
+    workerIsTerminal: selectedRunIsTerminal || !solePlanWorker || !isWorkerActiveStatus(solePlanWorker.status),
+    planState: acpPlanState,
+  });
 
   const conversationWorkerGroups = useMemo(
     () => selectedRunIsTerminal || selectedRunNeedsRecovery
@@ -668,6 +698,7 @@ export function useHomeViewModel({
     sideWindowWorkers,
     sideWindowAgents,
     primaryConversationAgent,
+    planSurfaceOwner,
     conversationWorkerGroups,
     activeConversationWorkerIds,
     activeConversationAgents,

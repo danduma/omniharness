@@ -1,9 +1,12 @@
 import { dbClient } from "@/server/db";
 import { requireApiSession } from "@/server/auth/guards";
 import { emitNamedEvent, type SurfacedErrorCode } from "@/server/events/named-events";
-import { goalAcpDispatcher } from "@/server/runs/goal-acp";
 import { goalControl } from "@/server/runs/goal-control";
+import { goalControlDispatchCoordinator, recoveryAction } from "@/server/runs/goal-control-dispatch";
 import { goalOutboxDispatcher } from "@/server/runs/goal-outbox";
+import { goalRateLimitManager } from "@/server/runs/goal-rate-limit";
+import { redactGoalErrorMessage } from "@/server/runs/goal-errors";
+import { attachGoalMutationToActiveWorker } from "@/server/runs/goal-worker-lease";
 import {
   GOAL_ACTIONS,
   type GoalAction,
@@ -24,7 +27,15 @@ type MutationBody = {
 };
 
 function errorResponse(status: number, code: string, message: string, extra: Record<string, unknown> = {}) {
-  return Response.json({ error: { code, message }, ...extra }, { status });
+  const goal = extra.goal;
+  return Response.json({
+    error: {
+      code,
+      message,
+      ...(goal && typeof goal === "object" ? { details: { goal } } : {}),
+    },
+    ...extra,
+  }, { status });
 }
 
 function nonEmptyIdentifier(value: unknown) {
@@ -118,7 +129,10 @@ function mutationFailureResponse(
     surface: "banner",
     runId: details.runId,
   });
-  return errorResponse(mapped.status, mapped.publicCode, result.message, { goal: result.snapshot });
+  return Response.json({
+    error: { code: mapped.publicCode, message: result.message, details: { goal: result.snapshot } },
+    goal: result.snapshot,
+  }, { status: mapped.status });
 }
 
 async function dispatchAndPublish(
@@ -126,22 +140,21 @@ async function dispatchAndPublish(
   action: GoalMutationAction,
   operationId: string,
 ) {
-  if (!result.replayed) {
-    const control = await goalAcpDispatcher.dispatch(result.snapshot, action);
-    if (action !== "set" && action !== "edit") {
+  const control = await goalControlDispatchCoordinator.dispatch(
+    result.snapshot,
+    result.replayed ? recoveryAction(result.snapshot) : action,
+  );
+  if (control.kind !== "unsupported" && control.kind !== "superseded" && action !== "set" && action !== "edit") {
       emitNamedEvent({
         kind: "goal.action.completed",
-        runId: result.snapshot.runId,
-        goalId: result.snapshot.goalId,
+        runId: control.snapshot.runId,
+        goalId: control.snapshot.goalId,
         operationId,
         action,
-        revision: result.snapshot.revision,
+        revision: control.snapshot.revision,
       });
-    }
-    await goalOutboxDispatcher.drainPending();
-    return control;
   }
-  return { kind: "replayed" as const };
+  return control;
 }
 
 export const handleGoalRequest: OmniHttpHandler = async (request, context) => {
@@ -155,23 +168,52 @@ export const handleGoalRequest: OmniHttpHandler = async (request, context) => {
   });
   if (auth.response) return auth.response;
 
-  if (!(await runExists(runId))) {
+  let exists: boolean;
+  try {
+    exists = await runExists(runId);
+  } catch (error) {
+    const message = redactGoalErrorMessage(error);
+    emitNamedEvent({ kind: "error.surfaced", code: "goal.persistence.failed", message, surface: "banner", runId });
+    return errorResponse(500, "goal.persistence.failed", "The goal state could not be loaded.");
+  }
+  if (!exists) {
+    emitNamedEvent({ kind: "error.surfaced", code: "goal.not_found", message: "The run does not exist.", surface: "banner", runId });
     return errorResponse(404, "goal.not_found", "The run does not exist.");
   }
   if (request.method === "GET") {
     return Response.json({ goal: await goalControl.getGoal(runId) });
   }
   if (request.method !== "PUT" && request.method !== "POST") {
+    emitNamedEvent({ kind: "error.surfaced", code: "goal.payload.invalid", message: "The goal request method is not supported.", surface: "banner", runId });
     return errorResponse(405, "goal.method_not_allowed", "The goal request method is not supported.");
   }
 
   const parsedBody = await readJsonBody(request);
-  if (!parsedBody.ok) return parsedBody.response;
+  if (!parsedBody.ok) {
+    emitNamedEvent({ kind: "error.surfaced", code: "goal.payload.invalid", message: "The goal request payload was rejected.", surface: "banner", runId });
+    return parsedBody.response;
+  }
   const body = parseMutationBody(parsedBody.value, request.method);
-  if (!body) return errorResponse(400, "goal.payload.invalid", "The goal request is invalid.");
+  if (!body) {
+    emitNamedEvent({ kind: "error.surfaced", code: "goal.payload.invalid", message: "The goal request is invalid.", surface: "banner", runId });
+    return errorResponse(400, "goal.payload.invalid", "The goal request is invalid.");
+  }
   const principalId = auth.session?.id ?? `local:${context.surface}`;
+  const rateLimit = goalRateLimitManager.check({ principalId, runId, endpoint: request.method });
+  if (!rateLimit.allowed) {
+    const message = "Too many goal changes were requested. Try again shortly.";
+    emitNamedEvent(request.method === "PUT"
+      ? { kind: "goal.set.refused", runId, goalId: body.goalId, operationId: body.operationId, reason: "rate_limited" }
+      : { kind: "goal.action.refused", runId, goalId: body.goalId, operationId: body.operationId, action: body.action!, reason: "rate_limited" });
+    emitNamedEvent({ kind: "error.surfaced", code: "goal.rate_limited", message, surface: "banner", runId });
+    return Response.json({ error: { code: "goal.rate_limited", message } }, {
+      status: 429,
+      headers: { "retry-after": String(Math.max(1, Math.ceil(rateLimit.retryAfterMs / 1_000))) },
+    });
+  }
+  const currentGoal = request.method === "PUT" ? await goalControl.getGoal(runId) : null;
   const action: GoalMutationAction = request.method === "PUT"
-    ? ((await goalControl.getGoal(runId)) ? "edit" : "set")
+    ? (!currentGoal || (currentGoal.status === "cleared" && currentGoal.goalId !== body.goalId) ? "set" : "edit")
     : body.action!;
 
   if (request.method === "PUT") {
@@ -208,11 +250,10 @@ export const handleGoalRequest: OmniHttpHandler = async (request, context) => {
           endpoint: "goal.actions",
         });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const kind = request.method === "PUT" ? "goal.set.failed" : "goal.action.failed";
+    const message = redactGoalErrorMessage(error);
     emitNamedEvent(request.method === "PUT"
-      ? { kind, runId, goalId: body.goalId, operationId: body.operationId, reason: message }
-      : { kind, runId, goalId: body.goalId, operationId: body.operationId, action: body.action!, reason: message });
+      ? { kind: "goal.set.failed", runId, goalId: body.goalId, operationId: body.operationId, reason: message }
+      : { kind: "goal.action.failed", runId, goalId: body.goalId, operationId: body.operationId, action: body.action!, reason: message });
     emitNamedEvent({ kind: "error.surfaced", code: "goal.persistence.failed", message, surface: "banner", runId });
     return errorResponse(500, "goal.persistence.failed", "The goal could not be persisted.");
   }
@@ -221,17 +262,87 @@ export const handleGoalRequest: OmniHttpHandler = async (request, context) => {
     return mutationFailureResponse(result, { runId, goalId: body.goalId, operationId: body.operationId, action });
   }
 
+  const persistedResult = result;
+  try {
+    result = await attachGoalMutationToActiveWorker(persistedResult);
+    if (result.snapshot.revision !== persistedResult.snapshot.revision) {
+      const finalized = await goalControl.finalizeOperation(runId, body.operationId, result);
+      if (!finalized) throw new Error("The goal operation result could not be updated after lease reconciliation.");
+    }
+  } catch (error) {
+    const message = redactGoalErrorMessage(error);
+    const failedResult: GoalMutationResult = {
+      ok: false,
+      code: "persistence_error",
+      message,
+      snapshot: persistedResult.snapshot,
+    };
+    try {
+      await goalControl.finalizeOperation(runId, body.operationId, failedResult);
+    } catch (finalizeError) {
+      emitNamedEvent({
+        kind: "goal.reconciliation.failed",
+        runId,
+        goalId: body.goalId,
+        workerId: persistedResult.snapshot.workerId,
+        reason: redactGoalErrorMessage(finalizeError),
+      });
+    }
+    emitNamedEvent({
+      kind: "goal.reconciliation.failed",
+      runId,
+      goalId: body.goalId,
+      workerId: persistedResult.snapshot.workerId,
+      reason: message,
+    });
+    emitNamedEvent(request.method === "PUT"
+      ? { kind: "goal.set.failed", runId, goalId: body.goalId, operationId: body.operationId, reason: message }
+      : { kind: "goal.action.failed", runId, goalId: body.goalId, operationId: body.operationId, action: body.action!, reason: message });
+    emitNamedEvent({ kind: "error.surfaced", code: "goal.persistence.failed", message, surface: "banner", runId });
+    await goalOutboxDispatcher.drainPending();
+    return errorResponse(500, "goal.persistence.failed", "The goal was saved, but its active worker lease could not be reconciled.", {
+      goal: persistedResult.snapshot,
+    });
+  }
+
   try {
     const control = await dispatchAndPublish(result, action, body.operationId);
-    return Response.json({ goal: result.snapshot, replayed: result.replayed, control });
+    if (control.kind === "unsupported") {
+      const failure = await goalControl.recordControlFailure(control.snapshot, "unsupported", control.reason);
+      const snapshot = failure.ok ? failure.snapshot : failure.snapshot ?? control.snapshot;
+      await goalControl.finalizeOperation(runId, body.operationId, {
+        ok: false,
+        code: "unsupported_action",
+        message: "The active agent does not support this goal action.",
+        snapshot,
+      });
+      await goalOutboxDispatcher.drainPending();
+      const message = "The active agent does not support this goal action.";
+      emitNamedEvent(request.method === "PUT"
+        ? { kind: "goal.set.failed", runId, goalId: body.goalId, operationId: body.operationId, reason: control.reason }
+        : { kind: "goal.action.failed", runId, goalId: body.goalId, operationId: body.operationId, action: body.action!, reason: control.reason });
+      emitNamedEvent({ kind: "error.surfaced", code: "goal.action.unsupported", message, surface: "banner", runId });
+      return errorResponse(422, "goal.action.unsupported", message, { goal: snapshot });
+    }
+    await goalOutboxDispatcher.drainPending();
+    return Response.json({ goal: control.snapshot ?? result.snapshot, replayed: result.replayed, control });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = redactGoalErrorMessage(error);
+    const failure = await goalControl.recordControlFailure(result.snapshot, "transport", message);
+    const snapshot = failure.ok ? failure.snapshot : failure.snapshot ?? result.snapshot;
+    await goalControl.finalizeOperation(runId, body.operationId, {
+      ok: false,
+      code: "provider_error",
+      message,
+      snapshot,
+    });
+    await goalOutboxDispatcher.drainPending();
     emitNamedEvent(request.method === "PUT"
       ? { kind: "goal.set.failed", runId, goalId: body.goalId, operationId: body.operationId, reason: message }
       : { kind: "goal.action.failed", runId, goalId: body.goalId, operationId: body.operationId, action: body.action!, reason: message });
     emitNamedEvent({ kind: "error.surfaced", code: "goal.acp.transport_failed", message, surface: "banner", runId });
     return errorResponse(502, "goal.acp.transport_failed", "The goal was saved, but the agent could not be updated.", {
-      goal: result.snapshot,
+      goal: snapshot,
     });
   }
 };

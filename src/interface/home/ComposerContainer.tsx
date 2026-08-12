@@ -24,8 +24,17 @@ import type {
   WorkerModelOption,
 } from "./types";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
+import type { PlanSurfaceOwner } from "@/shared/acp-plan";
+import { parseGoalComposerCommand, type GoalSnapshot } from "@/shared/goal-plan";
+import { goalPlanManager } from "./GoalPlanManager";
 
 type ComposerDraftState = Pick<HomeUiState, "command" | "commandCursor" | "mentionIndex" | "attachments">;
+
+function createGoalId() {
+  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `goal-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 function selectComposerDraftState(s: HomeUiState): ComposerDraftState {
   return {
@@ -75,6 +84,9 @@ export interface ComposerContainerProps {
   onSendConversationMessage: (content: string, attachments: PendingChatAttachment[], busyAction?: BusyMessageAction) => void;
   onRunCommand: (content: string, attachments: PendingChatAttachment[]) => void;
   onStopConversation: () => void;
+  planSurfaceOwner: PlanSurfaceOwner;
+  goal: GoalSnapshot | null;
+  onGoalSnapshot: (snapshot: GoalSnapshot, eventKey: string | null) => void;
 }
 
 // Isolates high-churn draft subscriptions so keystrokes don't re-render HomeApp
@@ -117,6 +129,9 @@ function ComposerContainerInner({
   onSendConversationMessage,
   onRunCommand,
   onStopConversation,
+  planSurfaceOwner,
+  goal,
+  onGoalSnapshot,
 }: ComposerContainerProps) {
   const runtimeApis = useRuntimeAPIs();
   const { setCommandCursor, setMentionIndex, setComposerDraft, addAttachmentFiles, addPastedImages, removeAttachment } = homeUiSetters;
@@ -174,6 +189,54 @@ function ComposerContainerInner({
     });
   };
 
+  const executeGoalComposerCommand = (goalCommand: NonNullable<ReturnType<typeof parseGoalComposerCommand>>) => {
+    if (!selectedRunId) return false;
+    if (goalCommand.kind === "invalid_objective") {
+      goalPlanManager.setActionError("invalid_objective");
+      return true;
+    }
+    const createsNewGoal = !goal || goal.status === "cleared";
+    const operation = goalPlanManager.beginOperation({
+      runId: selectedRunId,
+      goalId: createsNewGoal ? createGoalId() : goal.goalId,
+      action: createsNewGoal ? "set" : "edit",
+      baseRevision: goal?.revision ?? 0,
+      objective: goalCommand.objective,
+    });
+    if (!operation) return true;
+    const submittedCommand = command;
+    void goalPlanManager.executeOperation({
+      goalsApi: runtimeApis.goals,
+      operation,
+      onSnapshot: onGoalSnapshot,
+    }).then((result) => {
+      const currentUi = homeUiStateManager.getSnapshot();
+      if (!result.ok || currentUi.selectedRunId !== selectedRunId || currentUi.command !== submittedCommand) return;
+      homeUiSetters.setComposerDraft({ command: "", commandCursor: 0 });
+      requestAnimationFrame(() => commandInputRef.current?.focus());
+    });
+    return true;
+  };
+
+  const openGoalPlanArtifact = (uri: string) => {
+    try {
+      const parsed = new URL(uri);
+      if (parsed.protocol === "file:") {
+        onOpenProjectFile(decodeURIComponent(parsed.pathname));
+        return;
+      }
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
+      if (runtimeApis.native) {
+        void runtimeApis.native.openExternal({ url: parsed.toString() });
+        return;
+      }
+      window.open(parsed.toString(), "_blank", "noopener,noreferrer");
+    } catch {
+      // ACP URI payloads are validated before persistence. A malformed cached
+      // value is ignored here rather than being treated as a project path.
+    }
+  };
+
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     if (composerBehavior.submitAction === "stop") { onStopConversation(); return; }
@@ -182,6 +245,10 @@ function ComposerContainerInner({
       homeUiSetters.setComposerDraft({ command: "", commandCursor: 0 });
       onStopConversation();
       return;
+    }
+    if (selectedRunId && attachments.length === 0) {
+      const goalCommand = parseGoalComposerCommand(command);
+      if (goalCommand && executeGoalComposerCommand(goalCommand)) return;
     }
     if (selectedRunId) {
       onSendConversationMessage(command, attachments, resolveBusyMessageActionForSubmitAction(composerBehavior.submitAction));
@@ -244,6 +311,10 @@ function ComposerContainerInner({
       onSendConversationMessage={(content, busyAction) => onSendConversationMessage(content, attachments, busyAction)}
       onRunCommand={(content) => onRunCommand(content, attachments)}
       onStopConversation={onStopConversation}
+      planSurfaceOwner={planSurfaceOwner}
+      goal={goal}
+      onGoalSnapshot={onGoalSnapshot}
+      onOpenGoalPlanArtifact={openGoalPlanArtifact}
     />
   );
 }

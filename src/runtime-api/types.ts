@@ -87,6 +87,11 @@ export interface RuntimeAPIs {
     resume(input: { runId: string; body?: unknown }, options?: RuntimeCallOptions): Promise<unknown>;
     answer(input: { runId: string; body: unknown }, options?: RuntimeCallOptions): Promise<unknown>;
   };
+  goals: {
+    get(input: { runId: string }, options?: RuntimeCallOptions): Promise<{ goal: import("@/shared/goal-plan").GoalSnapshot | null }>;
+    put(input: { runId: string; body: import("@/shared/goal-plan").PutGoalInput }, options?: RuntimeCallOptions): Promise<unknown>;
+    act(input: { runId: string; body: import("@/shared/goal-plan").GoalActionInput }, options?: RuntimeCallOptions): Promise<unknown>;
+  };
   conversations: {
     create(input: unknown, options?: RuntimeCallOptions): Promise<unknown>;
     sendMessage(input: unknown, options?: RuntimeCallOptions): Promise<unknown>;

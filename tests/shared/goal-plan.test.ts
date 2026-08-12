@@ -4,6 +4,7 @@ import {
   canTransitionGoalStatus,
   createDeterministicGoalPlanItemId,
   normalizeGoalCapabilities,
+  parseGoalComposerCommand,
   parseGoalSnapshot,
   validateGoalObjective,
 } from "@/shared/goal-plan";
@@ -27,6 +28,23 @@ describe("goal plan shared contract", () => {
       code: "too_long",
       maxLength: GOAL_OBJECTIVE_MAX_LENGTH,
     });
+  });
+
+  it("recognizes only explicit bounded /goal composer commands", () => {
+    expect(parseGoalComposerCommand("  /goal   Ship durable goals  ")).toEqual({
+      kind: "set",
+      objective: "Ship durable goals",
+    });
+    expect(parseGoalComposerCommand("/goal")).toEqual({
+      kind: "invalid_objective",
+      reason: "empty",
+    });
+    expect(parseGoalComposerCommand(`/goal ${"x".repeat(GOAL_OBJECTIVE_MAX_LENGTH + 1)}`)).toEqual({
+      kind: "invalid_objective",
+      reason: "too_long",
+    });
+    expect(parseGoalComposerCommand("Please /goal ship this")).toBeNull();
+    expect(parseGoalComposerCommand("/goals Ship this")).toBeNull();
   });
 
   it("allows only explicit goal state transitions", () => {
@@ -101,5 +119,9 @@ describe("goal plan shared contract", () => {
 
     expect(parseGoalSnapshot(valid)).toEqual(valid);
     expect(() => parseGoalSnapshot({ ...valid, revision: -1 })).toThrow(/revision/i);
+    expect(() => parseGoalSnapshot({
+      ...valid,
+      validationState: { status: "passed", message: 42, updatedAt: "not-a-date" },
+    })).toThrow(/validation/i);
   });
 });

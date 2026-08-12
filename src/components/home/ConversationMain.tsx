@@ -41,6 +41,7 @@ import type { SupersededSeqRange } from "@/lib/superseded-entries";
 import { type PlanningReviewAgentSelection } from "@/shared/planning-review";
 import { WORKER_TYPE_LABELS, type SupportedWorkerType } from "@/shared/worker-types";
 import type { WorkerEntry } from "@/shared/worker-entries";
+import type { PlanSurfaceOwner } from "@/shared/acp-plan";
 import { CliBrandIcon } from "@/components/cli-brand-icons";
 import { ErrorNotice } from "./ErrorNotice";
 import { RecoveryIncidentInspector } from "./RecoveryIncidentInspector";
@@ -649,6 +650,7 @@ interface ConversationMainProps {
   toggleDirectMessageExpansion: (messageId: string) => void;
   primaryConversationAgent: AgentSnapshot | null;
   primaryConversationWorkerId: string | null;
+  planSurfaceOwner: PlanSurfaceOwner;
   initialWorkerEntries?: Record<string, WorkerEntry[]> | undefined;
   unifiedWorkerStreamEnabled: boolean;
   isHydratingConversations: boolean;
@@ -813,6 +815,7 @@ const ConversationMain = memo(function ConversationMain({
   toggleDirectMessageExpansion,
   primaryConversationAgent,
   primaryConversationWorkerId,
+  planSurfaceOwner,
   initialWorkerEntries = {},
   unifiedWorkerStreamEnabled,
   isHydratingConversations,
@@ -1203,6 +1206,7 @@ const ConversationMain = memo(function ConversationMain({
                 onOpenProjectFile={onOpenProjectFile}
                 scrollAnchorKey={selectedRunId}
                 summarizeWorkBlocks={isDirectConversation}
+                planSurfaceOwner={planSurfaceOwner}
                 hasMoreHistory={
                   !unifiedWorkerStreamEnabled
                     ? undefined

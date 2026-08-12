@@ -15,6 +15,8 @@
  * (subprocess boot is ~1s on a warm cache).
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { startSubprocessHarness, type SubprocessHandle } from "../harness/subprocess";
 import { LifecycleClient } from "../harness/client";
@@ -75,5 +77,70 @@ describe("lifecycle harness — real subprocess restart", () => {
     const postSnap = await client.fetch("/api/events?snapshot=1&persisted=1");
     const postBody = (await postSnap.json()) as { runs: Array<{ id: string }> };
     expect(postBody.runs.map((r) => r.id)).toContain(persistedRunId);
+  });
+
+  it("rebuilds an ACP plan from the unified worker stream after a real restart", { timeout: 90_000 }, async () => {
+    const runId = "run-plan-real-restart";
+    const workerId = `${runId}-worker-1`;
+    const streamDir = join(server.omniRoot, "run-data", runId);
+    const boundaryTimestamp = "2026-08-10T12:00:00.000Z";
+    const planTimestamp = "2026-08-10T12:00:01.000Z";
+    mkdirSync(streamDir, { recursive: true });
+    writeFileSync(join(streamDir, `${workerId}.jsonl`), `${[
+      {
+        id: "restart-boundary",
+        seq: 1,
+        type: "system_note",
+        text: "",
+        timestamp: boundaryTimestamp,
+        acpSessionId: "session-restart",
+        planProjection: "session_reset",
+        diagnosticOnly: true,
+      },
+      {
+        id: "restart-plan",
+        seq: 2,
+        type: "plan",
+        text: "Verify restart",
+        timestamp: planTimestamp,
+        acpSessionId: "session-restart",
+        planProjection: "accepted_core",
+        normalizedPlan: [{
+          id: "0",
+          content: "Verify restart",
+          priority: "high",
+          status: "in_progress",
+          order: 0,
+        }],
+      },
+    ].map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
+
+    const beforeResponse = await client.fetch(
+      `/api/workers/${encodeURIComponent(workerId)}/entries?view=plan&runId=${encodeURIComponent(runId)}`,
+    );
+    expect(beforeResponse.status).toBe(200);
+    const before = await beforeResponse.json() as { plan: unknown };
+
+    await client.subscribe({ runId, resumeFrom: "pre-restart:9999" });
+    client.dropSse();
+    await server.restart();
+    await client.subscribe({ runId, resumeFrom: "pre-restart:9999" });
+    await client.waitFor("stream.resync_required", { timeoutMs: 10_000 });
+
+    const bootstrap = await client.fetch(`/api/events?snapshot=1&persisted=1&runId=${encodeURIComponent(runId)}`);
+    expect(bootstrap.status).toBe(200);
+    const afterResponse = await client.fetch(
+      `/api/workers/${encodeURIComponent(workerId)}/entries?view=plan&runId=${encodeURIComponent(runId)}`,
+    );
+    expect(afterResponse.status).toBe(200);
+    const after = await afterResponse.json() as { plan: unknown };
+
+    expect(after.plan).toEqual(before.plan);
+    expect(after.plan).toMatchObject({
+      acpSessionId: "session-restart",
+      lastEntrySeq: 2,
+      updatedAt: planTimestamp,
+      items: [{ id: "1:0", content: "Verify restart", status: "in_progress" }],
+    });
   });
 });

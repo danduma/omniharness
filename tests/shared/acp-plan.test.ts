@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_ACP_PLAN_BYTES,
   MAX_ACP_PLAN_ITEM_CODE_POINTS,
   MAX_ACP_PLAN_ITEMS,
   normalizeAcpCorePlan,
@@ -74,6 +75,13 @@ describe("ACP core plan validation", () => {
       { content: "x", priority: "urgent" as never, status: "pending" },
     ]))).toMatchObject({ ok: false, reason: "invalid_priority" });
     expect(normalizeAcpCorePlan(planUpdate([
+      { content: "x", priority: "medium", status: "blocked" as never },
+    ]))).toMatchObject({ ok: false, reason: "invalid_status" });
+    expect(normalizeAcpCorePlan({ sessionUpdate: "plan", entries: ["not-an-entry"] })).toMatchObject({
+      ok: false,
+      reason: "item_not_object",
+    });
+    expect(normalizeAcpCorePlan(planUpdate([
       { content: "x".repeat(MAX_ACP_PLAN_ITEM_CODE_POINTS + 1), priority: "medium", status: "pending" },
     ]))).toMatchObject({ ok: false, reason: "item_too_long" });
     expect(normalizeAcpCorePlan({
@@ -84,6 +92,29 @@ describe("ACP core plan validation", () => {
         status: "pending",
       })),
     })).toMatchObject({ ok: false, reason: "too_many_items" });
+    expect(normalizeAcpCorePlan({
+      sessionUpdate: "plan",
+      entries: [{ content: "valid", priority: "medium", status: "pending" }],
+      ignored: "x".repeat(MAX_ACP_PLAN_BYTES),
+    })).toMatchObject({ ok: false, reason: "update_too_large" });
+  });
+
+  it("counts item length by Unicode code point and ignores unknown bounded fields", () => {
+    expect(normalizeAcpCorePlan({
+      sessionUpdate: "plan",
+      entries: [{
+        content: "😀".repeat(MAX_ACP_PLAN_ITEM_CODE_POINTS),
+        priority: "low",
+        status: "pending",
+        providerExtension: true,
+      }],
+      providerExtension: { version: 1 },
+    })).toMatchObject({ ok: true });
+    expect(normalizeAcpCorePlan(planUpdate([{
+      content: "😀".repeat(MAX_ACP_PLAN_ITEM_CODE_POINTS + 1),
+      priority: "low",
+      status: "pending",
+    }]))).toMatchObject({ ok: false, reason: "item_too_long" });
   });
 });
 
@@ -122,6 +153,24 @@ describe("reduceWorkerPlanEntries", () => {
       lastAcceptedEntryId: null,
       visible: false,
       items: [],
+    });
+  });
+
+  it("ignores legacy plan-shaped history without an accepted projection", () => {
+    const legacy = {
+      ...acceptedEntry(2, "session-a", planUpdate([
+        { content: "legacy", priority: "medium", status: "pending" },
+      ])),
+      planProjection: undefined,
+    } satisfies WorkerEntry;
+
+    expect(reduceWorkerPlanEntries([
+      boundary(1, "session-a"),
+      legacy,
+    ], "run-1", "worker-1")).toMatchObject({
+      visible: false,
+      items: [],
+      lastEntrySeq: 1,
     });
   });
 });

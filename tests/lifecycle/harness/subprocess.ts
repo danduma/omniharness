@@ -102,7 +102,9 @@ async function killProcess(child: ChildProcess, force: boolean): Promise<void> {
   });
 }
 
-export async function startSubprocessHarness(opts: { omniRoot?: string } = {}): Promise<SubprocessHandle> {
+export async function startSubprocessHarness(
+  opts: { omniRoot?: string; preserveRoot?: boolean } = {},
+): Promise<SubprocessHandle> {
   const omniRoot = opts.omniRoot ?? mkdtempSync(path.join(tmpdir(), "omni-lifecycle-sub-"));
   let { child, port } = await spawnRunner(omniRoot);
   let baseUrl = `http://127.0.0.1:${port}`;
@@ -117,6 +119,7 @@ export async function startSubprocessHarness(opts: { omniRoot?: string } = {}): 
     omniRoot,
     async stop(stopOpts = {}) {
       await killProcess(child, stopOpts.force === true);
+      if (opts.preserveRoot) return;
       try {
         rmSync(omniRoot, { recursive: true, force: true });
       } catch {
