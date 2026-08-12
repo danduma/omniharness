@@ -32,9 +32,11 @@ import {
 } from "@/../tests/helpers/runtime-routes";
 import {
   isConversationDeletionRequested,
+  runConversationMutation,
   trackConversationBackgroundTask,
   waitForConversationBackgroundTasksForTests,
 } from "@/server/conversations/worker-turn-gate";
+import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 
 const {
   mockAskAgent,
@@ -654,13 +656,137 @@ describe("POST /api/runs/[id]", () => {
     expect(scheduledWake).toBeUndefined();
     expect(mockCancelSupervisorWake).toHaveBeenCalledWith(runId);
     expect(mockStopRunObserver).toHaveBeenCalledWith(runId);
-    expect(mockCancelAgent).not.toHaveBeenCalled();
+    expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
     expect(stopEvents.some((event) => event.eventType === "supervisor_stopped")).toBe(true);
     expect(namedEvents).toContainEqual({
       kind: "recovery.resolved",
       runId,
       incidentId,
     });
+  });
+
+  it("terminalizes a needs-recovery run instead of treating it as already stopped", async () => {
+    mockCancelAgent.mockClear();
+    mockStopRunObserver.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/stop-needs-recovery.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "needs_recovery",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "cred-exhausted",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "stop_supervisor" }),
+    }), { params: Promise.resolve({ id: runId }) });
+    const payload = await response.json();
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+
+    expect(response.status).toBe(200);
+    expect(payload).not.toHaveProperty("alreadyStopped");
+    expect(updatedRun?.status).toBe("cancelled");
+    expect(updatedWorker?.status).toBe("cancelled");
+    expect(mockStopRunObserver).toHaveBeenCalledWith(runId);
+    expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
+  });
+
+  it("does not deadlock Stop when quota surfaces inside a conversation mutation", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/stop-nested-quota.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    let outerMutationEntered: () => void = () => undefined;
+    const entered = new Promise<void>((resolve) => {
+      outerMutationEntered = resolve;
+    });
+    let releaseQuota: () => void = () => undefined;
+    const quotaGate = new Promise<void>((resolve) => {
+      releaseQuota = resolve;
+    });
+    const quotaHandling = runConversationMutation(runId, async () => {
+      outerMutationEntered();
+      await quotaGate;
+      return handleWorkerQuotaExhaustion({
+        runId,
+        workerId,
+        text: "quota exhausted; try again in 30 minutes",
+        now,
+      });
+    });
+    await entered;
+
+    const stopRequest = POST(new Request(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "stop_supervisor" }),
+    }), { params: Promise.resolve({ id: runId }) });
+    releaseQuota();
+
+    const [quotaResult, stopResponse] = await Promise.race([
+      Promise.all([quotaHandling, stopRequest]),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("Stop/quota deadlocked")), 2_000)),
+    ]);
+    const storedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const storedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const incidents = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
+    const wake = await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get();
+
+    expect(stopResponse.status).toBe(200);
+    expect(["ignored", "quota_wait"]).toContain(quotaResult.state);
+    expect(storedRun?.status).toBe("cancelled");
+    expect(storedWorker?.status).toBe("cancelled");
+    expect(incidents.every((incident) => incident.status === "resolved")).toBe(true);
+    expect(wake).toBeUndefined();
   });
 
   it("keeps a direct quota-waiting conversation stopped after stop_worker", async () => {

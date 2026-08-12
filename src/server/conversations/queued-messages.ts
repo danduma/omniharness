@@ -633,6 +633,7 @@ async function deliverQueuedWorkerSteering(args: {
           filename: attachment.name,
           mimeType: attachment.mimeType,
           sizeBytes: attachment.size,
+          storagePath: attachment.storagePath,
         })),
       });
       args.onUserInputAppended?.();
@@ -1089,6 +1090,7 @@ export async function drainQueuedImplementationMessages(runId: string) {
               filename: attachment.name,
               mimeType: attachment.mimeType,
               sizeBytes: attachment.size,
+              storagePath: attachment.storagePath,
             })),
           });
           await db.insert(messages).values(userMessage);
@@ -1278,6 +1280,7 @@ export async function drainQueuedWorkerMessages({
             filename: attachment.name,
             mimeType: attachment.mimeType,
             sizeBytes: attachment.size,
+            storagePath: attachment.storagePath,
           })),
         });
         await db.insert(messages).values(userMessage);
@@ -1323,6 +1326,7 @@ export async function drainQueuedWorkerMessages({
               filename: attachment.name,
               mimeType: attachment.mimeType,
               sizeBytes: attachment.size,
+              storagePath: attachment.storagePath,
             })),
           });
           await db.insert(messages).values(userMessage);
@@ -1360,6 +1364,7 @@ export async function drainQueuedWorkerMessages({
             filename: attachment.name,
             mimeType: attachment.mimeType,
             sizeBytes: attachment.size,
+            storagePath: attachment.storagePath,
           })),
         });
         notifyEventStreamSubscribers();

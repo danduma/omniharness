@@ -102,6 +102,14 @@ the file:
   `lifecycle`) — synthesized by the server on each delivery boundary
   and on observable lifecycle transitions.
 
+Attachment descriptors on user-input entries must retain every field needed
+to render the persisted attachment, including `storagePath`. Composer-only
+`previewUrl` values are temporary object URLs; once optimistic state hands off
+to the worker stream, the UI resolves thumbnails from the persisted path.
+Legacy stream rows that predate this field may fill only missing attachment
+resolver metadata from the matching `messages` mirror; stream text, order, and
+attachment identity remain authoritative.
+
 Use `isBridgeOutputEntry(entry)` / `isServerProducedEntry(entry)` to
 discriminate; never branch ad-hoc on `entry.type`.
 

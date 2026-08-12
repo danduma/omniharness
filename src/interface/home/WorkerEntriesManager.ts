@@ -239,6 +239,7 @@ export class WorkerEntriesManager {
   private readonly stateByWorker = new Map<string, WorkerStreamState>();
   private readonly listenersByWorker = new Map<string, Set<Listener>>();
   private readonly inFlightByWorker = new Map<string, Promise<void>>();
+  private readonly olderLoadInFlightByWorker = new Set<string>();
   private readonly wakeVersionByWorker = new Map<string, number>();
   private readonly everLoadedWorkers = new Set<string>();
   private listEntries: RuntimeAPIs["workers"]["listEntries"] | null;
@@ -390,12 +391,26 @@ export class WorkerEntriesManager {
    */
   loadOlder(workerId: string, limit: number = DEFAULT_OLDER_LIMIT): Promise<void> {
     const existing = this.inFlightByWorker.get(workerId);
-    if (existing) return existing;
+    if (existing) {
+      if (this.olderLoadInFlightByWorker.has(workerId)) {
+        return existing;
+      }
+      // A live refresh may occupy the single-flight slot when the user
+      // reaches the top of the viewport. Preserve that scroll-back intent and
+      // start the older-page request after the refresh settles.
+      return existing.then(
+        () => this.loadOlder(workerId, limit),
+        () => this.loadOlder(workerId, limit),
+      );
+    }
     const state = this.getState(workerId);
     if (!state.hasOlder || state.lowestSeq <= 1) {
       return Promise.resolve();
     }
-    return this.fetchBefore(workerId, state.lowestSeq, limit);
+    this.olderLoadInFlightByWorker.add(workerId);
+    return this.fetchBefore(workerId, state.lowestSeq, limit).finally(() => {
+      this.olderLoadInFlightByWorker.delete(workerId);
+    });
   }
 
   refresh(workerId: string): Promise<void> {
@@ -474,6 +489,7 @@ export class WorkerEntriesManager {
     this.listenersByWorker.clear();
     this.inFlightByWorker.clear();
     this.wakeVersionByWorker.clear();
+    this.olderLoadInFlightByWorker.clear();
     this.everLoadedWorkers.clear();
     if (this.flushTimer !== null) {
       clearTimeout(this.flushTimer);

@@ -10,8 +10,10 @@ import {
   planItems,
   plans,
   queuedConversationMessages,
+  recoveryIncidents,
   runs,
   settings,
+  supervisorScheduledWakes,
   supervisorInterventions,
   workerAssignments,
   workerCounters,
@@ -64,7 +66,9 @@ import {
   queuedMessageInterruptNextRoute as INTERRUPT_NEXT,
   queuedMessageInterruptRoute as INTERRUPT_QUEUED,
   queuedMessageSendNowRoute as SEND_QUEUED_NOW,
+  runPostRoute as POST_RUN,
 } from "@/../tests/helpers/runtime-routes";
+import * as outputStore from "@/server/workers/output-store";
 import { createQueuedConversationMessage } from "@/server/conversations/queued-messages";
 import {
   __resetWorkerTurnChainsForTests,
@@ -122,6 +126,9 @@ describe("POST /api/conversations/[id]/messages", () => {
     mockStartSupervisorRun.mockReset();
     __resetOutputStoreCachesForTests();
     __resetNamedEventsForTests();
+    __resetWorkerTurnChainsForTests();
+    await db.delete(supervisorScheduledWakes);
+    await db.delete(recoveryIncidents);
     await db.delete(supervisorInterventions);
     await db.delete(workerAssignments);
     await db.delete(executionEvents);
@@ -184,7 +191,7 @@ describe("POST /api/conversations/[id]/messages", () => {
     // Worker response now lives in the unified worker stream — only
     // the user-role row is written to `messages` after delivery.
     expect(storedMessages.map((message) => message.role)).toEqual(["user"]);
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "Can you revise the plan for direct mode?");
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "Can you revise the plan for direct mode?", undefined, { expectedTurnGeneration: 0 });
   });
 
   it("treats exact manual stop text during active direct work as a stop action", async () => {
@@ -518,8 +525,8 @@ describe("POST /api/conversations/[id]/messages", () => {
 
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
     expect(JSON.parse(storedMessages[0]?.attachmentsJson || "[]")).toEqual([attachment]);
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("path: "));
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("attachment-2-notes.pdf"));
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("path: "), undefined, { expectedTurnGeneration: 0 });
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("attachment-2-notes.pdf"), undefined, { expectedTurnGeneration: 0 });
   });
 
   it("gives a direct worker both image pixels and the saved image path", async () => {
@@ -574,12 +581,22 @@ describe("POST /api/conversations/[id]/messages", () => {
     }), { params: Promise.resolve({ id: runId }) });
 
     expect(response.status).toBe(200);
+    const payload = await response.json();
     await waitForConversationBackgroundTasksForTests();
     expect(mockAskAgent).toHaveBeenCalledWith(
       workerId,
       expect.stringContaining(`path: ${getAppDataPath(attachment.storagePath)}`),
       [{ path: getAppDataPath(attachment.storagePath), mimeType: "image/png" }],
+      { expectedTurnGeneration: 0 },
     );
+    const entries = await readWorkerOutputEntries(runId, workerId);
+    expect(entries.find((entry) => entry.id === payload.message.id)?.attachments).toEqual([{
+      id: attachment.id,
+      filename: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.size,
+      storagePath: attachment.storagePath,
+    }]);
   });
 
   it("stores implementation follow-ups and wakes the supervisor instead of messaging a worker directly", async () => {
@@ -1165,6 +1182,80 @@ describe("POST /api/conversations/[id]/messages", () => {
     }));
   });
 
+  it("does not resurrect a direct worker when Stop wins during provider-session recreation", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+    await db.insert(plans).values({ id: planId, path: "vibes/ad-hoc/stop-during-recreate.md", status: "running", createdAt: now, updatedAt: now });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "failed",
+      preferredWorkerType: "codex",
+      allowedWorkerTypes: JSON.stringify(["codex"]),
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "error",
+      cwd: "/workspace/app",
+      bridgeSessionId: "old-session",
+      bridgeSessionMode: "full-access",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    let releaseSpawn!: () => void;
+    let markSpawnStarted!: () => void;
+    const spawnStarted = new Promise<void>((resolve) => { markSpawnStarted = resolve; });
+    const spawnGate = new Promise<void>((resolve) => { releaseSpawn = resolve; });
+    mockSpawnAgent.mockImplementationOnce(async () => {
+      markSpawnStarted();
+      await spawnGate;
+      return {
+        name: workerId,
+        type: "codex",
+        cwd: "/workspace/app",
+        state: "idle",
+        sessionId: "stale-fresh-session",
+        sessionMode: "full-access",
+        outputEntries: [],
+        currentText: "",
+        lastText: "",
+      };
+    });
+
+    const sendPromise = POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "Continue with Codex", preferredWorkerType: "codex" }),
+    }), { params: Promise.resolve({ id: runId }) });
+    await spawnStarted;
+    const stopResponse = await POST_RUN(new Request(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "stop_worker", workerId }),
+    }), { params: Promise.resolve({ id: runId }) });
+    releaseSpawn();
+    const sendResponse = await sendPromise;
+    await waitForConversationBackgroundTasksForTests();
+
+    const storedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const storedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(stopResponse.status).toBe(200);
+    expect(sendResponse.status).toBe(409);
+    expect(storedRun?.status).toBe("cancelled");
+    expect(storedWorker?.status).toBe("cancelled");
+    expect(mockAskAgent).not.toHaveBeenCalled();
+  });
+
   it("answers a direct worker elicitation from the main composer instead of queuing it as busy work", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -1273,6 +1364,78 @@ describe("POST /api/conversations/[id]/messages", () => {
     });
     expect(updatedRun?.status).toBe("running");
     expect(updatedWorker?.status).toBe("working");
+  });
+
+  it("refuses an elicitation answer whose runtime lookup was overtaken by Stop", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+    await db.insert(plans).values({ id: planId, path: "vibes/ad-hoc/stale-elicitation.md", status: "running", createdAt: now, updatedAt: now });
+    await db.insert(runs).values({ id: runId, planId, mode: "direct", status: "awaiting_user", createdAt: now, updatedAt: now });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "awaiting_user",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "How should I proceed?",
+      lastText: "How should I proceed?",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    let releaseLookup!: () => void;
+    let markLookupStarted!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => { markLookupStarted = resolve; });
+    const lookupGate = new Promise<void>((resolve) => { releaseLookup = resolve; });
+    mockGetAgent.mockImplementationOnce(async () => {
+      markLookupStarted();
+      await lookupGate;
+      return {
+        name: workerId,
+        type: "claude",
+        cwd: "/workspace/app",
+        state: "working",
+        outputEntries: [],
+        currentText: "How should I proceed?",
+        lastText: "How should I proceed?",
+        pendingElicitations: [{
+          requestId: 7,
+          requestedAt: now.toISOString(),
+          sessionId: "elicitation-session",
+          toolCallId: "ask-tool",
+          message: "How should I proceed?",
+          requestedSchema: { type: "object", properties: { customAnswer: { type: "string" } } },
+        }],
+        stderrBuffer: [],
+        stopReason: null,
+      };
+    });
+
+    const sendPromise = POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "Do not continue", busyAction: "steer" }),
+    }), { params: Promise.resolve({ id: runId }) });
+    await lookupStarted;
+    const stopResponse = await POST_RUN(new Request(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "stop_worker", workerId }),
+    }), { params: Promise.resolve({ id: runId }) });
+    releaseLookup();
+    const sendResponse = await sendPromise;
+
+    const storedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const storedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+    expect(stopResponse.status).toBe(200);
+    expect(sendResponse.status).toBe(409);
+    expect(storedRun?.status).toBe("cancelled");
+    expect(storedWorker?.status).toBe("cancelled");
+    expect(storedMessages).toHaveLength(0);
+    expect(mockRespondElicitation).not.toHaveBeenCalled();
   });
 
   it("force-delivers a busy direct steer instead of leaving it queued", async () => {
@@ -1409,10 +1572,14 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(mockAskAgent).toHaveBeenCalledWith(
       workerId,
       expect.stringContaining("Do not implement, edit files, run mutating commands, or otherwise change the workspace unless the user's latest message explicitly asks you to implement, edit, modify, fix, create, delete, run, apply, or change something."),
+      undefined,
+      { expectedTurnGeneration: 0 },
     );
     expect(mockAskAgent).toHaveBeenCalledWith(
       workerId,
       expect.stringContaining(`User message:\n${content}`),
+      undefined,
+      { expectedTurnGeneration: 0 },
     );
   });
 
@@ -1638,7 +1805,7 @@ describe("POST /api/conversations/[id]/messages", () => {
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
     expect(storedMessages.map((message) => message.id)).toContain(missingMessageId);
     expect(storedMessages.map((message) => message.content)).toContain("Do not accept this yet.");
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("Do not accept this yet."));
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("Do not accept this yet."), undefined, { expectedTurnGeneration: 0 });
     expect((await readWorkerOutputEntries(runId, workerId)).some((entry) => entry.id === missingMessageId)).toBe(true);
   });
 
@@ -1730,8 +1897,8 @@ describe("POST /api/conversations/[id]/messages", () => {
       () => Promise.resolve(mockAskAgent.mock.calls),
       (calls) => calls.length >= 2,
     );
-    expect(mockAskAgent).toHaveBeenNthCalledWith(1, workerId, expect.stringContaining("Please continue the demo work."));
-    expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, expect.stringContaining("Please continue the demo work."));
+    expect(mockAskAgent).toHaveBeenNthCalledWith(1, workerId, expect.stringContaining("Please continue the demo work."), undefined, { expectedTurnGeneration: 0 });
+    expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, expect.stringContaining("Please continue the demo work."), undefined, { expectedTurnGeneration: 0 });
 
     await waitFor(
       async () => db.select().from(runs).where(eq(runs.id, runId)).get(),
@@ -1843,8 +2010,8 @@ describe("POST /api/conversations/[id]/messages", () => {
       () => Promise.resolve(mockAskAgent.mock.calls),
       (calls) => calls.length >= 2,
     );
-    expect(mockAskAgent).toHaveBeenNthCalledWith(1, workerId, expect.stringContaining("continue"));
-    expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, expect.stringContaining("continue"));
+    expect(mockAskAgent).toHaveBeenNthCalledWith(1, workerId, expect.stringContaining("continue"), undefined, { expectedTurnGeneration: 0 });
+    expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, expect.stringContaining("continue"), undefined, { expectedTurnGeneration: 0 });
 
     await waitFor(
       async () => db.select().from(runs).where(eq(runs.id, runId)).get(),
@@ -2064,7 +2231,7 @@ describe("POST /api/conversations/[id]/messages", () => {
 
     expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
     expect(mockAskAgent).toHaveBeenCalledTimes(2);
-    expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, expect.stringContaining("continue"));
+    expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, expect.stringContaining("continue"), undefined, { expectedTurnGeneration: 0 });
 
     const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     const resumeEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
@@ -2144,8 +2311,8 @@ describe("POST /api/conversations/[id]/messages", () => {
 
     await delay(20);
 
-    expect(mockAskAgent).toHaveBeenCalledWith(activeWorkerId, expect.stringContaining("you did it?"));
-    expect(mockAskAgent).not.toHaveBeenCalledWith(cancelledWorkerId, expect.stringContaining("you did it?"));
+    expect(mockAskAgent).toHaveBeenCalledWith(activeWorkerId, expect.stringContaining("you did it?"), undefined, { expectedTurnGeneration: 0 });
+    expect(mockAskAgent).not.toHaveBeenCalledWith(cancelledWorkerId, expect.stringContaining("you did it?"), undefined, { expectedTurnGeneration: 0 });
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
     // Worker response now lives in the unified worker stream — only
     // the user-role row is written to `messages` after delivery.
@@ -2222,6 +2389,95 @@ describe("POST /api/conversations/[id]/messages", () => {
 
     expect(updatedWorker?.status).toBe("cancelled");
     expect(workerMessages).toHaveLength(0);
+  });
+
+  it("refuses a direct send that was already in flight when Stop terminalized the run", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-stop-before-delivery.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    let releaseReconciliation!: () => void;
+    let markReconciliationStarted!: () => void;
+    const reconciliationStarted = new Promise<void>((resolve) => {
+      markReconciliationStarted = resolve;
+    });
+    const reconciliationGate = new Promise<void>((resolve) => {
+      releaseReconciliation = resolve;
+    });
+    const readEntries = outputStore.readWorkerOutputEntries;
+    const readEntriesSpy = vi.spyOn(outputStore, "readWorkerOutputEntries").mockImplementationOnce(async (...args) => {
+      markReconciliationStarted();
+      await reconciliationGate;
+      return readEntries(...args);
+    });
+    mockAskAgent.mockRejectedValueOnce(new Error("You've hit your usage limit · resets 5pm"));
+
+    try {
+      const sendResponsePromise = POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
+        method: "POST",
+        body: JSON.stringify({ content: "This send started before Stop" }),
+      }), { params: Promise.resolve({ id: runId }) });
+
+      await reconciliationStarted;
+      const stopResponse = await POST_RUN(new Request(`http://localhost/api/runs/${runId}`, {
+        method: "POST",
+        body: JSON.stringify({ action: "stop_worker", workerId }),
+      }), { params: Promise.resolve({ id: runId }) });
+      expect(stopResponse.status).toBe(200);
+
+      releaseReconciliation();
+      const sendResponse = await sendResponsePromise;
+      await waitForConversationBackgroundTasksForTests();
+
+      const storedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+      const storedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+      const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
+      const incidents = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
+      const wake = await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get();
+      const entries = await readWorkerOutputEntries(runId, workerId);
+
+      expect(sendResponse.status).toBe(409);
+      expect(storedRun?.status).toBe("cancelled");
+      expect(storedWorker?.status).toBe("cancelled");
+      expect(storedMessages).toHaveLength(0);
+      expect(entries.some((entry) => entry.type === "user_input" && entry.text.includes("started before Stop"))).toBe(false);
+      expect(incidents).toHaveLength(0);
+      expect(wake).toBeUndefined();
+      expect(mockAskAgent).not.toHaveBeenCalled();
+    } finally {
+      releaseReconciliation();
+      readEntriesSpy.mockRestore();
+    }
   });
 });
 

@@ -42,29 +42,6 @@ function normalizedStatus(value: string | null | undefined) {
   return value?.trim().toLowerCase().split(":")[0]?.trim() ?? "";
 }
 
-function parseIncidentDetails(details: string | null | undefined): Record<string, unknown> {
-  if (!details) {
-    return {};
-  }
-  try {
-    const parsed: unknown = JSON.parse(details);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : {};
-  } catch {
-    return {};
-  }
-}
-
-function incidentResumeAt(details: string | null | undefined) {
-  const value = parseIncidentDetails(details).resumeAt;
-  if (typeof value !== "string") {
-    return null;
-  }
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date : null;
-}
-
 function isCompletedEntryStatus(value: string | null | undefined) {
   const status = normalizedStatus(value);
   return !status || [
@@ -506,13 +483,12 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
   const allWorkers = selectedRunId
     ? await db.select().from(workers).where(eq(workers.runId, selectedRunId))
     : await db.select().from(workers);
-  const openQuotaIncidents = (selectedRunId
+  const activeQuotaIncidents = (selectedRunId
     ? await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, selectedRunId))
     : await db.select().from(recoveryIncidents)
   ).filter((incident) => (
     incident.kind === "quota_exhausted"
     && (incident.status === "open" || incident.status === "recovering")
-    && (incidentResumeAt(incident.details)?.getTime() ?? 0) > Date.now()
   ));
 
   for (const run of allRuns) {
@@ -523,15 +499,46 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
       continue;
     }
 
-    const quotaIncident = openQuotaIncidents.find((incident) => incident.runId === run.id);
-    if (quotaIncident) {
+    const quotaIncident = activeQuotaIncidents.find((incident) => incident.runId === run.id);
+    const quotaWorker = allWorkers.find((candidate) => candidate.id === quotaIncident?.workerId);
+    const quotaRecoveryOwnsPersistedState = Boolean(
+      quotaIncident
+      && (
+        run.status === "quota_waiting"
+        || normalizedStatus(quotaWorker?.status) === "cred-exhausted"
+      ),
+    );
+    if (quotaIncident && quotaRecoveryOwnsPersistedState) {
       if (run.status !== "quota_waiting" || run.lastError || run.failedAt) {
-        await withSqliteBusyRetry(() => db.update(runs).set({
+        const updated = await withSqliteBusyRetry(() => db.update(runs).set({
           status: "quota_waiting",
           failedAt: null,
           lastError: null,
           updatedAt: new Date(),
-        }).where(eq(runs.id, run.id)));
+        }).where(and(
+          eq(runs.id, run.id),
+          eq(runs.status, run.status),
+        )).returning({ id: runs.id }));
+        if (updated.length > 0) {
+          emitNamedEvent({
+            kind: "recovery.quota_wait_preserved",
+            runId: run.id,
+            incidentId: quotaIncident.id,
+            previousStatus: run.status,
+          });
+          await recordExecutionEvent({
+            runId: run.id,
+            workerId: quotaIncident.workerId,
+            planItemId: null,
+            eventType: "quota_wait_preserved",
+            details: {
+              summary: "Reload reconciliation kept quota recovery authoritative over stale run state.",
+              incidentId: quotaIncident.id,
+              previousStatus: run.status,
+            },
+          });
+          notifyEventStreamSubscribers();
+        }
       }
       continue;
     }

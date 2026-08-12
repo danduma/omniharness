@@ -1212,10 +1212,15 @@ export async function pollRunWorkers(
           now: new Date(now),
         });
         stopRunObserver(runId, { reason: "quota_exhausted" });
+        if (quotaResult.state === "ignored") {
+          return;
+        }
         const allowedTypes = parseAllowedWorkerTypes(latestRun.allowedWorkerTypes);
         if (allowedTypes.length >= 2) {
-          await markIncidentForFailover({ runId, workerId: worker.id });
-          wakeSupervisor(runId, 0);
+          const markedForFailover = await markIncidentForFailover({ runId, workerId: worker.id });
+          if (markedForFailover) {
+            wakeSupervisor(runId, 0);
+          }
         } else if (quotaResult.state === "needs_recovery") {
           wakeSupervisor(runId, 0);
         }

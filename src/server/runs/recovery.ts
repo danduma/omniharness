@@ -241,6 +241,7 @@ function workerEntryAttachments(message: typeof messages.$inferSelect) {
     filename: attachment.name,
     mimeType: attachment.mimeType,
     sizeBytes: attachment.size,
+    storagePath: attachment.storagePath,
   }));
 }
 
@@ -354,6 +355,7 @@ async function startDirectRerun(
         filename: attachment.name,
         mimeType: attachment.mimeType,
         sizeBytes: attachment.size,
+        storagePath: attachment.storagePath,
       })),
     });
     if (userInputId) {
@@ -1048,6 +1050,14 @@ async function handleDirectWorkerAskQuotaError(args: {
     text: quotaInfo.rawText,
     provider: args.workerType,
   });
+
+  if (result.state === "ignored") {
+    return {
+      runId: args.runId,
+      recoveryState: "cancelled",
+      resumeAt: null,
+    };
+  }
 
   return {
     runId: args.runId,

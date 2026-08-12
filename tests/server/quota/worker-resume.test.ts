@@ -12,6 +12,14 @@ import {
   workers,
 } from "@/server/db/schema";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
+import {
+  abortWorkerTurn,
+  advanceWorkerTurnGeneration,
+  currentWorkerTurnSignal,
+} from "@/server/conversations/worker-turn-gate";
+import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
+import { syncConversationSessions } from "@/server/conversations/sync";
+import { updateDirectRunStatusFromWorkerOutput } from "@/server/conversations/direct-run-status";
 
 const now = new Date("2026-05-10T10:00:00.000Z");
 
@@ -160,7 +168,7 @@ describe("resumeQuotaExhaustedWorkers", () => {
     expect(await db.select().from(workers).where(eq(workers.runId, runId)).get()).toBeDefined();
   });
 
-  it("anchors the quota resume prompt before the resumed turn starts", async () => {
+  it("appends the quota resume prompt only after delivery succeeds", async () => {
     const { runId, workerId, run } = await insertRunWithQuotaIncident();
     mockSpawnAgent.mockResolvedValue(agentSnapshot(workerId, "idle"));
     mockGetAgent.mockResolvedValue(agentSnapshot(workerId, "idle"));
@@ -176,10 +184,46 @@ describe("resumeQuotaExhaustedWorkers", () => {
       resumedCount: 1,
     });
 
-    expect(entriesAtAskStart.map((entry) => entry.type)).toContain("supervisor_input");
-    expect(entriesAtAskStart.find((entry) => entry.type === "supervisor_input")?.text).toContain(
+    expect(entriesAtAskStart.map((entry) => entry.type)).not.toContain("supervisor_input");
+    const deliveredEntries = await readWorkerOutputEntries(runId, workerId);
+    expect(deliveredEntries.find((entry) => entry.type === "supervisor_input")?.text).toContain(
       "Continue the interrupted work now that the quota wait has cleared.",
     );
+  });
+
+  it("does not append or persist a quota-resume prompt when Stop wins during delivery", async () => {
+    const { runId, workerId, incidentId, run } = await insertRunWithQuotaIncident();
+    mockSpawnAgent.mockResolvedValue(agentSnapshot(workerId, "idle"));
+    mockGetAgent.mockResolvedValue(agentSnapshot(workerId, "idle"));
+    mockAskAgent.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      const signal = currentWorkerTurnSignal();
+      signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }));
+
+    const resume = resumeQuotaExhaustedWorkers({ run });
+    await vi.waitFor(() => expect(mockAskAgent).toHaveBeenCalledTimes(1));
+
+    await runQuotaRecoveryMutation(runId, async () => {
+      await db.update(runs).set({ status: "cancelled", updatedAt: new Date() }).where(eq(runs.id, runId));
+      abortWorkerTurn(workerId, "user stop");
+      await advanceWorkerTurnGeneration(workerId, {
+        status: "cancelled",
+        clearCurrentText: true,
+        updatedAt: new Date(),
+      });
+    });
+
+    await expect(resume).resolves.toMatchObject({ state: "ignored", reason: "run_terminal" });
+    const entries = await readWorkerOutputEntries(runId, workerId);
+    const interventions = await db.select().from(supervisorInterventions)
+      .where(eq(supervisorInterventions.runId, runId));
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.id, incidentId)).get();
+
+    expect(entries.some((entry) => entry.type === "supervisor_input")).toBe(false);
+    expect(interventions).toHaveLength(0);
+    expect(events.some((event) => event.eventType === "worker_prompted")).toBe(false);
+    expect(incident?.status).toBe("resolved");
   });
 
   it("reopens a quota incident when the resume prompt proves quota is still exhausted", async () => {
@@ -281,6 +325,77 @@ describe("resumeElapsedQuotaWaits", () => {
     }).where(eq(recoveryIncidents.id, incidentId));
   }
 
+  it("keeps an elapsed quota wait authoritative during reload reconciliation", async () => {
+    // Exact regression: after the user slept through the reset, reload sync
+    // saw the stale live worker as working and rewrote the parked run to
+    // running before the durable recovery path could resume it. The recovery
+    // notice disappeared and the conversation showed Working forever.
+    const { runId, workerId, incidentId } = await insertRunWithQuotaIncident();
+    await db.update(runs).set({
+      status: "quota_waiting",
+      lastError: null,
+      failedAt: null,
+    }).where(eq(runs.id, runId));
+    await db.update(workers).set({ status: "cred-exhausted" }).where(eq(workers.id, workerId));
+    await setElapsedIncident(incidentId, new Date(now.getTime() - 60_000));
+
+    await syncConversationSessions([agentSnapshot(workerId, "working")], { selectedRunId: runId });
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.id, incidentId)).get();
+
+    expect(persistedRun?.status).toBe("quota_waiting");
+    expect(persistedWorker?.status).toBe("cred-exhausted");
+    expect(incident?.status).toBe("open");
+  });
+
+  it("reasserts quota waiting when another direct-status writer sees stale live work", async () => {
+    const { runId, workerId, incidentId } = await insertRunWithQuotaIncident();
+    await db.update(runs).set({
+      status: "failed",
+      lastError: "stale provider error",
+      failedAt: now,
+    }).where(eq(runs.id, runId));
+    await db.update(workers).set({ status: "cred-exhausted" }).where(eq(workers.id, workerId));
+    await setElapsedIncident(incidentId, new Date(now.getTime() - 60_000));
+
+    await expect(updateDirectRunStatusFromWorkerOutput({
+      runId,
+      workerId,
+      workerStatus: "working",
+      currentText: "stale live work",
+    })).resolves.toBe("quota_waiting");
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(persistedRun?.status).toBe("quota_waiting");
+    expect(persistedRun?.lastError).toBeNull();
+    expect(persistedRun?.failedAt).toBeNull();
+  });
+
+  it("resumes an open quota incident even when stale failure status survived until reset", async () => {
+    const { runId, workerId, incidentId } = await insertRunWithQuotaIncident();
+    await db.update(runs).set({
+      status: "failed",
+      lastError: "stale provider error",
+      failedAt: now,
+    }).where(eq(runs.id, runId));
+    await db.update(workers).set({ status: "cred-exhausted" }).where(eq(workers.id, workerId));
+    await setElapsedIncident(incidentId, new Date(now.getTime() - 60_000));
+    mockSpawnAgent.mockResolvedValue(agentSnapshot(workerId, "idle"));
+    mockGetAgent.mockResolvedValue(agentSnapshot(workerId, "idle"));
+
+    await expect(resumeElapsedQuotaWaits({ now })).resolves.toEqual({
+      sweptCount: 1,
+      clearedCount: 0,
+    });
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.id, incidentId)).get();
+    expect(persistedRun?.status).toBe("running");
+    expect(incident?.status).toBe("resolved");
+  });
+
   it("resumes a direct run whose quota wake was consumed without resuming it", async () => {
     // Regression: the durable wake row is deleted by `claimDueDurableSupervisorWake`
     // *before* the handler checks whether it can act. When conversation sync had
@@ -302,6 +417,49 @@ describe("resumeElapsedQuotaWaits", () => {
     }));
     const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.id, incidentId)).get();
     const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(incident?.status).toBe("resolved");
+    expect(events.some((event) => event.eventType === "quota_wait_swept")).toBe(true);
+    expect(events.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
+  });
+
+  it("recovers the exact sleep-through-reset and reload sequence after the wake is lost", async () => {
+    const { runId, workerId, incidentId } = await insertRunWithQuotaIncident();
+    const resetElapsedAt = new Date(now.getTime() + 60_000);
+    await setElapsedIncident(incidentId, new Date(resetElapsedAt.getTime() - 60_000));
+    await db.insert(supervisorScheduledWakes).values({
+      runId,
+      wakeAt: resetElapsedAt,
+      reason: "quota_wait",
+      source: "time-of-day",
+      incidentId,
+      details: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.update(workers).set({ status: "cred-exhausted" }).where(eq(workers.id, workerId));
+    mockSpawnAgent.mockResolvedValue(agentSnapshot(workerId, "idle"));
+    mockGetAgent.mockResolvedValue(agentSnapshot(workerId, "idle"));
+
+    // The user was away while the reset passed. Reload reconciliation sees a
+    // stale bridge snapshot but must preserve the quota ownership first.
+    await syncConversationSessions([agentSnapshot(workerId, "working")], { selectedRunId: runId });
+    expect((await db.select().from(runs).where(eq(runs.id, runId)).get())?.status).toBe("quota_waiting");
+
+    // The due wake was consumed during the outage, so the watchdog sweep is
+    // the only remaining delivery path.
+    await db.delete(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId));
+    await expect(resumeElapsedQuotaWaits({ now: resetElapsedAt })).resolves.toEqual({
+      sweptCount: 1,
+      clearedCount: 0,
+    });
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.id, incidentId)).get();
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+
+    expect(persistedRun?.status).toBe("running");
+    expect(persistedWorker?.status).not.toBe("cred-exhausted");
     expect(incident?.status).toBe("resolved");
     expect(events.some((event) => event.eventType === "quota_wait_swept")).toBe(true);
     expect(events.some((event) => event.eventType === "worker_session_resumed")).toBe(true);

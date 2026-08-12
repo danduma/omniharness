@@ -12,6 +12,8 @@ import { markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
 import {
   parkRunForQuotaWait,
   recordWorkerQuotaBlock,
+  refuseLateQuotaRecovery,
+  transitionRunForQuotaRecovery,
   type WorkerQuotaBlockResult,
 } from "@/server/quota/recovery";
 import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
@@ -29,6 +31,14 @@ import { runs } from "@/server/db/schema";
 import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
 import { prepareClaudeGatewayLaunch } from "@/server/integrations/claude-model-gateway/worker-env";
+import {
+  abortWorkerTurn,
+  advanceWorkerTurnGeneration,
+  readWorkerTurnGeneration,
+  runWorkerTurn,
+} from "@/server/conversations/worker-turn-gate";
+import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
+import { isTerminalRunStatus, normalizeRunStatus } from "@/server/runs/status";
 
 export type FailoverEnv = Record<string, string | undefined>;
 
@@ -65,7 +75,8 @@ export type AttemptWorkerFailoverResult =
       handoff: HandoffReport;
     }
   | { state: "no_replacement"; reason: string }
-  | { state: "park_failed"; reason: string };
+  | { state: "park_failed"; reason: string }
+  | { state: "ignored"; reason: "run_missing" | "run_terminal" | "worker_cancelled" };
 
 function truncate(value: string, maxLength = 2_000) {
   return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
@@ -125,29 +136,35 @@ async function reserveReplacementWorkerRow(args: {
   launchEffort: string | null;
   launchCredentialSource: "gateway" | "account";
 }) {
-  const { workerId, workerNumber } = await allocateWorkerIdentity(args.runId);
-  await db.insert(workers).values({
-    id: workerId,
-    runId: args.runId,
-    type: args.workerType,
-    status: "starting",
-    cwd: args.cwd,
-    workerNumber,
-    title: args.title,
-    initialPrompt: args.initialPrompt,
-    effectiveLaunchModel: args.launchModel,
-    effectiveLaunchEffort: args.launchEffort,
-    launchCredentialSource: args.launchCredentialSource,
-    outputLog: "",
-    outputEntriesJson: "",
-    currentText: "",
-    lastText: "",
-    createdAt: new Date(),
-    updatedAt: new Date(),
+  return runQuotaRecoveryMutation(args.runId, async () => {
+    const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
+    if (!run || isTerminalRunStatus(run.status) || normalizeRunStatus(run.status) === "canceled") {
+      return null;
+    }
+    const { workerId, workerNumber } = await allocateWorkerIdentity(args.runId);
+    await db.insert(workers).values({
+      id: workerId,
+      runId: args.runId,
+      type: args.workerType,
+      status: "starting",
+      cwd: args.cwd,
+      workerNumber,
+      title: args.title,
+      initialPrompt: args.initialPrompt,
+      effectiveLaunchModel: args.launchModel,
+      effectiveLaunchEffort: args.launchEffort,
+      launchCredentialSource: args.launchCredentialSource,
+      outputLog: "",
+      outputEntriesJson: "",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    emitNamedEvent({ kind: "worker.spawned", runId: args.runId, workerId, workerType: args.workerType });
+    notifyEventStreamSubscribers();
+    return workerId;
   });
-  emitNamedEvent({ kind: "worker.spawned", runId: args.runId, workerId, workerType: args.workerType });
-  notifyEventStreamSubscribers();
-  return workerId;
 }
 
 async function tearDownOutgoingWorker(workerId: string) {
@@ -156,6 +173,60 @@ async function tearDownOutgoingWorker(workerId: string) {
   } catch {
     // best-effort teardown — quota-exhausted workers are often unresponsive
   }
+}
+
+async function abandonReplacementWorker(args: {
+  runId: string;
+  workerId: string;
+}) {
+  abortWorkerTurn(args.workerId, "quota recovery ownership lost");
+  void bridge.cancelAgent(args.workerId).catch(() => {
+    // best effort: the replacement may have been refused before it spawned
+  });
+  const worker = await db.select().from(workers).where(eq(workers.id, args.workerId)).get();
+  if (!worker || worker.status === "cancelled" || worker.status === "canceled") {
+    return;
+  }
+  await advanceWorkerTurnGeneration(args.workerId, {
+    status: "cancelled",
+    clearCurrentText: true,
+    updatedAt: new Date(),
+  });
+  emitNamedEvent({
+    kind: "worker.status",
+    runId: args.runId,
+    workerId: args.workerId,
+    prev: worker.status,
+    next: "cancelled",
+  });
+  emitNamedEvent({
+    kind: "worker.terminal",
+    runId: args.runId,
+    workerId: args.workerId,
+    status: "cancelled",
+  });
+}
+
+async function refuseFailoverIfTerminal(args: {
+  runId: string;
+  outgoingWorkerId: string;
+  incidentId?: string | null;
+  replacementWorkerId?: string | null;
+  now: Date;
+}): Promise<Extract<AttemptWorkerFailoverResult, { state: "ignored" }> | null> {
+  const refused = await refuseLateQuotaRecovery({
+    runId: args.runId,
+    workerId: args.outgoingWorkerId,
+    incidentId: args.incidentId,
+    now: args.now,
+  });
+  if (!refused) {
+    return null;
+  }
+  if (args.replacementWorkerId) {
+    await abandonReplacementWorker({ runId: args.runId, workerId: args.replacementWorkerId });
+  }
+  return { state: "ignored", reason: refused.reason };
 }
 
 async function recordFailoverEvent(args: {
@@ -192,6 +263,16 @@ export async function attemptWorkerFailover(
   const allowedTypes = args.allowedTypes;
   const maxAttempts = args.maxAttempts ?? Math.max(1, allowedTypes.length);
 
+  const initialRefusal = await refuseFailoverIfTerminal({
+    runId: args.runId,
+    outgoingWorkerId: args.outgoingWorkerId,
+    incidentId: args.existingBlock?.incidentId,
+    now,
+  });
+  if (initialRefusal) {
+    return initialRefusal;
+  }
+
   const block = args.existingBlock ?? (await recordWorkerQuotaBlock({
     runId: args.runId,
     workerId: args.outgoingWorkerId,
@@ -200,6 +281,19 @@ export async function attemptWorkerFailover(
     now,
     failoverPending: true,
   }));
+  if ("state" in block) {
+    return { state: "ignored", reason: block.reason };
+  }
+
+  const postBlockRefusal = await refuseFailoverIfTerminal({
+    runId: args.runId,
+    outgoingWorkerId: args.outgoingWorkerId,
+    incidentId: block.incidentId,
+    now,
+  });
+  if (postBlockRefusal) {
+    return postBlockRefusal;
+  }
   const outgoingWorker = await db.select().from(workers).where(eq(workers.id, args.outgoingWorkerId)).get();
   const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
   const launchSelection = resolveWorkerLaunchSelection(outgoingWorker ?? {}, run ?? {});
@@ -233,7 +327,9 @@ export async function attemptWorkerFailover(
       quota: block.quota,
       now,
     });
-    void park;
+    if (park.state === "ignored") {
+      return { state: "ignored", reason: park.reason };
+    }
     const selectionFailureReason = gatewayCompatibilityFailure ?? (replacementSelectionError instanceof Error
       ? replacementSelectionError.message
       : replacementSelectionError
@@ -274,6 +370,16 @@ export async function attemptWorkerFailover(
 
   const replacementType = replacementSelection.type;
 
+  const preHandoffRefusal = await refuseFailoverIfTerminal({
+    runId: args.runId,
+    outgoingWorkerId: args.outgoingWorkerId,
+    incidentId: block.incidentId,
+    now,
+  });
+  if (preHandoffRefusal) {
+    return preHandoffRefusal;
+  }
+
   emitNamedEvent({
     kind: "worker.failover_started",
     runId: args.runId,
@@ -313,6 +419,15 @@ export async function attemptWorkerFailover(
       originalPrompt: args.originalPrompt,
     });
   }
+  const postHandoffRefusal = await refuseFailoverIfTerminal({
+    runId: args.runId,
+    outgoingWorkerId: args.outgoingWorkerId,
+    incidentId: block.incidentId,
+    now,
+  });
+  if (postHandoffRefusal) {
+    return postHandoffRefusal;
+  }
   emitNamedEvent({
     kind: "worker.handoff_emitted",
     runId: args.runId,
@@ -341,7 +456,17 @@ export async function attemptWorkerFailover(
   while (attempts < maxAttempts) {
     attempts += 1;
     let newWorkerId: string | null = null;
+    let replacementTurnGeneration: number | null = null;
     try {
+      const preAttemptRefusal = await refuseFailoverIfTerminal({
+        runId: args.runId,
+        outgoingWorkerId: args.outgoingWorkerId,
+        incidentId: block.incidentId,
+        now: new Date(),
+      });
+      if (preAttemptRefusal) {
+        return preAttemptRefusal;
+      }
       await prepareClaudeGatewayLaunch({
         type: currentType,
         model: launchSelection.model,
@@ -359,6 +484,29 @@ export async function attemptWorkerFailover(
         launchEffort: launchSelection.effort,
         launchCredentialSource: launchSelection.credentialSource,
       });
+      if (!newWorkerId) {
+        const refused = await refuseFailoverIfTerminal({
+          runId: args.runId,
+          outgoingWorkerId: args.outgoingWorkerId,
+          incidentId: block.incidentId,
+          now: new Date(),
+        });
+        if (refused) {
+          return refused;
+        }
+        throw new Error(`Replacement worker reservation was refused for run ${args.runId}.`);
+      }
+      replacementTurnGeneration = await readWorkerTurnGeneration(newWorkerId);
+      const postReserveRefusal = await refuseFailoverIfTerminal({
+        runId: args.runId,
+        outgoingWorkerId: args.outgoingWorkerId,
+        incidentId: block.incidentId,
+        replacementWorkerId: newWorkerId,
+        now: new Date(),
+      });
+      if (postReserveRefusal) {
+        return postReserveRefusal;
+      }
       const accountAllocation = launchSelection.credentialSource === "gateway" ? null : await allocateWorkerAccount({
         workerType: currentType,
         runId: args.runId,
@@ -383,13 +531,38 @@ export async function attemptWorkerFailover(
         updatedAt: new Date(),
       }).where(eq(workers.id, newWorkerId));
 
+      const prePromptRefusal = await refuseFailoverIfTerminal({
+        runId: args.runId,
+        outgoingWorkerId: args.outgoingWorkerId,
+        incidentId: block.incidentId,
+        replacementWorkerId: newWorkerId,
+        now: new Date(),
+      });
+      if (prePromptRefusal) {
+        return prePromptRefusal;
+      }
+      const response = await runWorkerTurn(newWorkerId, () => bridge.askAgent(
+        newWorkerId!,
+        seed,
+        undefined,
+        { expectedTurnGeneration: replacementTurnGeneration ?? undefined },
+      ));
+      const postPromptRefusal = await refuseFailoverIfTerminal({
+        runId: args.runId,
+        outgoingWorkerId: args.outgoingWorkerId,
+        incidentId: block.incidentId,
+        replacementWorkerId: newWorkerId,
+        now: new Date(),
+      });
+      if (postPromptRefusal) {
+        return postPromptRefusal;
+      }
       await appendSupervisorInputOnDelivery({
         runId: args.runId,
         workerId: newWorkerId,
         text: seed,
         deliveredAt: new Date(),
       });
-      const response = await bridge.askAgent(newWorkerId, seed);
       let snapshot: Awaited<ReturnType<typeof bridge.getAgent>> | null = null;
       try {
         snapshot = await bridge.getAgent(newWorkerId);
@@ -398,13 +571,29 @@ export async function attemptWorkerFailover(
         // The ask response still determines visible state if the bridge drops the worker quickly.
       }
       const latestWorker = await db.select().from(workers).where(eq(workers.id, newWorkerId)).get();
-      await db.update(workers).set({
+      const persistedWorker = await db.update(workers).set({
         status: response.state,
         outputLog: appendWorkerOutput(latestWorker?.outputLog, response.response),
         currentText: snapshot?.currentText ?? latestWorker?.currentText ?? "",
         lastText: snapshot?.lastText || latestWorker?.lastText || response.response,
         updatedAt: new Date(),
-      }).where(eq(workers.id, newWorkerId));
+      }).where(and(
+        eq(workers.id, newWorkerId),
+        eq(workers.turnGeneration, replacementTurnGeneration ?? 0),
+      )).returning({ id: workers.id });
+      if (persistedWorker.length === 0) {
+        const refused = await refuseFailoverIfTerminal({
+          runId: args.runId,
+          outgoingWorkerId: args.outgoingWorkerId,
+          incidentId: block.incidentId,
+          replacementWorkerId: newWorkerId,
+          now: new Date(),
+        });
+        if (refused) {
+          return refused;
+        }
+        throw new Error(`Replacement worker ${newWorkerId} was superseded before failover completed.`);
+      }
       await recordFailoverEvent({
         runId: args.runId,
         workerId: newWorkerId,
@@ -418,30 +607,54 @@ export async function attemptWorkerFailover(
         },
       });
 
-      await markRecoveryIncidentResolved({
-        incidentId: block.incidentId,
-        runId: args.runId,
-        workerId: args.outgoingWorkerId,
-        summary: "Worker failover completed after quota exhaustion.",
-        details: {
-          ...block.details,
-          recoveryState: "failover_completed",
-          recommendedAction: "none",
-          failover_pending: false,
-          failover_resolved_at: new Date().toISOString(),
-          outgoingWorkerId: args.outgoingWorkerId,
-          outgoingType: args.outgoingWorkerType,
-          newWorkerId,
-          newType: currentType,
-          handoffSource: handoff.source,
-        },
+      const runTransitionRefusal = await runQuotaRecoveryMutation(args.runId, async () => {
+        const refused = await transitionRunForQuotaRecovery({
+          runId: args.runId,
+          workerId: args.outgoingWorkerId,
+          incidentId: block.incidentId,
+          now: new Date(),
+          updates: {
+            status: "running",
+            failedAt: null,
+            lastError: null,
+            updatedAt: new Date(),
+          },
+        });
+        if (refused) return refused;
+        await markRecoveryIncidentResolved({
+          incidentId: block.incidentId,
+          runId: args.runId,
+          workerId: args.outgoingWorkerId,
+          summary: "Worker failover completed after quota exhaustion.",
+          details: {
+            ...block.details,
+            recoveryState: "failover_completed",
+            recommendedAction: "none",
+            failover_pending: false,
+            failover_resolved_at: new Date().toISOString(),
+            outgoingWorkerId: args.outgoingWorkerId,
+            outgoingType: args.outgoingWorkerType,
+            newWorkerId,
+            newType: currentType,
+            handoffSource: handoff.source,
+          },
+        });
+        return null;
       });
-      await db.update(runs).set({
-        status: "running",
-        failedAt: null,
-        lastError: null,
-        updatedAt: new Date(),
-      }).where(eq(runs.id, args.runId));
+      if (runTransitionRefusal) {
+        await abandonReplacementWorker({ runId: args.runId, workerId: newWorkerId });
+        return { state: "ignored", reason: runTransitionRefusal.reason };
+      }
+      const postCompletionRefusal = await refuseFailoverIfTerminal({
+        runId: args.runId,
+        outgoingWorkerId: args.outgoingWorkerId,
+        incidentId: block.incidentId,
+        replacementWorkerId: newWorkerId,
+        now: new Date(),
+      });
+      if (postCompletionRefusal) {
+        return postCompletionRefusal;
+      }
 
       emitNamedEvent({
         kind: "worker.failover_completed",
@@ -472,15 +685,29 @@ export async function attemptWorkerFailover(
       };
     } catch (error) {
       lastError = error;
+      const caughtRefusal = await refuseFailoverIfTerminal({
+        runId: args.runId,
+        outgoingWorkerId: args.outgoingWorkerId,
+        incidentId: block.incidentId,
+        replacementWorkerId: newWorkerId,
+        now: new Date(),
+      });
+      if (caughtRefusal) {
+        return caughtRefusal;
+      }
       const quotaInfo = extractQuotaResetInfo(error, { provider: currentType });
       if (quotaInfo.isQuotaError && newWorkerId) {
-        await recordWorkerQuotaBlock({
+        const replacementBlock = await recordWorkerQuotaBlock({
           runId: args.runId,
           workerId: newWorkerId,
           text: quotaInfo.rawText,
           provider: currentType,
           now: new Date(),
         });
+        if ("state" in replacementBlock) {
+          await abandonReplacementWorker({ runId: args.runId, workerId: newWorkerId });
+          return { state: "ignored", reason: replacementBlock.reason };
+        }
         emitNamedEvent({
           kind: "worker.status",
           runId: args.runId,
@@ -570,7 +797,9 @@ export async function attemptWorkerFailover(
     quota: block.quota,
     now: new Date(),
   });
-  void park;
+  if (park.state === "ignored") {
+    return { state: "ignored", reason: park.reason };
+  }
   return { state: "park_failed", reason };
 }
 
@@ -584,9 +813,22 @@ export async function markIncidentForFailover(args: {
   runId: string;
   workerId: string;
 }): Promise<boolean> {
+  const refused = await refuseLateQuotaRecovery({
+    runId: args.runId,
+    workerId: args.workerId,
+    now: new Date(),
+  });
+  if (refused) return false;
   const incident = await findOpenQuotaIncidentForWorker(args.runId, args.workerId);
   if (!incident) return false;
   await setIncidentFailoverFlag(incident.id, true);
+  const postMutationRefusal = await refuseLateQuotaRecovery({
+    runId: args.runId,
+    workerId: args.workerId,
+    incidentId: incident.id,
+    now: new Date(),
+  });
+  if (postMutationRefusal) return false;
   return true;
 }
 

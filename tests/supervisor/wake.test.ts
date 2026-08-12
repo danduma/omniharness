@@ -404,6 +404,8 @@ describe("executeSupervisorWake", () => {
     expect(mockAskAgent).toHaveBeenCalledWith(
       workerId,
       expect.stringContaining("Continue the interrupted work"),
+      undefined,
+      { expectedTurnGeneration: 0 },
     );
     expect(mockSupervisorRun).toHaveBeenCalledTimes(1);
 
@@ -617,6 +619,8 @@ describe("executeSupervisorWake", () => {
     expect(mockAskAgent).toHaveBeenCalledWith(
       workerId,
       expect.stringContaining("Continue the interrupted work"),
+      undefined,
+      { expectedTurnGeneration: 0 },
     );
     expect(mockSupervisorRun).not.toHaveBeenCalled();
 

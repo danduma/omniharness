@@ -247,6 +247,43 @@ describe("WorkerEntriesManager", () => {
     expect(manager.getState("w1").entries.map((e) => e.seq)).toEqual([1, 2, 3]);
   });
 
+  it("queues an older-page request when refresh is already in flight", async () => {
+    let resolveRefresh!: (value: unknown) => void;
+    const requestJson = vi
+      .fn()
+      .mockResolvedValueOnce({
+        entries: [entry(152), entry(153)],
+        latestSeq: 153,
+        hasOlder: true,
+      })
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveRefresh = resolve;
+      }))
+      .mockResolvedValueOnce({
+        entries: [entry(150), entry(151)],
+        latestSeq: 153,
+        hasOlder: true,
+      });
+    const manager = new WorkerEntriesManager({ listEntries: requestJson });
+
+    await manager.ensureLoaded("w1");
+    const refresh = manager.refresh("w1");
+    const older = manager.loadOlder("w1");
+
+    expect(requestJson).toHaveBeenCalledTimes(2);
+
+    resolveRefresh({ entries: [], latestSeq: 153 });
+    await refresh;
+    await older;
+
+    expect(requestJson).toHaveBeenLastCalledWith({
+      workerId: "w1",
+      beforeSeq: 152,
+      limit: 100,
+    });
+    expect(manager.getState("w1").entries.map((item) => item.seq)).toEqual([150, 151, 152, 153]);
+  });
+
   it("refresh revalidates a loaded empty worker stream and pulls later disk output", async () => {
     const { manager, requestJson } = buildManager([
       { entries: [], latestSeq: 0 },

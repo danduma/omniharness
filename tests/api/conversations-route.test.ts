@@ -1823,6 +1823,15 @@ describe("POST /api/conversations", () => {
 
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
     expect(JSON.parse(storedMessages[0]?.attachmentsJson || "[]")).toEqual([attachment]);
+    const [createdWorker] = await db.select().from(workers).where(eq(workers.runId, payload.runId));
+    const entries = await readWorkerOutputEntries(payload.runId, createdWorker!.id);
+    expect(entries.find((entry) => entry.id === payload.message.id)?.attachments).toEqual([{
+      id: attachment.id,
+      filename: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.size,
+      storagePath: attachment.storagePath,
+    }]);
 
     await waitFor(
       () => Promise.resolve(mockAskAgent.mock.calls),

@@ -1,5 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
-import { askAgent, spawnAgent, getAgent, type AgentRecord } from "@/server/bridge-client";
+import { askAgent, cancelAgent, spawnAgent, getAgent, type AgentRecord } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
@@ -25,10 +25,21 @@ import {
   hasFutureDurableSupervisorWake,
   scheduleDurableSupervisorWakeAt,
 } from "@/server/supervisor/wake-schedule";
-import { isWorkerTurnSupersededError } from "@/server/conversations/worker-turn-gate";
+import {
+  isWorkerTurnAbortedError,
+  isWorkerTurnGenerationCurrent,
+  isWorkerTurnSupersededError,
+  readWorkerTurnGeneration,
+  runWorkerTurn,
+} from "@/server/conversations/worker-turn-gate";
+import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
 import { extractQuotaResetInfo } from "./reset-parser";
 import { clearResolvedQuotaIncidents } from "./type-blocking";
-import { handleWorkerQuotaExhaustion, type QuotaRecoveryResult } from "./recovery";
+import {
+  handleWorkerQuotaExhaustion,
+  refuseLateQuotaRecovery,
+  type QuotaRecoveryResult,
+} from "./recovery";
 
 type ResumeQuotaWorkersResult =
   | { state: "none"; resumedCount: number }
@@ -114,26 +125,47 @@ async function insertWorkerSessionResumedEvent(args: {
 async function promptResumedQuotaWorker(args: {
   runId: string;
   worker: typeof workers.$inferSelect;
+  incidentId: string;
+  turnGeneration: number;
 }) {
   const prompt = buildQuotaResumePrompt(args.worker);
-  const deliveredAt = new Date();
-  await recordSupervisorIntervention({
-    runId: args.runId,
-    workerId: args.worker.id,
+  const response = await runWorkerTurn(args.worker.id, () => askAgent(
+    args.worker.id,
     prompt,
-    summary: "Prompted worker to continue after quota reset.",
-    interventionType: "recovery",
+    undefined,
+    { expectedTurnGeneration: args.turnGeneration },
+  ));
+  const deliveryRefusal = await runQuotaRecoveryMutation(args.runId, async () => {
+    const refused = await refuseLateQuotaRecovery({
+      runId: args.runId,
+      workerId: args.worker.id,
+      incidentId: args.incidentId,
+      now: new Date(),
+    });
+    if (refused) return refused;
+    if (!await isWorkerTurnGenerationCurrent(args.worker.id, args.turnGeneration)) {
+      return { state: "superseded" as const };
+    }
+    const deliveredAt = new Date();
+    await recordSupervisorIntervention({
+      runId: args.runId,
+      workerId: args.worker.id,
+      prompt,
+      summary: "Prompted worker to continue after quota reset.",
+      interventionType: "recovery",
+    });
+    await appendSupervisorInputOnDelivery({
+      runId: args.runId,
+      workerId: args.worker.id,
+      text: prompt,
+      deliveredAt,
+    });
+    return null;
   });
-  // The resumed bridge can stream output while askAgent is still in flight.
-  // This recovery prompt is accepted once the saved session has reattached,
-  // so anchor it before the ask starts just like a supervisor-spawned prompt.
-  await appendSupervisorInputOnDelivery({
-    runId: args.runId,
-    workerId: args.worker.id,
-    text: prompt,
-    deliveredAt,
-  });
-  const response = await askAgent(args.worker.id, prompt);
+  if (deliveryRefusal) {
+    if (deliveryRefusal.state === "ignored") return deliveryRefusal;
+    throw new Error(`Worker turn was superseded by a newer worker turn: ${args.worker.id}`);
+  }
   let snapshot: AgentRecord | null = null;
   try {
     snapshot = await getAgent(args.worker.id, { retryIndefinitely: false });
@@ -149,31 +181,52 @@ async function promptResumedQuotaWorker(args: {
   });
   const latestWorker = await db.select().from(workers).where(eq(workers.id, args.worker.id)).get();
 
-  await db.update(workers).set({
-    status: response.state,
-    currentText: "",
-    lastText: "",
-    outputLog: appendWorkerOutput(latestWorker?.outputLog ?? args.worker.outputLog, response.response),
-    updatedAt: new Date(),
-  }).where(eq(workers.id, args.worker.id));
-  await recordExecutionEvent({
-    runId: args.runId,
-    workerId: args.worker.id,
-    planItemId: null,
-    eventType: "worker_prompted",
-    details: {
-      summary: `Sent quota recovery follow-up to ${args.worker.id}`,
-      prompt,
-      reason: "quota_wait",
-    },
-    createdAt: new Date(),
+  const persistenceRefusal = await runQuotaRecoveryMutation(args.runId, async () => {
+    const refused = await refuseLateQuotaRecovery({
+      runId: args.runId,
+      workerId: args.worker.id,
+      incidentId: args.incidentId,
+      now: new Date(),
+    });
+    if (refused) return refused;
+    const updated = await db.update(workers).set({
+      status: response.state,
+      currentText: "",
+      lastText: "",
+      outputLog: appendWorkerOutput(latestWorker?.outputLog ?? args.worker.outputLog, response.response),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(workers.id, args.worker.id),
+      eq(workers.turnGeneration, args.turnGeneration),
+    )).returning({ id: workers.id });
+    if (updated.length === 0) return { state: "superseded" as const };
+    await recordExecutionEvent({
+      runId: args.runId,
+      workerId: args.worker.id,
+      planItemId: null,
+      eventType: "worker_prompted",
+      details: {
+        summary: `Sent quota recovery follow-up to ${args.worker.id}`,
+        prompt,
+        reason: "quota_wait",
+      },
+      createdAt: new Date(),
+    });
+    return null;
   });
+  if (persistenceRefusal) {
+    if (persistenceRefusal.state === "ignored") return persistenceRefusal;
+    throw new Error(`Worker turn was superseded by a newer worker turn: ${args.worker.id}`);
+  }
   notifyEventStreamSubscribers();
+  return null;
 }
 
 export async function resumeQuotaExhaustedWorkers(args: {
   run: typeof runs.$inferSelect;
 }): Promise<ResumeQuotaWorkersResult> {
+  const initialRefusal = await refuseLateQuotaRecovery({ runId: args.run.id, now: new Date() });
+  if (initialRefusal) return initialRefusal;
   const incidents = await db.select().from(recoveryIncidents).where(and(
     eq(recoveryIncidents.runId, args.run.id),
     eq(recoveryIncidents.kind, "quota_exhausted"),
@@ -194,21 +247,32 @@ export async function resumeQuotaExhaustedWorkers(args: {
       continue;
     }
 
-    const incident = await claimRecoveryIncident({
-      incidentId: candidateIncident.id,
-      runId: args.run.id,
-      workerId: worker.id,
-      decision: "resume_quota_worker",
-      details: { sessionId, reason: "quota_wait" },
+    const incident = await runQuotaRecoveryMutation(args.run.id, async () => {
+      const refused = await refuseLateQuotaRecovery({
+        runId: args.run.id,
+        workerId: worker.id,
+        incidentId: candidateIncident.id,
+        now: new Date(),
+      });
+      if (refused) return refused;
+      return claimRecoveryIncident({
+        incidentId: candidateIncident.id,
+        runId: args.run.id,
+        workerId: worker.id,
+        decision: "resume_quota_worker",
+        details: { sessionId, reason: "quota_wait" },
+      });
     });
     if (!incident) {
       continue;
     }
+    if ("state" in incident) return incident;
 
     const workerMode = resolveWorkerLaunchMode(worker.bridgeSessionMode, yoloModeEnabled);
     const launchSelection = resolveWorkerLaunchSelection(worker, args.run, {
       accountId: await readWorkerAllocatedAccountId(worker.id),
     });
+    const turnGeneration = await readWorkerTurnGeneration(worker.id);
     try {
       let resumedWorker;
       try {
@@ -230,20 +294,34 @@ export async function resumeQuotaExhaustedWorkers(args: {
         resumedWorker = await getAgent(worker.id, { retryIndefinitely: false });
       }
 
-      await insertWorkerSessionResumedEvent({
-        runId: args.run.id,
-        workerId: worker.id,
-        sessionId,
-        incidentId: incident.id,
-      });
-      await db.update(workers).set({
-        status: resumedWorker.state,
-        bridgeSessionId: resumedWorker.sessionId ?? sessionId,
-        bridgeSessionMode: resumedWorker.sessionMode ?? worker.bridgeSessionMode ?? null,
-        currentText: resumedWorker.currentText ?? "",
-        lastText: resumedWorker.lastText ?? "",
-        updatedAt: new Date(),
-      }).where(eq(workers.id, worker.id));
+      const resumeRefusal = await runQuotaRecoveryMutation(args.run.id, async () => {
+        const refused = await refuseLateQuotaRecovery({
+          runId: args.run.id,
+          workerId: worker.id,
+          incidentId: incident.id,
+          now: new Date(),
+        });
+        if (refused) return refused;
+        const updated = await db.update(workers).set({
+          status: resumedWorker.state,
+          bridgeSessionId: resumedWorker.sessionId ?? sessionId,
+          bridgeSessionMode: resumedWorker.sessionMode ?? worker.bridgeSessionMode ?? null,
+          currentText: resumedWorker.currentText ?? "",
+          lastText: resumedWorker.lastText ?? "",
+          updatedAt: new Date(),
+        }).where(and(
+          eq(workers.id, worker.id),
+          eq(workers.turnGeneration, turnGeneration),
+        )).returning({ id: workers.id });
+        if (updated.length === 0) {
+          return { state: "superseded" as const };
+        }
+        await insertWorkerSessionResumedEvent({
+          runId: args.run.id,
+          workerId: worker.id,
+          sessionId,
+          incidentId: incident.id,
+        });
       // Resolve before prompting, not after. The successful resume is already
       // proof the quota window reopened; `promptResumedQuotaWorker` then awaits
       // a full agent turn, and sequencing the resolve behind it left the
@@ -251,21 +329,28 @@ export async function resumeQuotaExhaustedWorkers(args: {
       // entire turn, while the worker was visibly working. If the window did
       // not actually reopen, the ask below throws and the catch reopens a fresh
       // incident via `handleWorkerQuotaExhaustion`.
-      await markRecoveryIncidentResolved({
-        incidentId: incident.id,
-        runId: args.run.id,
-        workerId: worker.id,
-        summary: "Worker session resumed after quota reset.",
-        details: {
-          recoveryState: "quota_resumed",
-          recommendedAction: "none",
-          sessionId,
-        },
+        await markRecoveryIncidentResolved({
+          incidentId: incident.id,
+          runId: args.run.id,
+          workerId: worker.id,
+          summary: "Worker session resumed after quota reset.",
+          details: {
+            recoveryState: "quota_resumed",
+            recommendedAction: "none",
+            sessionId,
+          },
+        });
+        return null;
       });
+      if (resumeRefusal) {
+        void cancelAgent(worker.id).catch(() => undefined);
+        if (resumeRefusal.state === "ignored") return resumeRefusal;
+        throw new Error(`Worker turn was superseded by a newer worker turn: ${worker.id}`);
+      }
       resumedCount += 1;
       notifyEventStreamSubscribers();
       if (shouldPromptResumedWorker(resumedWorker.state)) {
-        await promptResumedQuotaWorker({
+        const promptRefusal = await promptResumedQuotaWorker({
           runId: args.run.id,
           worker: {
             ...worker,
@@ -273,37 +358,58 @@ export async function resumeQuotaExhaustedWorkers(args: {
             bridgeSessionId: resumedWorker.sessionId ?? sessionId,
             bridgeSessionMode: resumedWorker.sessionMode ?? worker.bridgeSessionMode ?? null,
           },
+          incidentId: incident.id,
+          turnGeneration,
         });
+        if (promptRefusal) return promptRefusal;
       }
     } catch (error) {
-      if (isWorkerTurnSupersededError(error)) {
-        emitNamedEvent({
-          kind: "worker.recovery_continuation_superseded",
-          runId: args.run.id,
-          workerId: worker.id,
-        });
-        await recordExecutionEvent({
-          runId: args.run.id,
-          workerId: worker.id,
-          planItemId: null,
-          eventType: "quota_resume_prompt_superseded",
-          details: {
-            summary: `Stopped the automatic quota-resume prompt for ${worker.id} because a newer turn took over.`,
+      const caughtRefusal = await refuseLateQuotaRecovery({
+        runId: args.run.id,
+        workerId: worker.id,
+        incidentId: incident.id,
+        now: new Date(),
+      });
+      if (caughtRefusal) return caughtRefusal;
+      if (isWorkerTurnSupersededError(error) || isWorkerTurnAbortedError(error)) {
+        const supersededRefusal = await runQuotaRecoveryMutation(args.run.id, async () => {
+          const refused = await refuseLateQuotaRecovery({
+            runId: args.run.id,
+            workerId: worker.id,
             incidentId: incident.id,
-          },
+            now: new Date(),
+          });
+          if (refused) return refused;
+          emitNamedEvent({
+            kind: "worker.recovery_continuation_superseded",
+            runId: args.run.id,
+            workerId: worker.id,
+          });
+          await recordExecutionEvent({
+            runId: args.run.id,
+            workerId: worker.id,
+            planItemId: null,
+            eventType: "quota_resume_prompt_superseded",
+            details: {
+              summary: `Stopped the automatic quota-resume prompt for ${worker.id} because a newer turn took over.`,
+              incidentId: incident.id,
+            },
+          });
+          await markRecoveryIncidentResolved({
+            incidentId: incident.id,
+            runId: args.run.id,
+            workerId: worker.id,
+            summary: "Quota recovery handed control to a newer worker turn.",
+            details: {
+              recoveryState: "quota_resumed",
+              recommendedAction: "none",
+              sessionId,
+              continuationSuperseded: true,
+            },
+          });
+          return null;
         });
-        await markRecoveryIncidentResolved({
-          incidentId: incident.id,
-          runId: args.run.id,
-          workerId: worker.id,
-          summary: "Quota recovery handed control to a newer worker turn.",
-          details: {
-            recoveryState: "quota_resumed",
-            recommendedAction: "none",
-            sessionId,
-            continuationSuperseded: true,
-          },
-        });
+        if (supersededRefusal) return supersededRefusal;
         resumedCount += 1;
         continue;
       }
@@ -319,48 +425,70 @@ export async function resumeQuotaExhaustedWorkers(args: {
 
       const reason = error instanceof Error ? error.message : String(error);
       if (isTransientSupervisorError(error)) {
-        await db.update(recoveryIncidents).set({
-          status: "open",
-          lastError: reason,
-          updatedAt: new Date(),
-        }).where(eq(recoveryIncidents.id, incident.id));
+        const transientRefusal = await runQuotaRecoveryMutation(args.run.id, async () => {
+          const refused = await refuseLateQuotaRecovery({
+            runId: args.run.id,
+            workerId: worker.id,
+            incidentId: incident.id,
+            now: new Date(),
+          });
+          if (refused) return refused;
+          await db.update(recoveryIncidents).set({
+            status: "open",
+            lastError: reason,
+            updatedAt: new Date(),
+          }).where(eq(recoveryIncidents.id, incident.id));
+          return null;
+        });
+        if (transientRefusal) return transientRefusal;
         throw error;
       }
 
-      await db.update(runs).set({
-        status: "needs_recovery",
-        failedAt: null,
-        lastError: reason,
-        updatedAt: new Date(),
-      }).where(eq(runs.id, args.run.id));
-      await db.update(workers).set({
-        status: "error",
-        currentText: "",
-        updatedAt: new Date(),
-      }).where(eq(workers.id, worker.id));
-      await markRecoveryIncidentNeedsUser({
-        incidentId: incident.id,
-        runId: args.run.id,
-        workerId: worker.id,
-        reason,
-        details: {
-          resumeFailed: true,
-          sessionId,
-          errorType: "non_quota_resume_failure",
-        },
-      });
-      await recordExecutionEvent({
-        runId: args.run.id,
-        workerId: worker.id,
-        planItemId: null,
-        eventType: "quota_resume_failed",
-        details: {
-          summary: `Quota recovery could not resume ${worker.id}.`,
+      const failureRefusal = await runQuotaRecoveryMutation(args.run.id, async () => {
+        const refused = await refuseLateQuotaRecovery({
+          runId: args.run.id,
+          workerId: worker.id,
           incidentId: incident.id,
+          now: new Date(),
+        });
+        if (refused) return refused;
+        await db.update(runs).set({
+          status: "needs_recovery",
+          failedAt: null,
+          lastError: reason,
+          updatedAt: new Date(),
+        }).where(eq(runs.id, args.run.id));
+        await db.update(workers).set({
+          status: "error",
+          currentText: "",
+          updatedAt: new Date(),
+        }).where(eq(workers.id, worker.id));
+        await markRecoveryIncidentNeedsUser({
+          incidentId: incident.id,
+          runId: args.run.id,
+          workerId: worker.id,
           reason,
-          sessionId,
-        },
+          details: {
+            resumeFailed: true,
+            sessionId,
+            errorType: "non_quota_resume_failure",
+          },
+        });
+        await recordExecutionEvent({
+          runId: args.run.id,
+          workerId: worker.id,
+          planItemId: null,
+          eventType: "quota_resume_failed",
+          details: {
+            summary: `Quota recovery could not resume ${worker.id}.`,
+            incidentId: incident.id,
+            reason,
+            sessionId,
+          },
+        });
+        return null;
       });
+      if (failureRefusal) return failureRefusal;
       notifyEventStreamSubscribers();
       return {
         state: "needs_recovery" as const,
@@ -404,12 +532,18 @@ export async function resumeDirectRunAfterQuotaReset(args: {
   run: typeof runs.$inferSelect;
   source: DirectQuotaResumeSource;
 }): Promise<ResumeQuotaWorkersResult> {
-  await db.update(runs).set({
-    status: "running",
-    failedAt: null,
-    lastError: null,
-    updatedAt: new Date(),
-  }).where(eq(runs.id, args.run.id));
+  const transitionRefusal = await runQuotaRecoveryMutation(args.run.id, async () => {
+    const refused = await refuseLateQuotaRecovery({ runId: args.run.id, now: new Date() });
+    if (refused) return refused;
+    await db.update(runs).set({
+      status: "running",
+      failedAt: null,
+      lastError: null,
+      updatedAt: new Date(),
+    }).where(eq(runs.id, args.run.id));
+    return null;
+  });
+  if (transitionRefusal) return transitionRefusal;
 
   const result = await resumeQuotaExhaustedWorkers({ run: args.run });
   if (result.state !== "none" || result.resumedCount !== 0) {
@@ -417,23 +551,29 @@ export async function resumeDirectRunAfterQuotaReset(args: {
   }
 
   const reason = MISSING_SESSION_REASONS[args.source];
-  await db.update(runs).set({
-    status: "needs_recovery",
-    lastError: reason,
-    updatedAt: new Date(),
-  }).where(eq(runs.id, args.run.id));
-  await recordExecutionEvent({
-    runId: args.run.id,
-    eventType: "quota_resume_missing_session",
-    details: { summary: reason, reason: MISSING_SESSION_EVENT_REASONS[args.source] },
+  const missingSessionRefusal = await runQuotaRecoveryMutation(args.run.id, async () => {
+    const refused = await refuseLateQuotaRecovery({ runId: args.run.id, now: new Date() });
+    if (refused) return refused;
+    await db.update(runs).set({
+      status: "needs_recovery",
+      lastError: reason,
+      updatedAt: new Date(),
+    }).where(eq(runs.id, args.run.id));
+    await recordExecutionEvent({
+      runId: args.run.id,
+      eventType: "quota_resume_missing_session",
+      details: { summary: reason, reason: MISSING_SESSION_EVENT_REASONS[args.source] },
+    });
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "recovery.needs_user",
+      message: reason,
+      surface: "banner",
+      runId: args.run.id,
+    });
+    return null;
   });
-  emitNamedEvent({
-    kind: "error.surfaced",
-    code: "recovery.needs_user",
-    message: reason,
-    surface: "banner",
-    runId: args.run.id,
-  });
+  if (missingSessionRefusal) return missingSessionRefusal;
   return result;
 }
 
@@ -512,15 +652,20 @@ export async function resumeElapsedQuotaWaits(options: { now?: Date } = {}) {
     // `quota_waiting`, and either outcome stops matching on the next sweep.
     if (run.mode === "implementation") {
       if (isRunnableImplementationRun(run) && normalizeRunStatus(run.status) === "quota_waiting") {
-        await scheduleDurableSupervisorWakeAt({
-          runId,
-          wakeAt: now,
-          reason: "quota_wait",
-          source: "watchdog-sweep",
-          force: true,
+        const sweepRefusal = await runQuotaRecoveryMutation(runId, async () => {
+          const refused = await refuseLateQuotaRecovery({ runId, now });
+          if (refused) return refused;
+          await scheduleDurableSupervisorWakeAt({
+            runId,
+            wakeAt: now,
+            reason: "quota_wait",
+            source: "watchdog-sweep",
+            force: true,
+          });
+          emitNamedEvent({ kind: "supervisor.quota_wake_swept", runId, status: run.status, action: "rescheduled" });
+          return null;
         });
-        emitNamedEvent({ kind: "supervisor.quota_wake_swept", runId, status: run.status, action: "rescheduled" });
-        sweptCount += 1;
+        if (!sweepRefusal) sweptCount += 1;
       }
       continue;
     }
@@ -542,18 +687,21 @@ export async function resumeElapsedQuotaWaits(options: { now?: Date } = {}) {
       continue;
     }
 
+    const resumeResult = await resumeDirectRunAfterQuotaReset({ run, source: "watchdog_sweep" });
+    if (resumeResult.state === "ignored") {
+      continue;
+    }
     emitNamedEvent({ kind: "supervisor.quota_wake_swept", runId, status: run.status, action: "resumed" });
     await recordExecutionEvent({
       runId,
       eventType: "quota_wait_swept",
       details: {
-        summary: "Quota reset had elapsed with no scheduled wake; resuming from the open incident.",
+        summary: "Quota reset had elapsed with no scheduled wake; resumed from the open incident.",
         runStatus: run.status,
         workerId: blockedWorker.id,
         reason: "watchdog_sweep",
       },
     });
-    await resumeDirectRunAfterQuotaReset({ run, source: "watchdog_sweep" });
     sweptCount += 1;
   }
 
