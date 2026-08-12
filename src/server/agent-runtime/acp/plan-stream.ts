@@ -1,8 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type * as acp from "@agentclientprotocol/sdk";
 import {
   MAX_ACP_PLAN_BYTES,
   MAX_ACP_PLAN_REJECTION_PREVIEW_BYTES,
+  MAX_ACP_PLAN_SESSION_ID_BYTES,
   type AcpPlanValidationFailure,
   type WorkerPlanReadResponse,
 } from "@/shared/acp-plan";
@@ -19,6 +20,8 @@ import {
   readLatestWorkerPlanEntries,
   readWorkerEntriesSince,
 } from "@/server/workers/output-store";
+import { handleAcpGoalSessionUpdateForWorker } from "./goal-state";
+import { redactGoalErrorMessage } from "@/server/runs/goal-errors";
 
 type AppendResult = { entry: WorkerEntry; appended: boolean };
 type PlanStreamDependencies = {
@@ -26,6 +29,7 @@ type PlanStreamDependencies = {
   read: (runId: string, workerId: string, afterSeq: number) => Promise<{ entries: WorkerEntry[]; latestSeq: number }>;
   readPlan: (runId: string, workerId: string) => Promise<{ entries: WorkerEntry[]; latestSeq: number }>;
   emit: (event: NamedEvent) => unknown;
+  createId: () => string;
 };
 
 type PlanBinding = {
@@ -66,6 +70,7 @@ const defaultDependencies: PlanStreamDependencies = {
   read: readWorkerEntriesSince,
   readPlan: readLatestWorkerPlanEntries,
   emit: emitNamedEvent,
+  createId: randomUUID,
 };
 
 const MAX_STARTUP_PLAN_UPDATES = 16;
@@ -100,6 +105,32 @@ function boundedPreview(update: unknown): { preview: string; hash: string; measu
     preview,
     hash: createHash("sha256").update(serialized).digest("hex"),
     measuredBytes,
+  };
+}
+
+type CapturedPlanSessionId =
+  | { kind: "valid"; value: string; measuredBytes: number }
+  | { kind: "missing"; measuredBytes: number }
+  | { kind: "oversized"; measuredBytes: number };
+
+function capturePlanSessionId(value: unknown): CapturedPlanSessionId {
+  if (typeof value !== "string") return { kind: "missing", measuredBytes: 0 };
+  const measuredBytes = new TextEncoder().encode(value).byteLength;
+  if (measuredBytes > MAX_ACP_PLAN_SESSION_ID_BYTES) {
+    return { kind: "oversized", measuredBytes };
+  }
+  const trimmed = value.trim();
+  if (!trimmed) return { kind: "missing", measuredBytes };
+  return { kind: "valid", value: trimmed, measuredBytes };
+}
+
+function oversizedSessionEvidence(value: unknown) {
+  const evidence = boundedPreview(value);
+  return {
+    classification: "oversized_session_id",
+    preview: evidence.preview,
+    hash: evidence.hash,
+    measuredBytes: evidence.measuredBytes,
   };
 }
 
@@ -264,9 +295,17 @@ export class AcpPlanStream {
       return "overflow";
     }
 
-    const sessionId = typeof command.sessionId === "string" && command.sessionId.trim()
-      ? command.sessionId.trim()
-      : null;
+    const capturedSessionId = capturePlanSessionId(command.sessionId);
+    if (capturedSessionId.kind === "oversized") {
+      state.commands.push({
+        sessionId: null,
+        update: oversizedSessionEvidence(command.sessionId),
+        forcedReason: "oversized",
+        measuredBytes: capturedSessionId.measuredBytes,
+      });
+      return "buffered";
+    }
+    const sessionId = capturedSessionId.kind === "valid" ? capturedSessionId.value : null;
     const envelope = boundedPreview(command.update);
     if (envelope.measuredBytes > MAX_ACP_PLAN_BYTES) {
       state.commands.push({
@@ -387,6 +426,15 @@ export class AcpPlanStream {
         this.bindings.set(operationKey, binding);
         return binding;
       } catch (error) {
+        // Fail closed. A previously hydrated session must not remain usable
+        // after a later lifecycle generation failed to re-establish durable
+        // truth; subsequent callbacks are rejected as hydrating until a
+        // successful hydration replaces this sentinel.
+        this.bindings.set(operationKey, {
+          sessionId: null,
+          boundarySeq: 0,
+          hydrated: false,
+        });
         this.publish({
           kind: "error.surfaced",
           code: "worker.plan.binding_hydration_failed",
@@ -403,24 +451,72 @@ export class AcpPlanStream {
 
   async beginWorkerPlanSession(runId: string, workerId: string, sessionId: string): Promise<PlanBinding> {
     return this.serial(runId, workerId, async () => {
+      const capturedSessionId = capturePlanSessionId(sessionId);
+      if (capturedSessionId.kind !== "valid") {
+        const message = capturedSessionId.kind === "oversized"
+          ? `ACP plan session id exceeds ${MAX_ACP_PLAN_SESSION_ID_BYTES} bytes.`
+          : "ACP plan session id is missing.";
+        const error = new Error(message);
+        this.publish({
+          kind: "error.surfaced",
+          code: "worker.plan.boundary_append_failed",
+          message,
+          surface: "log",
+          runId,
+          workerId,
+          cause: { name: error.name, message: error.message },
+        });
+        throw error;
+      }
+      const normalizedSessionId = capturedSessionId.value;
       const operationKey = key(runId, workerId);
       const current = this.bindings.get(operationKey);
-      if (current?.hydrated && current.sessionId === sessionId && current.boundarySeq > 0) {
+      if (current?.hydrated && current.sessionId === normalizedSessionId && current.boundarySeq > 0) {
         return current;
       }
 
       const entry: Omit<WorkerEntry, "seq"> = {
-        id: `acp-plan-boundary-${createHash("sha256")
-          .update(`${runId}\0${workerId}\0${sessionId}`)
-          .digest("hex")}`,
+        id: `acp-plan-boundary-${this.deps.createId()}`,
         type: "system_note",
         text: "",
         timestamp: nowIso(),
         raw: { kind: "acp.plan_session_boundary" },
-        acpSessionId: sessionId,
+        acpSessionId: normalizedSessionId,
         planProjection: "session_reset",
         diagnosticOnly: true,
       };
+      const maximumSeq = Number.MAX_SAFE_INTEGER;
+      const durableCandidate = { ...entry, seq: maximumSeq } satisfies WorkerEntry;
+      const responseCandidate: WorkerPlanReadResponse = {
+        latestSeq: maximumSeq,
+        plan: {
+          runId,
+          workerId,
+          acpSessionId: normalizedSessionId,
+          planBoundarySeq: maximumSeq,
+          lastEntrySeq: maximumSeq,
+          lastAcceptedEntryId: null,
+          visible: false,
+          items: [],
+          updatedAt: entry.timestamp,
+        },
+      };
+      if (
+        measureAcpPlanJsonBytes(durableCandidate) > MAX_ACP_PLAN_BYTES
+        || measureAcpPlanJsonBytes(responseCandidate) > MAX_ACP_PLAN_BYTES
+      ) {
+        const error = new Error(`ACP plan session boundary exceeds ${MAX_ACP_PLAN_BYTES} bytes.`);
+        this.publish({
+          kind: "error.surfaced",
+          code: "worker.plan.boundary_append_failed",
+          message: error.message,
+          surface: "log",
+          runId,
+          workerId,
+          cause: { name: error.name, message: error.message },
+        });
+        throw error;
+      }
       let result: AppendResult;
       try {
         result = await this.deps.append(runId, workerId, entry);
@@ -437,7 +533,7 @@ export class AcpPlanStream {
         throw error;
       }
       const boundarySeq = result.entry.seq;
-      const binding = { sessionId, boundarySeq, hydrated: true } satisfies PlanBinding;
+      const binding = { sessionId: normalizedSessionId, boundarySeq, hydrated: true } satisfies PlanBinding;
       this.bindings.set(operationKey, binding);
       if (result.appended) this.publishAppend(runId, workerId, result.entry);
       if (result.appended) {
@@ -456,7 +552,18 @@ export class AcpPlanStream {
     if (!isPlanLikeUpdate(args.update)) return { kind: "ignored", entry: null };
 
     return this.serial(args.runId, args.workerId, async () => {
-      const sessionId = typeof args.sessionId === "string" && args.sessionId.trim() ? args.sessionId.trim() : null;
+      const capturedSessionId = capturePlanSessionId(args.sessionId);
+      if (capturedSessionId.kind === "oversized") {
+        return this.appendDiagnostic({
+          runId: args.runId,
+          workerId: args.workerId,
+          sessionId: null,
+          update: oversizedSessionEvidence(args.sessionId),
+          reason: "oversized",
+          measuredBytes: capturedSessionId.measuredBytes,
+        });
+      }
+      const sessionId = capturedSessionId.kind === "valid" ? capturedSessionId.value : null;
       const current = this.bindings.get(key(args.runId, args.workerId));
       if (!sessionId) {
         return this.appendDiagnostic({ ...args, sessionId, reason: "missing_session" });
@@ -471,6 +578,29 @@ export class AcpPlanStream {
         return this.appendDiagnostic({ ...args, sessionId, reason: "stale_session", projection: "stale" });
       }
 
+      // The canonical run goal and the worker's append-only conversation
+      // projection consume the same ACP plan notification independently. The
+      // goal handler writes only control-plane state; this stream remains the
+      // sole persistence path for worker-visible plan content.
+      try {
+        await handleAcpGoalSessionUpdateForWorker({
+          workerId: args.workerId,
+          sessionId,
+          update: args.update,
+        });
+      } catch (error) {
+        const message = redactGoalErrorMessage(error);
+        this.publish({
+          kind: "error.surfaced",
+          code: "goal.reconciliation.failed",
+          message: `Failed to project an ACP plan into goal control: ${message}`,
+          surface: "log",
+          runId: args.runId,
+          workerId: args.workerId,
+          cause: error instanceof Error ? { name: error.name, message } : null,
+        });
+      }
+
       if (classifyAcpPlanUpdate(args.update) !== "core") {
         return this.appendDiagnostic({ ...args, sessionId, reason: "unsupported", projection: "unsupported" });
       }
@@ -482,9 +612,7 @@ export class AcpPlanStream {
       }
 
       const entry: Omit<WorkerEntry, "seq"> = {
-        id: `acp-plan-${createHash("sha256")
-          .update(`${sessionId}\0${JSON.stringify(args.update)}`)
-          .digest("hex")}`,
+        id: `acp-plan-${this.deps.createId()}`,
         type: "plan",
         text: normalized.items.map((item) => item.content).join("\n"),
         timestamp: nowIso(),
@@ -493,7 +621,30 @@ export class AcpPlanStream {
         planProjection: "accepted_core",
         normalizedPlan: normalized.items,
       };
-      if (measureAcpPlanJsonBytes(entry) > MAX_ACP_PLAN_BYTES) {
+      const maximumSeq = Number.MAX_SAFE_INTEGER;
+      const durableCandidate = { ...entry, seq: maximumSeq } satisfies WorkerEntry;
+      const responseCandidate: WorkerPlanReadResponse = {
+        latestSeq: maximumSeq,
+        plan: {
+          runId: args.runId,
+          workerId: args.workerId,
+          acpSessionId: sessionId,
+          planBoundarySeq: current.boundarySeq,
+          lastEntrySeq: maximumSeq,
+          lastAcceptedEntryId: entry.id,
+          visible: true,
+          items: normalized.items.map((item, order) => ({
+            ...item,
+            id: `${current.boundarySeq}:${order}`,
+            order,
+          })),
+          updatedAt: entry.timestamp,
+        },
+      };
+      if (
+        measureAcpPlanJsonBytes(durableCandidate) > MAX_ACP_PLAN_BYTES
+        || measureAcpPlanJsonBytes(responseCandidate) > MAX_ACP_PLAN_BYTES
+      ) {
         return this.appendDiagnostic({ ...args, sessionId, reason: "oversized" });
       }
 
@@ -603,6 +754,6 @@ export async function handleAcpSessionUpdateForWorker(args: {
   update: unknown;
 }): Promise<PlanStreamResult> {
   const runId = await resolveRunIdForWorker(args.workerId);
-  if (!runId) return { kind: "ignored", entry: null, reason: "worker_not_persisted" };
+  if (!runId) return { kind: "rejected", entry: null, reason: "worker_not_persisted" };
   return handleAcpSessionUpdate({ ...args, runId });
 }

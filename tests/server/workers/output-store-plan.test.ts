@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { getAppDataPath } from "@/server/app-root";
 import {
   __resetOutputStoreCachesForTests,
+  compactEntryForHistory,
   readLatestWorkerPlanEntries,
+  readWorkerEntriesSince,
   workerOutputFilePathFor,
 } from "@/server/workers/output-store";
 import type { WorkerEntry } from "@/shared/worker-entries";
@@ -19,6 +21,24 @@ afterEach(async () => {
 });
 
 describe("readLatestWorkerPlanEntries", () => {
+  it("preserves the ingress-bounded raw notification for accepted plan history", () => {
+    const raw = {
+      sessionUpdate: "plan",
+      entries: [{ content: "Inspect", priority: "high", status: "pending" }],
+      providerEvidence: "x".repeat(5_000),
+    };
+    const entry = {
+      id: "accepted-plan",
+      type: "plan",
+      text: "Inspect",
+      raw,
+      planProjection: "accepted_core",
+    };
+
+    expect(compactEntryForHistory(entry)).toBe(entry);
+    expect((compactEntryForHistory(entry).raw as typeof raw).providerEvidence).toHaveLength(5_000);
+  });
+
   it("finds a boundary outside the tail window and retains only the current plan projection", async () => {
     const runId = `plan-read-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const workerId = "worker-plan-read";
@@ -54,6 +74,12 @@ describe("readLatestWorkerPlanEntries", () => {
       normalizedPlan: [{ id: "0", content: "Ship it", priority: "high", status: "in_progress", order: 0 }],
     };
     await fs.writeFile(filePath, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
+
+    const cacheWarm = await readWorkerEntriesSince(runId, workerId, 0);
+    expect(cacheWarm.entries).toHaveLength(1_500);
+    const cachedPage = await readWorkerEntriesSince(runId, workerId, 100);
+    expect(cachedPage._path).toBe("cache.filtered");
+    expect(cachedPage.entries).toHaveLength(200);
 
     const result = await readLatestWorkerPlanEntries(runId, workerId);
 

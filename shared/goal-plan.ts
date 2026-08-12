@@ -26,6 +26,25 @@ export type GoalAction = (typeof GOAL_ACTIONS)[number];
 export type GoalMutationAction = "set" | "edit" | GoalAction;
 export type GoalMutationSource = "api" | "acp" | "reconciliation" | "recovery";
 
+export const GOAL_PUBLISHED_EVENT_KINDS = [
+  "goal.set.completed",
+  "goal.updated",
+  "goal.paused",
+  "goal.resumed",
+  "goal.cleared",
+  "goal.plan.updated",
+  "goal.plan.removed",
+  "goal.validation.started",
+  "goal.validation.completed",
+  "goal.validation.failed",
+  "goal.blocked",
+  "goal.limited",
+  "goal.completed",
+  "goal.reconciled",
+  "goal.reconciliation.started",
+] as const;
+export type GoalPublishedEventKind = (typeof GOAL_PUBLISHED_EVENT_KINDS)[number];
+
 export const GOAL_PLAN_ITEM_STATUSES = [
   "pending",
   "in_progress",
@@ -153,6 +172,23 @@ export function validateGoalObjective(input: unknown):
   return { ok: true, objective };
 }
 
+export type GoalComposerCommand =
+  | { kind: "set"; objective: string }
+  | { kind: "invalid_objective"; reason: "empty" | "too_long" };
+
+export function parseGoalComposerCommand(input: string): GoalComposerCommand | null {
+  const match = /^\s*\/goal(?:\s+([\s\S]*))?\s*$/i.exec(input);
+  if (!match) return null;
+  const validated = validateGoalObjective(match[1] ?? "");
+  if (!validated.ok) {
+    return {
+      kind: "invalid_objective",
+      reason: validated.code === "too_long" ? "too_long" : "empty",
+    };
+  }
+  return { kind: "set", objective: validated.objective };
+}
+
 export function normalizeGoalCapabilities(input: unknown): GoalCapabilities {
   const value = isRecord(input) ? input : {};
   return {
@@ -237,6 +273,24 @@ function parsePlanItem(value: unknown): GoalPlanItem {
   };
 }
 
+function parseValidationState(value: unknown): GoalValidationState | null {
+  if (value === null) return null;
+  if (!isRecord(value)) throw new TypeError("goal validationState is invalid");
+  const status = String(value.status);
+  if (!["idle", "validating", "passed", "failed"].includes(status)) {
+    throw new TypeError("goal validationState status is invalid");
+  }
+  const message = nullableString(value.message, "goal validationState message");
+  if ((message?.length ?? 0) > GOAL_PLAN_ITEM_MAX_LENGTH) {
+    throw new TypeError("goal validationState message is too long");
+  }
+  const updatedAt = requiredString(value.updatedAt, "goal validationState updatedAt");
+  if (!Number.isFinite(new Date(updatedAt).getTime())) {
+    throw new TypeError("goal validationState updatedAt is invalid");
+  }
+  return { status: status as GoalValidationState["status"], message, updatedAt };
+}
+
 export function parseGoalSnapshot(value: unknown): GoalSnapshot {
   if (!isRecord(value)) throw new TypeError("goal snapshot must be an object");
   if (value.schemaVersion !== GOAL_SCHEMA_VERSION) throw new TypeError("goal snapshot schemaVersion is unsupported");
@@ -272,7 +326,7 @@ export function parseGoalSnapshot(value: unknown): GoalSnapshot {
     planSource: parsePlanSource(value.planSource),
     capabilities: normalizeGoalCapabilities(value.capabilities),
     lastError: nullableString(value.lastError, "lastError"),
-    validationState: value.validationState as GoalValidationState | null,
+    validationState: parseValidationState(value.validationState),
     visible: value.visible,
     provenance: {
       source: value.provenance.source as "server" | "cache",

@@ -246,6 +246,23 @@ named events are *additional* frames on the same stream. Clients that don't
 care about a given event type ignore it. There is no `?test=1` flag, no
 separate test endpoint, no parallel surface that can drift.
 
+A new named event is not client-visible merely because the server emits it.
+Its regression test must prove the complete delivery chain: the EventSource
+adapter subscribes to the exact event name, the runtime stream normalizer
+preserves that name as `kind`, and the owning client manager dispatches the
+bounded payload. Test at least one real named frame through this chain; handler
+unit tests alone cannot detect an omitted subscription or a normalizer that
+drops the event kind.
+
+A committed control-plane row proves durable intent, not delivery to an
+external worker or event consumer. Any post-commit side effect must have one
+ordering owner, a durable delivery marker, a retry wake-up mechanism, startup
+recovery, and a last-moment canonical fence. Idempotent request replay must
+resume unsettled delivery instead of returning stored success while skipping
+the side effect. When a newer revision arrives during an in-flight call, the
+ordered dispatcher must converge the external system to that newest revision
+before releasing the per-subject queue.
+
 If a transition is worth emitting for tests, it is worth emitting in
 production. Anything else creates a second observability surface that will
 diverge from reality.
@@ -550,6 +567,14 @@ These two surfaces are distinct and must stay distinct.
 Two cursors deliberately: the global SSE id covers liveness/resync;
 `entry.seq` covers content. SSE frames are wake-up hints, never the
 authority on content.
+
+Complete-state notifications need notification identity, not payload identity.
+Content-addressing a replacement entry silently collapses a valid `A → B → A`
+sequence into `A → B`, leaving replay on the wrong state. Assign a fresh entry
+identity when each notification is admitted, and reserve idempotent deduplication
+for retries that carry the same already-assigned entry id. Regression coverage
+for complete-list projections must include both payload recurrence and authority
+recurrence (for example, session `A → B → A`).
 
 ## Open follow-ups
 

@@ -37,7 +37,11 @@ export function applyHomeBootstrap(
     settingsDiagnostics: bootstrap.initialQueries.settings?.diagnostics ?? current.settingsDiagnostics,
   }), notify);
 
-  if (bootstrap.initialEventState?.queuedMessages) {
-    busyMessageQueueManager.setQueuedMessages(bootstrap.initialEventState.queuedMessages, notify);
+  const initialSnapshotRunId = bootstrap.initialEventState?.snapshotRunId?.trim();
+  if (bootstrap.initialEventState?.queuedMessages && initialSnapshotRunId) {
+    busyMessageQueueManager.setQueuedMessages(bootstrap.initialEventState.queuedMessages, {
+      runId: initialSnapshotRunId,
+      notify,
+    });
   }
 }

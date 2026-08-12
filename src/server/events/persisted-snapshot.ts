@@ -30,6 +30,7 @@ import { reconcileOrphanedProcessSessions } from "@/server/session-providers/pro
 import { reconcilePersistedReloadZombies } from "@/server/runs/persisted-zombie-reconciler";
 import { toAccountDto } from "@/server/accounts/dto";
 import { stripUnusedRunSnapshotFields } from "@/server/events/run-snapshot-fields";
+import { goalControl } from "@/server/runs/goal-control";
 
 const EXECUTION_EVENT_LIMIT = 100;
 const SUPERVISOR_INTERVENTION_LIMIT = 50;
@@ -261,6 +262,7 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
     allRecoveryIncidents,
     allProcessSessions,
     allReadMarkers,
+    selectedGoal,
   ] = await Promise.all([
     selectedRunId
       ? db.select().from(messages).where(inArray(messages.runId, transcriptRunIds)).orderBy(asc(messages.createdAt), asc(messages.id))
@@ -297,6 +299,7 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
       : [],
     db.select().from(processSessions),
     db.select().from(conversationReadMarkers).where(allRuns.length > 0 ? inArray(conversationReadMarkers.runId, allRuns.map((run) => run.id)) : eq(conversationReadMarkers.runId, "__none__")),
+    selectedRunId ? goalControl.getGoal(selectedRunId) : null,
   ]);
   const processSessionsByRunId = new Map<string, typeof allProcessSessions[number]>(
     allProcessSessions.map((session) => [session.runId, session]),
@@ -383,5 +386,6 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
       },
     },
     workerEntrySeqs: selectedWorkerEntrySeqs,
+    goalsByRunId: selectedGoal ? { [selectedGoal.runId]: selectedGoal } : {},
   });
 }

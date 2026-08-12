@@ -18,7 +18,7 @@
  */
 import { notifyEventStreamSubscribers } from "./live-updates";
 import type { ClaudeSessionModelReason } from "@/lib/claude-session-model";
-import type { GoalAction, GoalSnapshot } from "@/shared/goal-plan";
+import type { GoalAction, GoalPublishedEventKind, GoalSnapshot } from "@/shared/goal-plan";
 import { randomBytes } from "node:crypto";
 import {
   formatEventStreamId,
@@ -41,6 +41,7 @@ export type SurfacedErrorCode =
   | "conversation.delete.failed"
   | "conversation.delete.worker_cancel_failed"
   | "conversation.continue.failed"
+  | "conversation.delivery_refused"
   | "external_session.import_failed"
   | "process.spawn.failed"
   | "process.cwd.invalid"
@@ -477,23 +478,6 @@ export type PlanEvent =
   | { kind: "plan.review.finished"; runId: string; reviewRunId: string; status: string }
   | { kind: "plan.review.blocked"; runId: string; reason: string };
 
-export type GoalPublishedEventKind =
-  | "goal.set.completed"
-  | "goal.updated"
-  | "goal.paused"
-  | "goal.resumed"
-  | "goal.cleared"
-  | "goal.plan.updated"
-  | "goal.plan.removed"
-  | "goal.validation.started"
-  | "goal.validation.completed"
-  | "goal.validation.failed"
-  | "goal.blocked"
-  | "goal.limited"
-  | "goal.completed"
-  | "goal.reconciled"
-  | "goal.reconciliation.started";
-
 export type GoalEvent =
   | {
       kind: GoalPublishedEventKind;
@@ -520,13 +504,27 @@ export type GoalEvent =
   | { kind: "goal.outbox.recovery_started"; pendingCount: number }
   | { kind: "goal.outbox.recovery_completed"; publishedCount: number; poisonedCount: number }
   | { kind: "goal.outbox.retry_scheduled"; runId: string; goalId: string; revision: number; attempt: number; nextAttemptAt: string }
-  | { kind: "goal.outbox.poisoned"; runId: string; goalId: string; revision: number; attempt: number; reason: string };
+  | { kind: "goal.outbox.poisoned"; runId: string; goalId: string; revision: number; attempt: number; reason: string }
+  | { kind: "goal.history.compacted"; operationCount: number; outboxCount: number; cutoff: string };
 
 export type RecoveryEvent =
   | { kind: "recovery.opened"; runId: string; incidentId: string; recoveryKind: string }
   | { kind: "recovery.attempt"; runId: string; incidentId: string; attempt: number }
   | { kind: "recovery.gave_up"; runId: string; incidentId: string; attempts: number }
-  | { kind: "recovery.resolved"; runId: string; incidentId: string };
+  | { kind: "recovery.resolved"; runId: string; incidentId: string }
+  | {
+      kind: "recovery.quota_wait_preserved";
+      runId: string;
+      incidentId: string;
+      previousStatus: string;
+    }
+  | {
+      kind: "recovery.refused";
+      runId: string;
+      workerId: string | null;
+      reason: "run_missing" | "run_terminal" | "worker_cancelled";
+      runStatus: string | null;
+    };
 
 export type AccountEvent =
   | { kind: "account.detected"; accountId: string; workerType: string; provider: string; authMode: string }

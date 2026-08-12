@@ -19,6 +19,7 @@ export type WorkerEntryAttachment = {
   filename: string;
   mimeType: string;
   sizeBytes: number;
+  storagePath?: string;
 };
 
 export type BridgeWorkerEntryType =

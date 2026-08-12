@@ -18,6 +18,10 @@ import { t, useI18nSnapshot } from "@/lib/i18n";
 import { StateManager } from "@/lib/state-manager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { cn } from "@/lib/utils";
+import { AcpPlanWidget } from "./AcpPlanWidget";
+import type { PlanSurfaceOwner } from "@/shared/acp-plan";
+import type { GoalSnapshot } from "@/shared/goal-plan";
+import { GoalPlanCard } from "./GoalPlanCard";
 
 interface ConversationComposerProps {
   className: string;
@@ -69,6 +73,10 @@ interface ConversationComposerProps {
   onSendConversationMessage: (content: string, busyAction?: BusyMessageAction) => void;
   onRunCommand: (content: string) => void;
   onStopConversation: () => void;
+  planSurfaceOwner: PlanSurfaceOwner;
+  goal: GoalSnapshot | null;
+  onGoalSnapshot: (snapshot: GoalSnapshot, eventKey: string | null) => void;
+  onOpenGoalPlanArtifact: (uri: string) => void;
 }
 
 class ComposerUiManager extends StateManager<{ fileDragDepth: number; mobileSettingsOpen: boolean }> {
@@ -85,20 +93,15 @@ class ComposerUiManager extends StateManager<{ fileDragDepth: number; mobileSett
 const composerUiManager = new ComposerUiManager();
 
 const COMPOSER_MAX_LINES = 5;
-const COMPOSER_IDLE_LINES = 2;
 
 function resizeComposerTextarea(textarea: HTMLTextAreaElement) {
   const lineHeight = Number.parseFloat(window.getComputedStyle(textarea).lineHeight);
   const resolvedLineHeight = Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : 20;
   const maxHeight = resolvedLineHeight * COMPOSER_MAX_LINES;
-  const idleHeight = resolvedLineHeight * COMPOSER_IDLE_LINES;
 
   textarea.style.height = "0px";
   const contentHeight = textarea.scrollHeight;
-  const minimumHeight = textarea.matches(":focus") && textarea.value.trim().length === 0
-    ? maxHeight
-    : idleHeight;
-  const nextHeight = Math.min(Math.max(contentHeight, minimumHeight), maxHeight);
+  const nextHeight = Math.min(contentHeight, maxHeight);
 
   textarea.style.height = `${nextHeight}px`;
   textarea.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
@@ -154,6 +157,10 @@ function ConversationComposerInner({
   onSendConversationMessage,
   onRunCommand,
   onStopConversation,
+  planSurfaceOwner,
+  goal,
+  onGoalSnapshot,
+  onOpenGoalPlanArtifact,
 }: ConversationComposerProps) {
   useI18nSnapshot();
   const trimmedCommand = command.trim();
@@ -192,7 +199,9 @@ function ConversationComposerInner({
   }, [attachments.length, command, commandInputRef]);
 
   return (
-  <div className={cn("relative z-20 w-full shrink-0 bg-background p-3 sm:p-4", className)}>
+  <div className={cn("relative z-20 w-full shrink-0 bg-background px-1.5 py-3 sm:p-4", className)}>
+    <GoalPlanCard goal={goal} onSnapshot={onGoalSnapshot} onOpenPlanArtifact={onOpenGoalPlanArtifact} />
+    {!goal?.visible ? <AcpPlanWidget owner={planSurfaceOwner} /> : null}
     <form
       data-selected-cli-harness={selectedCliAgent}
       data-selected-worker-model={selectedModel}
@@ -325,7 +334,7 @@ function ConversationComposerInner({
             }
           }}
           className={cn(
-            "relative rounded-[1.5rem] px-4 pb-0 pt-4 transition-all sm:px-5 sm:pb-0 sm:pt-5",
+            "relative rounded-[1.5rem] px-2 pb-0 pt-4 transition-all sm:px-5 sm:pb-0 sm:pt-5",
             isFileDragActive && "ring-2 ring-primary/35",
             themeMode === "night"
               ? "border border-transparent bg-muted/80 shadow-[0_18px_50px_-24px_rgba(0,0,0,0.45)] focus-within:bg-muted/90 dark:bg-[#2f2f2f] dark:focus-within:bg-[#343434]"
@@ -350,8 +359,6 @@ function ConversationComposerInner({
               commandCursor: e.target.selectionStart ?? e.target.value.length,
             });
           }}
-          onFocus={(e) => resizeComposerTextarea(e.currentTarget)}
-          onBlur={(e) => resizeComposerTextarea(e.currentTarget)}
           onClick={(e) => setCommandCursor(e.currentTarget.selectionStart ?? 0)}
           onKeyUp={(e) => setCommandCursor(e.currentTarget.selectionStart ?? 0)}
           onPaste={(event) => {
@@ -465,7 +472,6 @@ function ConversationComposerInner({
           className={cn(
             "omni-composer-input w-full resize-none bg-transparent outline-none",
             "min-h-[56px] sm:min-h-[72px] max-h-[100px] sm:max-h-[120px] overflow-y-hidden",
-            !trimmedCommand && "focus:min-h-[100px] sm:focus:min-h-[120px]",
             themeMode === "night"
               ? "text-foreground placeholder:text-muted-foreground/80"
               : "text-[#454545] placeholder:text-[#c4c4c2] dark:text-foreground dark:placeholder:text-muted-foreground/80",

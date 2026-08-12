@@ -39,9 +39,10 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('selectedModel: "gpt-5.6-sol"');
   expect(pageSource).toContain('selectedEffort: "High"');
   expect(pageSource).toContain('themeMode === "night"');
+  expect(pageSource).toContain("relative z-20 w-full shrink-0 bg-background px-1.5 py-3 sm:p-4");
   expect(pageSource).toContain('rounded-[2rem] border border-[#dededd] bg-[#fdfdfc]');
   expect(pageSource).toContain('focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc]');
-  expect(pageSource).toContain("px-4 pb-0 pt-4");
+  expect(pageSource).toContain("px-2 pb-0 pt-4 transition-all sm:px-5");
   expect(pageSource).toContain('"omni-composer-input w-full resize-none bg-transparent outline-none"');
   expect(pageSource).toContain('"min-h-[56px] sm:min-h-[72px] max-h-[100px] sm:max-h-[120px] overflow-y-hidden"');
   expect(globalsSource).toContain(".omni-composer-input");
@@ -69,15 +70,17 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('placeholder:text-[#c4c4c2]');
 });
 
-test("mobile composer keeps the summary in one bounded controls row and caps text growth", () => {
+test("mobile composer keeps the summary in one bounded controls row and grows only with content", () => {
   expect(pageSource).toContain('data-composer-controls="true"');
   expect(pageSource).toContain('className="mt-0 flex min-w-0 items-end gap-1 pb-2 sm:gap-2"');
   expect(pageSource).not.toContain('className="mt-0 flex flex-wrap items-center gap-1 pb-2 sm:flex-nowrap sm:gap-2"');
   expect(pageSource).toContain("COMPOSER_MAX_LINES = 5");
   expect(pageSource).toContain("resizeComposerTextarea");
   expect(pageSource).toContain('min-h-[56px] sm:min-h-[72px]');
-  expect(pageSource).toContain('focus:min-h-[100px] sm:focus:min-h-[120px]');
   expect(pageSource).toContain('max-h-[100px] sm:max-h-[120px]');
+  expect(pageSource).toContain("const nextHeight = Math.min(contentHeight, maxHeight);");
+  expect(pageSource).not.toContain('textarea.matches(":focus")');
+  expect(pageSource).not.toContain('focus:min-h-[100px] sm:focus:min-h-[120px]');
   expect(mobileComposerSettingsSource).toContain('data-composer-settings-summary="true"');
   expect(mobileComposerSettingsSource).toContain("flex-1 basis-0");
   expect(mobileComposerSettingsSource).toContain("truncate");
@@ -198,10 +201,11 @@ test("workspace control floats over the top-left of the typing shell", () => {
   expect(pageSource).toContain('data-composer-workspace="true"');
 });
 
-test("mobile composer settings expose one unlabeled summary chip inside the input row", () => {
+test("mobile composer keeps the workspace chip above the input and the settings summary in the controls row", () => {
   expect(mobileComposerSettingsSource).toContain('data-composer-mobile-settings="true"');
   expect(mobileComposerSettingsSource).toContain("contents sm:hidden");
-  expect(mobileComposerSettingsSource).not.toContain("bottom-full");
+  expect(mobileComposerSettingsSource).toContain("absolute inset-x-0 bottom-full z-30");
+  expect(mobileComposerSettingsSource).toContain("justify-start");
   expect(mobileComposerSettingsSource).toContain("max-w-full");
   expect(mobileComposerSettingsSource).toContain("min-w-0");
   expect(mobileComposerSettingsSource).toContain("sm:hidden");
@@ -246,6 +250,21 @@ test("composer draft state is isolated from the root home app subscription", () 
   expect(pageSource).toContain("const handleComposerCancelQueuedMessage = useCallback(");
   expect(pageSource).toContain("const handleComposerSendConversationMessage = useCallback(");
   expect(pageSource).toContain("const handleComposerRunCommand = useCallback(");
+});
+
+test("explicit goal commands bypass transcript message submission", () => {
+  const composerContainerSource = fs.readFileSync(
+    path.resolve(process.cwd(), "src/interface/home/ComposerContainer.tsx"),
+    "utf8"
+  );
+  const goalCommandIndex = composerContainerSource.indexOf("parseGoalComposerCommand(command)");
+  const transcriptSendIndex = composerContainerSource.indexOf("onSendConversationMessage(command, attachments");
+
+  expect(goalCommandIndex).toBeGreaterThanOrEqual(0);
+  expect(transcriptSendIndex).toBeGreaterThan(goalCommandIndex);
+  expect(composerContainerSource).toContain("attachments.length === 0");
+  expect(composerContainerSource).toContain("executeGoalComposerCommand");
+  expect(composerContainerSource).toContain("currentUi.selectedRunId !== selectedRunId");
 });
 
 test("selecting a session preserves its restored composer draft", () => {

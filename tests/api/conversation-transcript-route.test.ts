@@ -103,6 +103,74 @@ describe("GET /api/conversations/[id]/transcript", () => {
     }
   });
 
+  it("filters diagnostic plan rows while advancing the raw contiguous cursor", async () => {
+    process.env.OMNIHARNESS_TEST_BYPASS_AUTH = "true";
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+
+    try {
+      await db.insert(plans).values({
+        id: planId,
+        path: "vibes/ad-hoc/direct.md",
+        status: "running",
+        createdAt: now,
+        updatedAt: now,
+      });
+      await db.insert(runs).values({
+        id: runId,
+        planId,
+        mode: "direct",
+        status: "running",
+        createdAt: now,
+        updatedAt: now,
+      });
+      await db.insert(workers).values({
+        id: workerId,
+        runId,
+        type: "claude",
+        status: "idle",
+        cwd: "/workspace/app",
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        createdAt: now,
+        updatedAt: now,
+      });
+      await appendWorkerEntry(runId, workerId, {
+        id: "visible-message",
+        type: "message",
+        text: "working",
+        timestamp: now.toISOString(),
+      });
+      await appendWorkerEntry(runId, workerId, {
+        id: "plan-diagnostic",
+        type: "system_note",
+        text: "rejected plan",
+        timestamp: new Date(now.getTime() + 1).toISOString(),
+        planProjection: "rejected",
+        diagnosticOnly: true,
+      });
+
+      const response = await GET(
+        new Request(`http://localhost/api/conversations/${runId}/transcript?afterToken=${encodeAfterToken({ [workerId]: 0 })}`),
+        { params: Promise.resolve({ id: runId }) },
+      );
+      const payload = await response.json() as {
+        entries: Array<{ id: string; seq: number }>;
+        latestToken: string;
+      };
+
+      expect(response.status).toBe(200);
+      expect(payload.entries).toEqual([expect.objectContaining({ id: "visible-message", seq: 1 })]);
+      expect(decodeAfterToken(payload.latestToken).cursors[workerId]).toBe(2);
+    } finally {
+      await cleanupRun(runId, planId);
+    }
+  });
+
   it("returns the latest transcript window on cold tail load", async () => {
     process.env.OMNIHARNESS_TEST_BYPASS_AUTH = "true";
     const planId = randomUUID();

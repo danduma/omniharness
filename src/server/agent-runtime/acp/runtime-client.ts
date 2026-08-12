@@ -17,6 +17,10 @@ import {
   isAcpPlanNotification,
   type WorkerPlanStartupContext,
 } from "./plan-stream";
+import {
+  handleAcpGoalSessionUpdateForWorker,
+  isAcpGoalNotification,
+} from "./goal-state";
 
 export type AcpExtensionHandler = {
   request?(params: Record<string, unknown>): Promise<Record<string, unknown>>;
@@ -481,6 +485,14 @@ export class RuntimeClient implements acp.Client {
 
   async sessionUpdate(params: acp.SessionNotification): Promise<void> {
     const record = this.getRecord();
+    const goalWorkerId = record?.name ?? this.startupPlanContext?.workerId;
+    if (goalWorkerId && isAcpGoalNotification(params.update) && !isAcpPlanNotification(params.update)) {
+      await handleAcpGoalSessionUpdateForWorker({
+        workerId: goalWorkerId,
+        sessionId: params.sessionId,
+        update: params.update,
+      });
+    }
     if (this.startupPlanContext && isAcpPlanNotification(params.update)) {
       const admission = bufferWorkerPlanStartupUpdate(this.startupPlanContext, {
         sessionId: params.sessionId,

@@ -57,4 +57,26 @@ describe("goal control schema", () => {
       expect(Number(result.rows[0]?.count)).toBe(0);
     }
   });
+
+  it("upgrades a version-six database additively without changing existing runs", async () => {
+    const client = await createDatabase();
+    const now = Date.now();
+    await client.batch([
+      { sql: "INSERT INTO plans (id, path, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", args: ["legacy-plan", "/tmp/legacy.md", "running", now, now] },
+      { sql: "INSERT INTO runs (id, plan_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", args: ["legacy-run", "legacy-plan", "running", now, now] },
+    ], "write");
+    await client.executeMultiple(`
+      DROP TABLE run_goal_outbox;
+      DROP TABLE run_goal_operations;
+      DROP TABLE run_goals;
+      PRAGMA user_version = 6;
+    `);
+
+    await initializeDatabaseSchema(client);
+
+    expect((await client.execute("PRAGMA user_version")).rows[0]?.user_version).toBe(7);
+    expect((await client.execute("SELECT status FROM runs WHERE id = 'legacy-run'")).rows[0]).toMatchObject({ status: "running" });
+    const tables = await client.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'run_goal%'");
+    expect(tables.rows.map((row) => row.name).sort()).toEqual(["run_goal_operations", "run_goal_outbox", "run_goals"]);
+  });
 });

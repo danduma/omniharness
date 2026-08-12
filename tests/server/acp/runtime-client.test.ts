@@ -31,4 +31,23 @@ describe("ACP runtime client", () => {
     rmSync(additional, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
   });
+
+  it("never falls through to generic plan ingestion when the worker lookup disappears", async () => {
+    const record = {
+      name: `missing-plan-worker-${Date.now()}`,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      outputEntries: [],
+    };
+    const client = new RuntimeClient(() => record as never, () => undefined);
+
+    await client.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "plan",
+        entries: [{ content: "Do not duplicate", priority: "high", status: "pending" }],
+      },
+    });
+
+    expect(record.outputEntries).toEqual([]);
+  });
 });

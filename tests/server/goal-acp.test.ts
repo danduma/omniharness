@@ -103,4 +103,24 @@ describe("goal ACP control dispatch", () => {
       reason: "no_active_lease",
     });
   });
+
+  it("reapplies retry as a supported set operation", async () => {
+    const invokeExtension = vi.fn(async () => ({ ok: true }));
+    const dispatcher = createGoalAcpDispatcher({
+      getAgent: vi.fn(async () => ({
+        agentCapabilities: { _meta: { goal: { version: 1, capabilities: { set: true } } } },
+      })),
+      invokeExtension,
+      sendSlashCommand: vi.fn(),
+    });
+
+    expect(await dispatcher.dispatch(snapshot({ status: "error" }), "retry")).toMatchObject({
+      kind: "dispatched",
+      method: "extension",
+    });
+    expect(invokeExtension).toHaveBeenCalledWith("worker-1", "_session/goal", expect.objectContaining({
+      action: "set",
+      objective: "Ship it",
+    }));
+  });
 });

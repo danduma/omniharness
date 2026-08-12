@@ -1,6 +1,7 @@
 import type { EventStreamState, MessageRecord } from "./types";
 import { EventStreamSnapshotCacheManager } from "./EventStreamSnapshotCacheManager";
 import { isTerminalRunStatus } from "@/lib/run-status";
+import { parseGoalSnapshot } from "@/shared/goal-plan";
 
 type EventStreamStateListener = (state: EventStreamState) => void;
 type EventStreamStateAction = EventStreamState | ((current: EventStreamState) => EventStreamState);
@@ -110,6 +111,38 @@ function mergeReadMarkersForVisibleRuns(current: EventStreamState, incoming: Eve
     }
   }
 
+  return merged;
+}
+
+function mergeGoalSnapshots(
+  current: EventStreamState,
+  incoming: EventStreamState,
+  serverAuthoritative: boolean,
+) {
+  const merged = { ...(current.goalsByRunId ?? {}) };
+  const incomingGoals = incoming.goalsByRunId ?? {};
+  for (const [runId, rawSnapshot] of Object.entries(incomingGoals)) {
+    const snapshot = parseGoalSnapshot(rawSnapshot);
+    const existing = merged[runId];
+    if (!existing || snapshot.revision > existing.revision || (
+      snapshot.revision === existing.revision
+      && snapshot.provenance.source === "server"
+      && existing.provenance.source !== "server"
+    )) {
+      merged[runId] = snapshot;
+    }
+  }
+
+  const scopedRunId = incoming.snapshotRunId?.trim();
+  if (serverAuthoritative && scopedRunId && !(scopedRunId in incomingGoals)) {
+    delete merged[scopedRunId];
+  }
+  const visibleRunIds = new Set((incoming.runs ?? []).map((run) => run.id));
+  if (serverAuthoritative && incoming.snapshotScope?.catalog?.complete === true) {
+    for (const runId of Object.keys(merged)) {
+      if (!visibleRunIds.has(runId)) delete merged[runId];
+    }
+  }
   return merged;
 }
 
@@ -437,6 +470,7 @@ export class EventStreamStateManager {
     const incomingWithAgents = mergeDegradedAgentHumanInput(this.state, incomingWithRuns);
     const nextState = {
       ...mergeScopedMessages(this.state, incomingWithAgents),
+      goalsByRunId: mergeGoalSnapshots(this.state, incomingWithAgents, snapshotSource === "server"),
       snapshotSource,
     };
 
@@ -495,5 +529,25 @@ export class EventStreamStateManager {
 
   updateFromServer(action: EventStreamStateAction) {
     return this.update(action, { snapshotSource: "server" });
+  }
+
+  applyGoalEvent(rawSnapshot: unknown, eventKey?: string | null) {
+    const snapshot = parseGoalSnapshot(rawSnapshot);
+    const current = this.state.goalsByRunId?.[snapshot.runId];
+    if (current && current.revision >= snapshot.revision) return false;
+    this.state = {
+      ...this.state,
+      goalsByRunId: {
+        ...(this.state.goalsByRunId ?? {}),
+        [snapshot.runId]: {
+          ...snapshot,
+          provenance: { ...snapshot.provenance, source: "server" },
+        },
+      },
+    };
+    this.snapshotCache.rememberState(this.state, this.snapshotCacheScope);
+    this.listeners.forEach((listener) => listener(this.state));
+    void eventKey;
+    return true;
   }
 }

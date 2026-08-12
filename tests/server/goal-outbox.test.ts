@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initializeDatabaseSchema } from "@/server/db";
 import { createGoalControlService } from "@/server/runs/goal-control";
-import { createGoalOutboxDispatcher } from "@/server/runs/goal-outbox";
+import { compactGoalControlHistory, createGoalOutboxDispatcher } from "@/server/runs/goal-outbox";
 
 const clients: ReturnType<typeof createClient>[] = [];
 const tempRoots: string[] = [];
@@ -35,6 +35,7 @@ describe("GoalOutboxDispatcher", () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     await Promise.all(clients.splice(0).map((candidate) => candidate.close()));
     for (const tempRoot of tempRoots.splice(0)) fs.rmSync(tempRoot, { recursive: true, force: true });
   });
@@ -77,12 +78,52 @@ describe("GoalOutboxDispatcher", () => {
       now: () => currentTime,
       randomId: () => "claim-1",
       maxAttempts: 3,
+      onDiagnosticFailure: vi.fn(),
     });
 
     expect(await dispatcher.drainOnce()).toBe("retryable");
     const row = (await client.execute("SELECT status, attempt_count, next_attempt_at, last_error FROM run_goal_outbox")).rows[0];
     expect(row).toMatchObject({ status: "retryable", attempt_count: 1, last_error: "ring unavailable" });
     expect(Number(row?.next_attempt_at)).toBeGreaterThan(currentTime);
+  });
+
+  it("automatically publishes a retry after its backoff without another mutation", async () => {
+    vi.useFakeTimers();
+    let failNextPublish = true;
+    const emit = vi.fn((_event: { kind: string }) => {
+      if (failNextPublish) {
+        failNextPublish = false;
+        throw new Error("ring temporarily unavailable");
+      }
+    });
+    const dispatcher = createGoalOutboxDispatcher(client, {
+      emit,
+      now: () => currentTime,
+      randomId: () => `claim-${emit.mock.calls.length}`,
+      maxAttempts: 3,
+      onDiagnosticFailure: vi.fn(),
+    });
+
+    await dispatcher.startAutoDelivery();
+    expect((await client.execute("SELECT status FROM run_goal_outbox")).rows[0]?.status).toBe("retryable");
+
+    currentTime += 1_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect((await client.execute("SELECT status FROM run_goal_outbox")).rows[0]?.status).toBe("published");
+    expect(emit.mock.calls.filter(([event]) => event.kind === "goal.set.completed")).toHaveLength(2);
+    dispatcher.stopAutoDelivery();
+  });
+
+  it("does not spin an auto-delivery timer when no eligible rows remain", async () => {
+    const dispatcher = createGoalOutboxDispatcher(client, { emit: vi.fn() });
+    expect(await dispatcher.drainOnce()).toBe("published");
+    vi.useFakeTimers();
+
+    await dispatcher.startAutoDelivery();
+
+    expect(vi.getTimerCount()).toBe(0);
+    dispatcher.stopAutoDelivery();
   });
 
   it("poisons a terminal publication failure and surfaces the blocked run", async () => {
@@ -95,6 +136,7 @@ describe("GoalOutboxDispatcher", () => {
       now: () => currentTime,
       randomId: () => "claim-1",
       maxAttempts: 1,
+      onDiagnosticFailure: vi.fn(),
     });
 
     expect(await dispatcher.drainOnce()).toBe("poisoned");
@@ -122,5 +164,31 @@ describe("GoalOutboxDispatcher", () => {
     expect(await second.drainOnce()).toBe("published");
     expect(events).toHaveLength(2);
     expect(events[0]?.eventKey).toBe(events[1]?.eventKey);
+  });
+
+  it("retains active-run idempotency and compacts settled terminal history beyond the checkpoint", async () => {
+    await client.execute({
+      sql: "UPDATE run_goal_outbox SET status = 'published', published_at = ?, updated_at = ?",
+      args: [currentTime - 10_000, currentTime - 10_000],
+    });
+    await client.execute({
+      sql: "UPDATE run_goal_operations SET updated_at = ?",
+      args: [currentTime - 10_000],
+    });
+    const emit = vi.fn();
+    expect(await compactGoalControlHistory(client, { now: currentTime, retentionMs: 5_000, emit })).toEqual({
+      operationCount: 0,
+      outboxCount: 0,
+    });
+
+    await client.execute({
+      sql: "UPDATE runs SET status = 'done', updated_at = ? WHERE id = 'run-1'",
+      args: [currentTime - 10_000],
+    });
+    expect(await compactGoalControlHistory(client, { now: currentTime, retentionMs: 5_000, emit })).toEqual({
+      operationCount: 1,
+      outboxCount: 1,
+    });
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({ kind: "goal.history.compacted" }));
   });
 });

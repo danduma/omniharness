@@ -31,6 +31,7 @@
     "GET /api/notifications",
     "GET /api/plans",
     "GET /api/projects/memory",
+    "GET /api/runs/:id/goal",
     "GET /api/runtime/bootstrap",
     "GET /api/settings",
     "GET /api/terminals/:id/stream",
@@ -71,11 +72,13 @@
     "POST /api/runner/restart",
     "POST /api/runs/:id",
     "POST /api/runs/:id/answer",
+    "POST /api/runs/:id/goal/actions",
     "POST /api/runs/:id/resume",
     "POST /api/settings",
     "POST /api/supervisor",
     "POST /api/terminals",
     "POST /api/terminals/:id/input",
-    "POST /api/terminals/:id/resize"
+    "POST /api/terminals/:id/resize",
+    "PUT /api/runs/:id/goal"
   ]
 }

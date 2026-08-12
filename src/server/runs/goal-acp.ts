@@ -1,4 +1,3 @@
-import { askAgent, getAgent, invokeAgentAcpMethod } from "@/server/bridge-client";
 import { normalizeAcpGoalMetadata } from "@/server/agent-runtime/acp/goal-state";
 import type { GoalMutationAction, GoalSnapshot } from "@/shared/goal-plan";
 
@@ -19,9 +18,18 @@ export type GoalAcpDispatchResult =
   | { kind: "unsupported"; reason: string };
 
 const defaultDependencies: GoalAcpDependencies = {
-  getAgent,
-  invokeExtension: (workerId, method, params) => invokeAgentAcpMethod(workerId, method, params),
-  sendSlashCommand: (workerId, command) => askAgent(workerId, command),
+  getAgent: async (workerId) => {
+    const { getAgent } = await import("@/server/bridge-client");
+    return getAgent(workerId);
+  },
+  invokeExtension: async (workerId, method, params) => {
+    const { invokeAgentAcpMethod } = await import("@/server/bridge-client");
+    return invokeAgentAcpMethod(workerId, method, params);
+  },
+  sendSlashCommand: async (workerId, command) => {
+    const { askAgent } = await import("@/server/bridge-client");
+    return askAgent(workerId, command);
+  },
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -52,7 +60,7 @@ function advertisedCommands(entries: GoalAcpAgentSnapshot["outputEntries"]) {
 
 function extensionSupports(metadata: ReturnType<typeof normalizeAcpGoalMetadata>, action: GoalMutationAction) {
   if (!metadata.ok) return false;
-  if (action === "set") return metadata.value.capabilities.set;
+  if (action === "set" || action === "retry") return metadata.value.capabilities.set;
   if (action === "edit") return metadata.value.capabilities.edit;
   return metadata.value.capabilities[action];
 }
@@ -81,7 +89,7 @@ export class GoalAcpDispatcher {
         sessionId: snapshot.acpSessionId,
         goalId: snapshot.goalId,
         revision: snapshot.revision,
-        action,
+        action: action === "retry" ? "set" : action,
         ...(action === "set" || action === "edit" || action === "retry"
           ? { objective: snapshot.objective }
           : {}),

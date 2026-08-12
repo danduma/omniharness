@@ -1,6 +1,7 @@
 import { chatAttachmentKindFromMimeType, type PendingChatAttachment } from "@/lib/chat-attachments";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { StateManager, type StateUpdate } from "@/lib/state-manager";
+import { goalPlanManager } from "./GoalPlanManager";
 import { DEFAULT_CONVERSATION_SIDEBAR_WIDTH, DEFAULT_SERVER_SETTINGS, DEFAULT_TERMINAL_PANEL_WIDTH, DEFAULT_WORKERS_SIDEBAR_WIDTH, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "./constants";
 import type { ComposerWorkerOption, ConversationModeOption, ConversationSidebarTab, EventStreamState, LlmProfileTab, MessageRecord, SettingsTab, SidebarRun } from "./types";
 import type { CreatedConversationSnapshot } from "./utils";
@@ -375,7 +376,10 @@ export const homeUiSetters = {
   setActiveLlmProfileTab: homeUiStateManager.createSetter("activeLlmProfileTab"),
   setApiKeys: homeUiStateManager.createSetter("apiKeys"),
   setShowFolderPicker: homeUiStateManager.createSetter("showFolderPicker"),
-  setSelectedRunId: (value: string | null) => homeUiStateManager.selectRun(value),
+  setSelectedRunId: (value: string | null) => {
+    goalPlanManager.switchRun(value);
+    homeUiStateManager.selectRun(value);
+  },
   setLeftSidebarOpen: homeUiStateManager.createSetter("leftSidebarOpen"),
   setLeftSidebarWidth: homeUiStateManager.createSetter("leftSidebarWidth"),
   setRightSidebarOpen: homeUiStateManager.createSetter("rightSidebarOpen"),

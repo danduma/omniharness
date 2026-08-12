@@ -1,10 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/server/db";
-import { plans, runGoalOperations, runGoalOutbox, runGoals, runs } from "@/server/db/schema";
+import { plans, runGoalOperations, runGoalOutbox, runGoals, runs, workers } from "@/server/db/schema";
 import { handleGoalRequest } from "@/runtime/http/routes/goals";
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
+import { goalControl } from "@/server/runs/goal-control";
 
 const runId = "goal-api-run";
+
+const bridgeMocks = vi.hoisted(() => ({
+  getAgent: vi.fn(),
+  invokeAgentAcpMethod: vi.fn(),
+  askAgent: vi.fn(),
+}));
+
+vi.mock("@/server/bridge-client", () => bridgeMocks);
 
 function request(method: string, body?: unknown, id = runId) {
   return new Request(`http://localhost/api/runs/${id}/goal${method === "POST" ? "/actions" : ""}`, {
@@ -24,16 +33,32 @@ describe("run goal API", () => {
     await db.delete(runGoalOutbox);
     await db.delete(runGoalOperations);
     await db.delete(runGoals);
+    await db.delete(workers);
     await db.delete(runs);
     await db.delete(plans);
     const now = new Date();
     await db.insert(plans).values({ id: "goal-api-plan", path: "/tmp/goal-plan.md", status: "running", createdAt: now, updatedAt: now });
     await db.insert(runs).values({ id: runId, planId: "goal-api-plan", status: "running", createdAt: now, updatedAt: now });
     __resetNamedEventsForTests();
+    bridgeMocks.getAgent.mockReset();
+    bridgeMocks.invokeAgentAcpMethod.mockReset();
+    bridgeMocks.askAgent.mockReset();
   });
 
   afterEach(() => {
     delete process.env.OMNIHARNESS_TEST_BYPASS_AUTH;
+    delete process.env.OMNIHARNESS_AUTH_PASSWORD;
+  });
+
+  it("authenticates before revealing whether a run id exists", async () => {
+    delete process.env.OMNIHARNESS_TEST_BYPASS_AUTH;
+    process.env.OMNIHARNESS_AUTH_PASSWORD = "test-password";
+
+    const existing = await call("GET");
+    const guessed = await call("GET", undefined, "guessed-run");
+    expect(existing.status).toBe(401);
+    expect(guessed.status).toBe(401);
+    expect((await existing.json()).error.message).toBe((await guessed.json()).error.message);
   });
 
   it("returns an absent goal without disclosing missing runs as present", async () => {
@@ -69,6 +94,111 @@ describe("run goal API", () => {
     });
     expect(cleared.status).toBe(200);
     expect(await cleared.json()).toMatchObject({ goal: { revision: 2, status: "cleared", visible: false } });
+
+    const replaced = await call("PUT", {
+      goalId: "goal-2", expectedRevision: 2, operationId: "op-replace", objective: "Ship the next goal",
+    });
+    expect(replaced.status).toBe(200);
+    expect(await replaced.json()).toMatchObject({
+      goal: { goalId: "goal-2", revision: 3, status: "pending", visible: true },
+    });
+  });
+
+  it("attaches a newly set goal to the active worker session before ACP dispatch", async () => {
+    const now = new Date();
+    await db.insert(workers).values({
+      id: "goal-worker-1",
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/tmp",
+      bridgeSessionId: "goal-session-1",
+      createdAt: now,
+      updatedAt: now,
+    });
+    bridgeMocks.getAgent.mockResolvedValue({
+      agentCapabilities: {
+        _meta: { goal: { version: 1, capabilities: { set: true, edit: true, clear: true } } },
+      },
+    });
+    bridgeMocks.invokeAgentAcpMethod.mockResolvedValue({ ok: true });
+
+    const created = await call("PUT", {
+      goalId: "goal-bound",
+      expectedRevision: 0,
+      operationId: "op-bound",
+      objective: "Bind then dispatch",
+    });
+
+    expect(created.status).toBe(200);
+    expect(await created.json()).toMatchObject({
+      goal: {
+        goalId: "goal-bound",
+        revision: 2,
+        leaseGeneration: 1,
+        workerId: "goal-worker-1",
+        acpSessionId: "goal-session-1",
+      },
+      control: { kind: "dispatched", method: "extension" },
+    });
+    expect(bridgeMocks.invokeAgentAcpMethod).toHaveBeenCalledWith("goal-worker-1", "_session/goal", {
+      sessionId: "goal-session-1",
+      goalId: "goal-bound",
+      revision: 2,
+      action: "set",
+      objective: "Bind then dispatch",
+    });
+  });
+
+  it("recovers a replayed operation committed before ACP dispatch", async () => {
+    const now = new Date();
+    await db.insert(workers).values({
+      id: "goal-worker-1",
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/tmp",
+      bridgeSessionId: "goal-session-1",
+      createdAt: now,
+      updatedAt: now,
+    });
+    bridgeMocks.getAgent.mockResolvedValue({
+      agentCapabilities: {
+        _meta: { goal: { version: 1, capabilities: { set: true, edit: true, clear: true } } },
+      },
+    });
+    bridgeMocks.invokeAgentAcpMethod.mockResolvedValue({ ok: true });
+    const body = {
+      goalId: "goal-crash-recovery",
+      expectedRevision: 0,
+      operationId: "op-crash-recovery",
+      objective: "Recover the durable command",
+    };
+
+    expect(await goalControl.putGoal({
+      runId,
+      ...body,
+      principalId: "local:test",
+      endpoint: "goal.put",
+    })).toMatchObject({ ok: true, replayed: false, snapshot: { revision: 1, workerId: null } });
+
+    const replay = await call("PUT", body);
+
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({
+      replayed: true,
+      goal: { revision: 2, workerId: "goal-worker-1", acpSessionId: "goal-session-1" },
+      control: { kind: "dispatched", method: "extension" },
+    });
+    expect(bridgeMocks.invokeAgentAcpMethod).toHaveBeenCalledTimes(1);
+    expect(bridgeMocks.invokeAgentAcpMethod).toHaveBeenCalledWith(
+      "goal-worker-1",
+      "_session/goal",
+      expect.objectContaining({
+        action: "set",
+        objective: "Recover the durable command",
+      }),
+    );
   });
 
   it("returns 409 with the newest snapshot for stale revisions", async () => {
@@ -97,5 +227,8 @@ describe("run goal API", () => {
     const response = await handleGoalRequest(oversized, { surface: "test", params: { id: runId } });
     expect(response.status).toBe(413);
     expect(await response.json()).toMatchObject({ error: { code: "goal.payload_too_large" } });
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(
+      expect.objectContaining({ kind: "error.surfaced", code: "goal.payload.invalid" }),
+    );
   });
 });

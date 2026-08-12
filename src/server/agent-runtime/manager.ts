@@ -1,6 +1,6 @@
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { constants, accessSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "fs";
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { readFile } from "fs/promises";
 import { request as httpRequest } from "http";
 import { request as httpsRequest } from "https";
 import { homedir } from "os";
@@ -17,28 +17,23 @@ import {
 import { operationalClientCapabilities } from "./acp/capability-registry";
 import {
   abortWorkerPlanStartup,
-  bufferWorkerPlanStartupUpdate,
   completeWorkerPlanStartup,
   createWorkerPlanStartupContext,
-  handleAcpSessionUpdateForWorker,
   initializeWorkerPlanSession,
-  isAcpPlanNotification,
-  type WorkerPlanStartupContext,
 } from "./acp/plan-stream";
 import { invokeAgentRequest, sendAgentNotification } from "./acp/agent-methods";
+import { initializeWorkerGoalSession } from "./acp/goal-state";
+import { redactGoalErrorMessage } from "@/server/runs/goal-errors";
 import { sanitizeAcpStream } from "./acp-stream-sanitizer";
 import { applyCodexBridgeEnv, buildCodexConfigArgs, resolveCodexSessionMode, shouldSetRequestedMode } from "./codex";
 import { buildGeminiArgs, isFullAccessAgentMode, resolveFullGeminiUuid } from "./gemini";
 import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
 import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, stripRunnerControlEnv, withCodexStandardTooling, withManagedPath } from "./tool-env";
 import {
-  appendBoundedText,
-  appendMessageChunk,
   appendOutputEntry,
   openAgentOutputArchive,
   renderOutputEntries,
   selectLiveOutputEntries,
-  summarizeToolCallUpdate,
 } from "./output-store";
 import type {
   AgentRecord,
@@ -46,7 +41,6 @@ import type {
   AskResult,
   CancelTerminalProcessResult,
   DoctorResult,
-  ElicitationCreateParams,
   ElicitationResponse,
   PendingElicitation,
   PendingPermission,
@@ -87,7 +81,6 @@ import { t } from "@/lib/i18n-core";
 const MAX_STDERR_LINES = 50;
 const ENDPOINT_TIMEOUT_MS = 750;
 const WORKER_CONNECTION_RESET_MAX_BACKOFF_MS = 15 * 60_000;
-const MAX_TEXT_FIELD_CHARS = 100_000;
 // Bumped from 30s to 90s. Gemini's `--experimental-acp` startup
 // occasionally needs >30s on a cold first run (TLS cert install,
 // model fetch, etc.). The previous default caused recovery attempts
@@ -473,7 +466,7 @@ function updateContextUsage(record: AgentRecord, patch: Partial<NonNullable<Agen
  * "tokens currently in context" and drives `fullnessPercent`, so letting prompt
  * usage write it pinned every long-running agent to 100% full forever.
  *
- * Only `session/update` usage (`used`/`size`, via `applySessionUsageUpdate`)
+ * Only the runtime client's `session/update` usage (`used`/`size`)
  * measures the live window, and it is the sole source of `maxTokens`. So once a
  * window is known, leave the context fields to it and record spend only.
  */
@@ -489,25 +482,6 @@ function applyPromptUsage(record: AgentRecord, usage: unknown) {
     outputTokens: finiteNumber(payload.outputTokens),
     ...(hasSessionReportedWindow ? {} : { totalTokens: finiteNumber(payload.totalTokens) }),
   });
-}
-
-function applySessionUsageUpdate(record: AgentRecord, update: Record<string, unknown>) {
-  const used = finiteNumber(update.used);
-  const size = finiteNumber(update.size);
-  if (used === null || size === null || size <= 0) {
-    return false;
-  }
-
-  updateContextUsage(record, {
-    totalTokens: used,
-    maxTokens: size,
-    fullnessPercent: Math.min(100, Math.max(0, (used / size) * 100)),
-  });
-  return true;
-}
-
-function stripAgentControlText(text: string) {
-  return text.replace(/^\[MODE_UPDATE\]\s*autoEdit/i, "");
 }
 
 function expandHomePath(input: string, env: EnvLike = process.env) {
@@ -673,17 +647,6 @@ function pushStderrLine(buffer: string[], line: string) {
   if (buffer.length > MAX_STDERR_LINES) {
     buffer.splice(0, buffer.length - MAX_STDERR_LINES);
   }
-}
-
-function selectTextFileRange(content: string, line?: number | null, limit?: number | null) {
-  if (line == null && limit == null) {
-    return content;
-  }
-
-  const lines = content.match(/[^\n]*\n|[^\n]+/g) ?? [];
-  const start = Math.max(0, (line ?? 1) - 1);
-  const end = limit == null ? undefined : start + Math.max(0, limit);
-  return lines.slice(start, end).join("");
 }
 
 function sanitizePathPart(input: string) {
@@ -978,321 +941,6 @@ function readCachedEndpointCheck(urlString: string): EndpointCheckResult | null 
   const cached = endpointCheckCache.get(urlString);
   refreshEndpointCheck(urlString);
   return cached?.result ?? null;
-}
-
-class _RuntimeClient implements acp.Client {
-  private startupPlanContext: WorkerPlanStartupContext | null;
-
-  constructor(
-    private readonly getRecord: () => AgentRecord | undefined,
-    private readonly publishChunk: (name: string, chunk: string) => void,
-    startupPlanContext: WorkerPlanStartupContext | null = null,
-  ) {
-    this.startupPlanContext = startupPlanContext;
-  }
-
-  setWorkerPlanStartupContext(context: WorkerPlanStartupContext | null) {
-    this.startupPlanContext = context;
-  }
-
-  async requestPermission(params: acp.RequestPermissionRequest): Promise<acp.RequestPermissionResponse> {
-    const record = this.getRecord();
-    if (!record) {
-      return { outcome: { outcome: "cancelled" } };
-    }
-    const requestId = nextPermissionRequestId++;
-    record.updatedAt = nowIso();
-    record.state = "working";
-    appendOutputEntry(record, {
-      type: "permission",
-      text: buildPermissionRequestText(params),
-      status: "pending",
-      raw: { ...params, requestId },
-    });
-    // Mode switches (e.g. exiting plan mode via "Ready to code?") change how the
-    // agent operates and are always the user's call — never auto-approve them, even
-    // in full-access/YOLO mode where every other permission is bypassed.
-    if (isFullAccessAgentMode(record.sessionMode) && !isModeSwitchPermission(params)) {
-      const optionId = findAutoApprovePermissionOptionId(params);
-      appendPermissionOutcomeEntry(record, requestId, params, "approve", optionId);
-      record.updatedAt = nowIso();
-      return optionId
-        ? { outcome: { outcome: "selected", optionId } }
-        : { outcome: { outcome: "cancelled" } };
-    }
-    return new Promise((resolve) => {
-      record.pendingPermissions.push({
-        requestId,
-        params,
-        requestedAt: nowIso(),
-        resolve,
-      });
-    });
-  }
-
-  // The pinned SDK doesn't route `elicitation/create`, so it arrives through the
-  // generic ext-method escape hatch. This is how the claude-agent-acp adapter
-  // presents the built-in AskUserQuestion tool once we advertise
-  // `elicitation.form` — see startup `clientCapabilities`.
-  async extMethod(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
-    if (method === ELICITATION_CREATE_METHOD) {
-      return this.createElicitation(params as ElicitationCreateParams);
-    }
-    throw acp.RequestError.methodNotFound(method);
-  }
-
-  private async createElicitation(params: ElicitationCreateParams): Promise<ElicitationResponse> {
-    const record = this.getRecord();
-    if (!record) {
-      return { action: "cancel" };
-    }
-    // URL-mode elicitations need a browser surface we don't advertise; only form
-    // mode (AskUserQuestion) is supported. Decline anything else so the turn
-    // proceeds instead of hanging.
-    if (params.mode && params.mode !== "form") {
-      return { action: "decline" };
-    }
-    const requestId = nextElicitationRequestId++;
-    record.updatedAt = nowIso();
-    record.state = "working";
-    appendOutputEntry(record, {
-      type: "elicitation",
-      text: buildElicitationRequestText(params),
-      status: "pending",
-      raw: { ...params, requestId },
-    });
-    return new Promise((resolve) => {
-      record.pendingElicitations.push({
-        requestId,
-        params,
-        requestedAt: nowIso(),
-        resolve,
-      });
-    });
-  }
-
-  async readTextFile(params: acp.ReadTextFileRequest): Promise<acp.ReadTextFileResponse> {
-    const content = await readFile(params.path, "utf8");
-    return {
-      content: selectTextFileRange(content, params.line, params.limit),
-    };
-  }
-
-  async writeTextFile(params: acp.WriteTextFileRequest): Promise<acp.WriteTextFileResponse> {
-    await mkdir(dirname(params.path), { recursive: true });
-    await writeFile(params.path, params.content, "utf8");
-    return {};
-  }
-
-  async sessionUpdate(params: acp.SessionNotification): Promise<void> {
-    const record = this.getRecord();
-    if (this.startupPlanContext && isAcpPlanNotification(params.update)) {
-      const admission = bufferWorkerPlanStartupUpdate(this.startupPlanContext, {
-        sessionId: params.sessionId,
-        update: params.update,
-      });
-      if (admission !== "ignored") return;
-    }
-    const workerId = record?.name ?? this.startupPlanContext?.workerId;
-    if (workerId && isAcpPlanNotification(params.update)) {
-      const planResult = await handleAcpSessionUpdateForWorker({
-        workerId,
-        sessionId: params.sessionId,
-        update: params.update,
-      });
-      if (planResult.kind !== "ignored") {
-        if (record) record.updatedAt = nowIso();
-        return;
-      }
-    }
-    if (!record) {
-      return;
-    }
-    const update = asRecord(params.update);
-    if (!update) {
-      return;
-    }
-    record.updatedAt = nowIso();
-
-    if (update.sessionUpdate === "usage_update") {
-      applySessionUsageUpdate(record, update);
-      return;
-    }
-
-    if (update.sessionUpdate === "agent_message_chunk") {
-      const content = asRecord(update.content);
-      const text = content?.type === "text" && typeof content.text === "string" ? stripAgentControlText(content.text) : "";
-      if (text) {
-        record.currentText = appendBoundedText(record.currentText, text, MAX_TEXT_FIELD_CHARS);
-        record.lastText = record.currentText;
-        appendMessageChunk(record, text, "message");
-        this.publishChunk(record.name, text);
-      }
-      return;
-    }
-
-    if (update.sessionUpdate === "agent_thought_chunk") {
-      const content = asRecord(update.content);
-      const text = content?.type === "text" && typeof content.text === "string" ? content.text : "";
-      const isCwdThought = text.startsWith("[current working directory");
-      if (text && !isCwdThought) {
-        appendMessageChunk(record, text, "thought");
-      }
-      return;
-    }
-
-    if (update.sessionUpdate === "tool_call") {
-      record.state = "working";
-      appendOutputEntry(record, {
-        type: "tool_call",
-        text: typeof update.title === "string" && update.title.trim().length > 0
-          ? update.title
-          : typeof update.kind === "string"
-            ? update.kind
-            : "Tool call started",
-        toolCallId: typeof update.toolCallId === "string" ? update.toolCallId : undefined,
-        toolKind: typeof update.kind === "string" ? update.kind : undefined,
-        status: typeof update.status === "string" ? update.status : undefined,
-        raw: update,
-      });
-      return;
-    }
-
-    if (update.sessionUpdate === "tool_call_update") {
-      appendOutputEntry(record, {
-        type: "tool_call_update",
-        text: summarizeToolCallUpdate(update),
-        toolCallId: typeof update.toolCallId === "string" ? update.toolCallId : undefined,
-        status: typeof update.status === "string" ? update.status : undefined,
-        raw: update,
-      });
-    }
-  }
-}
-
-let nextPermissionRequestId = 1;
-
-// JSON-RPC method the claude-agent-acp adapter calls to present a form
-// elicitation (the built-in AskUserQuestion tool). Not modeled by the pinned
-// SDK, so we match on the raw method string.
-const ELICITATION_CREATE_METHOD = "elicitation/create";
-let nextElicitationRequestId = 1;
-
-function buildElicitationRequestText(params: ElicitationCreateParams) {
-  const message = asNonEmptyString(params.message);
-  const fieldNames = params.requestedSchema?.properties
-    ? Object.keys(params.requestedSchema.properties)
-    : [];
-  const fieldsSuffix = fieldNames.length > 0 ? ` (${fieldNames.length} field${fieldNames.length === 1 ? "" : "s"})` : "";
-  return message ? `Question for user: ${message}${fieldsSuffix}` : `Question for user${fieldsSuffix}`;
-}
-
-function _appendElicitationOutcomeEntry(record: AgentRecord, requestId: number, response: ElicitationResponse) {
-  const status = response.action === "accept" ? "answered" : response.action === "decline" ? "skipped" : "cancelled";
-  const summary = response.action === "accept"
-    ? Object.entries(response.content)
-        .map(([key, value]) => `${key}=${Array.isArray(value) ? value.join("/") : String(value)}`)
-        .join(", ")
-    : "";
-  appendOutputEntry(record, {
-    type: "elicitation",
-    text: summary
-      ? `Question ${status} for request ${requestId}: ${summary}`
-      : `Question ${status} for request ${requestId}`,
-    status,
-    raw: { requestId, action: response.action, ...(response.action === "accept" ? { content: response.content } : {}) },
-  });
-}
-
-function describePermissionToolCall(params: acp.RequestPermissionRequest) {
-  const toolCall = asRecord(params.toolCall);
-  if (!toolCall) {
-    return null;
-  }
-  const title = asNonEmptyString(toolCall.title);
-  const kind = asNonEmptyString(toolCall.kind);
-  if (title && kind) {
-    return `${kind}: ${title}`;
-  }
-  return title ?? kind;
-}
-
-function buildPermissionRequestText(params: acp.RequestPermissionRequest) {
-  const target = describePermissionToolCall(params);
-  const optionsText = params.options.length > 0
-    ? `: ${params.options.map((option) => `${option.kind} ${option.name}`).join(", ")}`
-    : "";
-  return target
-    ? `Permission requested for ${target}${optionsText}`
-    : `Permission requested${optionsText}`;
-}
-
-// A `switch_mode` permission asks to change the agent's operating mode (the
-// plan-mode → code-mode "Ready to code?" handoff). This is a deliberate user
-// gate and must never be auto-approved, regardless of session permission mode.
-function isModeSwitchPermission(params: acp.RequestPermissionRequest) {
-  const toolCall = asRecord(params.toolCall);
-  return asNonEmptyString(toolCall?.kind) === "switch_mode";
-}
-
-function _findPermissionOptionId(params: acp.RequestPermissionRequest, mode: "approve" | "deny", explicitOptionId?: string) {
-  if (explicitOptionId && params.options.some((option) => option.optionId === explicitOptionId)) {
-    return explicitOptionId;
-  }
-  const preferred = mode === "approve"
-    ? params.options.find((option) => option.kind === "allow_always" || option.optionId === "allow_always" || option.optionId === "proceed_always")
-      ?? params.options.find((option) => option.kind.startsWith("allow"))
-    : params.options.find((option) => option.kind.startsWith("reject"));
-  return preferred?.optionId ?? params.options[0]?.optionId ?? null;
-}
-
-function findAutoApprovePermissionOptionId(params: acp.RequestPermissionRequest) {
-  const preferred =
-    params.options.find((option) => option.kind === "allow_always" || option.optionId === "allow_always" || option.optionId === "proceed_always")
-    ?? params.options.find((option) => option.kind.startsWith("allow"));
-  return preferred?.optionId ?? null;
-}
-
-function appendPermissionOutcomeEntry(
-  record: AgentRecord,
-  requestId: number,
-  params: acp.RequestPermissionRequest,
-  decision: "approve" | "deny" | "cancel",
-  optionId: string | null,
-) {
-  if (decision === "cancel") {
-    appendOutputEntry(record, {
-      type: "permission",
-      text: `Permission cancelled for request ${requestId}`,
-      status: "cancelled",
-      raw: { requestId, decision },
-    });
-    return;
-  }
-
-  const option = optionId
-    ? params.options.find((candidate) => candidate.optionId === optionId)
-    : null;
-  const status = optionId
-    ? decision === "approve" ? "approved" : "denied"
-    : "cancelled";
-  const optionLabel = option
-    ? `${option.kind} ${option.name}`.trim()
-    : optionId;
-  appendOutputEntry(record, {
-    type: "permission",
-    text: optionLabel
-      ? `Permission ${status} for request ${requestId}: ${optionLabel}`
-      : `Permission ${status} for request ${requestId}`,
-    status,
-    raw: {
-      requestId,
-      decision,
-      optionId: optionId ?? null,
-      option: option ?? null,
-      toolCall: params.toolCall,
-    },
-  });
 }
 
 export class AgentRuntimeManager {
@@ -2116,6 +1764,19 @@ export class AgentRuntimeManager {
       if (planStartupContext) abortWorkerPlanStartup(planStartupContext);
     } finally {
       client.setWorkerPlanStartupContext(null);
+    }
+    try {
+      await initializeWorkerGoalSession(name, sessionId);
+    } catch (error) {
+      const message = redactGoalErrorMessage(error);
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "goal.reconciliation.failed",
+        message: `Failed to initialize goal control for the ACP session: ${message}`,
+        surface: "log",
+        workerId: name,
+        cause: error instanceof Error ? { name: error.name, message } : null,
+      });
     }
 
     child.on("exit", (code, signal) => {

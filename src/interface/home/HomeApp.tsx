@@ -34,6 +34,7 @@ import {
 } from "./direct-control-activity";
 import { cancelInactiveAutoResumeTimers, isPermanentAutoResumeFailure, shouldFireAutoResumeTimer } from "./auto-resume-selection";
 import { EventStreamStateManager } from "./EventStreamStateManager";
+import { goalPlanManager } from "./GoalPlanManager";
 import { sentConversationMessagesManager } from "./SentConversationMessagesManager";
 import {
   homeUiSetters,
@@ -352,6 +353,14 @@ export function HomeApp({
     () => stateManager.getSnapshot().snapshotChecksum ?? null,
     [stateManager],
   );
+  const applyGoalEvent = useCallback(
+    (snapshot: import("@/shared/goal-plan").GoalSnapshot, eventKey: string | null) => {
+      const applied = stateManager.applyGoalEvent(snapshot, eventKey);
+      if (applied) goalPlanManager.observeServerRevision(snapshot.runId, snapshot.revision, snapshot.goalId);
+      return applied;
+    },
+    [stateManager],
+  );
   useEffect(() => {
     sessionStateManager.ingestSnapshot(state, selectedRunId);
   }, [selectedRunId, state]);
@@ -452,7 +461,13 @@ export function HomeApp({
     next = sentMerge.state;
     sentConversationMessagesManager.acknowledge(sentMerge.settledMessageIds);
     const pendingDeleted = pendingDeletedRunIdsRef.current;
-    const reconcile = (s: EventStreamState) => { busyMessageQueueManager.setQueuedMessages(s.queuedMessages || []); return s; };
+    const reconcile = (s: EventStreamState) => {
+      const snapshotRunId = s.snapshotRunId?.trim();
+      if (snapshotRunId) {
+        busyMessageQueueManager.setQueuedMessages(s.queuedMessages || [], { runId: snapshotRunId });
+      }
+      return s;
+    };
     if (pendingDeleted.size === 0) return reconcile(next);
     next = filterOptimisticallyDeletedRuns(next, pendingDeleted);
     const serverRunIds = new Set((incoming.runs || []).map((r) => r.id));
@@ -723,6 +738,7 @@ export function HomeApp({
     setHasReceivedInitialEventStreamPayload,
     setState,
     applyServerEventStreamState,
+    applyGoalEvent,
     setRuntimeErrors,
     routeReady,
     setRouteReady,
@@ -1270,6 +1286,9 @@ export function HomeApp({
       onSendConversationMessage={handleComposerSendConversationMessage}
       onRunCommand={handleComposerRunCommand}
       onStopConversation={handleStopConversation}
+      planSurfaceOwner={vm.planSurfaceOwner}
+      goal={selectedRunId ? state.goalsByRunId?.[selectedRunId] ?? null : null}
+      onGoalSnapshot={applyGoalEvent}
     />
   );
 
@@ -1473,6 +1492,7 @@ export function HomeApp({
           toggleDirectMessageExpansion={actions.toggleDirectMessageExpansion}
           primaryConversationAgent={vm.primaryConversationAgent}
           primaryConversationWorkerId={vm.primaryConversationAgent?.name ?? null}
+          planSurfaceOwner={vm.planSurfaceOwner}
           initialWorkerEntries={state.workerEntries}
           unifiedWorkerStreamEnabled={bootstrap?.features?.unifiedWorkerStream ?? false}
           isHydratingConversations={isHydratingConversations}

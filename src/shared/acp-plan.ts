@@ -4,6 +4,7 @@ export const MAX_ACP_PLAN_ITEMS = 100;
 export const MAX_ACP_PLAN_ITEM_CODE_POINTS = 500;
 export const MAX_ACP_PLAN_BYTES = 64 * 1024;
 export const MAX_ACP_PLAN_REJECTION_PREVIEW_BYTES = 4 * 1024;
+export const MAX_ACP_PLAN_SESSION_ID_BYTES = 1024;
 
 export type AcpPlanItemStatus = "pending" | "in_progress" | "completed";
 export type AcpPlanPriority = "high" | "medium" | "low";
@@ -49,6 +50,15 @@ export type WorkerPlanScope = {
 export type WorkerPlanReadResponse = {
   plan: WorkerPlanSnapshot | null;
   latestSeq: number;
+};
+
+export type PlanSurfaceOwner = {
+  runId: string | null;
+  workerId: string | null;
+  ready: boolean;
+  ownsWidget: boolean;
+  suppressAcceptedPlanRows: boolean;
+  plan: WorkerPlanSnapshot | null;
 };
 
 export type AcpPlanValidationFailure = {
@@ -158,6 +168,9 @@ export function reduceWorkerPlanEntries(
   }
 
   const accepted = ordered.reduce<WorkerEntry | null>((latest, entry) => {
+    // Legacy plan-shaped rows are diagnostic history only. Projection is an
+    // explicit ingress decision; replay must never infer acceptance from a
+    // `type: "plan"` row or from the shape of its raw payload.
     if (
       entry.planProjection !== "accepted_core"
       || entry.acpSessionId !== boundary.acpSessionId

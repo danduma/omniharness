@@ -21,6 +21,7 @@ import {
   handleEventsLogRequest,
   handleEventsRequest,
   handleGitRequest,
+  handleGoalRequest,
   handleLlmModelsRequest,
   handleMessagesRequest,
   handleNotificationsRequest,
@@ -82,6 +83,7 @@ export const conversationsRoute = testRoute(handleConversationsRequest);
 export const eventsLogRoute = testRoute(handleEventsLogRequest);
 export const eventsRoute = testRoute(handleEventsRequest);
 export const gitRoute = testRoute(handleGitRequest);
+export const goalRoute = testRoute(handleGoalRequest);
 export const llmModelsRoute = testRoute(handleLlmModelsRequest);
 export const notificationsDeleteRoute = testRoute(handleNotificationsRequest);
 export const notificationsGetRoute = testRoute(handleNotificationsRequest);
@@ -116,6 +118,7 @@ export const updateProjectMemoryRoute = testRoute(handleProjectMemoryRequest);
 export const workerEntriesRoute = testRoute(handleWorkerEntriesRequest);
 
 export const eventsRouteModule = { GET: eventsRoute };
+export const goalRouteModule = { GET: goalRoute, PUT: goalRoute, POST: goalRoute };
 export const conversationsRouteModule = { POST: conversationsRoute };
 export const conversationMessagesRouteModule = { POST: conversationMessagesRoute };
 export const planningReviewRouteModule = { POST: planningReviewRoute };
