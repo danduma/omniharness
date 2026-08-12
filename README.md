@@ -131,6 +131,9 @@ auto-login, install the boot-time daemon:
 It installs as a `LaunchDaemon` by default. If you explicitly want the older
 login-session `LaunchAgent` behavior, set
 `OMNIHARNESS_RESTART_LAUNCHD_SCOPE=user` before running the installer.
+The installed job also restores the last runner mode (`dev` or `prod`) after a
+reboot. Using Stop in the restart controller removes that saved intent, so an
+intentionally stopped runner stays stopped after later controller restarts.
 
 The script API creates `.omniharness/remote-restart-token` on first run and
 accepts bearer auth:

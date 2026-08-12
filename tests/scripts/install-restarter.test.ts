@@ -94,6 +94,8 @@ esac
     expect(plist).toContain("<string>fakeuser</string>");
     expect(plist).toContain(`<string>${tempDir}</string>`);
     expect(plist).toContain("restart:control");
+    expect(plist).toContain("<key>OMNIHARNESS_REMOTE_RESTART_RESTORE_ON_STARTUP</key>");
+    expect(plist).toContain("<string>1</string>");
     expect(fs.existsSync(path.join(launchAgentDir, "com.omniharness.restart-control.plist"))).toBe(false);
     expect(fs.readFileSync(launchctlLog, "utf8")).toContain("bootstrap system");
     expect(fs.readFileSync(launchctlLog, "utf8")).toContain("print system/com.omniharness.restart-control");

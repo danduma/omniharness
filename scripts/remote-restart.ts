@@ -891,4 +891,13 @@ server.listen(config.port, config.host, () => {
   process.stdout.write(`[restart-control] Token file: ${tokenFile}\n`);
   process.stdout.write(`[restart-control] Web password: ${process.env.OMNIHARNESS_AUTH_PASSWORD_HASH ? "from OMNIHARNESS_AUTH_PASSWORD_HASH" : process.env.OMNIHARNESS_AUTH_PASSWORD ? "from OMNIHARNESS_AUTH_PASSWORD" : process.env.OMNIHARNESS_REMOTE_RESTART_PASSWORD ? "from OMNIHARNESS_REMOTE_RESTART_PASSWORD" : "token file contents"}\n`);
   process.stdout.write(`[restart-control] Restart with: curl -X POST http://HOST:${config.port}/restart -H "Authorization: Bearer $(cat ${tokenFile})"\n`);
+  if (config.restoreOnStartup) {
+    activeRestart = controller.restorePreviousOnStartup()
+      .catch((error) => {
+        console.error("[restart-control] startup restore failed:", error);
+      })
+      .finally(() => {
+        activeRestart = null;
+      });
+  }
 });
