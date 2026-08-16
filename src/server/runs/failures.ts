@@ -8,6 +8,7 @@ import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { emitNamedEvent, type ErrorSurface, type SurfacedErrorCode } from "@/server/events/named-events";
 import { userFacingProviderSessionErrorMessage } from "@/server/workers/session-recovery";
+import { stripProviderFailureMarkers } from "@/lib/provider-account-failures";
 
 export { formatErrorMessage };
 
@@ -29,7 +30,9 @@ export async function persistRunFailure(
   const rawErrorMessage = formatErrorMessage(error);
   const errorMessage = userFacingProviderSessionErrorMessage(rawErrorMessage);
   const now = new Date();
-  const content = `Run failed: ${errorMessage}`;
+  // `lastError` keeps the internal verdict markers because the recovery gates
+  // read them; the transcript row is read by a human, so it must not.
+  const content = `Run failed: ${stripProviderFailureMarkers(errorMessage) || errorMessage}`;
   const currentRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
   if (!currentRun || (isTerminalRunStatus(currentRun.status) && normalizeRunStatus(currentRun.status) !== "failed")) {
     return;

@@ -837,5 +837,15 @@
   "goal.plan.status.in_progress": "In progress",
   "goal.plan.status.blocked": "Blocked",
   "goal.plan.status.completed": "Completed",
-  "goal.plan.status.failed": "Failed"
+  "goal.plan.status.failed": "Failed",
+  "conversation.failure.reauth.action": "Sign in again",
+  "conversation.failure.reauth.message": "The provider rejected the credentials for {account} twice, so sending the message again will not reconnect.",
+  "conversation.failure.reauth.accountFallback": "this account",
+  "conversation.failure.reauth.workerFallback": "the agent",
+  "conversation.failure.reauth.hint.claude": "Run `claude` in a terminal and sign in with /login, then send your message again.",
+  "conversation.failure.reauth.hint.codex": "Run `codex login` in a terminal, then send your message again.",
+  "conversation.failure.reauth.hint.cli": "Sign in to {worker} in a terminal, then send your message again.",
+  "conversation.failure.reauth.hint.apiKey": "Update the API key for {account} in Settings → Agents, then send your message again.",
+  "conversation.failure.reauth.hint.credentialCommand": "The credential command for {account} returned a token the provider rejected. Fix the command, then send your message again.",
+  "conversation.failure.reauth.hint.credentialProfile": "The credential profile for {account} holds a token the provider rejected. Refresh the profile, then send your message again."
 }

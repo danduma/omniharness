@@ -837,5 +837,15 @@
   "goal.plan.status.in_progress": "In Bearbeitung",
   "goal.plan.status.blocked": "Blockiert",
   "goal.plan.status.completed": "Abgeschlossen",
-  "goal.plan.status.failed": "Fehlgeschlagen"
+  "goal.plan.status.failed": "Fehlgeschlagen",
+  "conversation.failure.reauth.action": "Erneut anmelden",
+  "conversation.failure.reauth.message": "Der Anbieter hat die Zugangsdaten von {account} zweimal abgelehnt; das Senden der Nachricht stellt die Verbindung nicht wieder her.",
+  "conversation.failure.reauth.accountFallback": "dieses Konto",
+  "conversation.failure.reauth.workerFallback": "der Agent",
+  "conversation.failure.reauth.hint.claude": "Führe `claude` in einem Terminal aus und melde dich mit /login an, dann sende deine Nachricht erneut.",
+  "conversation.failure.reauth.hint.codex": "Führe `codex login` in einem Terminal aus und sende deine Nachricht dann erneut.",
+  "conversation.failure.reauth.hint.cli": "Melde dich in einem Terminal bei {worker} an und sende deine Nachricht dann erneut.",
+  "conversation.failure.reauth.hint.apiKey": "Aktualisiere den API-Schlüssel für {account} unter Einstellungen → Agenten und sende deine Nachricht dann erneut.",
+  "conversation.failure.reauth.hint.credentialCommand": "Der Anmeldedaten-Befehl für {account} hat ein Token geliefert, das der Anbieter abgelehnt hat. Korrigiere den Befehl und sende deine Nachricht erneut.",
+  "conversation.failure.reauth.hint.credentialProfile": "Das Anmeldedaten-Profil für {account} enthält ein Token, das der Anbieter abgelehnt hat. Aktualisiere das Profil und sende deine Nachricht erneut."
 }

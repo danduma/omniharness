@@ -837,5 +837,15 @@
   "goal.plan.status.in_progress": "進行中",
   "goal.plan.status.blocked": "ブロック中",
   "goal.plan.status.completed": "完了",
-  "goal.plan.status.failed": "失敗"
+  "goal.plan.status.failed": "失敗",
+  "conversation.failure.reauth.action": "再度サインイン",
+  "conversation.failure.reauth.message": "プロバイダーが {account} の認証情報を 2 回とも拒否したため、メッセージを送り直しても再接続できません。",
+  "conversation.failure.reauth.accountFallback": "このアカウント",
+  "conversation.failure.reauth.workerFallback": "エージェント",
+  "conversation.failure.reauth.hint.claude": "ターミナルで `claude` を実行し /login でサインインしてから、メッセージを送り直してください。",
+  "conversation.failure.reauth.hint.codex": "ターミナルで `codex login` を実行してから、メッセージを送り直してください。",
+  "conversation.failure.reauth.hint.cli": "ターミナルで {worker} にサインインしてから、メッセージを送り直してください。",
+  "conversation.failure.reauth.hint.apiKey": "設定 → エージェント で {account} の API キーを更新してから、メッセージを送り直してください。",
+  "conversation.failure.reauth.hint.credentialCommand": "{account} の認証情報コマンドが返したトークンはプロバイダーに拒否されました。コマンドを修正してから、メッセージを送り直してください。",
+  "conversation.failure.reauth.hint.credentialProfile": "{account} の認証情報プロファイルのトークンはプロバイダーに拒否されました。プロファイルを更新してから、メッセージを送り直してください。"
 }

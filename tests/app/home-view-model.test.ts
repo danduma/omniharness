@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { EventStreamState, ExecutionEventRecord, RunRecord } from "@/interface/home/types";
 
+// The hook runs outside React here, so every hook it touches must exist on the
+// mock or the module fails to bind. `useEffect` is a no-op: this suite asserts
+// derived view-model values, not subscriptions.
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
+  useEffect: () => {},
   useMemo: (factory: () => unknown) => factory(),
   useSyncExternalStore: (_subscribe: unknown, getSnapshot: () => unknown) => getSnapshot(),
 }));
@@ -238,6 +242,61 @@ describe("useHomeViewModel", () => {
       action: "Run failed",
       message: 'Spawn failed: failed to start gemini agent via gemini: {"code":-32000,"message":"Gemini API key is missing or not configured."}',
     });
+  });
+
+  it("tells the user to sign in again when the credential was proven dead", () => {
+    // The reported bug: a revoked OAuth token produced "Run failed: 401 …"
+    // plus "Send a message to reconnect; the worker will respawn
+    // automatically." Every resend respawned a worker against the same dead
+    // token. The server proved the credential dead, so the notice now names
+    // the account and the fix.
+    const state = createState({
+      accounts: [{
+        id: "claude-sub-1",
+        cliType: "claude",
+        provider: "anthropic",
+        type: "subscription",
+        label: "claude-sub-1",
+        authMode: "local_session",
+        enabled: true,
+        priority: 0,
+        capacity: 50,
+        resetSchedule: null,
+        status: null,
+        statusCheckedAt: null,
+        metadata: null,
+        createdAt: "2026-08-16T00:00:00.000Z",
+        updatedAt: null,
+      }],
+      runs: [createRun({
+        mode: "direct",
+        status: "failed",
+        failedAt: "2026-08-16T11:00:23.000Z",
+        lastError: "Ask failed: Internal error: Failed to authenticate. API Error: 401 OAuth access token has been revoked. [credential_verified_dead:claude-sub-1]",
+        preferredWorkerType: "claude",
+      })],
+      plans: [{ id: "plan-1", path: "/workspace/project" }],
+      messages: [{
+        id: "message-1",
+        runId: "run-1",
+        role: "user",
+        kind: "checkpoint",
+        content: "Do the thing",
+        createdAt: "2026-08-16T10:00:00.000Z",
+      }],
+    });
+
+    const viewModel = useRenderViewModel(state);
+
+    expect(viewModel.conversationFailure).toMatchObject({
+      tone: "error",
+      action: "Sign in again",
+      suggestion: "Run `claude` in a terminal and sign in with /login, then send your message again.",
+    });
+    expect(viewModel.conversationFailure?.message).toContain("claude-sub-1");
+    // Neither the internal marker nor the spawn-readiness line reaches the user.
+    expect(JSON.stringify(viewModel.conversationFailure)).not.toContain("credential_verified");
+    expect(JSON.stringify(viewModel.conversationFailure)).not.toContain("Ready to spawn");
   });
 
   it("does not show a stale failed-run notice after newer recovery success", () => {

@@ -837,5 +837,15 @@
   "goal.plan.status.in_progress": "In corso",
   "goal.plan.status.blocked": "Bloccato",
   "goal.plan.status.completed": "Completato",
-  "goal.plan.status.failed": "Non riuscito"
+  "goal.plan.status.failed": "Non riuscito",
+  "conversation.failure.reauth.action": "Accedi di nuovo",
+  "conversation.failure.reauth.message": "Il provider ha rifiutato due volte le credenziali di {account}, quindi inviare di nuovo il messaggio non ristabilirà la connessione.",
+  "conversation.failure.reauth.accountFallback": "questo account",
+  "conversation.failure.reauth.workerFallback": "l'agente",
+  "conversation.failure.reauth.hint.claude": "Esegui `claude` in un terminale e accedi con /login, poi invia di nuovo il messaggio.",
+  "conversation.failure.reauth.hint.codex": "Esegui `codex login` in un terminale, poi invia di nuovo il messaggio.",
+  "conversation.failure.reauth.hint.cli": "Accedi a {worker} da un terminale, poi invia di nuovo il messaggio.",
+  "conversation.failure.reauth.hint.apiKey": "Aggiorna la chiave API di {account} in Impostazioni → Agenti, poi invia di nuovo il messaggio.",
+  "conversation.failure.reauth.hint.credentialCommand": "Il comando delle credenziali di {account} ha restituito un token rifiutato dal provider. Correggi il comando, poi invia di nuovo il messaggio.",
+  "conversation.failure.reauth.hint.credentialProfile": "Il profilo delle credenziali di {account} contiene un token rifiutato dal provider. Aggiorna il profilo, poi invia di nuovo il messaggio."
 }

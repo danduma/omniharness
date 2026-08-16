@@ -18,6 +18,16 @@
 
 export const CREDENTIAL_VERIFIED_LIVE_MARKER = "[credential_verified_live]";
 
+// The mirror image: the probe was rejected too, so the credential really is
+// dead. Recovery already treats unmarked auth wording as permanent, so this
+// marker changes no gate — it exists so the UI can stop telling the user to
+// "send a message to reconnect" (which can only fail again) and say
+// "re-authenticate this account" instead. The optional payload is the account
+// id the worker was using, so the notice can name it.
+export const CREDENTIAL_VERIFIED_DEAD_MARKER = "[credential_verified_dead]";
+
+const CREDENTIAL_VERIFIED_DEAD_PATTERN = /\[credential_verified_dead(?::([^\]\s]+))?\]/;
+
 // Auth-shaped wording. Matching this means "the provider blamed the
 // credential", NOT "the credential is dead" — callers must verify before
 // treating it as permanent.
@@ -50,9 +60,44 @@ export function annotateVerifiedLiveCredential(message: string | null | undefine
   return text.length > 0 ? `${text} ${CREDENTIAL_VERIFIED_LIVE_MARKER}` : CREDENTIAL_VERIFIED_LIVE_MARKER;
 }
 
+export function hasVerifiedDeadCredentialMarker(message: string | null | undefined) {
+  return CREDENTIAL_VERIFIED_DEAD_PATTERN.test(message ?? "");
+}
+
+/**
+ * Which account was proven dead, when the marker carried an id. Null both when
+ * the failure is not marked and when the worker had no account allocated.
+ */
+export function readVerifiedDeadCredentialAccountId(message: string | null | undefined) {
+  return CREDENTIAL_VERIFIED_DEAD_PATTERN.exec(message ?? "")?.[1] ?? null;
+}
+
+/**
+ * Stamp a failure whose credential was probed and rejected a second time. The
+ * provider text is preserved verbatim; the marker only tells the UI that
+ * re-authentication — not another send — is what fixes this.
+ */
+export function annotateVerifiedDeadCredential(message: string | null | undefined, accountId?: string | null) {
+  const text = (message ?? "").trim();
+  if (hasVerifiedDeadCredentialMarker(text)) {
+    return text;
+  }
+  // An id with a bracket or whitespace in it would not survive the round trip,
+  // so drop it and keep the generic marker rather than emit an unparseable one.
+  const id = (accountId ?? "").trim();
+  const marker = id && /^[^\][\s]+$/.test(id)
+    ? `[credential_verified_dead:${id}]`
+    : CREDENTIAL_VERIFIED_DEAD_MARKER;
+  return text.length > 0 ? `${text} ${marker}` : marker;
+}
+
 /** Strip internal markers before showing a failure to a human. */
 export function stripProviderFailureMarkers(message: string | null | undefined) {
-  return (message ?? "").split(CREDENTIAL_VERIFIED_LIVE_MARKER).join("").replace(/\s{2,}/g, " ").trim();
+  return (message ?? "")
+    .split(CREDENTIAL_VERIFIED_LIVE_MARKER).join("")
+    .replace(CREDENTIAL_VERIFIED_DEAD_PATTERN, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 /** Does the provider's wording blame the credential? Says nothing about permanence. */
