@@ -425,6 +425,7 @@ export type SupervisorStopReason =
 
 export type SupervisorEvent =
   | { kind: "supervisor.stopped"; runId: string; reason: SupervisorStopReason }
+  | { kind: "supervisor.watchdog_sweep_failed"; reason: string }
   | {
       kind: "supervisor.wake_lease_acquired";
       runId: string;

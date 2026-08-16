@@ -10,6 +10,7 @@ import { compactStaleArtifactStreams } from "@/server/artifacts/compaction";
 import { reapStuckDirectWorkers } from "@/server/workers/stuck-worker-reaper";
 import { syncConversationSessionsFromBridge } from "@/server/conversations/sync";
 import { resumeElapsedQuotaWaits } from "@/server/quota/worker-resume";
+import { emitNamedEvent } from "@/server/events/named-events";
 
 const WATCHDOG_INTERVAL_MS = 15_000;
 
@@ -115,12 +116,40 @@ export async function syncRunningSupervision() {
   }
 }
 
+export function createSupervisorWatchdogSweepRunner(sweep: () => Promise<void>) {
+  let inFlight: Promise<void> | null = null;
+
+  return () => {
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const sweepPromise = Promise.resolve()
+      .then(sweep)
+      .catch((error) => {
+        const reason = error instanceof Error ? error.message : String(error);
+        emitNamedEvent({ kind: "supervisor.watchdog_sweep_failed", reason });
+        process.stderr.write(`[supervisor-watchdog] sweep failed: ${reason}\n`);
+      })
+      .finally(() => {
+        if (inFlight === sweepPromise) {
+          inFlight = null;
+        }
+      });
+
+    inFlight = sweepPromise;
+    return sweepPromise;
+  };
+}
+
+const runSupervisorWatchdogSweep = createSupervisorWatchdogSweepRunner(syncRunningSupervision);
+
 export async function ensureSupervisorRuntimeStarted() {
   if (!startupPromise) {
     startupPromise = syncRunningSupervision().then(() => {
       if (!watchdogInterval) {
         watchdogInterval = setInterval(() => {
-          void syncRunningSupervision();
+          void runSupervisorWatchdogSweep();
         }, WATCHDOG_INTERVAL_MS);
       }
     }).catch((error) => {
