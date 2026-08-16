@@ -144,11 +144,11 @@ export function InlineElicitation({
       aria-label={t("worker.elicitation.title")}
     >
       {/* Eyebrow: quietest thing in the card. The question below is the title. */}
-      <div className="flex items-center gap-1.5 text-[0.6875rem] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
         <MessageCircleQuestion className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" aria-hidden="true" />
         {t("worker.elicitation.title")}
       </div>
-      <p className="mt-1.5 text-[0.9375rem] font-semibold leading-6 text-foreground">
+      <p className="mt-1.5 text-base font-semibold leading-6 text-foreground">
         {elicitation.message || t("worker.elicitation.defaultQuestion")}
       </p>
       {safeUrl ? (
@@ -196,7 +196,7 @@ export function InlineElicitation({
                   document.getElementById(`${prefix}${target.name}:tab`)?.focus();
                 }}
                 className={cn(
-                  "-mb-px border-b-2 px-2.5 pb-2 pt-1 text-[0.8125rem] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50",
+                  "-mb-px border-b-2 px-2.5 pb-2 pt-1 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50",
                   selected
                     ? "border-sky-500 text-foreground dark:border-sky-400"
                     : "border-transparent text-muted-foreground hover:border-border hover:text-foreground",
@@ -220,7 +220,7 @@ export function InlineElicitation({
           const otherKey = perQuestionOther && acceptsOtherText(field) ? otherDraftKey(prefix, field.name) : null;
           return (
             <fieldset key={field.name} className="space-y-1.5">
-              <legend className={cn("text-[0.8125rem] font-medium text-foreground", isTabbedQuestion && "sr-only")}>{field.label}</legend>
+              <legend className={cn("text-sm font-medium text-foreground", isTabbedQuestion && "sr-only")}>{field.label}</legend>
               {field.description ? (
                 <p className="text-xs leading-5 text-muted-foreground">{field.description}</p>
               ) : null}
@@ -233,7 +233,7 @@ export function InlineElicitation({
                     <label
                       key={option.value}
                       className={cn(
-                        "flex cursor-pointer items-start gap-2.5 rounded-lg px-1.5 py-1.5 text-[0.8125rem] leading-5 transition-colors",
+                        "flex cursor-pointer items-start gap-2.5 rounded-lg px-1.5 py-1.5 text-sm leading-5 transition-colors",
                         value === option.value
                           ? "bg-sky-500/10 text-foreground dark:bg-sky-400/10"
                           : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
@@ -262,7 +262,7 @@ export function InlineElicitation({
                       <label
                         key={option.value}
                         className={cn(
-                          "flex cursor-pointer items-start gap-2.5 rounded-lg px-1.5 py-1.5 text-[0.8125rem] leading-5 transition-colors",
+                          "flex cursor-pointer items-start gap-2.5 rounded-lg px-1.5 py-1.5 text-sm leading-5 transition-colors",
                           checked
                             ? "bg-sky-500/10 text-foreground dark:bg-sky-400/10"
                             : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
@@ -294,7 +294,7 @@ export function InlineElicitation({
                   disabled={disabled}
                   placeholder={t("worker.elicitation.inputPlaceholder")}
                   onChange={(event) => workerCardManager.setElicitationDraft(draftKey, event.target.value)}
-                  className="min-h-20 resize-y text-[0.8125rem]"
+                  className="min-h-20 resize-y text-sm"
                 />
               ) : (
                 <Input
@@ -303,14 +303,14 @@ export function InlineElicitation({
                   disabled={disabled}
                   placeholder={t("worker.elicitation.inputPlaceholder")}
                   onChange={(event) => workerCardManager.setElicitationDraft(draftKey, event.target.value)}
-                  className="text-[0.8125rem]"
+                  className="text-sm"
                 />
               )}
               {otherKey && customAnswerField ? (
                 <div className="space-y-1.5 pt-1">
                   <label
                     htmlFor={otherKey}
-                    className="block text-[0.8125rem] font-medium text-foreground"
+                    className="block text-sm font-medium text-foreground"
                   >
                     {customAnswerField.label}
                   </label>
@@ -323,7 +323,7 @@ export function InlineElicitation({
                     disabled={disabled}
                     placeholder={t("worker.elicitation.inputPlaceholder")}
                     onChange={(event) => workerCardManager.setElicitationDraft(otherKey, event.target.value)}
-                    className="min-h-20 resize-y text-[0.8125rem]"
+                    className="min-h-20 resize-y text-sm"
                   />
                 </div>
               ) : null}
@@ -334,7 +334,7 @@ export function InlineElicitation({
       <div className="mt-4 flex flex-wrap items-center justify-end gap-1.5">
         <button
           type="button"
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[0.8125rem] font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           disabled={disabled || !onRespond}
           onClick={() => { void submit("decline"); }}
         >
@@ -343,7 +343,7 @@ export function InlineElicitation({
         </button>
         <button
           type="button"
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[0.8125rem] font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           disabled={disabled || !onRespond || missingRequired || invalid}
           onClick={() => { void submit("accept"); }}
         >
