@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const repositoryRoot = path.resolve(__dirname, "../..");
 const buildRoot = fs.mkdtempSync(path.join(os.tmpdir(), "omniharness-pwa-build-"));
+const WIDTH_COMPARISON_RUN_ID = "11111111-1111-4111-8111-111111111111";
 const contentTypes: Record<string, string> = {
   ".css": "text/css",
   ".html": "text/html",
@@ -18,11 +19,20 @@ const contentTypes: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 
-function emptyBootstrap() {
+function emptyBootstrap(selectedRunId: string | null = null) {
   const initialEventState = {
     messages: [],
     plans: [],
-    runs: [],
+    runs: selectedRunId ? [{
+      id: selectedRunId,
+      planId: "pwa-width-plan",
+      mode: "direct",
+      status: "done",
+      createdAt: "2026-08-12T10:00:00.000Z",
+      updatedAt: "2026-08-12T10:01:00.000Z",
+      projectPath: null,
+      title: "Width comparison run",
+    }] : [],
     accounts: [],
     agents: [],
     workers: [],
@@ -34,7 +44,7 @@ function emptyBootstrap() {
   return {
     id: "pwa-browser-test",
     route: {
-      selectedRunId: null,
+      selectedRunId,
       draftProjectPath: null,
       pairTokenFromUrl: null,
     },
@@ -104,8 +114,11 @@ describe.sequential("PWA browser behavior", () => {
     appServer = http.createServer((request, response) => {
       const requestUrl = new URL(request.url ?? "/", "http://localhost");
       if (requestUrl.pathname === "/api/runtime/bootstrap") {
+        const selectedRunId = request.headers.referer?.includes(`/session/${WIDTH_COMPARISON_RUN_ID}`)
+          ? WIDTH_COMPARISON_RUN_ID
+          : null;
         response.setHeader("content-type", "application/json");
-        response.end(JSON.stringify(emptyBootstrap()));
+        response.end(JSON.stringify(emptyBootstrap(selectedRunId)));
         return;
       }
       if (requestUrl.pathname === "/api/probe") {
@@ -210,6 +223,79 @@ describe.sequential("PWA browser behavior", () => {
     await context.setOffline(false);
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect.poll(async () => page.locator("#root").innerHTML()).not.toBe("");
+  }, 60_000);
+
+  test("mobile new-session composer preserves controlled scroll and uses the responsive layout", async () => {
+    await page.setViewportSize({ width: 390, height: 800 });
+    await page.goto(appOrigin, { waitUntil: "domcontentloaded" });
+
+    const composer = page.locator('[data-composer-input="true"]');
+    await expect.poll(() => composer.isVisible()).toBe(true);
+
+    const mobileStyles = await composer.evaluate((textarea) => {
+      const style = window.getComputedStyle(textarea);
+      const composerShell = textarea.closest('[data-composer-dropzone="true"]');
+      return {
+        maxHeight: style.maxHeight,
+        overflowY: style.overflowY,
+        overscrollBehaviorY: style.overscrollBehaviorY,
+        shellWidth: composerShell?.getBoundingClientRect().width,
+        touchAction: style.touchAction,
+      };
+    });
+    expect(mobileStyles).toMatchObject({
+      maxHeight: "400px",
+      overflowY: "auto",
+      overscrollBehaviorY: "contain",
+      shellWidth: 378,
+      touchAction: "pan-y",
+    });
+
+    const longDraft = Array.from({ length: 40 }, (_, index) => `dictated line ${index}`).join("\n");
+    await composer.evaluate((textarea, value) => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(textarea, value);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    }, longDraft);
+    await expect.poll(() => composer.inputValue()).toBe(longDraft);
+    await expect.poll(() => composer.evaluate((textarea) => textarea.clientHeight)).toBe(400);
+
+    const expectedScrollTop = await composer.evaluate((textarea) => {
+      const nextScrollTop = Math.floor((textarea.scrollHeight - textarea.clientHeight) * 0.6);
+      textarea.scrollTop = nextScrollTop;
+      return nextScrollTop;
+    });
+    expect(expectedScrollTop).toBeGreaterThan(0);
+
+    const correctedDraft = longDraft.replace("dictated line 2", "corrected dictated line 2");
+    await composer.evaluate((textarea, { value, scrollTop }) => {
+      if (!(textarea instanceof HTMLTextAreaElement)) {
+        throw new Error("Composer input is not a textarea.");
+      }
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(textarea, value);
+      textarea.setSelectionRange(value.length, value.length);
+      textarea.scrollTop = scrollTop;
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    }, { value: correctedDraft, scrollTop: expectedScrollTop });
+    await expect.poll(() => composer.inputValue()).toBe(correctedDraft);
+    await expect.poll(() => composer.evaluate((textarea) => textarea.scrollTop)).toBe(expectedScrollTop);
+
+    await page.setViewportSize({ width: 800, height: 800 });
+    await expect.poll(() => composer.evaluate((textarea) => window.getComputedStyle(textarea).maxHeight)).toBe("120px");
+
+    await page.setViewportSize({ width: 390, height: 800 });
+    await page.goto(`${appOrigin}/session/${WIDTH_COMPARISON_RUN_ID}`, { waitUntil: "domcontentloaded" });
+    const ongoingComposer = page.locator('[data-composer-input="true"]');
+    await expect.poll(() => ongoingComposer.isVisible()).toBe(true);
+    const ongoingStyles = await ongoingComposer.evaluate((textarea) => ({
+      maxHeight: window.getComputedStyle(textarea).maxHeight,
+      shellWidth: textarea.closest('[data-composer-dropzone="true"]')?.getBoundingClientRect().width,
+    }));
+    expect(ongoingStyles).toEqual({
+      maxHeight: "100px",
+      shellWidth: mobileStyles.shellWidth,
+    });
   }, 60_000);
 
   test("a replacement worker activates and removes only its own old cache", async () => {

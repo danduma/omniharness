@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from "react";
+import { memo, useLayoutEffect, useRef } from "react";
 import type React from "react";
 import { ArrowUp, FileText, LoaderCircle, Plus, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { isManualStopCommand, resolveBusyMessageActionForSubmitAction, type Busy
 import { getComposerSubmitShortcutLabel, isAppleComposerShortcutPlatform, shouldInterruptQueuedMessageKeyDown, shouldSubmitComposerKeyDown, shouldUseAlternateComposerSubmitKeyDown } from "@/interface/home/composer-keyboard";
 import type { ComposerWorkerOption, QueuedConversationMessageRecord, WorkerModelOption } from "@/interface/home/types";
 import { formatBytes, type PendingChatAttachment } from "@/lib/chat-attachments";
+import { resizeComposerTextarea } from "@/lib/composer-textarea";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { StateManager } from "@/lib/state-manager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
@@ -91,21 +92,6 @@ class ComposerUiManager extends StateManager<{ fileDragDepth: number; mobileSett
 }
 
 const composerUiManager = new ComposerUiManager();
-
-const COMPOSER_MAX_LINES = 5;
-
-function resizeComposerTextarea(textarea: HTMLTextAreaElement) {
-  const lineHeight = Number.parseFloat(window.getComputedStyle(textarea).lineHeight);
-  const resolvedLineHeight = Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : 20;
-  const maxHeight = resolvedLineHeight * COMPOSER_MAX_LINES;
-
-  textarea.style.height = "0px";
-  const contentHeight = textarea.scrollHeight;
-  const nextHeight = Math.min(contentHeight, maxHeight);
-
-  textarea.style.height = `${nextHeight}px`;
-  textarea.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
-}
 
 function ConversationComposerInner({
   className,
@@ -192,7 +178,7 @@ function ConversationComposerInner({
         : t("conversation.composer.placeholder.implementation")
     : t("conversation.composer.placeholder.default");
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (commandInputRef.current) {
       resizeComposerTextarea(commandInputRef.current);
     }
@@ -353,7 +339,6 @@ function ConversationComposerInner({
           ref={commandInputRef}
           value={command}
           onChange={(e) => {
-            resizeComposerTextarea(e.currentTarget);
             setComposerDraft({
               command: e.target.value,
               commandCursor: e.target.selectionStart ?? e.target.value.length,
@@ -471,7 +456,8 @@ function ConversationComposerInner({
           rows={1}
           className={cn(
             "omni-composer-input w-full resize-none bg-transparent outline-none",
-            "min-h-[56px] sm:min-h-[72px] max-h-[100px] sm:max-h-[120px] overflow-y-hidden",
+            "min-h-[56px] sm:min-h-[72px] overflow-y-auto",
+            selectedRunId ? "max-h-[100px] sm:max-h-[120px]" : "max-h-[50dvh] sm:max-h-[120px]",
             themeMode === "night"
               ? "text-foreground placeholder:text-muted-foreground/80"
               : "text-[#454545] placeholder:text-[#c4c4c2] dark:text-foreground dark:placeholder:text-muted-foreground/80",
