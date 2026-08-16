@@ -418,7 +418,7 @@
   "planning.review.agent.claude": "Claude",
   "planning.review.agent.gemini": "Gemini",
   "planning.review.agent.opencode": "OpenCode",
-  "conversation.composer.placeholder.default": "Ask Omni anything. @ to refer to files",
+  "conversation.composer.placeholder.default": "Do anything. @ to refer to files",
   "conversation.composer.placeholder.planning": "Reply to planning agent...",
   "conversation.composer.placeholder.direct": "Send to CLI...",
   "conversation.composer.workerModelAria": "Worker model",

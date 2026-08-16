@@ -68,6 +68,15 @@ describe("OmniHarness i18n adapter", () => {
     expect(Object.keys(ko).sort()).toEqual(englishKeys);
   });
 
+  it("uses an action-oriented default composer placeholder without the Omni name", () => {
+    const dictionaries = [en, es, fr, de, itLocale, pt, zhCN, ja, ko];
+
+    expect(en["conversation.composer.placeholder.default"]).toBe("Do anything. @ to refer to files");
+    for (const dictionary of dictionaries) {
+      expect(dictionary["conversation.composer.placeholder.default"]).not.toContain("Omni");
+    }
+  });
+
   it("uses server terminology in every user-facing locale value", () => {
     const dictionaries = [en, es, fr, de, itLocale, pt, zhCN, ja, ko];
 

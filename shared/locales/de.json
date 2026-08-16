@@ -370,7 +370,7 @@
   "planning.review.agent.claude": "Claude",
   "planning.review.agent.gemini": "Gemini",
   "planning.review.agent.opencode": "OpenCode",
-  "conversation.composer.placeholder.default": "Omni alles fragen. @ zum Verweisen auf Dateien",
+  "conversation.composer.placeholder.default": "Mach alles. @ zum Verweisen auf Dateien",
   "conversation.composer.placeholder.planning": "Dem Planungsagenten antworten...",
   "conversation.composer.placeholder.direct": "An CLI senden...",
   "conversation.composer.workerModelAria": "Worker-Modell",

@@ -370,7 +370,7 @@
   "planning.review.agent.claude": "Claude",
   "planning.review.agent.gemini": "Gemini",
   "planning.review.agent.opencode": "OpenCode",
-  "conversation.composer.placeholder.default": "Omni에게 무엇이든 물어보세요. @로 파일 참조",
+  "conversation.composer.placeholder.default": "무엇이든 하세요. @로 파일 참조",
   "conversation.composer.placeholder.planning": "계획 에이전트에게 답장...",
   "conversation.composer.placeholder.direct": "CLI로 보내기...",
   "conversation.composer.workerModelAria": "워커 모델",
