@@ -1027,6 +1027,10 @@ test("empty state centers the composer with the welcome stack instead of docking
   expect(pageSource).toContain("const welcomeRepoName = resolveRepoName(currentProjectScope)");
   expect(pageSource).toContain('renderComposer("mt-2 w-full pt-0 sm:pt-0")');
   expect(pageSource).toContain('{selectedRunId ? renderComposer("w-full") : null}');
+  expect(pageSource).toContain('className="omni-conversation-text-scale flex h-full w-full flex-col items-center justify-center text-center"');
+  expect(pageSource).toContain('className="mx-auto mb-6 w-full max-w-3xl space-y-3 px-6 text-left"');
+  expect(pageSource).toContain('className="mx-auto mb-4 w-full max-w-3xl px-6 text-[1.7rem] font-semibold leading-tight"');
+  expect(pageSource).not.toContain('className="omni-conversation-text-scale mx-auto flex h-full w-full max-w-3xl flex-col items-center justify-center px-6 text-center"');
   expect(pageSource).not.toContain("Welcome to OmniHarness");
   expect(pageSource).not.toContain("{getConversationModeCopy(selectedConversationMode).description}");
 });

@@ -419,6 +419,14 @@
     line-height: var(--omni-composer-line-height, 20px);
   }
 
+  @media (max-width: 639px) {
+    .omni-composer-input {
+      touch-action: pan-y;
+      overscroll-behavior-y: contain;
+      -webkit-overflow-scrolling: touch;
+    }
+  }
+
   @media (min-width: 640px) {
     .omni-composer-input {
       line-height: var(--omni-composer-line-height, 24px);

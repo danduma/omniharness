@@ -44,7 +44,8 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain('focus-within:border-[#d2d2d0] focus-within:bg-[#fdfdfc]');
   expect(pageSource).toContain("px-2 pb-0 pt-4 transition-all sm:px-5");
   expect(pageSource).toContain('"omni-composer-input w-full resize-none bg-transparent outline-none"');
-  expect(pageSource).toContain('"min-h-[56px] sm:min-h-[72px] max-h-[100px] sm:max-h-[120px] overflow-y-hidden"');
+  expect(pageSource).toContain('"min-h-[56px] sm:min-h-[72px] overflow-y-auto"');
+  expect(pageSource).toContain('selectedRunId ? "max-h-[100px] sm:max-h-[120px]" : "max-h-[50dvh] sm:max-h-[120px]"');
   expect(globalsSource).toContain(".omni-composer-input");
   expect(globalsSource).toContain("line-height: var(--omni-composer-line-height, 20px);");
   expect(pageSource).toContain("rows={1}");
@@ -74,11 +75,14 @@ test("mobile composer keeps the summary in one bounded controls row and grows on
   expect(pageSource).toContain('data-composer-controls="true"');
   expect(pageSource).toContain('className="mt-0 flex min-w-0 items-end gap-1 pb-2 sm:gap-2"');
   expect(pageSource).not.toContain('className="mt-0 flex flex-wrap items-center gap-1 pb-2 sm:flex-nowrap sm:gap-2"');
-  expect(pageSource).toContain("COMPOSER_MAX_LINES = 5");
+  expect(pageSource).toContain('import { resizeComposerTextarea } from "@/lib/composer-textarea";');
   expect(pageSource).toContain("resizeComposerTextarea");
+  expect(pageSource).toContain("useLayoutEffect");
+  expect(pageSource).not.toContain('textarea.style.height = "0px"');
   expect(pageSource).toContain('min-h-[56px] sm:min-h-[72px]');
-  expect(pageSource).toContain('max-h-[100px] sm:max-h-[120px]');
-  expect(pageSource).toContain("const nextHeight = Math.min(contentHeight, maxHeight);");
+  expect(pageSource).toContain('selectedRunId ? "max-h-[100px] sm:max-h-[120px]" : "max-h-[50dvh] sm:max-h-[120px]"');
+  expect(pageSource).toContain("overflow-y-auto");
+  expect(pageSource).not.toContain("const nextHeight = Math.min(contentHeight, maxHeight);");
   expect(pageSource).not.toContain('textarea.matches(":focus")');
   expect(pageSource).not.toContain('focus:min-h-[100px] sm:focus:min-h-[120px]');
   expect(mobileComposerSettingsSource).toContain('data-composer-settings-summary="true"');
@@ -86,6 +90,13 @@ test("mobile composer keeps the summary in one bounded controls row and grows on
   expect(mobileComposerSettingsSource).toContain("truncate");
   expect(mobileComposerSettingsSource).not.toContain("whitespace-normal");
   expect(mobileComposerSettingsSource).not.toContain("overflow-wrap:anywhere");
+});
+
+test("mobile composer keeps vertical touch scrolling available when viewport height changes", () => {
+  expect(globalsSource).toContain("@media (max-width: 639px)");
+  expect(globalsSource).toContain("touch-action: pan-y;");
+  expect(globalsSource).toContain("overscroll-behavior-y: contain;");
+  expect(globalsSource).toContain("-webkit-overflow-scrolling: touch;");
 });
 
 test("composer supports auto agent selection while pinning explicit agent choices", () => {

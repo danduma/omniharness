@@ -1537,15 +1537,15 @@ const ConversationMain = memo(function ConversationMain({
         </div>
       )
     ) : (
-      <div className="omni-conversation-text-scale mx-auto flex h-full w-full max-w-3xl flex-col items-center justify-center px-6 text-center">
+      <div className="omni-conversation-text-scale flex h-full w-full flex-col items-center justify-center text-center">
         {appErrors.length > 0 ? (
-          <div className="mb-6 w-full space-y-3 text-left">
+          <div className="mx-auto mb-6 w-full max-w-3xl space-y-3 px-6 text-left">
             {appErrors.map((error) => (
               <ErrorNotice key={appErrorKey(error)} error={error} />
             ))}
           </div>
         ) : null}
-        <h1 className="mb-4 text-[1.7rem] font-semibold leading-tight">What shall we build in {welcomeRepoName}?</h1>
+        <h1 className="mx-auto mb-4 w-full max-w-3xl px-6 text-[1.7rem] font-semibold leading-tight">What shall we build in {welcomeRepoName}?</h1>
         {emptyComposer}
       </div>
     )}
