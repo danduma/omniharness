@@ -1,8 +1,48 @@
 {
   "version": 2,
   "projectRoot": "/Users/masterman/NLP/omniharness",
-  "generatedAt": "2026-08-11T22:01:17.674Z",
+  "generatedAt": "2026-08-13T22:00:14.503Z",
   "conversations": [
+    {
+      "provider": "claude",
+      "id": "023a2dbb-adb1-4d60-9c90-068c09aa7ada",
+      "title": "Claude conversation 023a2dbb",
+      "startedAt": "2026-08-12T11:03:31.270Z",
+      "updatedAt": "2026-08-12T11:03:31.873Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "92d6971c97221903076f2142ce6d5cc6a89395cd3e1d303d9d24457e9b671af7",
+      "parts": [
+        "conversations/2026/08/2026-08-12-claude-claude-conversation-023a2dbb-023a2dbb-adb1-4d60-9c90-068c09aa7ada-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 5,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "codex",
+      "id": "019ff52c-110f-7362-b3da-be6c321589f6",
+      "title": "Investigate OmniHarness restart",
+      "startedAt": "2026-08-12T08:52:13.780Z",
+      "updatedAt": "2026-08-12T08:58:51.972Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "0db52a11d1a9222d666a70121761b0a71868ba8e47a0efb6f7a3b85325762281",
+      "parts": [
+        "conversations/2026/08/2026-08-12-investigate-omniharness-restart-019ff52c-110f-7362-b3da-be6c321589f6-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 88,
+      "malformedLines": 0,
+      "redactions": 10,
+      "warnings": []
+    },
     {
       "provider": "codex",
       "id": "019fed3e-3051-7c53-9359-77cf8a924cd0",
@@ -1097,7 +1137,7 @@
       "workingDirectory": "/Users/masterman/NLP/omniharness",
       "sourcePresent": true,
       "resolution": "repository",
-      "sourceFingerprint": "4ea4fe6e5034b040e8ae4bf581b8c15edd7a3666ae80e3bd0b7553d79dc1f2c8",
+      "sourceFingerprint": "a3f1b3d9f5ba0e2c51adba973c1f269d48d5fc24d91f09308d5b7ac8ab5e4850",
       "parts": [
         "conversations/2026/08/2026-08-03-claude-investigate-stuck-worker-recovery-session-2de57847-cbf5-4d73-b59c-90f2e544d885-part-001.md"
       ],
@@ -1946,7 +1986,7 @@
       "updatedAt": "2026-07-13T18:09:36.013Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "83a90fe896e1970d6426444eafc13199212dae9409508283fdc6f3c8b268b60b",
       "parts": [
@@ -1986,7 +2026,7 @@
       "updatedAt": "2026-07-13T06:46:23.314Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "b1ab54101c203d04e1045a415bf8fd2bd42bc4560032930c65e6743bb55c156e",
       "parts": [
