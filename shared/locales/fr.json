@@ -837,5 +837,15 @@
   "goal.plan.status.in_progress": "En cours",
   "goal.plan.status.blocked": "Bloqué",
   "goal.plan.status.completed": "Terminé",
-  "goal.plan.status.failed": "Échec"
+  "goal.plan.status.failed": "Échec",
+  "conversation.failure.reauth.action": "Reconnectez-vous",
+  "conversation.failure.reauth.message": "Le fournisseur a rejeté deux fois les identifiants de {account} ; renvoyer le message ne rétablira pas la connexion.",
+  "conversation.failure.reauth.accountFallback": "ce compte",
+  "conversation.failure.reauth.workerFallback": "l'agent",
+  "conversation.failure.reauth.hint.claude": "Lancez `claude` dans un terminal et connectez-vous avec /login, puis renvoyez votre message.",
+  "conversation.failure.reauth.hint.codex": "Lancez `codex login` dans un terminal, puis renvoyez votre message.",
+  "conversation.failure.reauth.hint.cli": "Connectez-vous à {worker} dans un terminal, puis renvoyez votre message.",
+  "conversation.failure.reauth.hint.apiKey": "Mettez à jour la clé d'API de {account} dans Paramètres → Agents, puis renvoyez votre message.",
+  "conversation.failure.reauth.hint.credentialCommand": "La commande d'identifiants de {account} a renvoyé un jeton rejeté par le fournisseur. Corrigez la commande, puis renvoyez votre message.",
+  "conversation.failure.reauth.hint.credentialProfile": "Le profil d'identifiants de {account} contient un jeton rejeté par le fournisseur. Actualisez le profil, puis renvoyez votre message."
 }

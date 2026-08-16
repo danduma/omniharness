@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  annotateVerifiedDeadCredential,
   annotateVerifiedLiveCredential,
   classifyProviderAccountFailure,
+  hasVerifiedDeadCredentialMarker,
   isAuthShapedProviderFailure,
   isPermanentAccountFailure,
   isPoisonedSessionFailure,
+  readVerifiedDeadCredentialAccountId,
   stripProviderFailureMarkers,
 } from "@/lib/provider-account-failures";
 
@@ -75,5 +78,42 @@ describe("provider account failure classification", () => {
     expect(stripProviderFailureMarkers(annotateVerifiedLiveCredential(SUSPENDED))).toBe(SUSPENDED);
     expect(annotateVerifiedLiveCredential(annotateVerifiedLiveCredential(SUSPENDED)))
       .toBe(annotateVerifiedLiveCredential(SUSPENDED));
+  });
+
+  it("carries the dead verdict and the account it belongs to", () => {
+    // The permanence gate already latched on unverified auth wording; the dead
+    // marker exists so the UI can say "sign in again" instead of "send another
+    // message", which is the advice that made this failure look self-healing.
+    const dead = annotateVerifiedDeadCredential(REVOKED, "claude-sub-1");
+
+    expect(hasVerifiedDeadCredentialMarker(dead)).toBe(true);
+    expect(readVerifiedDeadCredentialAccountId(dead)).toBe("claude-sub-1");
+    expect(isPermanentAccountFailure(dead)).toBe(true);
+    expect(stripProviderFailureMarkers(dead)).toBe(REVOKED);
+    expect(annotateVerifiedDeadCredential(dead, "claude-sub-1")).toBe(dead);
+  });
+
+  it("keeps the marker parseable when no account is known", () => {
+    const dead = annotateVerifiedDeadCredential(REVOKED, null);
+
+    expect(hasVerifiedDeadCredentialMarker(dead)).toBe(true);
+    expect(readVerifiedDeadCredentialAccountId(dead)).toBeNull();
+    expect(stripProviderFailureMarkers(dead)).toBe(REVOKED);
+  });
+
+  it("drops an account id that would not survive the round trip", () => {
+    // A bracket or a space would truncate the marker and leave unparseable
+    // text in `lastError`, so the generic marker is used instead.
+    for (const id of ["bad]id", "two words"]) {
+      const dead = annotateVerifiedDeadCredential(REVOKED, id);
+      expect(hasVerifiedDeadCredentialMarker(dead)).toBe(true);
+      expect(readVerifiedDeadCredentialAccountId(dead)).toBeNull();
+      expect(stripProviderFailureMarkers(dead)).toBe(REVOKED);
+    }
+  });
+
+  it("does not mark an unverified auth failure as dead", () => {
+    expect(hasVerifiedDeadCredentialMarker(REVOKED)).toBe(false);
+    expect(hasVerifiedDeadCredentialMarker(annotateVerifiedLiveCredential(REVOKED))).toBe(false);
   });
 });

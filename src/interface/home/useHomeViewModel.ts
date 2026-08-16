@@ -17,11 +17,13 @@ import { buildDirectTerminalUserMessages } from "@/lib/worker-terminal-messages"
 import { resolveProjectScope } from "@/lib/project-scope";
 import { buildConversationTimelineItems, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterPromotedPlanningTranscriptMessages, extractWorkerFailureDetail, getConversationTranscriptRunIds, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, parseProjectList, parseWorkerType, parseWorkerTypes, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought } from "./utils";
 import { COMPOSER_WORKER_OPTIONS, WORKER_OPTIONS } from "./constants";
-import type { AgentSnapshot, ClarificationRecord, ComposerMode, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, RunMode, RunRecord, SidebarGroup, SupervisorInterventionRecord } from "./types";
+import type { AccountRecord, AgentSnapshot, ClarificationRecord, ComposerMode, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, RunMode, RunRecord, SidebarGroup, SupervisorInterventionRecord } from "./types";
 import type { WorkerCatalogResponse } from "./types";
 import { sessionStateManager } from "./SessionStateManager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { isPermanentAutoResumeFailure } from "./auto-resume-selection";
+import { buildCredentialReauthNotice } from "./credential-failure-notice";
+import { stripProviderFailureMarkers } from "@/lib/provider-account-failures";
 import {
   acpPlanManager,
   selectAcpPlanSurfaceOwner,
@@ -29,6 +31,7 @@ import {
 
 const EMPTY_RUNS: RunRecord[] = [];
 const EMPTY_PLANS: PlanRecord[] = [];
+const EMPTY_ACCOUNTS: AccountRecord[] = [];
 const RECOVERY_SUCCESS_EVENT_TYPES = new Set([
   "direct_retry_worker_already_active",
   "worker_session_resumed",
@@ -478,6 +481,18 @@ export function useHomeViewModel({
       return null;
     }
 
+    // A credential the provider rejected twice needs a sign-in, not a resend,
+    // so it takes precedence over every reconnect-flavoured branch below.
+    const reauthNotice = buildCredentialReauthNotice({
+      lastError: selectedRun.lastError,
+      accounts: state.accounts ?? EMPTY_ACCOUNTS,
+      workerType: selectedRun.preferredWorkerType,
+      workerLabel: failedWorkerAvailability?.label,
+    });
+    if (reauthNotice) {
+      return reauthNotice;
+    }
+
     // Only show "Reconnecting" when an auto-resume will actually run.
     // Planning runs surface the real error and rely on the user to act.
     const autoResumes = selectedRun.mode === "direct" || selectedRun.mode === "commit" || selectedRun.mode === "implementation";
@@ -488,7 +503,9 @@ export function useHomeViewModel({
     const workerLabel = failedWorkerAvailability?.label;
     const workerStatus = failedWorkerAvailability?.availability.message;
 
-    const rawMessage = stripRunFailurePrefix(selectedRun.lastError);
+    // The verdict markers are internal bookkeeping; they must never reach the
+    // banner, which used to print "… [credential_verified_live]" verbatim.
+    const rawMessage = stripRunFailurePrefix(stripProviderFailureMarkers(selectedRun.lastError));
     const looksLikeStaleSession = typeof rawMessage === "string"
       && /not present in the bridge runtime|worker.*not.*found|session.*lost/i.test(rawMessage);
 
@@ -515,7 +532,7 @@ export function useHomeViewModel({
         ? [`Current ${workerLabel} status: ${workerStatus}`]
         : [],
     };
-  }, [failedWorkerAvailability, selectedRun, selectedRunExecutionEvents, workerFailureDetail]);
+  }, [failedWorkerAvailability, selectedRun, selectedRunExecutionEvents, state.accounts, workerFailureDetail]);
 
   const awaitingUserQuestionMessage = useMemo(() => {
     if (selectedRun?.status !== "awaiting_user") {

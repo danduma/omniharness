@@ -52,7 +52,7 @@ import {
 } from "@/server/workers/session-recovery";
 import { recreateWorkerFromTranscript, type WorkerRecreationSelection } from "@/server/workers/provider-session-recovery";
 import { decodeClaudeGatewayModel } from "@/lib/claude-model-gateway";
-import { annotateVerifiedLiveCredential, isAuthShapedProviderFailure } from "@/lib/provider-account-failures";
+import { annotateVerifiedDeadCredential, annotateVerifiedLiveCredential, hasVerifiedDeadCredentialMarker, isAuthShapedProviderFailure } from "@/lib/provider-account-failures";
 import { supportsCredentialLivenessProbe, verifyAccountCredentialLiveness } from "@/server/accounts/credential-verification";
 
 type RunRecord = typeof runs.$inferSelect;
@@ -743,9 +743,9 @@ async function resolveWorkerAccountId(run: RunRecord, worker: WorkerRecord) {
  * Decide whether an auth-shaped failure is really the account's fault.
  *
  * Returns the message to persist: annotated as verified-live when the
- * credential provably still works (so recovery stays armed), or untouched when
- * the credential is dead or the probe was inconclusive (so the run latches and
- * the user is told to re-authenticate).
+ * credential provably still works (so recovery stays armed), as verified-dead
+ * when the probe was rejected too (so the UI asks for a re-login instead of
+ * another send), or untouched when the probe could not run at all.
  */
 async function resolveAuthFailureMessage(run: RunRecord, worker: WorkerRecord, message: string) {
   if (!isAuthShapedProviderFailure(message) || !supportsCredentialLivenessProbe(worker.type)) {
@@ -774,7 +774,26 @@ async function resolveAuthFailureMessage(run: RunRecord, worker: WorkerRecord, m
     },
   });
 
-  return verification.liveness === "live" ? annotateVerifiedLiveCredential(message) : message;
+  if (verification.liveness === "live") {
+    return annotateVerifiedLiveCredential(message);
+  }
+
+  if (verification.liveness === "dead") {
+    // Two independent requests agreed the credential is rejected. Nothing the
+    // run can do fixes that, so say so instead of leaving the UI to guess.
+    emitNamedEvent({
+      kind: "account.login_required",
+      accountId: accountId ?? "default",
+      workerType: worker.type,
+      reason: verification.detail,
+    });
+    return annotateVerifiedDeadCredential(message, accountId);
+  }
+
+  // "unknown" — the probe itself could not run. Callers still treat this as
+  // permanent, but we have not proven the credential is dead, so the message
+  // stays unmarked and the UI keeps its generic failure copy.
+  return message;
 }
 
 /**
@@ -1098,7 +1117,12 @@ async function continueWorkerConversation({
       updatedAt: new Date(),
     }).where(eq(workers.id, worker.id));
     await persistRunFailure(run.id, new Error(surfacedErrorMessage), {
-      surface: { code: "conversation.continue.failed", workerId: worker.id },
+      surface: {
+        code: hasVerifiedDeadCredentialMarker(surfacedErrorMessage)
+          ? "account.login_required"
+          : "conversation.continue.failed",
+        workerId: worker.id,
+      },
     });
     throw isProviderSessionDiagnosticErrorMessage(formatErrorMessage(error))
       ? new Error(surfacedErrorMessage)

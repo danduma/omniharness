@@ -837,5 +837,15 @@
   "goal.plan.status.in_progress": "진행 중",
   "goal.plan.status.blocked": "차단됨",
   "goal.plan.status.completed": "완료됨",
-  "goal.plan.status.failed": "실패"
+  "goal.plan.status.failed": "실패",
+  "conversation.failure.reauth.action": "다시 로그인",
+  "conversation.failure.reauth.message": "공급자가 {account}의 자격 증명을 두 번 모두 거부했으므로 메시지를 다시 보내도 연결되지 않습니다.",
+  "conversation.failure.reauth.accountFallback": "이 계정",
+  "conversation.failure.reauth.workerFallback": "에이전트",
+  "conversation.failure.reauth.hint.claude": "터미널에서 `claude`를 실행하고 /login으로 로그인한 다음 메시지를 다시 보내세요.",
+  "conversation.failure.reauth.hint.codex": "터미널에서 `codex login`을 실행한 다음 메시지를 다시 보내세요.",
+  "conversation.failure.reauth.hint.cli": "터미널에서 {worker}에 로그인한 다음 메시지를 다시 보내세요.",
+  "conversation.failure.reauth.hint.apiKey": "설정 → 에이전트에서 {account}의 API 키를 업데이트한 다음 메시지를 다시 보내세요.",
+  "conversation.failure.reauth.hint.credentialCommand": "{account}의 자격 증명 명령이 반환한 토큰을 공급자가 거부했습니다. 명령을 수정한 다음 메시지를 다시 보내세요.",
+  "conversation.failure.reauth.hint.credentialProfile": "{account}의 자격 증명 프로필에 있는 토큰을 공급자가 거부했습니다. 프로필을 새로 고친 다음 메시지를 다시 보내세요."
 }

@@ -837,5 +837,15 @@
   "goal.plan.status.in_progress": "Em andamento",
   "goal.plan.status.blocked": "Bloqueado",
   "goal.plan.status.completed": "Concluído",
-  "goal.plan.status.failed": "Falhou"
+  "goal.plan.status.failed": "Falhou",
+  "conversation.failure.reauth.action": "Entre novamente",
+  "conversation.failure.reauth.message": "O provedor rejeitou duas vezes as credenciais de {account}, portanto reenviar a mensagem não vai reconectar.",
+  "conversation.failure.reauth.accountFallback": "esta conta",
+  "conversation.failure.reauth.workerFallback": "o agente",
+  "conversation.failure.reauth.hint.claude": "Execute `claude` em um terminal e entre com /login, depois envie sua mensagem novamente.",
+  "conversation.failure.reauth.hint.codex": "Execute `codex login` em um terminal e depois envie sua mensagem novamente.",
+  "conversation.failure.reauth.hint.cli": "Entre no {worker} em um terminal e depois envie sua mensagem novamente.",
+  "conversation.failure.reauth.hint.apiKey": "Atualize a chave de API de {account} em Configurações → Agentes e depois envie sua mensagem novamente.",
+  "conversation.failure.reauth.hint.credentialCommand": "O comando de credenciais de {account} retornou um token que o provedor rejeitou. Corrija o comando e envie sua mensagem novamente.",
+  "conversation.failure.reauth.hint.credentialProfile": "O perfil de credenciais de {account} contém um token que o provedor rejeitou. Atualize o perfil e envie sua mensagem novamente."
 }

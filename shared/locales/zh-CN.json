@@ -837,5 +837,15 @@
   "goal.plan.status.in_progress": "进行中",
   "goal.plan.status.blocked": "已阻塞",
   "goal.plan.status.completed": "已完成",
-  "goal.plan.status.failed": "失败"
+  "goal.plan.status.failed": "失败",
+  "conversation.failure.reauth.action": "重新登录",
+  "conversation.failure.reauth.message": "服务提供方两次拒绝了 {account} 的凭据，重新发送消息无法恢复连接。",
+  "conversation.failure.reauth.accountFallback": "该账号",
+  "conversation.failure.reauth.workerFallback": "该代理",
+  "conversation.failure.reauth.hint.claude": "在终端运行 `claude` 并使用 /login 登录，然后重新发送消息。",
+  "conversation.failure.reauth.hint.codex": "在终端运行 `codex login`，然后重新发送消息。",
+  "conversation.failure.reauth.hint.cli": "在终端登录 {worker}，然后重新发送消息。",
+  "conversation.failure.reauth.hint.apiKey": "在“设置 → 代理”中更新 {account} 的 API 密钥，然后重新发送消息。",
+  "conversation.failure.reauth.hint.credentialCommand": "{account} 的凭据命令返回的令牌被服务提供方拒绝。请修复该命令，然后重新发送消息。",
+  "conversation.failure.reauth.hint.credentialProfile": "{account} 的凭据配置中保存的令牌被服务提供方拒绝。请刷新该配置，然后重新发送消息。"
 }
