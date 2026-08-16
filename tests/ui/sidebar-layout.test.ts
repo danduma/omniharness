@@ -996,14 +996,14 @@ test("planning artifacts are shown as relative file links without card chrome", 
   expect(planningArtifactsSource).not.toContain(">{candidate.path}<");
 });
 
-test("new conversations expose a mode picker and only existing direct runs lock the worker type", () => {
+test("new conversations expose only direct control and existing direct runs lock the worker type", () => {
   expect(pageSource).toContain('import { ConversationModePicker, type ConversationModeOption } from "@/components/ConversationModePicker"');
   expect(pageSource).toContain('selectedConversationMode={activeComposerMode}');
   expect(pageSource).toContain('value={selectedConversationMode as ConversationModeOption}');
-  expect(conversationModePickerSource).toContain("conversation.mode.omni.label");
+  expect(conversationModePickerSource).not.toContain("conversation.mode.omni.label");
   expect(conversationModePickerSource).toContain("conversation.mode.direct.label");
   expect(conversationModePickerSource).toContain("useI18nSnapshot()");
-  expect(conversationModePickerSource).toContain('const MODE_ORDER: ConversationModeOption[] = ["omni", "direct"]');
+  expect(conversationModePickerSource).toContain('const MODE_ORDER: ConversationModeOption[] = ["direct"]');
   expect(conversationModePickerSource).toContain("w-fit max-w-full");
   expect(conversationModePickerSource).toContain("break-words hyphens-auto");
   expect(conversationModePickerSource).not.toContain("overflow-x-auto");

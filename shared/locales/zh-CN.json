@@ -370,7 +370,7 @@
   "planning.review.agent.claude": "Claude",
   "planning.review.agent.gemini": "Gemini",
   "planning.review.agent.opencode": "OpenCode",
-  "conversation.composer.placeholder.default": "向 Omni 提问。用 @ 引用文件",
+  "conversation.composer.placeholder.default": "做任何事情。用 @ 引用文件",
   "conversation.composer.placeholder.planning": "回复规划代理...",
   "conversation.composer.placeholder.direct": "发送到 CLI...",
   "conversation.composer.workerModelAria": "工作器模型",

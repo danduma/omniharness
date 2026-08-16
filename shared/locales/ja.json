@@ -370,7 +370,7 @@
   "planning.review.agent.claude": "Claude",
   "planning.review.agent.gemini": "Gemini",
   "planning.review.agent.opencode": "OpenCode",
-  "conversation.composer.placeholder.default": "Omni に何でも聞く。@ でファイルを参照",
+  "conversation.composer.placeholder.default": "何でもする。@ でファイルを参照",
   "conversation.composer.placeholder.planning": "計画エージェントに返信...",
   "conversation.composer.placeholder.direct": "CLI に送信...",
   "conversation.composer.workerModelAria": "ワーカーモデル",

@@ -222,8 +222,8 @@ function ConversationComposerInner({
     >
       {!selectedRunId ? (
         <ConversationModePicker
-          // Only rendered for a new conversation, where the composer mode is
-          // always a pickable option ("omni" | "direct").
+          // New conversations expose direct control only; existing Omni runs
+          // retain their stored mode and lifecycle behavior.
           value={selectedConversationMode as ConversationModeOption}
           onChange={setSelectedConversationMode}
           disabled={isComposerSubmitting}
