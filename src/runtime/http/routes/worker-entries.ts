@@ -96,6 +96,43 @@ export const handleWorkerEntriesRequest: OmniHttpHandler = async (request, conte
   }
 
   const url = new URL(request.url);
+  const contentEntryId = url.searchParams.get("contentEntryId")?.trim();
+  if (contentEntryId) {
+    try {
+      // Binary output is a cold, user-triggered path. Keep its DB-backed
+      // resolver out of the transcript module graph so normal cursor reads
+      // preserve the worker-stream hot-path invariant.
+      const { readWorkerEntryContent } = await import("@/server/workers/entry-content");
+      const content = await readWorkerEntryContent(workerId, contentEntryId);
+      probe.mark("readContent");
+      return new Response(Uint8Array.from(content.body), {
+        headers: {
+          "Content-Type": content.mimeType,
+          "Cache-Control": "private, max-age=3600",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    } catch (error) {
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "worker.output_content_unavailable",
+        message: error instanceof Error ? error.message : String(error),
+        surface: "banner",
+        runId,
+        workerId,
+        cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+      });
+      return errorResponse(error, {
+        status: typeof (error as { status?: unknown } | null)?.status === "number"
+          ? (error as { status: number }).status
+          : 500,
+        source: "Worker entries",
+        action: "Load generated image",
+      });
+    } finally {
+      probe.end();
+    }
+  }
   if (url.searchParams.get("view") === "plan") {
     try {
       probe.mark("readPlan");

@@ -110,6 +110,18 @@ Legacy stream rows that predate this field may fill only missing attachment
 resolver metadata from the matching `messages` mirror; stream text, order, and
 attachment identity remain authoritative.
 
+Generated binary output is referenced by its `agent_content` stream entry; it
+must not create a second conversation transcript or be inlined unbounded into
+the JSONL. Raw ACP strings are intentionally compacted, so a large base64 image
+body is not a durable render source. The frontend resolves the binary through
+the authenticated worker-entry content reader using `(workerId, entryId)` and
+owns the resulting object URL through `WorkerEntryContentUrlManager`. The
+server validates any Codex `uri` against that worker's canonical
+`.omniharness/cli-home/codex/home/generated_images` root before reading it.
+Missing or unsafe content emits `error.surfaced` with
+`worker.output_content_unavailable`; the UI renders the real failure instead
+of a broken image or the literal text `image`.
+
 Use `isBridgeOutputEntry(entry)` / `isServerProducedEntry(entry)` to
 discriminate; never branch ad-hoc on `entry.type`.
 
