@@ -10,8 +10,9 @@
 import { randomUUID, createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { withSqliteBusyRetry } from "@/server/db/retry";
+import { isSqliteBusyError, withSqliteBusyRetry } from "@/server/db/retry";
 import { artifactStreams, runs } from "@/server/db/schema";
+import { emitNamedEvent } from "@/server/events/named-events";
 import {
   ARTIFACT_STREAM_OWNER_NONE,
   normalizeArtifactOwnerId,
@@ -162,20 +163,39 @@ export async function commitArtifactAppend(args: {
     return;
   }
   const now = new Date();
-  await withSqliteBusyRetry(() => db
-    .update(artifactStreams)
-    .set({
-      latestSeq: args.seq,
-      latestRecordId: args.recordId,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(artifactStreams.runId, args.streamId.runId),
-        eq(artifactStreams.kind, args.streamId.kind),
-        eq(artifactStreams.ownerId, normalizeArtifactOwnerId(args.streamId.ownerId)),
-      ),
-    ));
+  try {
+    await withSqliteBusyRetry(() => db
+      .update(artifactStreams)
+      .set({
+        latestSeq: args.seq,
+        latestRecordId: args.recordId,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(artifactStreams.runId, args.streamId.runId),
+          eq(artifactStreams.kind, args.streamId.kind),
+          eq(artifactStreams.ownerId, normalizeArtifactOwnerId(args.streamId.ownerId)),
+        ),
+      ));
+  } catch (error) {
+    if (!isSqliteBusyError(error)) {
+      throw error;
+    }
+    emitNamedEvent({
+      kind: "artifact.metadata_update_deferred",
+      runId: args.streamId.runId,
+      streamKind: args.streamId.kind,
+      ownerId: args.streamId.ownerId,
+      seq: args.seq,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    // The JSONL append is already durable. Keep this process's allocator
+    // ahead of that line so the next append can advance SQLite to a newer
+    // cursor instead of reusing this sequence number.
+    latestSeqByStreamRow.set(cacheKey, args.seq);
+    return;
+  }
   latestSeqByStreamRow.set(cacheKey, args.seq);
 }
 

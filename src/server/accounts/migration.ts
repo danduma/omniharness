@@ -495,28 +495,21 @@ async function removeAccountsDeletedDuringMigration() {
       const cleanupResults = await db.batch([
         db.update(runs)
           .set({ preferredWorkerAccountId: null })
-          .where(and(eq(runs.preferredWorkerAccountId, accountId), markerStillExists()))
-          .returning({ id: runs.id }),
+          .where(and(eq(runs.preferredWorkerAccountId, accountId), markerStillExists())),
         db.delete(creditEvents)
-          .where(and(eq(creditEvents.accountId, accountId), markerStillExists()))
-          .returning({ id: creditEvents.id }),
+          .where(and(eq(creditEvents.accountId, accountId), markerStillExists())),
         db.delete(workerCredentialAllocations)
-          .where(and(eq(workerCredentialAllocations.accountId, accountId), markerStillExists()))
-          .returning({ id: workerCredentialAllocations.id }),
+          .where(and(eq(workerCredentialAllocations.accountId, accountId), markerStillExists())),
         db.delete(workerTokenUsage)
-          .where(and(eq(workerTokenUsage.accountId, accountId), markerStillExists()))
-          .returning({ id: workerTokenUsage.id }),
+          .where(and(eq(workerTokenUsage.accountId, accountId), markerStillExists())),
         db.delete(accountUsageSnapshots)
-          .where(and(eq(accountUsageSnapshots.accountId, accountId), markerStillExists()))
-          .returning({ id: accountUsageSnapshots.id }),
+          .where(and(eq(accountUsageSnapshots.accountId, accountId), markerStillExists())),
         db.delete(accountSecrets)
-          .where(and(eq(accountSecrets.accountId, accountId), markerStillExists()))
-          .returning({ id: accountSecrets.id }),
+          .where(and(eq(accountSecrets.accountId, accountId), markerStillExists())),
         db.delete(accounts)
-          .where(and(eq(accounts.id, accountId), markerStillExists()))
-          .returning({ id: accounts.id }),
+          .where(and(eq(accounts.id, accountId), markerStillExists())),
       ]);
-      if (cleanupResults.every((rows) => rows.length === 0)) continue;
+      if (cleanupResults.every((result) => result.rowsAffected === 0)) continue;
       emitNamedEvent({
         kind: "account.deleted",
         accountId,
