@@ -110,6 +110,34 @@ describe("directWorkerOutputHasPendingHumanInput", () => {
     })).toBe("running");
   });
 
+  it("keeps an idle direct worker awaiting a blocking prose decision", () => {
+    expect(resolveDirectRunStatusFromWorkerOutput({
+      workerStatus: "idle",
+      outputEntries: [{
+        type: "message",
+        text: [
+          "Before merging, I need your decision.",
+          "Should I commit, stash, or merge only committed changes?",
+          "Which approach do you want?",
+        ].join("\n"),
+      }],
+    })).toBe("awaiting_user");
+  });
+
+  it("completes an idle direct worker after an optional post-completion offer", () => {
+    expect(resolveDirectRunStatusFromWorkerOutput({
+      workerStatus: "idle",
+      outputEntries: [{
+        type: "message",
+        text: [
+          "Both fixes are in, and the focused tests pass.",
+          "The runner still needs a restart before the earlier session picks up the change.",
+          "Want me to restart the runner?",
+        ].join("\n"),
+      }],
+    })).toBe("done");
+  });
+
   it("runs milestone auto-commit when a direct run finishes", async () => {
     const now = new Date();
     await db.insert(plans).values({
