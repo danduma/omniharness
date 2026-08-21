@@ -1,8 +1,248 @@
 {
   "version": 2,
   "projectRoot": "/Users/masterman/NLP/omniharness",
-  "generatedAt": "2026-08-13T22:00:14.503Z",
+  "generatedAt": "2026-08-21T22:00:57.707Z",
   "conversations": [
+    {
+      "provider": "claude",
+      "id": "a258fe36-48a4-491c-8e7c-fb5d622e7147",
+      "title": "Claude conversation a258fe36",
+      "startedAt": "2026-08-21T16:08:11.721Z",
+      "updatedAt": "2026-08-21T16:08:14.040Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "6f588589fb534f2e03d7111b84654a8b10b769e1c98feeab93b67b4b5914445b",
+      "parts": [
+        "conversations/2026/08/2026-08-21-claude-claude-conversation-a258fe36-a258fe36-48a4-491c-8e7c-fb5d622e7147-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 9,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "23684cf2-66e9-47ff-ada1-76c62f4558a0",
+      "title": "Review cross-CLI handoff fork implementation plan",
+      "startedAt": "2026-08-20T18:04:33.774Z",
+      "updatedAt": "2026-08-20T18:18:30.695Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "a66ecbc717619bd96bec16d87631ce97924a29dca5e80941763b2820a9c56fc5",
+      "parts": [
+        "conversations/2026/08/2026-08-20-claude-review-cross-cli-handoff-fork-implementation-plan-23684cf2-66e9-47ff-ada1-76c62f4558a0-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 24,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "codex",
+      "id": "01a01a9f-e16a-7722-8574-f7a50fed5090",
+      "title": "Codex conversation 01a01a9f",
+      "startedAt": "2026-08-19T15:24:40.717Z",
+      "updatedAt": "2026-08-19T17:36:42.893Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "dcde643c713fc58fcf9c27174eb30bba0685073d1155c10f2266929109b19821",
+      "parts": [
+        "conversations/2026/08/2026-08-19-codex-conversation-01a01a9f-01a01a9f-e16a-7722-8574-f7a50fed5090-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 183,
+      "malformedLines": 0,
+      "redactions": 9,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "61fe1531-0eb5-4470-a655-f912886adcb6",
+      "title": "Claude conversation 61fe1531",
+      "startedAt": "2026-08-19T15:04:45.658Z",
+      "updatedAt": "2026-08-19T17:30:46.418Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "203075778e276534c0debc4843a8de4df3b7cb488b11f148d8e612e4a879af8e",
+      "parts": [
+        "conversations/2026/08/2026-08-19-claude-claude-conversation-61fe1531-61fe1531-0eb5-4470-a655-f912886adcb6-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 462,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "399ae130-d63e-4008-9d9b-34929cf5e2ab",
+      "title": "Claude conversation 399ae130",
+      "startedAt": "2026-08-19T09:13:28.824Z",
+      "updatedAt": "2026-08-19T11:49:15.777Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "b7ddb71f80b1eb19c3b5a107db6a5689ee2a67773c7e474e0a663ceaf6da82b6",
+      "parts": [
+        "conversations/2026/08/2026-08-19-claude-claude-conversation-399ae130-399ae130-d63e-4008-9d9b-34929cf5e2ab-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 423,
+      "malformedLines": 0,
+      "redactions": 2,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "2330dcb2-b39a-4011-ad28-ceb51d602578",
+      "title": "Claude conversation 2330dcb2",
+      "startedAt": "2026-08-18T09:10:43.417Z",
+      "updatedAt": "2026-08-19T09:10:17.231Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "1596d5ce250d0216f143337ffd0db41cf60783a498eadef89b0cdbe4a4a7568e",
+      "parts": [
+        "conversations/2026/08/2026-08-18-claude-claude-conversation-2330dcb2-2330dcb2-b39a-4011-ad28-ceb51d602578-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 203,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "93b09c06-b2cb-47a9-b3b3-e5eb4e547a94",
+      "title": "Claude conversation 93b09c06",
+      "startedAt": "2026-08-16T17:13:18.544Z",
+      "updatedAt": "2026-08-16T19:41:38.226Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "6483ff4513233b1d3e868f767574dc1c96803bbd793a6caec79ede1765db68e3",
+      "parts": [
+        "conversations/2026/08/2026-08-16-claude-claude-conversation-93b09c06-93b09c06-b2cb-47a9-b3b3-e5eb4e547a94-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 420,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "codex",
+      "id": "01a00a69-281f-7933-9400-8005af399afe",
+      "title": "Diagnose server outage",
+      "startedAt": "2026-08-16T11:50:58.869Z",
+      "updatedAt": "2026-08-16T13:44:37.075Z",
+      "status": "complete",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "c3ef17d360a413a9dcefe583d12909fa63930664d9f0ab67c20b0d4a330a4637",
+      "parts": [
+        "conversations/2026/08/2026-08-16-diagnose-server-outage-01a00a69-281f-7933-9400-8005af399afe-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 291,
+      "malformedLines": 0,
+      "redactions": 3,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "ecac1614-17f0-4b28-9992-826f70e9fa09",
+      "title": "Claude conversation ecac1614",
+      "startedAt": "2026-08-16T11:05:15.523Z",
+      "updatedAt": "2026-08-16T11:42:53.386Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "77d22ebebbb9c548e33f4113af7e5222b936ef5a2aa535862413ed7feefee941",
+      "parts": [
+        "conversations/2026/08/2026-08-16-claude-claude-conversation-ecac1614-ecac1614-17f0-4b28-9992-826f70e9fa09-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 105,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "c7aa3c93-a538-4b6f-ae4c-96a09627aa90",
+      "title": "Claude conversation c7aa3c93",
+      "startedAt": "2026-08-16T11:02:03.275Z",
+      "updatedAt": "2026-08-16T11:28:58.305Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "c737a2c1affd15dfcf0529df4ade7b62b7afff5a162fbdde1b3ee2abfd03dbee",
+      "parts": [
+        "conversations/2026/08/2026-08-16-claude-claude-conversation-c7aa3c93-c7aa3c93-a538-4b6f-ae4c-96a09627aa90-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 603,
+      "malformedLines": 0,
+      "redactions": 3,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "1e6eebf5-876f-4a37-a5f9-4e3091f2aa25",
+      "title": "Claude conversation 1e6eebf5",
+      "startedAt": "2026-08-16T11:02:30.134Z",
+      "updatedAt": "2026-08-16T11:03:25.974Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "74eb903fe203caaa0bb476054499e96dc4e84e03302cf05f5cac76d52a374a63",
+      "parts": [
+        "conversations/2026/08/2026-08-16-claude-claude-conversation-1e6eebf5-1e6eebf5-876f-4a37-a5f9-4e3091f2aa25-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 6,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "dab722b5-3846-4074-9e3e-febfb1b10726",
+      "title": "Claude conversation dab722b5",
+      "startedAt": "2026-08-16T10:59:34.277Z",
+      "updatedAt": "2026-08-16T10:59:36.635Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "8313d3114843528be866fc0781a38cb56b143b6fd252dbb2aa4563e25967b4e8",
+      "parts": [
+        "conversations/2026/08/2026-08-16-claude-claude-conversation-dab722b5-dab722b5-3846-4074-9e3e-febfb1b10726-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 7,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
     {
       "provider": "claude",
       "id": "023a2dbb-adb1-4d60-9c90-068c09aa7ada",
