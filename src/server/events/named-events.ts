@@ -747,6 +747,14 @@ export type ArtifactEvent =
       reason: string;
     }
   | {
+      kind: "artifact.metadata_update_deferred";
+      runId: string;
+      streamKind: ArtifactStreamKindLabel;
+      ownerId: string | null;
+      seq: number;
+      reason: string;
+    }
+  | {
       kind: "artifact.metadata_mismatch";
       runId: string;
       streamKind: ArtifactStreamKindLabel;
