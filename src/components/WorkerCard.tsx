@@ -889,6 +889,7 @@ export function WorkerCard({
                 agent={agent}
                 userMessages={userMessages}
                 entries={unifiedTerminalEntries}
+                workerId={agent.name}
                 projectRoot={projectRoot}
                 onOpenProjectFile={(file) => sideWindowManager.openFile(file)}
                 hasMoreHistory={hasMoreHistory}

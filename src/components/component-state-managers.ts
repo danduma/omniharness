@@ -440,6 +440,7 @@ export const terminalUiManager = new class extends StateManager<{
   toolOutputExpandedById: Record<string, boolean>;
   thoughtOpenById: Record<string, boolean>;
   workSummaryOpenById: Record<string, boolean>;
+  generatedImageIndexByGalleryId: Record<string, number>;
 }> {
   constructor() {
     super({
@@ -448,6 +449,7 @@ export const terminalUiManager = new class extends StateManager<{
       toolOutputExpandedById: {},
       thoughtOpenById: {},
       workSummaryOpenById: {},
+      generatedImageIndexByGalleryId: {},
     });
   }
 
@@ -475,4 +477,12 @@ export const terminalUiManager = new class extends StateManager<{
     ...current,
     [id]: open,
   }));
+
+  setGeneratedImageIndex = (galleryId: string, index: number, imageCount: number) => this.setKey(
+    "generatedImageIndexByGalleryId",
+    (current) => ({
+      ...current,
+      [galleryId]: Math.max(0, Math.min(index, Math.max(0, imageCount - 1))),
+    }),
+  );
 }();

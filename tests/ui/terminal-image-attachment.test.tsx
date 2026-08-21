@@ -8,6 +8,14 @@ vi.mock("@/interface/attachments/AttachmentUrlManager", () => ({
   ),
 }));
 
+vi.mock("@/interface/home/WorkerEntryContentUrlManager", () => ({
+  useWorkerEntryContent: () => ({
+    status: "loaded",
+    url: "blob:generated-image",
+    error: null,
+  }),
+}));
+
 import { Terminal } from "@/components/Terminal";
 import type { WorkerEntry } from "@/server/workers/entries-types";
 
@@ -78,4 +86,63 @@ test("legacy stream image attachments recover their thumbnail source from the me
 
   expect(html).toContain("<img");
   expect(html).toContain("attachments%2Flegacy%2Flegacy-image-1-screenshot.png");
+});
+
+test("generated image content from the unified worker stream renders inline", () => {
+  Object.assign(globalThis, { React });
+
+  const entries: WorkerEntry[] = [{
+    id: "generated-image",
+    seq: 1,
+    type: "agent_content",
+    text: "image",
+    timestamp: "2026-08-21T22:37:24.903Z",
+    authorRole: "assistant",
+    raw: {
+      content: {
+        type: "image",
+        data: "aW1hZ2U=",
+        mimeType: "image/png",
+      },
+    },
+  }];
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries,
+    showTextSizeControl: false,
+  }));
+
+  expect(html).toContain("<img");
+  expect(html).toContain("data:image/png;base64,aW1hZ2U=");
+});
+
+test("historical generated images use their worker entry as the binary content source", () => {
+  Object.assign(globalThis, { React });
+
+  const entries = [{
+    id: "historical-generated-image",
+    seq: 1,
+    type: "agent_content" as const,
+    text: "image",
+    timestamp: "2026-08-21T22:37:24.903Z",
+    authorRole: "assistant" as const,
+    raw: {
+      content: {
+        type: "image",
+        data: "iVBORw0K\n[truncated 1000000 chars]",
+        mimeType: "image/png",
+        uri: "/workspace/.omniharness/cli-home/codex/home/generated_images/session/image.png",
+      },
+    },
+  }];
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries,
+    workerId: "run-worker-1",
+    showTextSizeControl: false,
+  }));
+
+  expect(html).toContain("<img");
+  expect(html).toContain('src="blob:generated-image"');
+  expect(html).not.toContain("[truncated");
 });

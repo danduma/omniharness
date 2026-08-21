@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
-import { ALargeSmall, Check, ChevronDown, Copy, LoaderCircle } from "lucide-react";
+import { ALargeSmall, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, ExternalLink, LoaderCircle } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { ProjectFileContextMenu } from "@/components/ProjectFileContextMenu";
 import { conversationCopyNoticeManager, terminalUiManager } from "@/components/component-state-managers";
@@ -28,6 +28,13 @@ import {
   shouldTerminalKeepFollowingLatest,
   shouldTerminalResetInitialPosition,
 } from "@/components/terminal/scroll-state";
+import { useWorkerEntryContent, type WorkerEntryContentReference } from "@/interface/home/WorkerEntryContentUrlManager";
+import {
+  buildGeneratedImagesActivity,
+  isGeneratedImageEntry,
+  type GeneratedImageItem,
+  type GeneratedImagesActivity,
+} from "@/components/terminal/generated-image-activity";
 
 export {
   resolveTerminalPrependedScrollTop,
@@ -47,6 +54,8 @@ interface TerminalProps {
    * docs/architecture/worker-conversation-stream.md.
    */
   entries?: WorkerEntry[];
+  /** Worker owner for per-worker streams whose entries do not carry workerId. */
+  workerId?: string;
   /**
    * True when the conversation ran across more than one worker, so `seq` (which
    * restarts per worker) cannot order it. Pass the run's worker count rather
@@ -140,7 +149,7 @@ export type TerminalActivityItem = AgentActivityItem | {
   kind: "pending_assistant";
   status: TerminalPendingAssistantStatus;
   timestamp: string;
-};
+} | GeneratedImagesActivity;
 type TerminalActivityItemWithOrder = TerminalActivityItem & { streamSeq?: number };
 export type TerminalActivityKind = TerminalActivityItem["kind"];
 export type TerminalPendingAssistantStatus = "connecting" | "thinking" | "working";
@@ -173,6 +182,8 @@ export function getTerminalActivityVersion(activity: TerminalActivityItem[]) {
       case "message":
       case "user_message":
         return `${item.id}:${item.kind}:${item.timestamp}:${item.text.length}`;
+      case "generated_images":
+        return `${item.id}:${item.kind}:${item.timestamp}:${item.images.map((image) => image.id).join(",")}`;
       case "work_summary":
         return `${item.id}:${item.kind}:${item.durationMs}:${item.inProgress}:${item.items.length}`;
     }
@@ -373,10 +384,12 @@ function activityKindOrder(activity: TerminalActivityItem) {
       return 3;
     case "permission":
       return 4;
-    case "message":
+    case "generated_images":
       return 5;
-    default:
+    case "message":
       return 6;
+    default:
+      return 7;
   }
 }
 
@@ -570,8 +583,10 @@ function summarizeWorkIntervals(items: TerminalActivityItemWithOrder[]): Termina
       return;
     }
 
-    const firstItem = workBlock[0]!;
-    const lastItem = workBlock[workBlock.length - 1]!;
+    const generatedImages = workBlock.filter((item) => item.kind === "generated_images");
+    const workItems = workBlock.filter((item) => item.kind !== "generated_images");
+    const firstItem = workItems[0] ?? workBlock[0]!;
+    const lastItem = workItems.at(-1) ?? workBlock[workBlock.length - 1]!;
     const firstTs = Date.parse(firstItem.timestamp);
     const endTs = nextItem ? Date.parse(nextItem.timestamp) : null;
     const lastTs = Date.parse(lastItem.timestamp);
@@ -589,14 +604,18 @@ function summarizeWorkIntervals(items: TerminalActivityItemWithOrder[]): Termina
       durationMs,
       timestamp: firstItem.timestamp,
       inProgress,
-      items: workBlock as AgentActivityItem[],
+      items: workItems as AgentActivityItem[],
       streamSeq: firstItem.streamSeq,
     });
+    // Generated media is a result of the turn, not implementation detail. Keep
+    // it immediately after the collapsed work summary so it never disappears
+    // inside the disclosure that contains the tool calls.
+    result.push(...generatedImages);
     workBlock = [];
   };
 
   for (const item of items) {
-    if (item.kind === "thinking" || item.kind === "tool" || item.kind === "tool_group" || item.kind === "permission") {
+    if (item.kind === "thinking" || item.kind === "tool" || item.kind === "tool_group" || item.kind === "permission" || item.kind === "generated_images") {
       workBlock.push(item);
     } else {
       flushWorkBlock(item);
@@ -1852,6 +1871,23 @@ function ProtocolActivityContent({
     ? raw.content as Record<string, unknown>
     : null;
 
+  const workerContentReference = content
+    && typeof content.omniWorkerContent === "object"
+    && content.omniWorkerContent !== null
+    ? content.omniWorkerContent as Record<string, unknown>
+    : null;
+  if (
+    activity.protocolType === "content"
+    && content?.type === "image"
+    && typeof workerContentReference?.workerId === "string"
+    && typeof workerContentReference.entryId === "string"
+  ) {
+    return <WorkerEntryContentImage reference={{
+      workerId: workerContentReference.workerId,
+      entryId: workerContentReference.entryId,
+    }} />;
+  }
+
   if (activity.protocolType === "content" && content?.type === "image" && typeof content.data === "string") {
     const mimeType = typeof content.mimeType === "string" ? content.mimeType : "image/png";
     return (
@@ -1897,6 +1933,186 @@ function ProtocolActivityContent({
     );
   }
   return activity.text ? <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{activity.text}</p> : null;
+}
+
+function WorkerEntryContentImage({
+  reference,
+  alt = t("terminal.protocol.content"),
+  className = "mt-2 max-h-[32rem] w-auto max-w-full rounded-lg border border-border object-contain",
+  openable = false,
+}: {
+  reference: WorkerEntryContentReference;
+  alt?: string;
+  className?: string;
+  openable?: boolean;
+}) {
+  const content = useWorkerEntryContent(reference);
+  if (content.status === "error") {
+    return (
+      <p className="mt-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
+        {t("terminal.protocol.contentUnavailable", { error: content.error ?? "" })}
+      </p>
+    );
+  }
+  if (!content.url) {
+    return (
+      <div
+        className="mt-2 h-40 w-full max-w-2xl animate-pulse rounded-lg border border-border bg-muted/30"
+        role="status"
+        aria-label={t("terminal.protocol.content")}
+      />
+    );
+  }
+  const image = (
+    <img
+      src={content.url}
+      alt={alt}
+      width={960}
+      height={640}
+      className={className}
+    />
+  );
+  return openable ? (
+    <a
+      href={content.url}
+      target="_blank"
+      rel="noreferrer noopener"
+      aria-label={t("terminal.generatedImages.openFullSize", { image: alt })}
+      title={t("terminal.generatedImages.openFullSize", { image: alt })}
+      className="group/image relative block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {image}
+      <span className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/20 bg-black/55 text-white opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/image:opacity-100 group-focus-visible/image:opacity-100">
+        <ExternalLink className="h-4 w-4" aria-hidden="true" />
+      </span>
+    </a>
+  ) : image;
+}
+
+function GeneratedImageMedia({ image, label }: { image: GeneratedImageItem; label: string }) {
+  const imageClassName = "mx-auto block max-h-[34rem] min-h-48 w-auto max-w-full object-contain sm:min-h-64";
+  if (image.reference) {
+    return (
+      <WorkerEntryContentImage
+        reference={image.reference}
+        alt={label}
+        className={imageClassName}
+        openable
+      />
+    );
+  }
+  if (!image.data) {
+    return (
+      <p className="px-4 py-16 text-center text-sm text-destructive" role="alert">
+        {t("terminal.protocol.contentUnavailable", { error: t("terminal.generatedImages.missingData") })}
+      </p>
+    );
+  }
+
+  const source = `data:${image.mimeType};base64,${image.data}`;
+  return (
+    <a
+      href={source}
+      target="_blank"
+      rel="noreferrer noopener"
+      aria-label={t("terminal.generatedImages.openFullSize", { image: label })}
+      title={t("terminal.generatedImages.openFullSize", { image: label })}
+      className="group/image relative block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <img src={source} alt={label} width={960} height={640} className={imageClassName} />
+      <span className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/20 bg-black/55 text-white opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/image:opacity-100 group-focus-visible/image:opacity-100">
+        <ExternalLink className="h-4 w-4" aria-hidden="true" />
+      </span>
+    </a>
+  );
+}
+
+function GeneratedImagesCarousel({ activity }: { activity: GeneratedImagesActivity }) {
+  const selectedOverride = useManagerSelector(
+    terminalUiManager,
+    useCallback((state) => state.generatedImageIndexByGalleryId[activity.id], [activity.id]),
+  );
+  const selectedIndex = Math.min(selectedOverride ?? 0, activity.images.length - 1);
+  const selectedImage = activity.images[selectedIndex];
+  if (!selectedImage) {
+    return null;
+  }
+
+  const imageLabel = t("terminal.generatedImages.imageLabel", { number: selectedIndex + 1 });
+  const selectImage = (index: number) => terminalUiManager.setGeneratedImageIndex(
+    activity.id,
+    index,
+    activity.images.length,
+  );
+
+  return (
+    <section
+      className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm dark:border-white/10 dark:bg-[#111317]"
+      aria-label={t("terminal.generatedImages.title")}
+    >
+      <div className="flex items-center justify-between gap-3 border-b border-border/70 px-3.5 py-2.5 dark:border-white/10">
+        <h3 className="text-sm font-semibold tracking-tight text-foreground">
+          {t("terminal.generatedImages.title")}
+        </h3>
+        <span className="font-mono text-xs text-muted-foreground" aria-live="polite">
+          {t("terminal.generatedImages.position", {
+            number: selectedIndex + 1,
+            count: activity.images.length,
+          })}
+        </span>
+      </div>
+      <div className="relative bg-muted/25 p-2 dark:bg-black/25 sm:p-3">
+        <GeneratedImageMedia image={selectedImage} label={imageLabel} />
+        {activity.images.length > 1 ? (
+          <>
+            <button
+              type="button"
+              className="absolute left-4 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-sm backdrop-blur-sm transition-colors hover:bg-black/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 disabled:cursor-not-allowed disabled:opacity-35"
+              onClick={() => selectImage(selectedIndex - 1)}
+              disabled={selectedIndex === 0}
+              aria-label={t("terminal.generatedImages.previous")}
+              title={t("terminal.generatedImages.previous")}
+            >
+              <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="absolute right-4 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-sm backdrop-blur-sm transition-colors hover:bg-black/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 disabled:cursor-not-allowed disabled:opacity-35"
+              onClick={() => selectImage(selectedIndex + 1)}
+              disabled={selectedIndex === activity.images.length - 1}
+              aria-label={t("terminal.generatedImages.next")}
+              title={t("terminal.generatedImages.next")}
+            >
+              <ChevronRight className="h-5 w-5" aria-hidden="true" />
+            </button>
+          </>
+        ) : null}
+      </div>
+      <div className="flex flex-wrap items-center justify-center gap-1.5 border-t border-border/70 px-3 py-2.5 dark:border-white/10">
+        {activity.images.map((image, index) => {
+          const label = t("terminal.generatedImages.imageLabel", { number: index + 1 });
+          const selected = index === selectedIndex;
+          return (
+            <button
+              key={image.id}
+              type="button"
+              className={cn(
+                "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                selected
+                  ? "border-foreground/20 bg-foreground text-background"
+                  : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground dark:border-white/10 dark:bg-white/5",
+              )}
+              onClick={() => selectImage(index)}
+              aria-pressed={selected}
+              aria-label={label}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 /**
@@ -2069,8 +2285,10 @@ const ActivityRow = memo(function ActivityRow({
   const running = activity.kind === "thinking" || activity.kind === "work_summary"
     ? activity.inProgress
     : (activity.kind === "tool" || activity.kind === "tool_group") && isRunningActivityStatus(activity.status);
-  const markerTone = activity.kind === "tool" || activity.kind === "tool_group"
-    ? isErrorActivityStatus(activity.status) ? "error" : "tool"
+  const markerTone = activity.kind === "generated_images"
+    ? "tool"
+    : activity.kind === "tool" || activity.kind === "tool_group"
+      ? isErrorActivityStatus(activity.status) ? "error" : "tool"
     : activity.kind === "permission"
       ? "permission"
     : "thought";
@@ -2176,6 +2394,9 @@ const ActivityRow = memo(function ActivityRow({
             onOpenProjectFile={onOpenProjectFile}
           />
         ) : null}
+        {activity.kind === "generated_images" ? (
+          <GeneratedImagesCarousel activity={activity} />
+        ) : null}
         {activity.kind === "permission" ? (
           activity.status === "pending" ? (
             <div className={cn(
@@ -2223,6 +2444,7 @@ export function Terminal({
   agent,
   userMessages = [],
   entries,
+  workerId,
   multiWorkerOrdering,
   allowUserMessageFallback = false,
   ungatedUserMessageIds,
@@ -2297,7 +2519,11 @@ export function Terminal({
             || entry.type === "tool_call"
             || entry.type === "tool_call_update"
             || entry.type === "permission"
+            || entry.type === "agent_content"
           ) {
+            if (isGeneratedImageEntry(entry)) {
+              return [];
+            }
             return [entry as unknown as AgentOutputEntry];
           }
           if (entry.type === "system_note" || entry.type === "lifecycle") {
@@ -2338,6 +2564,9 @@ export function Terminal({
         ? { ...item, streamSeq: activityStreamSeq(item, seqByActivityId) ?? undefined }
         : item
     ));
+    const generatedImagesActivity: TerminalActivityItemWithOrder[] = usingUnifiedStream
+      ? buildGeneratedImagesActivity(visibleEntries ?? [], workerId)
+      : [];
     // `seq` is per-worker, so it only orders a conversation that ran on a
     // single worker; across workers we have to fall back to timestamps.
     //
@@ -2487,7 +2716,7 @@ export function Terminal({
     // (rows appearing, disappearing, and jumping position as the two copies
     // sorted apart), so keep the newest delivery and drop the rewound copy.
     const dedupedUserActivity = dedupeUserActivityByMessageId(userActivity);
-    const latestActivityTimestamp = [...dedupedUserActivity, ...agentActivity]
+    const latestActivityTimestamp = [...dedupedUserActivity, ...agentActivity, ...generatedImagesActivity]
       .map((item) => activityTimestampMs(item.timestamp))
       .reduce((latest, timestamp) => Math.max(latest, timestamp), 0);
     const shouldShowPendingAssistantActivity = showPendingAssistantIndicator;
@@ -2500,7 +2729,12 @@ export function Terminal({
         }]
       : [];
 
-    const renderable = [...dedupedUserActivity, ...agentActivity, ...pendingAssistantActivity];
+    const renderable = [
+      ...dedupedUserActivity,
+      ...agentActivity,
+      ...generatedImagesActivity,
+      ...pendingAssistantActivity,
+    ];
     // Every item is reduced to fixed scalars before a single comparison runs,
     // so the ordering is a total order and cannot depend on the pairs `sort`
     // visits. `seq` is the authority for a conversation that ran on one
