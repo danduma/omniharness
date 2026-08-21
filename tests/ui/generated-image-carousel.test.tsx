@@ -129,6 +129,6 @@ test("generated images after a new user input form a separate carousel", () => {
     showTextSizeControl: false,
   }));
 
-  expect(html.match(/Generated images/g)).toHaveLength(2);
+  expect(html.match(/<section/g)).toHaveLength(2);
   expect(html.match(/Image 1 of 1/g)).toHaveLength(2);
 });
