@@ -11,6 +11,7 @@ import { reapStuckDirectWorkers } from "@/server/workers/stuck-worker-reaper";
 import { syncConversationSessionsFromBridge } from "@/server/conversations/sync";
 import { resumeElapsedQuotaWaits } from "@/server/quota/worker-resume";
 import { emitNamedEvent } from "@/server/events/named-events";
+import { reconcileExpiredHandoffs } from "@/server/handoff/reconciler";
 
 const WATCHDOG_INTERVAL_MS = 15_000;
 
@@ -58,6 +59,7 @@ async function resumeRecoverableFailedImplementationRun(run: typeof runs.$inferS
 }
 
 export async function syncRunningSupervision() {
+  await reconcileExpiredHandoffs();
   await cancelDurableSupervisorWakesForTerminalRuns();
   await rehydrateDurableSupervisorWakes();
   void compactStaleWorkerOutputs().catch((error) => {

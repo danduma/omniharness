@@ -1,5 +1,5 @@
 import { lazy, memo, useCallback, type Dispatch, type KeyboardEvent, type SetStateAction } from "react";
-import { Bug, ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, Menu, MoreHorizontal, PanelLeft, PanelRight, Pencil, RotateCw, SquareTerminal } from "lucide-react";
+import { ArrowLeftRight, Bug, ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, Menu, MoreHorizontal, PanelLeft, PanelRight, Pencil, RotateCw, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
@@ -137,6 +137,7 @@ interface HomeHeaderProps {
   stoppingTerminalProcess?: { workerId: string; terminalProcessId: string } | null;
   onForkSession: () => void;
   onForkSessionIntoWorktree: () => void;
+  onForkSessionToDifferentCli: () => void;
   canForkSession: boolean;
   onReload: () => void;
   onOpenExternalSessions?: () => void;
@@ -233,6 +234,7 @@ const HomeHeader = memo(function HomeHeader({
   stoppingTerminalProcess,
   onForkSession,
   onForkSessionIntoWorktree,
+  onForkSessionToDifferentCli,
   canForkSession,
   onReload,
   onOpenExternalSessions,
@@ -488,6 +490,10 @@ const HomeHeader = memo(function HomeHeader({
                   <DropdownMenuItem onClick={onForkSessionIntoWorktree} disabled={!canForkSession}>
                     <FolderGit2 className="h-4 w-4" />
                     <span>{t("session.menu.forkIntoWorktree")}</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={onForkSessionToDifferentCli} disabled={!canForkSession}>
+                    <ArrowLeftRight className="h-4 w-4" />
+                    <span>{t("session.menu.forkDifferentCli")}</span>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={onReload}>

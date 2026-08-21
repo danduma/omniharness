@@ -25,6 +25,7 @@ export type RecoveryPolicyDecision =
   | { action: "none"; reason: string }
   | { action: "resume_session"; reason: string }
   | { action: "restart_from_checkpoint"; reason: string }
+  | { action: "restart_direct_worker"; reason: string }
   | { action: "wait_for_quota_reset"; reason: string; resumeAt: Date | null }
   | { action: "wait_for_backoff"; reason: string; nextAttemptAt: Date }
   | { action: "needs_user"; reason: string }
@@ -178,9 +179,15 @@ export function decideRecoveryAction(args: {
   }
 
   if (recoveryState.kind === "queue_blocked") {
-    return implementationRun
-      ? { action: "restart_from_checkpoint", reason: "Queued message is blocked by a missing worker." }
-      : { action: "needs_user", reason: "Queued message is blocked by a missing direct worker." };
+    if (implementationRun) {
+      return { action: "restart_from_checkpoint", reason: "Queued message is blocked by a missing worker." };
+    }
+    // A direct run has no checkpoint to restart from, but `needs_user` here was
+    // a dead end rather than a prompt: Resume re-classified the run, landed on
+    // `queue_blocked` again, and returned needs_user again — forever, and even
+    // with `force` set. A direct worker whose session is gone can still be
+    // replaced, and the blocked message redelivered to the fresh one.
+    return { action: "restart_direct_worker", reason: "Queued message is blocked by a missing direct worker." };
   }
 
   return { action: "needs_user", reason: recoveryState.reason || recoveryState.message };

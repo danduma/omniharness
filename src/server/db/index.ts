@@ -4,7 +4,7 @@ import * as schema from './schema';
 import { getAppDataPath } from '@/server/app-root';
 
 const dbPath = getAppDataPath('sqlite.db');
-const DB_SCHEMA_VERSION = 7;
+const DB_SCHEMA_VERSION = 9;
 export type DbClient = ReturnType<typeof createClient>;
 
 async function tableColumns(client: DbClient, table: string): Promise<Set<string>> {
@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS runs (
   planner_readiness_verdict_json text,
   parent_run_id text,
   forked_from_message_id text,
+  origin_handoff_id text,
+  active_handoff_id text,
   auto_commit_milestones integer NOT NULL DEFAULT 0,
   push_on_commit integer NOT NULL DEFAULT 0,
   git_baseline_json text,
@@ -159,6 +161,41 @@ CREATE TABLE IF NOT EXISTS workers (
   created_at integer NOT NULL,
   updated_at integer NOT NULL,
   FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE IF NOT EXISTS conversation_handoffs (
+  id text PRIMARY KEY NOT NULL,
+  source_run_id text NOT NULL,
+  source_worker_id text,
+  target_run_id text,
+  forked_from_message_id text,
+  reason text NOT NULL,
+  status text NOT NULL,
+  revision integer NOT NULL DEFAULT 1,
+  source_seq integer,
+  normalized_project_path text NOT NULL,
+  workspace_fingerprint text,
+  target_worker_type text NOT NULL,
+  target_model text,
+  target_effort text,
+  target_account_id text,
+  target_selection_hash text NOT NULL,
+  packet_version integer,
+  artifact_seq integer,
+  packet_hash text,
+  packet_preview text,
+  summary_source text,
+  operation_id text,
+  launch_claim_token text,
+  claim_expires_at integer,
+  retry_of_handoff_id text,
+  last_error text,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  completed_at integer,
+  FOREIGN KEY (source_run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE CASCADE,
+  FOREIGN KEY (source_worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE SET NULL,
+  FOREIGN KEY (target_run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS process_sessions (
@@ -274,6 +311,14 @@ CREATE TABLE IF NOT EXISTS accounts (
   status text,
   status_checked_at integer,
   metadata_json text,
+  lifecycle_operation_id text,
+  lifecycle_operation_kind text,
+  lifecycle_operation_owner text,
+  lifecycle_operation_started_at integer,
+  lifecycle_operation_deadline_at integer,
+  lifecycle_operation_error_code text,
+  lifecycle_previous_status text,
+  lifecycle_previous_enabled integer,
   created_at integer NOT NULL,
   updated_at integer
 );
@@ -619,6 +664,14 @@ if (!runColumnNames.has("forked_from_message_id")) {
   await client.execute("ALTER TABLE runs ADD COLUMN forked_from_message_id text;");
 }
 
+if (!runColumnNames.has("origin_handoff_id")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN origin_handoff_id text;");
+}
+
+if (!runColumnNames.has("active_handoff_id")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN active_handoff_id text;");
+}
+
 if (!runColumnNames.has("auto_commit_milestones")) {
   await client.execute("ALTER TABLE runs ADD COLUMN auto_commit_milestones integer NOT NULL DEFAULT 0;");
 }
@@ -906,6 +959,21 @@ if (!accountColumnNames.has("updated_at")) {
   await client.execute("ALTER TABLE accounts ADD COLUMN updated_at integer;");
 }
 
+for (const [columnName, columnType] of [
+  ["lifecycle_operation_id", "text"],
+  ["lifecycle_operation_kind", "text"],
+  ["lifecycle_operation_owner", "text"],
+  ["lifecycle_operation_started_at", "integer"],
+  ["lifecycle_operation_deadline_at", "integer"],
+  ["lifecycle_operation_error_code", "text"],
+  ["lifecycle_previous_status", "text"],
+  ["lifecycle_previous_enabled", "integer"],
+] as const) {
+  if (!accountColumnNames.has(columnName)) {
+    await client.execute(`ALTER TABLE accounts ADD COLUMN ${columnName} ${columnType};`);
+  }
+}
+
 const authSessionColumnNames = await tableColumns(client, "auth_sessions");
 
 if (!authSessionColumnNames.has("transport")) {
@@ -1006,6 +1074,9 @@ CREATE INDEX IF NOT EXISTS worker_token_usage_account_occurred_idx ON worker_tok
 CREATE INDEX IF NOT EXISTS worker_token_usage_worker_idx ON worker_token_usage(worker_id);
 CREATE INDEX IF NOT EXISTS account_usage_snapshots_account_window_idx ON account_usage_snapshots(account_id, window_key);
 CREATE INDEX IF NOT EXISTS runs_created_idx ON runs(created_at);
+CREATE INDEX IF NOT EXISTS runs_origin_handoff_idx ON runs(origin_handoff_id);
+CREATE UNIQUE INDEX IF NOT EXISTS runs_origin_handoff_unique_idx ON runs(origin_handoff_id) WHERE origin_handoff_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS runs_active_handoff_idx ON runs(active_handoff_id);
 CREATE INDEX IF NOT EXISTS runs_archived_created_id_desc_idx ON runs(archived_at, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS runs_archived_activity_id_desc_idx ON runs(archived_at, last_activity_at DESC, id DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS run_goals_goal_id_idx ON run_goals(goal_id);
@@ -1019,6 +1090,52 @@ CREATE INDEX IF NOT EXISTS notification_subscriptions_revoked_idx ON notificatio
 CREATE UNIQUE INDEX IF NOT EXISTS artifact_streams_identity_idx ON artifact_streams(run_id, kind, owner_id);
 CREATE INDEX IF NOT EXISTS artifact_streams_kind_updated_idx ON artifact_streams(kind, updated_at);
 CREATE INDEX IF NOT EXISTS artifact_streams_project_run_idx ON artifact_streams(project_path, run_id);
+CREATE INDEX IF NOT EXISTS conversation_handoffs_source_idx ON conversation_handoffs(source_run_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS conversation_handoffs_target_idx ON conversation_handoffs(target_run_id);
+CREATE INDEX IF NOT EXISTS conversation_handoffs_claim_idx ON conversation_handoffs(status, claim_expires_at);
+CREATE INDEX IF NOT EXISTS conversation_handoffs_status_updated_idx ON conversation_handoffs(status, updated_at);
+DROP INDEX IF EXISTS conversation_handoffs_active_source_idx;
+DROP INDEX IF EXISTS conversation_handoffs_active_workspace_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS conversation_handoffs_active_source_idx
+  ON conversation_handoffs(source_run_id)
+  WHERE status IN ('capturing', 'ready', 'launching', 'needs_recovery');
+CREATE UNIQUE INDEX IF NOT EXISTS conversation_handoffs_active_workspace_idx
+  ON conversation_handoffs(normalized_project_path)
+  WHERE status IN ('capturing', 'ready', 'launching', 'needs_recovery');
+`);
+
+await client.execute(`DROP TRIGGER IF EXISTS workers_direct_cli_invariant`);
+await client.executeMultiple(`
+CREATE TRIGGER IF NOT EXISTS workers_direct_cli_invariant
+BEFORE INSERT ON workers
+WHEN EXISTS (
+  SELECT 1
+  FROM runs
+  WHERE runs.id = NEW.run_id
+    AND runs.session_type = 'omni'
+    AND runs.mode IN ('direct', 'commit')
+)
+AND EXISTS (
+  SELECT 1
+  FROM workers existing
+  WHERE existing.run_id = NEW.run_id
+    AND CASE replace(replace(replace(lower(trim(existing.type)), '-', ''), '_', ''), ' ', '')
+      WHEN 'codexcli' THEN 'codex'
+      WHEN 'codexacp' THEN 'codex'
+      WHEN 'claudecode' THEN 'claude'
+      WHEN 'geminicli' THEN 'gemini'
+      ELSE replace(replace(replace(lower(trim(existing.type)), '-', ''), '_', ''), ' ', '')
+    END <> CASE replace(replace(replace(lower(trim(NEW.type)), '-', ''), '_', ''), ' ', '')
+      WHEN 'codexcli' THEN 'codex'
+      WHEN 'codexacp' THEN 'codex'
+      WHEN 'claudecode' THEN 'claude'
+      WHEN 'geminicli' THEN 'gemini'
+      ELSE replace(replace(replace(lower(trim(NEW.type)), '-', ''), '_', ''), ' ', '')
+    END
+)
+BEGIN
+  SELECT RAISE(ABORT, 'HANDOFF_REQUIRED');
+END;
 `);
 
 await client.execute(`PRAGMA user_version = ${DB_SCHEMA_VERSION}`);

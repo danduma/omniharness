@@ -15,6 +15,8 @@ import { t, useI18nSnapshot } from "@/lib/i18n";
 import { getWorkerAvailabilityMessage } from "./worker-availability-copy";
 import { ClaudeModelGatewaySettings } from "./ClaudeModelGatewaySettings";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
+import { ClaudeAccountAuthManager } from "@/interface/home/ClaudeAccountAuthManager";
+import { ClaudeAccountSettings } from "./ClaudeAccountSettings";
 
 interface AgentsSettingsPanelProps {
   settings: Record<string, string>;
@@ -35,6 +37,7 @@ interface AgentsSettingsPanelProps {
   workerCatalogRefreshing: boolean;
   secretStates?: Record<string, { configured: boolean }>;
   settingsDirtyKeys?: Set<string>;
+  claudeAccountAuthManager: ClaudeAccountAuthManager;
 }
 
 export function AgentsSettingsPanel({
@@ -51,6 +54,7 @@ export function AgentsSettingsPanel({
   workerCatalogRefreshing,
   secretStates,
   settingsDirtyKeys,
+  claudeAccountAuthManager,
 }: AgentsSettingsPanelProps) {
   useI18nSnapshot();
   const runtimeApis = useRuntimeAPIs();
@@ -252,6 +256,12 @@ export function AgentsSettingsPanel({
           <p className="text-xs text-muted-foreground">{t("settings.agents.supervisorMemoryHelp")}</p>
         </div>
       </div>
+
+      <ClaudeAccountSettings
+        accounts={accounts}
+        manager={claudeAccountAuthManager}
+        onRefreshAccounts={onRefreshAccounts}
+      />
 
       <div className="space-y-2">
         <div className="space-y-1">

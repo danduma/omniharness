@@ -68,6 +68,7 @@ export type AgentOutputArchiveHandle = {
 export type AgentRecord = {
   name: string;
   type: string;
+  accountId: string | null;
   cwd: string;
   additionalDirectories: string[];
   child: ChildProcessWithoutNullStreams;

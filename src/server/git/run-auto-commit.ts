@@ -1,14 +1,19 @@
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
+import path from "node:path";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
 import { autoCommitMilestone, parseGitBaselineJson, type AutoCommitResult } from "./auto-commit";
+import { assertRunNotHandoffFenced, HandoffInProgressError } from "@/server/handoff/fence";
+import { withWorkspaceMutationLock } from "@/server/handoff/workspace-lock";
 
 type RunRecord = typeof runs.$inferSelect;
 
 const OPEN_INCIDENT_STATUSES = new Set(["open", "recovering", "needs_user"]);
+type AutoCommitOperation = Promise<Awaited<ReturnType<typeof runMilestoneAutoCommitInternal>>>;
+const inFlightAutoCommits = new Map<string, Set<AutoCommitOperation>>();
 
 function sanitizeCommitSubject(value: string | null | undefined) {
   const normalized = (value ?? "")
@@ -108,10 +113,26 @@ function resultSummary(result: AutoCommitResult) {
   return `Auto-commit failed: ${result.reason}`;
 }
 
-export async function runMilestoneAutoCommit(runId: string, summary: string) {
+async function runMilestoneAutoCommitInternal(runId: string, summary: string) {
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
   if (!run || (run.mode !== "implementation" && run.mode !== "direct") || !run.projectPath) {
     return null;
+  }
+
+  return withWorkspaceMutationLock(run.projectPath, async () => {
+
+  try {
+    await assertRunNotHandoffFenced(runId);
+  } catch (error) {
+    if (!(error instanceof HandoffInProgressError)) throw error;
+    const details = "a cross-CLI handoff owns this workspace";
+    await insertCommitEvent(runId, "auto_commit_skipped", {
+      summary: `Auto-commit skipped: ${details}`,
+      status: "skipped",
+      reason: details,
+      wouldHavePushed: Boolean(run.pushOnCommit),
+    });
+    return { status: "skipped", reason: "handoff_in_progress", details } as const;
   }
 
   // Nothing below this line is silent: whether we commit, push, decline to, or
@@ -125,6 +146,12 @@ export async function runMilestoneAutoCommit(runId: string, summary: string) {
       wouldHavePushed: Boolean(run.pushOnCommit),
     });
     return { status: "skipped", reason: "unhealthy_conversation", details: blockedReason } as const;
+  }
+
+  if (!run.autoCommitMilestones) {
+    const result: AutoCommitResult = { status: "skipped", reason: "disabled" };
+    await insertCommitEvent(runId, "auto_commit_skipped", { summary: resultSummary(result), ...result });
+    return result;
   }
 
   const result = autoCommitMilestone({
@@ -179,4 +206,30 @@ export async function runMilestoneAutoCommit(runId: string, summary: string) {
     ...result,
   });
   return result;
+  });
+}
+
+export function runMilestoneAutoCommit(runId: string, summary: string) {
+  const operation = runMilestoneAutoCommitInternal(runId, summary);
+  const operations = inFlightAutoCommits.get(runId) ?? new Set<AutoCommitOperation>();
+  operations.add(operation);
+  inFlightAutoCommits.set(runId, operations);
+  void operation.finally(() => {
+    const current = inFlightAutoCommits.get(runId);
+    current?.delete(operation);
+    if (current?.size === 0) inFlightAutoCommits.delete(runId);
+  }).catch(() => {});
+  return operation;
+}
+
+export async function waitForRunMilestoneAutoCommit(runId: string): Promise<void> {
+  await Promise.all([...(inFlightAutoCommits.get(runId) ?? [])]);
+}
+
+export async function waitForWorkspaceMilestoneAutoCommits(projectPath: string): Promise<void> {
+  const normalized = path.resolve(projectPath);
+  const runIds = (await db.select({ id: runs.id, projectPath: runs.projectPath }).from(runs))
+    .filter((run) => run.projectPath && path.resolve(run.projectPath) === normalized)
+    .map((run) => run.id);
+  await Promise.all(runIds.flatMap((id) => [...(inFlightAutoCommits.get(id) ?? [])]));
 }

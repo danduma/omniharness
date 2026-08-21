@@ -16,10 +16,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
+  accounts,
   executionEvents,
   messages,
   plans,
   runs,
+  workerCredentialAllocations,
   workerCounters,
   workers,
 } from "@/server/db/schema";
@@ -33,6 +35,7 @@ import { LifecycleClient } from "../harness/client";
 import { Chaos, NO_CHAOS } from "../harness/chaos";
 import { __resetNamedEventsForTests } from "@/server/events/named-events";
 import { askAgent } from "@/server/bridge-client";
+import { syncConversationSessions } from "@/server/conversations/sync";
 
 const { AGENT_SNAPSHOT } = vi.hoisted(() => ({
   AGENT_SNAPSHOT: {
@@ -53,16 +56,20 @@ const { AGENT_SNAPSHOT } = vi.hoisted(() => ({
 
 const REVOKED = "Ask failed: Internal error: Failed to authenticate. API Error: 401 OAuth access token has been revoked.";
 
-vi.mock("@/server/bridge-client", () => ({
-  spawnAgent: vi.fn().mockResolvedValue(AGENT_SNAPSHOT),
-  askAgent: vi.fn().mockResolvedValue({ response: "ok", state: "idle" }),
-  getAgent: vi.fn().mockResolvedValue(AGENT_SNAPSHOT),
-  cancelAgent: vi.fn().mockResolvedValue(undefined),
-  cancelAgentTerminalProcess: vi.fn().mockResolvedValue(undefined),
-  respondElicitation: vi.fn().mockResolvedValue(undefined),
-  updateRuntimeSettings: vi.fn().mockResolvedValue(undefined),
-  BRIDGE_URL: "http://localhost:0",
-}));
+vi.mock("@/server/bridge-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/bridge-client")>();
+  return {
+    ...actual,
+    spawnAgent: vi.fn().mockResolvedValue(AGENT_SNAPSHOT),
+    askAgent: vi.fn().mockResolvedValue({ response: "ok", state: "idle" }),
+    getAgent: vi.fn().mockResolvedValue(AGENT_SNAPSHOT),
+    cancelAgent: vi.fn().mockResolvedValue(undefined),
+    cancelAgentTerminalProcess: vi.fn().mockResolvedValue(undefined),
+    respondElicitation: vi.fn().mockResolvedValue(undefined),
+    updateRuntimeSettings: vi.fn().mockResolvedValue(undefined),
+    BRIDGE_URL: "http://localhost:0",
+  };
+});
 
 // The real probe shells out to `claude -p ok`; here it stands in for the
 // provider rejecting the credential a second time.
@@ -101,10 +108,12 @@ beforeEach(async () => {
   __resetNamedEventsForTests();
   await db.delete(executionEvents);
   await db.delete(messages);
+  await db.delete(workerCredentialAllocations);
   await db.delete(workers);
   await db.delete(workerCounters);
   await db.delete(runs);
   await db.delete(plans);
+  await db.delete(accounts).where(eq(accounts.id, "claude-sub-1"));
   server = await startLifecycleHarness({
     routes: [
       { pattern: "/api/events", module: eventsRoute },
@@ -125,7 +134,7 @@ afterEach(async () => {
 });
 
 describe("lifecycle harness — revoked provider credential", () => {
-  it("surfaces account.login_required and marks the failure as verified dead", async () => {
+  it("keeps login-required state through restart reconciliation", async () => {
     await client.bootstrapSnapshot();
     await client.subscribe({});
 
@@ -143,6 +152,20 @@ describe("lifecycle harness — revoked provider credential", () => {
     });
 
     // The worker's account is what the notice names, so pin one.
+    const accountCreatedAt = new Date("2026-08-21T16:00:00.000Z");
+    await db.insert(accounts).values({
+      id: "claude-sub-1",
+      cliType: "claude",
+      provider: "anthropic",
+      type: "subscription",
+      label: "Claude subscription",
+      authMode: "local_session",
+      authRef: "local-session:claude",
+      enabled: true,
+      status: "available",
+      createdAt: accountCreatedAt,
+      updatedAt: accountCreatedAt,
+    });
     await db.update(runs).set({ preferredWorkerAccountId: "claude-sub-1" }).where(eq(runs.id, runId));
 
     vi.mocked(askAgent).mockRejectedValue(new Error(REVOKED));
@@ -165,6 +188,39 @@ describe("lifecycle harness — revoked provider credential", () => {
     expect(run?.status).toBe("failed");
     expect(run?.lastError).toContain("401 OAuth access token has been revoked");
     expect(run?.lastError).toContain("[credential_verified_dead:claude-sub-1]");
+
+    const account = await db.select().from(accounts).where(eq(accounts.id, "claude-sub-1")).get();
+    expect(account).toMatchObject({
+      enabled: false,
+      status: "login_required",
+    });
+
+    // Recreate the state left by the broken release: it had already replaced
+    // the marker with Claude's raw error and had never disabled the account.
+    // The durable verification event above is the only remaining proof.
+    await db.update(runs).set({ lastError: REVOKED }).where(eq(runs.id, runId));
+    await db.update(accounts).set({ enabled: true, status: null }).where(eq(accounts.id, "claude-sub-1"));
+
+    // A restarted bridge also only has Claude's raw error. Reconcile that
+    // fresh snapshot after resetting the event epoch and prove the server
+    // repairs both durable state and UI-driving marker automatically.
+    const worker = (await db.select().from(workers)).find((row) => row.runId === runId);
+    expect(worker).toBeTruthy();
+    server.simulateRestart();
+    await syncConversationSessions([{
+      ...AGENT_SNAPSHOT,
+      name: worker!.id,
+      state: "error",
+      currentText: REVOKED,
+      lastText: REVOKED,
+      renderedOutput: REVOKED,
+      lastError: REVOKED,
+    }], { selectedRunId: runId });
+
+    const reconciledRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(reconciledRun?.lastError).toContain("[credential_verified_dead:claude-sub-1]");
+    const reconciledAccount = await db.select().from(accounts).where(eq(accounts.id, "claude-sub-1")).get();
+    expect(reconciledAccount).toMatchObject({ enabled: false, status: "login_required" });
 
     // The transcript is read by a human; the marker is not for them.
     // `error.surfaced` is emitted before the row is inserted, so poll for it

@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import { workerCounters, workers } from "@/server/db/schema";
+import { withSqliteBusyRetry } from "@/server/db/retry";
 
 function parseWorkerNumberFromId(runId: string, workerId: string) {
   const prefix = `${runId}-worker-`;
@@ -27,17 +28,21 @@ async function getExistingMaxWorkerNumber(runId: string) {
 export async function allocateWorkerIdentity(runId: string) {
   const now = new Date();
   const firstWorkerNumber = (await getExistingMaxWorkerNumber(runId)) + 1;
-  const row = await db.insert(workerCounters)
-    .values({ runId, nextNumber: firstWorkerNumber, updatedAt: now })
-    .onConflictDoUpdate({
-      target: workerCounters.runId,
-      set: {
-        nextNumber: sql`${workerCounters.nextNumber} + 1`,
-        updatedAt: now,
-      },
-    })
-    .returning({ workerNumber: workerCounters.nextNumber })
-    .get();
+  const row = await withSqliteBusyRetry(() => db.transaction(async (tx) => {
+    await tx.insert(workerCounters)
+      .values({ runId, nextNumber: firstWorkerNumber, updatedAt: now })
+      .onConflictDoUpdate({
+        target: workerCounters.runId,
+        set: {
+          nextNumber: sql`${workerCounters.nextNumber} + 1`,
+          updatedAt: now,
+        },
+      });
+    return tx.select({ workerNumber: workerCounters.nextNumber })
+      .from(workerCounters)
+      .where(eq(workerCounters.runId, runId))
+      .get();
+  }));
 
   if (!row?.workerNumber) {
     throw new Error("Unable to allocate worker id.");

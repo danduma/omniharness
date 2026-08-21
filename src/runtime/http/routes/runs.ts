@@ -5,6 +5,7 @@ import { db } from "@/server/db";
 import { cancelAgent, cancelAgentTerminalProcess } from "@/server/bridge-client";
 import { errorResponse } from "@/server/api-errors";
 import { recoverRun } from "@/server/runs/recovery";
+import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
 import { stopRunObserver } from "@/server/supervisor/observer";
 import { cancelSupervisorWake } from "@/server/supervisor/wake";
 import { cancelDurableSupervisorWake } from "@/server/supervisor/wake-schedule";
@@ -62,6 +63,7 @@ import {
   waitForConversationBackgroundTasks,
 } from "@/server/conversations/worker-turn-gate";
 import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
+import { settleHandoffsForTargetDeletion } from "@/server/handoff/service";
 
 function normalizeTitle(input: unknown) {
   return String(input ?? "").trim().replace(/\s+/g, " ");
@@ -740,6 +742,7 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
       });
     }
 
+    await assertRunNotHandoffFenced(runId);
     const result = await recoverRun({
       runId,
       action,
@@ -812,6 +815,8 @@ export const handleRunDeleteRequest: OmniHttpHandler = async (request, context) 
         action: "Delete",
       });
     }
+
+    await settleHandoffsForTargetDeletion(runId);
 
     requestConversationDeletion(runId);
 

@@ -39,10 +39,6 @@ const pageSource = [
   "src/components/home/WorkersSidebar.tsx",
   "src/components/component-state-managers.ts",
 ].map(readSource).join("\n");
-const conversationModePickerSource = fs.readFileSync(
-  path.resolve(process.cwd(), "src/components/ConversationModePicker.tsx"),
-  "utf8"
-);
 const agentSurfaceSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/AgentSurface.tsx"),
   "utf8"
@@ -997,17 +993,10 @@ test("planning artifacts are shown as relative file links without card chrome", 
 });
 
 test("new conversations expose only direct control and existing direct runs lock the worker type", () => {
-  expect(pageSource).toContain('import { ConversationModePicker, type ConversationModeOption } from "@/components/ConversationModePicker"');
+  expect(fs.existsSync(path.resolve(process.cwd(), "src/components/ConversationModePicker.tsx"))).toBe(false);
+  expect(pageSource).not.toContain("ConversationModePicker");
+  expect(pageSource).not.toContain("conversation.mode.direct.label");
   expect(pageSource).toContain('selectedConversationMode={activeComposerMode}');
-  expect(pageSource).toContain('value={selectedConversationMode as ConversationModeOption}');
-  expect(conversationModePickerSource).not.toContain("conversation.mode.omni.label");
-  expect(conversationModePickerSource).toContain("conversation.mode.direct.label");
-  expect(conversationModePickerSource).toContain("useI18nSnapshot()");
-  expect(conversationModePickerSource).toContain('const MODE_ORDER: ConversationModeOption[] = ["direct"]');
-  expect(conversationModePickerSource).toContain("w-fit max-w-full");
-  expect(conversationModePickerSource).toContain("break-words hyphens-auto");
-  expect(conversationModePickerSource).not.toContain("overflow-x-auto");
-  expect(conversationModePickerSource).not.toContain("whitespace-nowrap rounded-xl");
   expect(pageSource).toContain('const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct"');
   expect(pageSource).not.toContain("Direct worker:");
   expect(pageSource).toContain("{shouldLockDirectWorker ? (");
@@ -1027,9 +1016,9 @@ test("empty state centers the composer with the welcome stack instead of docking
   expect(pageSource).toContain("const welcomeRepoName = resolveRepoName(currentProjectScope)");
   expect(pageSource).toContain('renderComposer("mt-2 w-full pt-0 sm:pt-0")');
   expect(pageSource).toContain('{selectedRunId ? renderComposer("w-full") : null}');
-  expect(pageSource).toContain('className="omni-conversation-text-scale flex h-full w-full flex-col items-center justify-center text-center"');
+  expect(pageSource).toContain('className="omni-conversation-text-scale flex h-full w-full flex-col items-center justify-center pb-32 text-center"');
   expect(pageSource).toContain('className="mx-auto mb-6 w-full max-w-3xl space-y-3 px-6 text-left"');
-  expect(pageSource).toContain('className="mx-auto mb-4 w-full max-w-3xl px-6 text-[1.7rem] font-semibold leading-tight"');
+  expect(pageSource).toContain('className="mx-auto mb-8 w-full max-w-3xl px-6 text-[1.7rem] font-semibold leading-tight sm:mb-14"');
   expect(pageSource).not.toContain('className="omni-conversation-text-scale mx-auto flex h-full w-full max-w-3xl flex-col items-center justify-center px-6 text-center"');
   expect(pageSource).not.toContain("Welcome to OmniHarness");
   expect(pageSource).not.toContain("{getConversationModeCopy(selectedConversationMode).description}");

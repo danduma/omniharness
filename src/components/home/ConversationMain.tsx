@@ -641,6 +641,7 @@ interface ConversationMainProps {
   isImplementationConversation: boolean;
   appErrors: AppErrorDescriptor[];
   conversationFailure: NoticeDescriptor | null;
+  onCredentialReauthenticate?: () => void;
   directConversationMessages: TerminalUserMessage[];
   /** Ids of messages this client sent itself — rendered past the stream fallback gate. */
   locallySentUserMessageIds?: ReadonlySet<string>;
@@ -679,6 +680,8 @@ interface ConversationMainProps {
   handleStartEditingMessage: (message: Pick<MessageRecord, "id" | "content">) => void;
   handleForkMessage: (message: Pick<MessageRecord, "id" | "content">) => void;
   handleForkMessageIntoWorktree: (message: Pick<MessageRecord, "id" | "content">) => void;
+  handleForkMessageToDifferentCli: (message: Pick<MessageRecord, "id" | "content">) => void;
+  handleQuotaHandoffToDifferentCli: () => void;
   handleConfirmForkMessageIntoWorktree: (request: GitWorkspaceLaunchRequest & {
     runId: string;
     targetMessageId: string;
@@ -808,6 +811,7 @@ const ConversationMain = memo(function ConversationMain({
   isImplementationConversation,
   appErrors,
   conversationFailure,
+  onCredentialReauthenticate,
   directConversationMessages,
   locallySentUserMessageIds,
   sendingUserMessageIds,
@@ -841,6 +845,8 @@ const ConversationMain = memo(function ConversationMain({
   handleStartEditingMessage,
   handleForkMessage,
   handleForkMessageIntoWorktree,
+  handleForkMessageToDifferentCli,
+  handleQuotaHandoffToDifferentCli,
   handleConfirmForkMessageIntoWorktree,
   editingMessageId,
   editingMessageValue,
@@ -1113,6 +1119,12 @@ const ConversationMain = memo(function ConversationMain({
             disabled: recoverRun.isPending,
             onClick: () => handleForkMessageIntoWorktree(message),
           },
+          {
+            label: t("conversation.message.action.forkDifferentCli"),
+            icon: <ArrowLeftRight className="h-3.5 w-3.5" />,
+            disabled: recoverRun.isPending,
+            onClick: () => handleForkMessageToDifferentCli(message),
+          },
         ],
       },
     ];
@@ -1126,6 +1138,7 @@ const ConversationMain = memo(function ConversationMain({
     handleStartEditingMessage,
     handleForkMessage,
     handleForkMessageIntoWorktree,
+    handleForkMessageToDifferentCli,
     // Action labels come from `t()`, so they must be rebuilt when the language
     // changes rather than captured once.
     i18nSnapshot,
@@ -1180,6 +1193,7 @@ const ConversationMain = memo(function ConversationMain({
               <Terminal
                 agent={primaryConversationAgent}
                 userMessages={directConversationMessages}
+                workerId={primaryConversationWorkerId ?? undefined}
                 entries={
                   unifiedWorkerStreamEnabled && (primaryConversationWorkerId || selectedRunId)
                     ? conversationEntries
@@ -1256,16 +1270,24 @@ const ConversationMain = memo(function ConversationMain({
           {conversationFailure ? (
             <div className="space-y-3">
               <ErrorNotice error={conversationFailure} />
-              <LatestRecoveryAction
-                selectedRun={selectedRun}
-                canRetryConversation={canRetryConversation}
-                isSelectedConversationLoaded={isSelectedConversationLoaded}
-                recoverRun={recoverRun}
-                showRecoverableRunningState={showRecoverableRunningState}
-                hasStuckWorker={hasStuckWorker}
-                latestUserCheckpoint={latestUserCheckpoint}
-                handleRetryMessage={handleRetryMessage}
-              />
+              {onCredentialReauthenticate ? (
+                <div className="flex justify-start">
+                  <Button type="button" size="sm" onClick={onCredentialReauthenticate}>
+                    {t("conversation.failure.reauth.action")}
+                  </Button>
+                </div>
+              ) : (
+                <LatestRecoveryAction
+                  selectedRun={selectedRun}
+                  canRetryConversation={canRetryConversation}
+                  isSelectedConversationLoaded={isSelectedConversationLoaded}
+                  recoverRun={recoverRun}
+                  showRecoverableRunningState={showRecoverableRunningState}
+                  hasStuckWorker={hasStuckWorker}
+                  latestUserCheckpoint={latestUserCheckpoint}
+                  handleRetryMessage={handleRetryMessage}
+                />
+              )}
             </div>
           ) : null}
           {recoveryState ? (
@@ -1275,6 +1297,7 @@ const ConversationMain = memo(function ConversationMain({
               isStopping={stopRunRecovery.isPending}
               onResume={handleResumeRunRecovery}
               onStop={handleStopRecoveryWait}
+              onHandoff={recoveryState.kind === "quota_waiting" ? handleQuotaHandoffToDifferentCli : undefined}
             />
           ) : null}
         </div>
@@ -1290,6 +1313,7 @@ const ConversationMain = memo(function ConversationMain({
               isStopping={stopRunRecovery.isPending}
               onResume={handleResumeRunRecovery}
               onStop={handleStopRecoveryWait}
+              onHandoff={recoveryState.kind === "quota_waiting" ? handleQuotaHandoffToDifferentCli : undefined}
             />
           ) : null}
           {isImplementationConversation ? <FailoverChip events={executionEvents} /> : null}
@@ -1521,23 +1545,31 @@ const ConversationMain = memo(function ConversationMain({
           {conversationFailure ? (
             <div className="space-y-3">
               <ErrorNotice error={conversationFailure} />
-              <LatestRecoveryAction
-                selectedRun={selectedRun}
-                canRetryConversation={canRetryConversation}
-                isSelectedConversationLoaded={isSelectedConversationLoaded}
-                recoverRun={recoverRun}
-                showRecoverableRunningState={showRecoverableRunningState}
-                hasStuckWorker={hasStuckWorker}
-                latestUserCheckpoint={latestUserCheckpoint}
-                handleRetryMessage={handleRetryMessage}
-              />
+              {onCredentialReauthenticate ? (
+                <div className="flex justify-start">
+                  <Button type="button" size="sm" onClick={onCredentialReauthenticate}>
+                    {t("conversation.failure.reauth.action")}
+                  </Button>
+                </div>
+              ) : (
+                <LatestRecoveryAction
+                  selectedRun={selectedRun}
+                  canRetryConversation={canRetryConversation}
+                  isSelectedConversationLoaded={isSelectedConversationLoaded}
+                  recoverRun={recoverRun}
+                  showRecoverableRunningState={showRecoverableRunningState}
+                  hasStuckWorker={hasStuckWorker}
+                  latestUserCheckpoint={latestUserCheckpoint}
+                  handleRetryMessage={handleRetryMessage}
+                />
+              )}
             </div>
           ) : null}
 
         </div>
       )
     ) : (
-      <div className="omni-conversation-text-scale flex h-full w-full flex-col items-center justify-center text-center">
+      <div className="omni-conversation-text-scale flex h-full w-full flex-col items-center justify-center pb-32 text-center">
         {appErrors.length > 0 ? (
           <div className="mx-auto mb-6 w-full max-w-3xl space-y-3 px-6 text-left">
             {appErrors.map((error) => (
@@ -1545,7 +1577,9 @@ const ConversationMain = memo(function ConversationMain({
             ))}
           </div>
         ) : null}
-        <h1 className="mx-auto mb-4 w-full max-w-3xl px-6 text-[1.7rem] font-semibold leading-tight">What shall we build in {welcomeRepoName}?</h1>
+        {/* The composer's workspace pill floats at -top-5, so the heading needs
+            clearance below it on the breakpoints where that pill is visible. */}
+        <h1 className="mx-auto mb-8 w-full max-w-3xl px-6 text-[1.7rem] font-semibold leading-tight sm:mb-14">What shall we build in {welcomeRepoName}?</h1>
         {emptyComposer}
       </div>
     )}

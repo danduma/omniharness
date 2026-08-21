@@ -49,7 +49,7 @@ describe("credential re-authentication notice", () => {
 
     expect(notice?.action).toBe("Sign in again");
     expect(notice?.message).toContain("Daniel's Max plan");
-    expect(notice?.suggestion).toBe("Run `claude` in a terminal and sign in with /login, then send your message again.");
+    expect(notice?.suggestion).toBe("Select Sign in again to reconnect this Claude account inside OmniHarness, then send your message again.");
     // The bug this fixes: the old copy told the user to send another message,
     // which respawns a worker against the same revoked token.
     expect(notice?.suggestion).not.toContain("respawn");

@@ -11,7 +11,8 @@ export type ArtifactStreamKind =
   | "worker_entries"
   | "execution_events"
   | "supervisor_interventions"
-  | "planning_review_findings";
+  | "planning_review_findings"
+  | "handoff_packets";
 
 /**
  * The envelope every non-worker artifact record uses on disk. The

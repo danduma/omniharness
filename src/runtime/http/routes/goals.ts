@@ -144,6 +144,15 @@ async function dispatchAndPublish(
     result.snapshot,
     result.replayed ? recoveryAction(result.snapshot) : action,
   );
+  if (control.kind === "deferred") {
+    emitNamedEvent({
+      kind: "goal.reconciliation.refused",
+      runId: control.snapshot.runId,
+      goalId: control.snapshot.goalId,
+      workerId: control.snapshot.workerId,
+      reason: control.reason,
+    });
+  }
   if (control.kind !== "unsupported" && control.kind !== "superseded" && action !== "set" && action !== "edit") {
       emitNamedEvent({
         kind: "goal.action.completed",

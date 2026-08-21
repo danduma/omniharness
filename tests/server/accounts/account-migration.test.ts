@@ -3,12 +3,14 @@ import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomUUID } from "crypto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { db } from "@/server/db";
-import { accounts, plans, runs, settings } from "@/server/db/schema";
+import { db, dbClient } from "@/server/db";
+import { accounts, executionEvents, plans, runs, settings, workerCounters, workerCredentialAllocations, workers } from "@/server/db/schema";
 import { runAccountInventoryMigration } from "@/server/accounts/migration";
 import { toAccountDto } from "@/server/accounts/dto";
+import { allocateWorkerIdentity } from "@/server/workers/ids";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 
 const now = new Date("2026-06-29T15:00:00.000Z");
 const DELETED_ACCOUNT_SETTING_PREFIX = "OMNIHARNESS_DELETED_ACCOUNT:";
@@ -30,6 +32,12 @@ describe("account inventory migration", () => {
   const originalHome = process.env.HOME;
 
   beforeEach(async () => {
+    await db.delete(executionEvents);
+    await db.delete(workerCredentialAllocations);
+    await db.delete(workers);
+    await db.delete(workerCounters);
+    await db.delete(runs);
+    await db.delete(plans);
     await db.delete(accounts);
     await db.delete(settings);
   });
@@ -84,6 +92,141 @@ describe("account inventory migration", () => {
       authRef: "local-session:claude",
       updatedAt: now,
     });
+  });
+
+  it("repairs a proven-dead legacy account even when its run is no longer failed", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const verificationAt = new Date(now.getTime() - 60_000);
+    const accountCreatedAt = new Date(now.getTime() - 120_000);
+    await db.insert(accounts).values({
+      id: "claude-sub-1",
+      cliType: "claude",
+      provider: "anthropic",
+      type: "subscription",
+      label: "Claude subscription",
+      authMode: "local_session",
+      authRef: "local-session:claude",
+      enabled: true,
+      status: null,
+      metadataJson: JSON.stringify({ identity: { email: "person@example.test", checkedAt: now.toISOString() } }),
+      createdAt: accountCreatedAt,
+      updatedAt: now,
+    });
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/dead-account-history-repair.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "working",
+      cwd: process.cwd(),
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(executionEvents).values({
+      id: randomUUID(),
+      runId,
+      workerId,
+      eventType: "worker_credential_verified",
+      details: JSON.stringify({
+        accountId: "claude-sub-1",
+        liveness: "dead",
+        detail: "Probe rejected the revoked OAuth token.",
+      }),
+      createdAt: verificationAt,
+    });
+
+    await runAccountInventoryMigration({ configPath: null, now });
+
+    const account = await db.select().from(accounts).where(eq(accounts.id, "claude-sub-1")).get();
+    expect(account).toMatchObject({ enabled: false, status: "login_required" });
+    expect(getNamedEventsSince(0).events.map((entry) => entry.event)).toContainEqual(
+      expect.objectContaining({
+        kind: "account.credential_verdict_recovered",
+        accountId: "claude-sub-1",
+        runId,
+        workerId,
+        verdict: "dead",
+      }),
+    );
+  });
+
+  it("does not reapply an old dead verdict after a newer successful account check", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const verificationAt = new Date(now.getTime() - 60_000);
+    const accountCreatedAt = new Date(now.getTime() - 120_000);
+    await db.insert(accounts).values({
+      id: "claude-sub-1",
+      cliType: "claude",
+      provider: "anthropic",
+      type: "subscription",
+      label: "Claude subscription",
+      authMode: "local_session",
+      authRef: "local-session:claude",
+      enabled: true,
+      status: "available",
+      statusCheckedAt: now,
+      metadataJson: JSON.stringify({ identity: { email: "person@example.test", checkedAt: now.toISOString() } }),
+      createdAt: accountCreatedAt,
+      updatedAt: now,
+    });
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/successful-login-fences-old-dead-verdict.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "idle",
+      cwd: process.cwd(),
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(executionEvents).values({
+      id: randomUUID(),
+      runId,
+      workerId,
+      eventType: "worker_credential_verified",
+      details: JSON.stringify({ accountId: "claude-sub-1", liveness: "dead" }),
+      createdAt: verificationAt,
+    });
+
+    await runAccountInventoryMigration({ configPath: null, now });
+
+    const account = await db.select().from(accounts).where(eq(accounts.id, "claude-sub-1")).get();
+    expect(account).toMatchObject({ enabled: true, status: "available", statusCheckedAt: now });
   });
 
   it("renames the existing Codex local session account as a subscription", async () => {
@@ -286,6 +429,65 @@ describe("account inventory migration", () => {
         preferredWorkerAccountId: null,
       });
     } finally {
+      await db.delete(runs).where(eq(runs.id, runId));
+      await db.delete(plans).where(eq(plans.id, planId));
+    }
+  });
+
+  it("finishes worker allocation before account cleanup starts its transaction", async () => {
+    const accountId = "deleted-account-after-worker-allocation";
+    const planId = `plan-${randomUUID()}`;
+    const runId = `run-${randomUUID()}`;
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/worker-allocation-before-account-cleanup.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(accounts).values({
+      id: accountId,
+      cliType: "codex",
+      provider: "openai",
+      type: "api",
+      label: accountId,
+      authMode: "legacy_ref",
+      authRef: "OPENAI_API_KEY",
+      enabled: true,
+      createdAt: now,
+    });
+    await deletedAccountSetting(accountId);
+    __resetNamedEventsForTests();
+
+    const batchSpy = vi.spyOn(dbClient, "batch");
+    try {
+      await allocateWorkerIdentity(runId);
+      await runAccountInventoryMigration({ configPath: null, now });
+
+      expect(await db.select().from(accounts).where(eq(accounts.id, accountId)).get()).toBeUndefined();
+      const batchedSql = batchSpy.mock.calls.flatMap(([statements]) => (
+        Array.isArray(statements) ? statements : []
+      ).map((statement) => (
+        typeof statement === "string"
+          ? statement
+          : (statement as { sql: string }).sql
+      )));
+      expect(batchedSql.some((sql) => /\breturning\b/i.test(sql))).toBe(false);
+      expect(getNamedEventsSince(0).events.map((entry) => entry.event)).not.toContainEqual(
+        expect.objectContaining({
+          kind: "account.delete_failed",
+          accountId,
+        }),
+      );
+    } finally {
+      await db.delete(workerCounters).where(eq(workerCounters.runId, runId));
       await db.delete(runs).where(eq(runs.id, runId));
       await db.delete(plans).where(eq(plans.id, planId));
     }

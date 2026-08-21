@@ -3,13 +3,14 @@ import { homedir } from "os";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { accounts } from "@/server/db/schema";
-import { getAppDataPath } from "@/server/app-root";
 import {
   applyCredentialProfileEnv,
   resolveCredentialProfile,
   type CredentialProfileResolution,
 } from "@/server/agent-runtime/external-credentials";
 import { RuntimeHttpError } from "@/server/agent-runtime/types";
+import { resolveAccountCliHome, resolveClaudeConfigDir } from "@/server/accounts/cli-home";
+import { claudeCredentialRoutingKeys } from "@/server/accounts/claude-auth-contract";
 
 type EnvLike = Record<string, string | undefined>;
 type AccountRow = typeof accounts.$inferSelect;
@@ -24,7 +25,7 @@ export type ResolvedAccountCredentials = {
 
 function accountHome(account: AccountRow) {
   const cliType = account.cliType?.trim() || "unknown";
-  return getAppDataPath("account-cli-homes", cliType, account.id);
+  return resolveAccountCliHome(cliType, account.id);
 }
 
 function isolatedHomeEnv(account: AccountRow): Record<string, string> {
@@ -36,7 +37,7 @@ function isolatedHomeEnv(account: AccountRow): Record<string, string> {
         CODEX_SQLITE_HOME: join(root, "sqlite"),
       };
     case "claude":
-      return { CLAUDE_CONFIG_DIR: join(root, "config") };
+      return { CLAUDE_CONFIG_DIR: resolveClaudeConfigDir(account.id) };
     case "gemini":
       return { GEMINI_CLI_HOME: join(root, "home") };
     case "opencode":
@@ -124,7 +125,7 @@ export async function resolveAccountCredentials(input: {
     return {
       account,
       env,
-      unset: [],
+      unset: input.workerType === "claude" ? claudeCredentialRoutingKeys(input.env) : [],
       credentialProfile: emptyCredentialProfile(),
       allowGlobalCredentialBridge: false,
     };

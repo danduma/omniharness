@@ -63,6 +63,36 @@ afterEach(() => {
 });
 
 describe("TerminalManager", () => {
+  it("creates random session-bound managed terminals and enforces their owner", () => {
+    const created = manager.createManagedTerminal({
+      command: process.platform === "win32" ? "cmd.exe" : "/bin/sh",
+      args: [],
+      env: { PATH: process.env.PATH ?? "", HOME: os.tmpdir(), TERM: "xterm-256color" },
+      cwd: os.tmpdir(),
+      ownerSessionId: "session-a",
+      runnerInstanceId: "runner-a",
+      accountId: "account-a",
+      operationId: "operation-a",
+    });
+    createdIds.push(created.id);
+
+    expect(created.id).toMatch(/^term-[0-9a-f-]{36}$/);
+    expect(manager.authorize(created.id, {
+      sessionId: "session-a",
+      runnerInstanceId: "runner-a",
+      scope: "account_auth",
+      accountId: "account-a",
+      operationId: "operation-a",
+    })).toBe(true);
+    expect(manager.authorize(created.id, {
+      sessionId: "session-b",
+      runnerInstanceId: "runner-a",
+      scope: "account_auth",
+      accountId: "account-a",
+      operationId: "operation-a",
+    })).toBe(false);
+  });
+
   it("spawns a pty and round-trips stdin to streamed output", async () => {
     const { id } = open();
     expect(manager.has(id)).toBe(true);

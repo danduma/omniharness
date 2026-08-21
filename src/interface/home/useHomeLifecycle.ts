@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import type React from "react";
 import { type UseMutationResult } from "@tanstack/react-query";
 import { type AppErrorDescriptor, mergeAppErrors } from "@/lib/app-errors";
-import type { ConversationModeOption } from "@/components/ConversationModePicker";
 import {
   clampConversationSidebarWidth,
   clampWorkersSidebarWidth,
@@ -20,7 +19,7 @@ import { claudeModelGatewayManager } from "./ClaudeModelGatewayManager";
 import { LiveEventConnectionManager, LiveEventCursorManager } from "./LiveEventConnectionManager";
 import { acpPlanManager } from "./AcpPlanManager";
 import { goalPlanManager } from "./GoalPlanManager";
-import type { ComposerWorkerOption, EventStreamState } from "./types";
+import type { ComposerWorkerOption, ConversationModeOption, EventStreamState } from "./types";
 import { buildConversationPath, buildInlineError, parseBrowserConversationRoute, parseCollapsedProjectPaths, resolveSavedComposerModel } from "./utils";
 import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
 import { useRuntimeAPIs } from "@/runtime-api/provider";

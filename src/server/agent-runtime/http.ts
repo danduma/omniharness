@@ -92,6 +92,18 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
         return;
       }
 
+      if (method === "POST" && parts.length === 3 && parts[0] === "accounts") {
+        const accountId = decodeURIComponent(parts[1]);
+        if (parts[2] === "quiesce") {
+          writeJson(res, 200, manager.quiesceAccount(accountId));
+          return;
+        }
+        if (parts[2] === "resume") {
+          writeJson(res, 200, manager.resumeAccount(accountId));
+          return;
+        }
+      }
+
       if (method === "POST" && parts.length === 2 && parts[0] === "prewarm" && parts[1] === "worker") {
         const body = await readJson<{
           type?: string;

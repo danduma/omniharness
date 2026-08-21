@@ -1073,7 +1073,7 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(systemErrors.filter((message) => message.kind === "error")).toHaveLength(0);
   });
 
-  it("recreates a direct worker when the selected provider changes before continuation", async () => {
+  it("requires a handoff instead of changing a direct run provider", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;
@@ -1147,42 +1147,27 @@ describe("POST /api/conversations/[id]/messages", () => {
       }),
     }), { params: Promise.resolve({ id: runId }) });
 
-    expect(response.status).toBe(200);
-    await waitFor(
-      () => mockSpawnAgent.mock.calls,
-      (calls) => calls.some((call) => call[0]?.name === workerId && call[0]?.type === "codex"),
-    );
-    await waitFor(
-      () => mockAskAgent.mock.calls,
-      (calls) => calls.some((call) => call[0] === workerId && String(call[1]).includes("Continue from the saved transcript.")),
-    );
-
-    expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
-    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
-      name: workerId,
-      type: "codex",
-      accountId: "local-session-codex",
-      model: "gpt-5.6-sol",
-      effort: "high",
-    }));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { message: expect.stringContaining("handoff session") } });
+    expect(mockCancelAgent).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
 
     const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
-    expect(updatedWorker?.type).toBe("codex");
-    expect(updatedWorker?.bridgeSessionId).toBe("fresh-codex-session");
-    expect(updatedRun?.lastError).toBeNull();
-    expect(events.some((event) => event.eventType === "worker_session_recreated_from_transcript")).toBe(true);
+    expect(updatedWorker?.type).toBe("claude");
+    expect(updatedWorker?.bridgeSessionId).toBe("poisoned-claude-session");
+    expect(updatedRun?.lastError).toContain("Account suspended");
+    expect(events.some((event) => event.eventType === "worker_session_recreated_from_transcript")).toBe(false);
     expect(getNamedEventsSince(0, { runId }).events).toContainEqual(expect.objectContaining({
       event: expect.objectContaining({
-        kind: "worker.recreated",
+        kind: "handoff.refused",
         runId,
-        workerId,
       }),
     }));
   });
 
-  it("does not resurrect a direct worker when Stop wins during provider-session recreation", async () => {
+  it("never begins provider-session recreation for a direct cross-CLI request", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;
@@ -1214,45 +1199,17 @@ describe("POST /api/conversations/[id]/messages", () => {
       updatedAt: now,
     });
 
-    let releaseSpawn!: () => void;
-    let markSpawnStarted!: () => void;
-    const spawnStarted = new Promise<void>((resolve) => { markSpawnStarted = resolve; });
-    const spawnGate = new Promise<void>((resolve) => { releaseSpawn = resolve; });
-    mockSpawnAgent.mockImplementationOnce(async () => {
-      markSpawnStarted();
-      await spawnGate;
-      return {
-        name: workerId,
-        type: "codex",
-        cwd: "/workspace/app",
-        state: "idle",
-        sessionId: "stale-fresh-session",
-        sessionMode: "full-access",
-        outputEntries: [],
-        currentText: "",
-        lastText: "",
-      };
-    });
-
-    const sendPromise = POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
+    const sendResponse = await POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content: "Continue with Codex", preferredWorkerType: "codex" }),
     }), { params: Promise.resolve({ id: runId }) });
-    await spawnStarted;
-    const stopResponse = await POST_RUN(new Request(`http://localhost/api/runs/${runId}`, {
-      method: "POST",
-      body: JSON.stringify({ action: "stop_worker", workerId }),
-    }), { params: Promise.resolve({ id: runId }) });
-    releaseSpawn();
-    const sendResponse = await sendPromise;
-    await waitForConversationBackgroundTasksForTests();
 
     const storedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const storedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
-    expect(stopResponse.status).toBe(200);
     expect(sendResponse.status).toBe(409);
-    expect(storedRun?.status).toBe("cancelled");
-    expect(storedWorker?.status).toBe("cancelled");
+    expect(storedRun?.status).toBe("failed");
+    expect(storedWorker?.status).toBe("error");
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
     expect(mockAskAgent).not.toHaveBeenCalled();
   });
 

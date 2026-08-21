@@ -654,6 +654,23 @@ and command identity prove OmniHarness ownership. External mode performs bounded
 readiness requests and never signals a process. Stop disables future autostart and
 preserves binaries, configuration, logs, and provider credentials.
 
+### Cross-CLI handoff lifecycle
+
+A direct or commit conversation never changes CLI type in place. Cross-CLI continuation
+uses a persisted `conversation_handoffs` state machine and creates a lineage-linked target
+run. `capturing`, `ready`, and `launching` fence all source mutations. The coordinator
+validates the target first, confirms the source process stopped, captures the final worker
+sequence and tracked-workspace fingerprint, then claims and creates the target. A launch
+refuses on either sequence or fingerprint drift.
+
+Every decision emits a typed `handoff.*` event. User-visible failures additionally emit
+`error.surfaced` with a stable `handoff.*` code. Ready and launch claims expire; the
+watchdog either adopts a target found by `runs.origin_handoff_id` or restores the source
+to its durable quota wait / recovery state. Successful launch marks the source cancelled,
+retains its transcript and handoff artifact, and cancels undelivered source queue rows.
+The packet itself lives in the append-only `handoff_packets` artifact stream; the target's
+first prompt is persisted through the ordinary unified worker conversation stream.
+
 ### Scenario catalog (`tests/lifecycle/scenarios/`)
 
 | Scenario | Asserts |

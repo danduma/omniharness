@@ -14,6 +14,12 @@ import {
   handleAuthSessionRequest,
   handleBrowseFilesystemRequest,
   handleClaudeModelGatewayRequest,
+  handleClaudeAccountConnectRequest,
+  handleAccountAuthOperationRequest,
+  handleClaudeAccountLogoutRequest,
+  handleClaudeAccountPurgeRequest,
+  handleAccountStatusRequest,
+  handleAccountDetailRequest,
   handleCodexAuthStatusRequest,
   handleConversationMessagesRequest,
   handleConversationTranscriptRequest,
@@ -21,6 +27,10 @@ import {
   handleEventsLogRequest,
   handleEventsRequest,
   handleGitRequest,
+  handleHandoffCancelRequest,
+  handleHandoffLaunchRequest,
+  handleHandoffRequest,
+  handleRunHandoffsRequest,
   handleGoalRequest,
   handleLlmModelsRequest,
   handleMessagesRequest,
@@ -44,6 +54,10 @@ import {
   handleSettingsRequest,
   handleSupervisorRequest,
   handleWorkerEntriesRequest,
+  handleTerminalStreamRequest,
+  handleTerminalInputRequest,
+  handleTerminalResizeRequest,
+  handleTerminalDeleteRequest,
 } from "@/runtime/http/routes";
 
 type LegacyRouteContext = {
@@ -83,6 +97,10 @@ export const conversationsRoute = testRoute(handleConversationsRequest);
 export const eventsLogRoute = testRoute(handleEventsLogRequest);
 export const eventsRoute = testRoute(handleEventsRequest);
 export const gitRoute = testRoute(handleGitRequest);
+export const handoffCancelRoute = testRoute(handleHandoffCancelRequest);
+export const handoffLaunchRoute = testRoute(handleHandoffLaunchRequest);
+export const handoffRoute = testRoute(handleHandoffRequest);
+export const runHandoffsRoute = testRoute(handleRunHandoffsRequest);
 export const goalRoute = testRoute(handleGoalRequest);
 export const llmModelsRoute = testRoute(handleLlmModelsRequest);
 export const notificationsDeleteRoute = testRoute(handleNotificationsRequest);
@@ -121,6 +139,10 @@ export const eventsRouteModule = { GET: eventsRoute };
 export const goalRouteModule = { GET: goalRoute, PUT: goalRoute, POST: goalRoute };
 export const conversationsRouteModule = { POST: conversationsRoute };
 export const conversationMessagesRouteModule = { POST: conversationMessagesRoute };
+export const handoffRouteModule = { GET: handoffRoute, PATCH: handoffRoute };
+export const handoffLaunchRouteModule = { POST: handoffLaunchRoute };
+export const handoffCancelRouteModule = { POST: handoffCancelRoute };
+export const runHandoffsRouteModule = { GET: runHandoffsRoute, POST: runHandoffsRoute };
 export const planningReviewRouteModule = { POST: planningReviewRoute };
 export const runRouteModule = {
   PATCH: runPatchRoute,
@@ -132,3 +154,16 @@ export const claudeModelGatewayRouteModule = {
   POST: claudeModelGatewayRoute,
   OPTIONS: claudeModelGatewayRoute,
 };
+export const claudeAccountConnectRouteModule = { POST: testRoute(handleClaudeAccountConnectRequest) };
+export const accountAuthOperationRouteModule = {
+  GET: testRoute(handleAccountAuthOperationRequest),
+  POST: testRoute(handleAccountAuthOperationRequest),
+};
+export const claudeAccountLogoutRouteModule = { POST: testRoute(handleClaudeAccountLogoutRequest) };
+export const claudeAccountPurgeRouteModule = { POST: testRoute(handleClaudeAccountPurgeRequest) };
+export const accountStatusRouteModule = { POST: testRoute(handleAccountStatusRequest) };
+export const accountDetailRouteModule = { DELETE: testRoute(handleAccountDetailRequest) };
+export const terminalStreamRouteModule = { GET: testRoute(handleTerminalStreamRequest) };
+export const terminalInputRouteModule = { POST: testRoute(handleTerminalInputRequest) };
+export const terminalResizeRouteModule = { POST: testRoute(handleTerminalResizeRequest) };
+export const terminalDeleteRouteModule = { DELETE: testRoute(handleTerminalDeleteRequest) };

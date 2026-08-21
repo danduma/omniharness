@@ -6,6 +6,7 @@ import { clarifications, conversationReadMarkers, creditEvents, executionEvents,
 import { getEventStreamNotificationVersion } from "@/server/events/live-updates";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
 import { waitForConversationBackgroundTasksForTests } from "@/server/conversations/worker-turn-gate";
+import { annotateVerifiedDeadCredential } from "@/lib/provider-account-failures";
 
 const { mockAskAgent, mockGetAgent, mockRespondElicitation, mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
   mockAskAgent: vi.fn(),
@@ -82,6 +83,146 @@ describe("syncConversationSessions", () => {
     await db.delete(planItems);
     await db.delete(plans);
     await db.delete(settings);
+  });
+
+  it("preserves a verified-dead credential verdict when a restarted bridge reports the raw auth error", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+    const rawProviderError = "Internal error: Failed to authenticate. API Error: 401 OAuth access token has been revoked.";
+    const verifiedFailure = annotateVerifiedDeadCredential(rawProviderError, "claude-sub-1");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/revoked-credential-restart.md",
+      status: "failed",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "failed",
+      title: "Revoked credential restart",
+      lastError: verifiedFailure,
+      failedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "error",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: rawProviderError,
+      lastText: rawProviderError,
+      lastError: rawProviderError,
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await syncConversationSessions([{
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "error",
+      sessionId: "revoked-session",
+      sessionMode: "full-access",
+      currentText: rawProviderError,
+      lastText: rawProviderError,
+      renderedOutput: rawProviderError,
+      outputEntries: [],
+      pendingPermissions: [],
+      pendingElicitations: [],
+      stderrBuffer: [],
+      stopReason: null,
+      lastError: rawProviderError,
+    }], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(run?.status).toBe("failed");
+    expect(run?.lastError).toBe(verifiedFailure);
+  });
+
+  it("repairs a legacy raw auth error from the persisted dead-credential verification event", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+    const rawProviderError = "Internal error: Failed to authenticate. API Error: 401 OAuth access token has been revoked.";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/revoked-credential-legacy-repair.md",
+      status: "failed",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "failed",
+      title: "Legacy revoked credential restart",
+      lastError: rawProviderError,
+      failedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "error",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: rawProviderError,
+      lastText: rawProviderError,
+      lastError: rawProviderError,
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(executionEvents).values({
+      id: randomUUID(),
+      runId,
+      workerId,
+      eventType: "worker_credential_verified",
+      details: JSON.stringify({
+        accountId: "claude-sub-1",
+        liveness: "dead",
+        detail: "Probe request was rejected: 401 OAuth access token has been revoked.",
+      }),
+      createdAt: now,
+    });
+
+    await syncConversationSessions([{
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "error",
+      sessionId: "legacy-revoked-session",
+      sessionMode: "full-access",
+      currentText: rawProviderError,
+      lastText: rawProviderError,
+      renderedOutput: rawProviderError,
+      outputEntries: [],
+      pendingPermissions: [],
+      pendingElicitations: [],
+      stderrBuffer: [],
+      stopReason: null,
+      lastError: rawProviderError,
+    }], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(run?.lastError).toBe(annotateVerifiedDeadCredential(rawProviderError, "claude-sub-1"));
   });
 
   it("resumes a selected direct run when its active worker is missing but has a saved session", async () => {
@@ -1758,6 +1899,97 @@ describe("syncConversationSessions", () => {
     expect(worker?.lastText).toBe(partialText);
     expect(entries.map((entry) => (entry as { text?: string }).text)).toContain(partialText);
     expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it("drains a message queued in the same beat that the run reached a terminal state", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+    const answered = "Here is the finished answer.";
+    const queuedContent = "one more thing before you go";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/terminal-run-pending-queue.md",
+      status: "done",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "done",
+      title: "Terminal direct with a stranded queue row",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "idle",
+      cwd: process.cwd(),
+      outputLog: answered,
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: answered,
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(queuedConversationMessages).values({
+      id: "queued-after-terminal",
+      runId,
+      targetWorkerId: workerId,
+      action: "queue",
+      status: "pending",
+      content: queuedContent,
+      attachmentsJson: "[]",
+      createdAt: new Date(now.getTime() + 1),
+      updatedAt: new Date(now.getTime() + 1),
+    });
+
+    // No `selectedRunId`: the pre-existing terminal-run escape hatch only
+    // covered the selected run with a still-streaming agent, so a queue row
+    // sitting behind an idle agent had no route out at all.
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "claude",
+        cwd: process.cwd(),
+        state: "idle",
+        sessionId: "terminal-queue-session",
+        sessionMode: "full-access",
+        currentText: "",
+        lastText: answered,
+        renderedOutput: answered,
+        outputEntries: [
+          {
+            id: "message-1",
+            type: "message",
+            text: answered,
+            timestamp: new Date(now.getTime()).toISOString(),
+          },
+        ],
+        stderrBuffer: [],
+        stopReason: "end_turn",
+      },
+    ]);
+
+    const queued = await db
+      .select()
+      .from(queuedConversationMessages)
+      .where(eq(queuedConversationMessages.id, "queued-after-terminal"))
+      .get();
+
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      workerId,
+      expect.stringContaining(queuedContent),
+    );
+    expect(queued?.status).toBe("delivered");
+    expect(queued?.deliveredAt).not.toBeNull();
   });
 
   it("does not recover a running implementation worker from an incomplete runtime list", async () => {

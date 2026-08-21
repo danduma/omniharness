@@ -147,6 +147,80 @@ describe("classifyRunRecoveryState", () => {
     });
   });
 
+  it("still sees the saved session after the blocked worker was parked as lost", () => {
+    // `markNeedsUser` parks the worker as `lost`, which is not an active
+    // status. That used to hide the saved session from every later tick, so a
+    // direct run latched on `queue_blocked` with a resumable session unused.
+    const state = classifyRunRecoveryState({
+      run: { ...run, mode: "direct" },
+      workers: [{
+        id: "worker-1",
+        runId: run.id,
+        status: "lost",
+        bridgeSessionId: "session-1",
+        updatedAt: new Date(0),
+      }],
+      liveAgents: [],
+      messages: [userMessage],
+      queuedMessages: [{
+        id: "queue-1",
+        runId: run.id,
+        targetWorkerId: "worker-1",
+        status: "failed",
+        lastError: "Ask failed: Agent not found: worker-1",
+      }],
+      nowMs: 60_000,
+    });
+
+    expect(state).toMatchObject({
+      kind: "lost_worker_resumable",
+      workerId: "worker-1",
+      queuedMessageId: "queue-1",
+      sessionId: "session-1",
+      recommendedAction: "resume_session",
+    });
+  });
+
+  it("surfaces a resumable session even after the run was stamped needs_recovery", () => {
+    const state = classifyRunRecoveryState({
+      run: { ...run, mode: "direct", status: "needs_recovery" },
+      workers: [{
+        id: "worker-1",
+        runId: run.id,
+        status: "lost",
+        bridgeSessionId: "session-1",
+        updatedAt: new Date(0),
+      }],
+      liveAgents: [],
+      messages: [userMessage],
+      queuedMessages: [{
+        id: "queue-1",
+        runId: run.id,
+        targetWorkerId: "worker-1",
+        status: "failed",
+        lastError: "Ask failed: Agent not found: worker-1",
+      }],
+      nowMs: 60_000,
+    });
+
+    expect(state).toMatchObject({
+      kind: "lost_worker_resumable",
+      sessionId: "session-1",
+    });
+  });
+
+  it("keeps parking a needs_recovery run that has no saved session", () => {
+    const state = classifyRunRecoveryState({
+      run: { ...run, mode: "direct", status: "needs_recovery" },
+      workers: [{ id: "worker-1", runId: run.id, status: "lost", updatedAt: new Date(0) }],
+      liveAgents: [],
+      messages: [userMessage],
+      nowMs: 60_000,
+    });
+
+    expect(state.kind).toBe("needs_recovery");
+  });
+
   it("prefers direct worker session recovery over a blocked queued message", () => {
     const state = classifyRunRecoveryState({
       run: { ...run, mode: "direct" },

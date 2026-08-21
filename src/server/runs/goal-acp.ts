@@ -1,4 +1,5 @@
 import { normalizeAcpGoalMetadata } from "@/server/agent-runtime/acp/goal-state";
+import { isMissingAgentError } from "@/server/supervisor/retry";
 import type { GoalMutationAction, GoalSnapshot } from "@/shared/goal-plan";
 
 interface GoalAcpAgentSnapshot {
@@ -65,6 +66,13 @@ function extensionSupports(metadata: ReturnType<typeof normalizeAcpGoalMetadata>
   return metadata.value.capabilities[action];
 }
 
+function recordedFallbackSupports(capabilities: GoalSnapshot["capabilities"], action: GoalMutationAction) {
+  if (!capabilities.fallbackMethod) return false;
+  if (action === "set" || action === "retry") return capabilities.set;
+  if (action === "edit") return capabilities.edit;
+  return capabilities[action];
+}
+
 function fallbackCommand(snapshot: GoalSnapshot, action: GoalMutationAction) {
   if (action === "set" || action === "edit") return `/goal ${snapshot.objective}`;
   if (action === "retry") return `/goal ${snapshot.objective}`;
@@ -78,7 +86,19 @@ export class GoalAcpDispatcher {
     if (!snapshot.workerId || !snapshot.acpSessionId) {
       return { kind: "deferred", reason: "no_active_lease" };
     }
-    const agent = await this.dependencies.getAgent(snapshot.workerId);
+    let agent: GoalAcpAgentSnapshot;
+    try {
+      agent = await this.dependencies.getAgent(snapshot.workerId);
+    } catch (error) {
+      // The lease still names a worker the runtime no longer hosts — the run
+      // finished, the process was reaped, or the session was dropped. That is
+      // the same situation as holding no lease at all, so defer instead of
+      // burning the goal into `error`; the next worker to attach reconciles it.
+      // Treating this as a transport failure left `/goal` dead for the rest of
+      // the session with "Get agent failed: not_found".
+      if (!isMissingAgentError(error)) throw error;
+      return { kind: "deferred", reason: "no_active_lease" };
+    }
     const goalMetadata = metadataGoal(agent.agentCapabilities);
     if (goalMetadata) {
       const normalized = normalizeAcpGoalMetadata({ _meta: { goal: goalMetadata } });
@@ -97,10 +117,17 @@ export class GoalAcpDispatcher {
       return { kind: "dispatched", method: "extension" };
     }
 
+    // Trust the capabilities the runtime already recorded from the agent's
+    // available_commands frame before re-deriving them. `outputEntries` is a
+    // rolling window that drops that frame once the session produces enough
+    // output, and after a session resume it never reappears — so scanning it
+    // alone reported `fallback_not_advertised_for_*` for workers that do
+    // advertise `/goal`.
     const commands = advertisedCommands(agent.outputEntries);
-    const supported = action === "pause" || action === "resume"
-      ? commands.has(`goal ${action}`) || commands.has(`${action}-goal`)
-      : commands.has("goal");
+    const supported = recordedFallbackSupports(snapshot.capabilities, action)
+      || (action === "pause" || action === "resume"
+        ? commands.has(`goal ${action}`) || commands.has(`${action}-goal`)
+        : commands.has("goal"));
     if (!supported) {
       return { kind: "unsupported", reason: `fallback_not_advertised_for_${action}` };
     }

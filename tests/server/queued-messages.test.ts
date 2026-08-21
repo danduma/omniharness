@@ -34,6 +34,7 @@ import {
 import {
   __resetWorkerTurnChainsForTests,
   abortWorkerTurn,
+  waitForConversationBackgroundTasks,
   runWorkerTurn,
 } from "@/server/conversations/worker-turn-gate";
 
@@ -552,6 +553,44 @@ describe("queued conversation messages", () => {
       text: "Trace why the old warning is still rendering.",
     });
     expect(userIndex).toBeLessThan(bridgeIndex);
+  });
+
+  it("keeps immediate queued delivery registered until response persistence settles", async () => {
+    const runId = await createRun("direct");
+    const workerId = randomUUID();
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const queued = await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: workerId,
+      action: "queue",
+      content: "Persist this before handoff capture.",
+      attachments: [],
+    });
+    const response = deferred<{ response: string; state: string }>();
+    mockAskAgent.mockReturnValueOnce(response.promise);
+
+    await sendQueuedConversationMessageNow({ runId, messageId: queued.id });
+    let drained = false;
+    const drain = waitForConversationBackgroundTasks(runId).then(() => { drained = true; });
+    await delay(20);
+    expect(drained).toBe(false);
+
+    response.resolve({ response: "Persisted before capture.", state: "idle" });
+    await drain;
+    const stored = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queued.id)).get();
+    expect(stored?.status).toBe("delivered");
   });
 
   it("persists send-now queued worker responses and clears direct running state", async () => {

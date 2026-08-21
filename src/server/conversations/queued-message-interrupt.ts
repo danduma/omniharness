@@ -29,10 +29,12 @@ import {
   isWorkerTurnAbortedError,
   isWorkerTurnSupersededError,
   isWorkerTurnGenerationCurrent,
+  runConversationMutation,
   runWorkerTurn,
   trackConversationBackgroundTask,
 } from "./worker-turn-gate";
 import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
+import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
 import {
   isProviderSessionDiagnosticErrorMessage,
   userFacingProviderSessionErrorMessage,
@@ -664,32 +666,43 @@ async function handleInterruptDeliveryError(args: {
 // Entry points
 // ---------------------------------------------------------------------------
 
-export async function interruptAndSendQueuedConversationMessageNow(params: {
+async function interruptAndSendQueuedConversationMessageNowUnlocked(params: {
   runId: string;
   messageId: string;
   source?: InterruptSource;
 }): Promise<InterruptResult> {
+  await assertRunNotHandoffFenced(params.runId);
   const run = await loadRun(params.runId);
   const record = await loadQueuedRecord(params.runId, params.messageId);
   return interruptAndDeliver({ run, record, source: params.source ?? "drawer" });
 }
 
-export async function interruptAndSendNextQueuedConversationMessage(params: {
+export function interruptAndSendQueuedConversationMessageNow(args: Parameters<typeof interruptAndSendQueuedConversationMessageNowUnlocked>[0]) {
+  return runConversationMutation(args.runId, () => interruptAndSendQueuedConversationMessageNowUnlocked(args));
+}
+
+async function interruptAndSendNextQueuedConversationMessageUnlocked(params: {
   runId: string;
   source?: InterruptSource;
 }): Promise<InterruptResult> {
+  await assertRunNotHandoffFenced(params.runId);
   const run = await loadRun(params.runId);
   const record = await selectOldestPendingRecord(params.runId);
   return interruptAndDeliver({ run, record, source: params.source ?? "escape" });
 }
 
-export async function interruptWithDraftMessage(params: {
+export function interruptAndSendNextQueuedConversationMessage(args: Parameters<typeof interruptAndSendNextQueuedConversationMessageUnlocked>[0]) {
+  return runConversationMutation(args.runId, () => interruptAndSendNextQueuedConversationMessageUnlocked(args));
+}
+
+async function interruptWithDraftMessageUnlocked(params: {
   runId: string;
   content: string;
   attachments?: ChatAttachment[];
   targetWorkerId?: string | null;
   source?: InterruptSource;
 }): Promise<InterruptResult> {
+  await assertRunNotHandoffFenced(params.runId);
   const run = await loadRun(params.runId);
   const trimmed = params.content.trim();
   const normalizedAttachments = normalizeChatAttachments(params.attachments ?? []);
@@ -715,4 +728,8 @@ export async function interruptWithDraftMessage(params: {
   });
   const record = await loadQueuedRecord(params.runId, created.id);
   return interruptAndDeliver({ run, record, source: params.source ?? "escape" });
+}
+
+export function interruptWithDraftMessage(args: Parameters<typeof interruptWithDraftMessageUnlocked>[0]) {
+  return runConversationMutation(args.runId, () => interruptWithDraftMessageUnlocked(args));
 }

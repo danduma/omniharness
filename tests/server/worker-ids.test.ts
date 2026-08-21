@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { db } from "@/server/db";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { db, dbClient } from "@/server/db";
 import { eq } from "drizzle-orm";
 import { plans, runs, workerCounters, workers } from "@/server/db/schema";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
@@ -10,6 +10,10 @@ describe("worker id allocation", () => {
     await db.delete(workerCounters);
     await db.delete(runs);
     await db.delete(plans);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("allocates per-run worker numbers without making them globally unique", async () => {
@@ -38,6 +42,8 @@ describe("worker id allocation", () => {
       },
     ]);
 
+    const executeSpy = vi.spyOn(dbClient, "execute");
+
     await expect(allocateWorkerIdentity("run-a")).resolves.toEqual({
       workerId: "run-a-worker-1",
       workerNumber: 1,
@@ -50,6 +56,12 @@ describe("worker id allocation", () => {
       workerId: "run-b-worker-1",
       workerNumber: 1,
     });
+    const executedSql = executeSpy.mock.calls.map(([statement]) => (
+      typeof statement === "string"
+        ? statement
+        : (statement as { sql: string }).sql
+    ));
+    expect(executedSql.some((sql) => /insert into "worker_counters"[\s\S]*\breturning\b/i.test(sql))).toBe(false);
   });
 
   it("seeds a new counter from existing workers on old runs", async () => {

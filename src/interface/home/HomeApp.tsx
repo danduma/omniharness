@@ -82,6 +82,9 @@ import type { AccountRecord } from "./types";
 import { decodeClaudeGatewayModel } from "@/lib/claude-model-gateway";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
 import { gitWorkspaceManager } from "./GitWorkspaceManager";
+import { handoffManager } from "./HandoffManager";
+import { normalizeWorkerType, SUPPORTED_WORKER_TYPES, type SupportedWorkerType } from "@/shared/worker-types";
+import { CrossCliHandoffDialog } from "@/components/home/CrossCliHandoffDialog";
 import {
   autoResumeExhaustionManager,
   mergeReadMarkers,
@@ -90,6 +93,8 @@ import {
 import { applyHomeBootstrap } from "./home-bootstrap";
 import type { RunnerConnection } from "@/interface/runners/RunnerConnection";
 import { RunnerControls } from "@/interface/runners/RunnerControls";
+import { ClaudeAccountAuthManager } from "./ClaudeAccountAuthManager";
+import { hasVerifiedDeadCredentialMarker, readVerifiedDeadCredentialAccountId } from "@/lib/provider-account-failures";
 
 const FolderPickerDialog = lazy(
   () => import("@/components/FolderPickerDialog").then((m) => ({ default: m.FolderPickerDialog })),
@@ -194,7 +199,13 @@ export function HomeApp({
   runnerConnection?: RunnerConnection;
 }) {
   const runtimeApis = useRuntimeAPIs();
+  const claudeAccountAuthManager = useMemo(() => {
+    const manager = new ClaudeAccountAuthManager(runtimeApis.accounts);
+    manager.configureScope(runnerConnection?.getSnapshot().profileId ?? "local-runner");
+    return manager;
+  }, [runnerConnection, runtimeApis.accounts]);
   gitWorkspaceManager.configure(runtimeApis.git.execute);
+  handoffManager.configure(runtimeApis.handoffs);
   conversationNotificationManager.configure(runtimeApis.notifications);
   applyHomeBootstrap(bootstrap, false);
   const initialEventState = bootstrap?.initialEventState ?? INITIAL_EVENT_STREAM_STATE;
@@ -586,6 +597,20 @@ export function HomeApp({
     conversationTimelineItems,
     conversationWorkerGroups,
   } = vm;
+
+  const hasCredentialReauthFailure = hasVerifiedDeadCredentialMarker(selectedRun?.lastError);
+  const credentialReauthAccountId = hasCredentialReauthFailure
+    ? readVerifiedDeadCredentialAccountId(selectedRun?.lastError)
+    : null;
+  const handleCredentialReauthenticate = useCallback(() => {
+    setActiveSettingsTab("agents");
+    setShowSettings(true);
+    if (credentialReauthAccountId) {
+      void claudeAccountAuthManager.resume(credentialReauthAccountId);
+    } else {
+      claudeAccountAuthManager.openConnect();
+    }
+  }, [claudeAccountAuthManager, credentialReauthAccountId, setActiveSettingsTab, setShowSettings]);
 
   // Freeze the Recent ("Active") tab's order while it's open so rows don't
   // reshuffle on every turn; it re-sorts by latest activity only on (re)open.
@@ -1252,7 +1277,6 @@ export function HomeApp({
       commandInputRef={commandInputRef}
       selectedRunId={selectedRunId}
       selectedConversationMode={activeComposerMode}
-      setSelectedConversationMode={setSelectedConversationMode}
       currentProjectScope={currentProjectScope}
       projectFiles={composerProjectFiles}
       projectFilesIsFetched={projectFilesQuery.isFetched}
@@ -1471,6 +1495,11 @@ export function HomeApp({
           } : null}
           onForkSession={actions.handleForkSession}
           onForkSessionIntoWorktree={actions.handleForkSessionIntoWorktree}
+          onForkSessionToDifferentCli={() => {
+            if (!selectedRunId) return;
+            const normalized = normalizeWorkerType(vm.primaryConversationAgent?.type ?? "");
+            handoffManager.open({ runId: selectedRunId, workerId: vm.primaryConversationAgent?.name ?? null, sourceWorkerType: SUPPORTED_WORKER_TYPES.includes(normalized as SupportedWorkerType) ? normalized as SupportedWorkerType : null, forkedFromMessageId: null, reason: "manual_session" });
+          }}
           canForkSession={Boolean(selectedRunId && latestUserCheckpoint)}
           onReload={handleReload}
         />
@@ -1485,6 +1514,7 @@ export function HomeApp({
           isImplementationConversation={isImplementationConversation}
           appErrors={appErrors}
           conversationFailure={conversationFailure}
+          onCredentialReauthenticate={hasCredentialReauthFailure ? handleCredentialReauthenticate : undefined}
           directConversationMessages={directConversationMessages}
           locallySentUserMessageIds={locallySentUserMessageIds}
           sendingUserMessageIds={sendingUserMessageIds}
@@ -1522,6 +1552,16 @@ export function HomeApp({
           handleStartEditingMessage={actions.handleStartEditingMessage}
           handleForkMessage={actions.handleForkMessage}
           handleForkMessageIntoWorktree={actions.handleForkMessageIntoWorktree}
+          handleForkMessageToDifferentCli={(message) => {
+            if (!selectedRunId) return;
+            const normalized = normalizeWorkerType(vm.primaryConversationAgent?.type ?? "");
+            handoffManager.open({ runId: selectedRunId, workerId: vm.primaryConversationAgent?.name ?? null, sourceWorkerType: SUPPORTED_WORKER_TYPES.includes(normalized as SupportedWorkerType) ? normalized as SupportedWorkerType : null, forkedFromMessageId: message.id, reason: "manual_message" });
+          }}
+          handleQuotaHandoffToDifferentCli={() => {
+            if (!selectedRunId) return;
+            const normalized = normalizeWorkerType(vm.primaryConversationAgent?.type ?? "");
+            handoffManager.open({ runId: selectedRunId, workerId: vm.primaryConversationAgent?.name ?? null, sourceWorkerType: SUPPORTED_WORKER_TYPES.includes(normalized as SupportedWorkerType) ? normalized as SupportedWorkerType : null, forkedFromMessageId: null, reason: "quota_exhausted" });
+          }}
           handleConfirmForkMessageIntoWorktree={actions.handleConfirmForkMessageIntoWorktree}
           editingMessageId={editingMessageId}
           editingMessageValue={editingMessageValue}
@@ -1659,6 +1699,7 @@ export function HomeApp({
         resourceSnapshot={settingsQuery.data?.resourceSnapshot}
         saveSettings={saveSettings}
         activeProjectPath={activeConversationCwd ?? null}
+        claudeAccountAuthManager={claudeAccountAuthManager}
       />
 
       <PairDeviceDialog
@@ -1677,10 +1718,18 @@ export function HomeApp({
 
       <AttachmentImagePreviewDialog />
 
+      <CrossCliHandoffDialog onCompleted={(runId) => actions.handleSelectRun(runId)} />
+
       <ExternalSessionsPicker
         open={showExternalSessionsPicker}
         onClose={() => setShowExternalSessionsPicker(false)}
         onResumed={(runId) => actions.handleSelectRun(runId)}
+        canForkCurrent={Boolean(selectedRunId && (selectedRun?.mode === "direct" || selectedRun?.mode === "commit") && vm.primaryConversationAgent)}
+        onForkCurrent={() => {
+          if (!selectedRunId) return;
+          const normalized = normalizeWorkerType(vm.primaryConversationAgent?.type ?? "");
+          handoffManager.open({ runId: selectedRunId, workerId: vm.primaryConversationAgent?.name ?? null, sourceWorkerType: SUPPORTED_WORKER_TYPES.includes(normalized as SupportedWorkerType) ? normalized as SupportedWorkerType : null, forkedFromMessageId: null, reason: "manual_session" });
+        }}
       />
 
       <Dialog

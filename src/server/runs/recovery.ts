@@ -62,6 +62,8 @@ import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
 import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
 import { reconcileRecoveredHumanInputEntries } from "@/server/workers/human-input-entries";
+import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
+import { runConversationMutation } from "@/server/conversations/worker-turn-gate";
 
 export type RecoveryAction = "retry" | "edit" | "fork";
 
@@ -1066,7 +1068,8 @@ async function handleDirectWorkerAskQuotaError(args: {
   };
 }
 
-export async function recoverRun(args: RecoverRunArgs) {
+async function recoverRunUnlocked(args: RecoverRunArgs) {
+  await assertRunNotHandoffFenced(args.runId);
   const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
   if (!run) {
     throw new Error("Run not found");
@@ -1287,6 +1290,10 @@ export async function recoverRun(args: RecoverRunArgs) {
   await startDirectRerun(run, nextContent, args.targetMessageId, targetAttachments);
 
   return { runId: args.runId };
+}
+
+export function recoverRun(args: RecoverRunArgs) {
+  return runConversationMutation(args.runId, () => recoverRunUnlocked(args));
 }
 
 export async function forkRunIntoWorktree(args: ForkRunWorktreeArgs) {

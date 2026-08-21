@@ -1,4 +1,4 @@
-import { CircleStop, RotateCcw, ShieldAlert } from "lucide-react";
+import { ArrowLeftRight, CircleStop, RotateCcw, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
@@ -23,12 +23,14 @@ export function RunRecoveryNotice({
   isStopping = false,
   onResume,
   onStop,
+  onHandoff,
 }: {
   recoveryState: RunRecoveryState | null;
   isResuming: boolean;
   isStopping?: boolean;
   onResume: () => void;
   onStop?: () => void;
+  onHandoff?: () => void;
 }) {
   useI18nSnapshot();
   if (!recoveryState) {
@@ -101,6 +103,12 @@ export function RunRecoveryNotice({
                 <span className="min-w-0 break-words">{autoResumeLabel}</span>
               </label>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {onHandoff ? (
+                  <Button type="button" size="sm" variant="outline" disabled={isResuming || isStopping} onClick={onHandoff}>
+                    <ArrowLeftRight className="mr-2 h-3.5 w-3.5" />
+                    {t("recovery.notice.handoff")}
+                  </Button>
+                ) : null}
                 {canResume ? (
                   <Button
                     type="button"

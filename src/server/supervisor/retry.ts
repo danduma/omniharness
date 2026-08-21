@@ -190,6 +190,22 @@ export function isTransientSupervisorError(error: unknown) {
   });
 }
 
+/**
+ * The bridge no longer hosts the agent this error names: the worker process was
+ * reaped, the ACP session was dropped, or the saved session file is unreadable.
+ * Distinct from a transport failure — retrying the same call cannot succeed, but
+ * respawning or resuming the worker can.
+ */
+export function isMissingAgentError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return message.includes("404")
+    || message.includes("not_found")
+    || message.includes("agent not found")
+    || message.includes("session not found")
+    || message.includes("invalid session identifier")
+    || message.includes("failed to load resumed session data from file");
+}
+
 export function isRecoverableConnectionSupervisorError(error: unknown) {
   return extractErrorChain(error).some((entry) => {
     const message = typeof entry.message === "string" ? entry.message : "";

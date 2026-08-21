@@ -17,13 +17,14 @@ import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallba
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
 import { closeStaleHumanInputEntries } from "@/server/workers/human-input-entries";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
-import { runWorkerTurn } from "./worker-turn-gate";
+import { runConversationMutation, runWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 import { persistRunFailure } from "@/server/runs/failures";
 import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
 import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import { resolveRecoveryIncidentsAfterHealthyTurn } from "@/server/runs/recovery-incidents";
+import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
 import {
   serializeQueuedConversationMessage,
   type BusyMessageAction,
@@ -516,7 +517,7 @@ async function resolveQueuedConversationMessageId(clientMessageId: string | null
   return existing ? randomUUID() : candidate;
 }
 
-export async function createQueuedConversationMessage({
+async function createQueuedConversationMessageUnlocked({
   runId,
   targetWorkerId = null,
   action,
@@ -536,6 +537,7 @@ export async function createQueuedConversationMessage({
    */
   clientMessageId?: string | null;
 }) {
+  await assertRunNotHandoffFenced(runId);
   const trimmedContent = content.trim();
   const normalizedAttachments = normalizeChatAttachments(attachments);
   if (!trimmedContent && normalizedAttachments.length === 0) {
@@ -567,7 +569,11 @@ export async function createQueuedConversationMessage({
   return serializeQueuedConversationMessage(record);
 }
 
-export async function cancelQueuedConversationMessage({
+export function createQueuedConversationMessage(args: Parameters<typeof createQueuedConversationMessageUnlocked>[0]) {
+  return runConversationMutation(args.runId, () => createQueuedConversationMessageUnlocked(args));
+}
+
+async function cancelQueuedConversationMessageUnlocked({
   runId,
   messageId,
 }: {
@@ -608,6 +614,10 @@ export async function cancelQueuedConversationMessage({
     status: "cancelled",
     updatedAt: now,
   });
+}
+
+export function cancelQueuedConversationMessage(args: Parameters<typeof cancelQueuedConversationMessageUnlocked>[0]) {
+  return runConversationMutation(args.runId, () => cancelQueuedConversationMessageUnlocked(args));
 }
 
 async function deliverQueuedWorkerSteering(args: {
@@ -819,13 +829,14 @@ async function continueQueuedWorkerSteering(args: {
   }
 }
 
-export async function sendQueuedConversationMessageNow({
+async function sendQueuedConversationMessageNowUnlocked({
   runId,
   messageId,
 }: {
   runId: string;
   messageId: string;
 }) {
+  await assertRunNotHandoffFenced(runId);
   const record = await db
     .select()
     .from(queuedConversationMessages)
@@ -964,7 +975,7 @@ export async function sendQueuedConversationMessageNow({
   }, worker.id);
   notifyEventStreamSubscribers();
 
-  continueQueuedWorkerSteering({
+  trackConversationBackgroundTask(continueQueuedWorkerSteering({
     run,
     worker,
     messageId,
@@ -972,7 +983,7 @@ export async function sendQueuedConversationMessageNow({
     content: workerContent,
     userText: record.content,
     attachments: normalizedAttachments,
-  }).catch((error) => {
+  }), { runId }).catch((error) => {
     console.error("Queued message immediate steering failed:", error);
   });
 
@@ -989,6 +1000,10 @@ export async function sendQueuedConversationMessageNow({
       deliveredAt: null,
     }),
   };
+}
+
+export function sendQueuedConversationMessageNow(args: Parameters<typeof sendQueuedConversationMessageNowUnlocked>[0]) {
+  return runConversationMutation(args.runId, () => sendQueuedConversationMessageNowUnlocked(args));
 }
 
 async function pendingQueueRecords(runId: string, workerId?: string | null) {
@@ -1011,7 +1026,8 @@ async function pendingQueueRecords(runId: string, workerId?: string | null) {
   });
 }
 
-export async function drainQueuedImplementationMessages(runId: string) {
+async function drainQueuedImplementationMessagesUnlocked(runId: string) {
+  await assertRunNotHandoffFenced(runId);
   const records = await pendingQueueRecords(runId);
   let deliveredCount = 0;
 
@@ -1195,7 +1211,11 @@ export async function drainQueuedImplementationMessages(runId: string) {
   return deliveredCount;
 }
 
-export async function drainQueuedWorkerMessages({
+export function drainQueuedImplementationMessages(runId: string) {
+  return runConversationMutation(runId, () => drainQueuedImplementationMessagesUnlocked(runId));
+}
+
+async function drainQueuedWorkerMessagesUnlocked({
   runId,
   workerId,
   snapshot,
@@ -1204,6 +1224,7 @@ export async function drainQueuedWorkerMessages({
   workerId: string;
   snapshot?: WorkerSnapshot | null;
 }) {
+  await assertRunNotHandoffFenced(runId);
   const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
   if (!worker || worker.runId !== runId) {
     return 0;
@@ -1449,4 +1470,8 @@ export async function drainQueuedWorkerMessages({
   }
 
   return deliveredCount;
+}
+
+export function drainQueuedWorkerMessages(args: Parameters<typeof drainQueuedWorkerMessagesUnlocked>[0]) {
+  return runConversationMutation(args.runId, () => drainQueuedWorkerMessagesUnlocked(args));
 }

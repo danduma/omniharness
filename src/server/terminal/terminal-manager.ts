@@ -3,6 +3,7 @@ import os from "node:os";
 import { chmodSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 /**
  * In-process registry of interactive PTY sessions backing the UI terminal.
@@ -33,6 +34,22 @@ export interface CreatedTerminal {
   rows: number;
 }
 
+export type TerminalAuthorization = {
+  sessionId: string;
+  runnerInstanceId?: string | null;
+  scope?: "shell" | "account_auth";
+  accountId?: string;
+  operationId?: string;
+};
+
+type TerminalOwnership = {
+  sessionId: string | null;
+  runnerInstanceId: string | null;
+  scope: "shell" | "account_auth";
+  accountId: string | null;
+  operationId: string | null;
+};
+
 type Subscriber = {
   onChunk: (chunk: TerminalChunk) => void;
   onExit: (exit: TerminalExit) => void;
@@ -54,6 +71,9 @@ interface TerminalSession {
   /** When the last subscriber detached (null while at least one is attached). */
   detachedAt: number | null;
   exited: TerminalExit | null;
+  ownership: TerminalOwnership;
+  lifecycleOwners: number;
+  onExit: ((exit: TerminalExit) => void) | null;
 }
 
 const MAX_BUFFER_BYTES = 256 * 1024;
@@ -75,9 +95,7 @@ function defaultShell(): string {
 class TerminalManager {
   private readonly sessions = new Map<string, TerminalSession>();
   private reaper: ReturnType<typeof setInterval> | null = null;
-  private idCounter = 0;
-
-  createTerminal(options: { cwd: string; cols?: number; rows?: number }): CreatedTerminal {
+  createTerminal(options: { cwd: string; cols?: number; rows?: number; ownerSessionId?: string | null }): CreatedTerminal {
     ensureSpawnHelperExecutable();
     const cols = clampDimension(options.cols, DEFAULT_COLS);
     const rows = clampDimension(options.rows, DEFAULT_ROWS);
@@ -90,13 +108,73 @@ class TerminalManager {
       env: sanitizedEnv(),
     });
 
-    const id = `term-${process.pid.toString(36)}-${(this.idCounter += 1).toString(36)}-${Date.now().toString(36)}`;
+    return this.registerPty(pty, {
+      cwd: options.cwd,
+      cols,
+      rows,
+      ownership: {
+        sessionId: options.ownerSessionId ?? null,
+        runnerInstanceId: null,
+        scope: "shell",
+        accountId: null,
+        operationId: null,
+      },
+      onExit: null,
+    });
+  }
+
+  createManagedTerminal(options: {
+    command: string;
+    args: string[];
+    env: Record<string, string>;
+    cwd: string;
+    cols?: number;
+    rows?: number;
+    ownerSessionId: string;
+    runnerInstanceId: string;
+    accountId: string;
+    operationId: string;
+    onExit?: (exit: TerminalExit) => void;
+  }): CreatedTerminal {
+    ensureSpawnHelperExecutable();
+    const cols = clampDimension(options.cols, DEFAULT_COLS);
+    const rows = clampDimension(options.rows, DEFAULT_ROWS);
+    const pty = spawn(options.command, [...options.args], {
+      name: "xterm-color",
+      cols,
+      rows,
+      cwd: options.cwd,
+      env: { ...options.env },
+    });
+    return this.registerPty(pty, {
+      cwd: options.cwd,
+      cols,
+      rows,
+      ownership: {
+        sessionId: options.ownerSessionId,
+        runnerInstanceId: options.runnerInstanceId,
+        scope: "account_auth",
+        accountId: options.accountId,
+        operationId: options.operationId,
+      },
+      onExit: options.onExit ?? null,
+    });
+  }
+
+  private registerPty(pty: IPty, options: {
+    cwd: string;
+    cols: number;
+    rows: number;
+    ownership: TerminalOwnership;
+    onExit: ((exit: TerminalExit) => void) | null;
+  }): CreatedTerminal {
+    const id = `term-${randomUUID()}`;
     const session: TerminalSession = {
       id,
       pty,
       cwd: options.cwd,
-      cols,
-      rows,
+      cols: options.cols,
+      rows: options.rows,
       lastSeq: 0,
       buffer: [],
       bufferBytes: 0,
@@ -104,6 +182,9 @@ class TerminalManager {
       lastActivityAt: Date.now(),
       detachedAt: Date.now(),
       exited: null,
+      ownership: options.ownership,
+      lifecycleOwners: options.ownership.scope === "account_auth" ? 1 : 0,
+      onExit: options.onExit,
     };
     this.sessions.set(id, session);
 
@@ -111,11 +192,41 @@ class TerminalManager {
     pty.onExit(({ exitCode, signal }) => this.handleExit(session, { exitCode, signal }));
 
     this.ensureReaper();
-    return { id, cols, rows };
+    return { id, cols: options.cols, rows: options.rows };
+  }
+
+  authorize(id: string, expected: TerminalAuthorization): boolean {
+    const session = this.sessions.get(id);
+    if (!session) return false;
+    const actual = session.ownership;
+    if (actual.sessionId && actual.sessionId !== expected.sessionId) return false;
+    if (expected.scope && actual.scope !== expected.scope) return false;
+    if (expected.runnerInstanceId && actual.runnerInstanceId !== expected.runnerInstanceId) return false;
+    if (expected.accountId && actual.accountId !== expected.accountId) return false;
+    if (expected.operationId && actual.operationId !== expected.operationId) return false;
+    return true;
+  }
+
+  releaseLifecycleOwner(id: string): boolean {
+    const session = this.sessions.get(id);
+    if (!session) return false;
+    session.lifecycleOwners = Math.max(0, session.lifecycleOwners - 1);
+    return true;
   }
 
   has(id: string): boolean {
     return this.sessions.has(id);
+  }
+
+  replayState(id: string, fromSeq: number) {
+    const session = this.sessions.get(id);
+    if (!session) return null;
+    const oldestSeq = session.buffer[0]?.seq ?? session.lastSeq + 1;
+    return {
+      oldestSeq,
+      lastSeq: session.lastSeq,
+      resyncRequired: fromSeq > 0 && fromSeq < oldestSeq - 1,
+    };
   }
 
   write(id: string, data: string): boolean {
@@ -220,6 +331,7 @@ class TerminalManager {
   }
 
   private handleExit(session: TerminalSession, exit: TerminalExit): void {
+    if (session.exited) return;
     session.exited = exit;
     for (const subscriber of session.subscribers) {
       subscriber.onExit(exit);
@@ -227,6 +339,7 @@ class TerminalManager {
     // Leave the session briefly so attached clients can render the exit, then
     // let the reaper remove it.
     session.detachedAt = session.detachedAt ?? Date.now();
+    session.onExit?.(exit);
   }
 
   private disposeSession(session: TerminalSession): void {
@@ -261,7 +374,7 @@ class TerminalManager {
         now - session.detachedAt > SUBSCRIBER_GRACE_MS;
       const idleTooLong = now - session.lastActivityAt > IDLE_TIMEOUT_MS;
       const exitedAndDetached = session.exited !== null && session.subscribers.size === 0;
-      if (detachedTooLong || idleTooLong || exitedAndDetached) {
+      if (session.lifecycleOwners === 0 && (detachedTooLong || idleTooLong || exitedAndDetached)) {
         this.disposeSession(session);
       }
     }

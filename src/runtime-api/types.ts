@@ -87,6 +87,14 @@ export interface RuntimeAPIs {
     resume(input: { runId: string; body?: unknown }, options?: RuntimeCallOptions): Promise<unknown>;
     answer(input: { runId: string; body: unknown }, options?: RuntimeCallOptions): Promise<unknown>;
   };
+  handoffs: {
+    getActive(input: { runId: string }, options?: RuntimeCallOptions): Promise<import("@/shared/handoff").ActiveHandoffResponse>;
+    prepare(input: { runId: string; body: import("@/shared/handoff").CreateHandoffRequest }, options?: RuntimeCallOptions): Promise<import("@/shared/handoff").HandoffResponse>;
+    get(input: { handoffId: string; sourceRunId: string }, options?: RuntimeCallOptions): Promise<import("@/shared/handoff").HandoffResponse>;
+    revise(input: { handoffId: string; sourceRunId: string; body: import("@/shared/handoff").HandoffAdvisoryPatch }, options?: RuntimeCallOptions): Promise<import("@/shared/handoff").HandoffResponse>;
+    launch(input: { handoffId: string; sourceRunId: string; body: import("@/shared/handoff").LaunchHandoffRequest }, options?: RuntimeCallOptions): Promise<import("@/shared/handoff").HandoffResponse>;
+    cancel(input: { handoffId: string; sourceRunId: string; body?: Partial<import("@/shared/handoff").CancelHandoffRequest> }, options?: RuntimeCallOptions): Promise<import("@/shared/handoff").HandoffResponse>;
+  };
   goals: {
     get(input: { runId: string }, options?: RuntimeCallOptions): Promise<{ goal: import("@/shared/goal-plan").GoalSnapshot | null }>;
     put(input: { runId: string; body: import("@/shared/goal-plan").PutGoalInput }, options?: RuntimeCallOptions): Promise<unknown>;
@@ -134,6 +142,10 @@ export interface RuntimeAPIs {
       beforeSeq?: number;
       limit?: number;
     }, options?: RuntimeCallOptions): Promise<unknown>;
+    content(input: {
+      workerId: string;
+      entryId: string;
+    }, options?: RuntimeCallOptions): Promise<Blob>;
     getPlan(input: {
       runId?: string;
       workerId: string;
@@ -201,8 +213,23 @@ export interface RuntimeAPIs {
     list(options?: RuntimeCallOptions): Promise<unknown>;
     create(input: unknown, options?: RuntimeCallOptions): Promise<unknown>;
     update(input: { accountId: string; body: unknown }, options?: RuntimeCallOptions): Promise<unknown>;
-    remove(input: { accountId: string }, options?: RuntimeCallOptions): Promise<unknown>;
-    refreshStatus(input: { accountId: string }, options?: RuntimeCallOptions): Promise<unknown>;
+    remove(input: { accountId: string }, options?: RuntimeCallOptions): Promise<import("@/shared/home-types").AccountRemovalResponse>;
+    refreshStatus(input: { accountId: string }, options?: RuntimeCallOptions): Promise<import("@/shared/home-types").AccountRecord>;
+    connectClaude(input: {
+      label: string;
+      email?: string | null;
+      sso?: boolean;
+    }, options?: RuntimeCallOptions): Promise<import("@/shared/home-types").ClaudeAccountAuthResponse>;
+    getAuthOperation(input: { accountId: string }, options?: RuntimeCallOptions): Promise<import("@/shared/home-types").ClaudeAccountAuthResponse>;
+    actOnAuthOperation(input: {
+      accountId: string;
+      action: "retry" | "cancel";
+    }, options?: RuntimeCallOptions): Promise<import("@/shared/home-types").ClaudeAccountAuthResponse>;
+    logout(input: { accountId: string }, options?: RuntimeCallOptions): Promise<{ account: import("@/shared/home-types").AccountRecord }>;
+    purge(input: {
+      accountId: string;
+      confirmAccountId: string;
+    }, options?: RuntimeCallOptions): Promise<import("@/shared/home-types").AccountPurgeResponse>;
     codexStatus(options?: RuntimeCallOptions): Promise<unknown>;
   };
   notifications: {

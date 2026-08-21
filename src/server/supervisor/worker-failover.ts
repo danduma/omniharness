@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { and, desc, eq } from "drizzle-orm";
 import * as bridge from "@/server/bridge-client";
@@ -73,6 +74,12 @@ export type AttemptWorkerFailoverResult =
       newWorkerId: string;
       newType: SupportedWorkerType;
       handoff: HandoffReport;
+    }
+  | {
+      state: "handed_off";
+      targetRunId: string;
+      newWorkerId: string | null;
+      newType: SupportedWorkerType;
     }
   | { state: "no_replacement"; reason: string }
   | { state: "park_failed"; reason: string }
@@ -369,6 +376,41 @@ export async function attemptWorkerFailover(
   }
 
   const replacementType = replacementSelection.type;
+
+  if (run && (run.mode === "direct" || run.mode === "commit")) {
+    const parked = await parkRunForQuotaWait({
+      runId: args.runId,
+      workerId: args.outgoingWorkerId,
+      incidentId: block.incidentId,
+      quota: block.quota,
+      now,
+    });
+    if (parked.state === "ignored") return { state: "ignored", reason: parked.reason };
+    try {
+      const { handoffCoordinator } = await import("@/server/handoff/service");
+      const ready = await handoffCoordinator.prepare({
+        sourceRunId: args.runId,
+        sourceWorkerId: args.outgoingWorkerId,
+        forkedFromMessageId: null,
+        reason: "quota_exhausted",
+        target: { workerType: replacementType, model: null, effort: null, accountId: null },
+      });
+      const completed = await handoffCoordinator.launch({ handoffId: ready.id, expectedRevision: ready.revision, operationId: randomUUID() });
+      await setIncidentFailoverFlag(block.incidentId, "resolved");
+      const replacement = completed.targetRunId
+        ? await db.select({ id: workers.id }).from(workers).where(eq(workers.runId, completed.targetRunId)).orderBy(desc(workers.createdAt), desc(workers.id)).limit(1).get()
+        : null;
+      return { state: "handed_off", targetRunId: completed.targetRunId!, newWorkerId: replacement?.id ?? null, newType: replacementType };
+    } catch (error) {
+      await recordFailoverEvent({
+        runId: args.runId,
+        workerId: args.outgoingWorkerId,
+        type: "worker_failover_failed",
+        details: { summary: "Cross-CLI handoff failed; the source remains recoverable.", stage: "cross_cli_handoff", reason: error instanceof Error ? error.message : String(error) },
+      });
+      return { state: "park_failed", reason: error instanceof Error ? error.message : String(error) };
+    }
+  }
 
   const preHandoffRefusal = await refuseFailoverIfTerminal({
     runId: args.runId,
@@ -890,10 +932,20 @@ export async function loadPendingFailoverContext(runId: string) {
     if (!row.workerId) continue;
     const worker = await db.select().from(workers).where(eq(workers.id, row.workerId)).get();
     if (!worker) continue;
+    const rawText = typeof details.rawText === "string" ? details.rawText : (row.lastError ?? "");
+    const parsedResumeAt = typeof details.resumeAt === "string"
+      ? new Date(details.resumeAt)
+      : null;
     return {
       incident: row,
       worker,
-      rawText: typeof details.rawText === "string" ? details.rawText : (row.lastError ?? ""),
+      rawText,
+      block: {
+        incidentId: row.id,
+        quota: extractQuotaResetInfo(rawText, { provider: worker.type }),
+        resumeAt: parsedResumeAt && !Number.isNaN(parsedResumeAt.getTime()) ? parsedResumeAt : null,
+        details,
+      } satisfies WorkerQuotaBlockResult,
     };
   }
   return null;

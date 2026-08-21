@@ -21,6 +21,7 @@ import { RunnerReadinessManager } from "./readiness-manager";
 import { acquireRunnerLock } from "./runner-lock";
 import { emitRunnerStaticUiStatus } from "./static-ui-status";
 import { configureRunnerReadinessSource } from "./identity";
+import { getClaudeAccountAuthService } from "@/server/accounts/claude-account-auth-service";
 
 export interface RunnerProcessHandle {
   origin: string;
@@ -125,6 +126,8 @@ export async function startRunnerProcess(
     await ensureSupervisorRuntimeStarted();
     await ensureClaudeModelGatewayStartedAtBoot();
     await bridge.start();
+    const claudeAccountAuthService = await getClaudeAccountAuthService({ instanceRoot: config.instanceRoot });
+    await claudeAccountAuthService.reconcileAtStartup();
     await recoverPendingGoalControlsAtStartup();
 
     const runtime = createOmniRuntime({
@@ -132,6 +135,7 @@ export async function startRunnerProcess(
       label: "OmniHarness Server",
       hooks: {
         async onStop() {
+          claudeAccountAuthService.shutdown();
           getTerminalManager().killAll();
           await getClaudeModelGatewayService().shutdown();
           await bridge.stop();
