@@ -3,6 +3,7 @@ import {
   authorizeRestartRequest,
   authorizeSessionCookie,
   createRestartController,
+  createRestartSupervisor,
   createSessionCookie,
   passwordsMatch,
   resolveRestartControlConfig,
@@ -427,5 +428,69 @@ describe("restart current with early acknowledgement", () => {
     expect(actions).toEqual(["ack"]);
     expect(failures).toHaveLength(1);
     expect((failures[0] as Error).message).toBe("could not signal the runner");
+  });
+});
+
+describe("restart supervision", () => {
+  it("recovers a recorded production runner after its detached process disappears", async () => {
+    const actions: string[] = [];
+    const supervisor = createRestartSupervisor({
+      controller: {
+        getStatus: async () => ({ running: false, mode: "prod" }),
+        restart: async (reason, mode) => {
+          actions.push(`restart:${reason}:${mode}`);
+          return {
+            pid: 888,
+            startedAt: 1_000,
+            command: ["pnpm", "run", "start"],
+            mode,
+          };
+        },
+      },
+      appendLog: (message: string) => {
+        actions.push(`log:${message}`);
+      },
+      now: () => 1_000,
+    });
+
+    await expect(supervisor.check()).resolves.toMatchObject({
+      status: "recovered",
+      attempt: 1,
+      pid: 888,
+      mode: "prod",
+    });
+    expect(actions).toEqual([
+      "log:runner.supervision.restart_attempt mode=prod attempt=1",
+      "restart:automatic supervision:prod",
+      "log:runner.supervision.restart_succeeded mode=prod attempt=1 pid=888",
+    ]);
+  });
+
+  it("gives up after bounded consecutive failures instead of restarting forever", async () => {
+    const actions: string[] = [];
+    const supervisor = createRestartSupervisor({
+      controller: {
+        getStatus: async () => ({ running: false, mode: "prod" }),
+        restart: async () => {
+          actions.push("restart");
+          throw new Error("spawn failed");
+        },
+      },
+      appendLog: (message: string) => {
+        actions.push(`log:${message}`);
+      },
+      now: () => 1_000,
+      maxAttempts: 2,
+    });
+
+    await expect(supervisor.check()).resolves.toMatchObject({ status: "failed", attempt: 1 });
+    await expect(supervisor.check()).resolves.toMatchObject({ status: "failed", attempt: 2 });
+    await expect(supervisor.check()).resolves.toMatchObject({ status: "gave_up", attempts: 2 });
+    await expect(supervisor.check()).resolves.toMatchObject({ status: "gave_up", attempts: 2 });
+
+    expect(actions.filter((action) => action === "restart")).toHaveLength(2);
+    expect(actions.filter((action) => action.includes("runner.supervision.gave_up"))).toEqual([
+      "log:runner.supervision.gave_up mode=prod attempts=2",
+    ]);
   });
 });

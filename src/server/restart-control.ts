@@ -281,6 +281,103 @@ export function createRestartController({ config, system }: {
   };
 }
 
+type RestartSupervisionController = {
+  getStatus(): Promise<{ running: boolean; mode: RestartMode | null }>;
+  restart(reason: string, mode: RestartMode): Promise<RestartPidEntry>;
+};
+
+export function createRestartSupervisor({
+  controller,
+  appendLog,
+  now = Date.now,
+  maxAttempts = 3,
+  stableWindowMs = 5 * 60 * 1000,
+}: {
+  controller: RestartSupervisionController;
+  appendLog: (message: string) => void | Promise<void>;
+  now?: () => number;
+  maxAttempts?: number;
+  stableWindowMs?: number;
+}) {
+  let consecutiveAttempts = 0;
+  let healthySince: number | null = null;
+  let gaveUpLogged = false;
+  let inFlight: Promise<unknown> | null = null;
+
+  const inspectAndRecover = async () => {
+    const status = await controller.getStatus();
+    if (status.running) {
+      const checkedAt = now();
+      healthySince ??= checkedAt;
+      if (
+        consecutiveAttempts > 0
+        && checkedAt - healthySince >= stableWindowMs
+      ) {
+        await appendLog(
+          `runner.supervision.stable attempts_reset=${consecutiveAttempts}`,
+        );
+        consecutiveAttempts = 0;
+        gaveUpLogged = false;
+      }
+      return { status: "healthy" as const, attempts: consecutiveAttempts };
+    }
+
+    healthySince = null;
+    if (!status.mode) {
+      return { status: "skipped" as const, reason: "no_previous_mode" as const };
+    }
+    if (consecutiveAttempts >= maxAttempts) {
+      if (!gaveUpLogged) {
+        gaveUpLogged = true;
+        await appendLog(
+          `runner.supervision.gave_up mode=${status.mode} attempts=${consecutiveAttempts}`,
+        );
+      }
+      return {
+        status: "gave_up" as const,
+        mode: status.mode,
+        attempts: consecutiveAttempts,
+      };
+    }
+
+    const attempt = ++consecutiveAttempts;
+    await appendLog(
+      `runner.supervision.restart_attempt mode=${status.mode} attempt=${attempt}`,
+    );
+    try {
+      const entry = await controller.restart("automatic supervision", status.mode);
+      await appendLog(
+        `runner.supervision.restart_succeeded mode=${entry.mode} attempt=${attempt} pid=${entry.pid}`,
+      );
+      return {
+        status: "recovered" as const,
+        attempt,
+        pid: entry.pid,
+        mode: entry.mode,
+      };
+    } catch (error) {
+      const reason = (error instanceof Error ? error.message : String(error))
+        .replaceAll(/\s+/g, " ")
+        .trim();
+      await appendLog(
+        `runner.supervision.restart_failed mode=${status.mode} attempt=${attempt} reason=${reason || "unknown"}`,
+      );
+      return { status: "failed" as const, attempt, error };
+    }
+  };
+
+  return {
+    check() {
+      if (!inFlight) {
+        inFlight = inspectAndRecover().finally(() => {
+          inFlight = null;
+        });
+      }
+      return inFlight;
+    },
+  };
+}
+
 type RestartCurrentController = Pick<ReturnType<typeof createRestartController>, "restartCurrent">;
 
 /**

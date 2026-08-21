@@ -8,6 +8,7 @@ import {
   authorizeSessionCookie,
   createNodeRestartSystem,
   createRestartController,
+  createRestartSupervisor,
   createSessionCookie,
   resolveRestartControlConfig,
   type RestartMode,
@@ -718,9 +719,14 @@ async function renderControlPage(status: { mode?: RestartMode; restarted?: boole
 }
 
 const token = ensureToken();
+const restartSystem = createNodeRestartSystem(config);
 const controller = createRestartController({
   config: { ...config, token },
-  system: createNodeRestartSystem(config),
+  system: restartSystem,
+});
+const restartSupervisor = createRestartSupervisor({
+  controller,
+  appendLog: restartSystem.appendLog,
 });
 
 let activeRestart: Promise<unknown> | null = null;
@@ -899,5 +905,19 @@ server.listen(config.port, config.host, () => {
       .finally(() => {
         activeRestart = null;
       });
+
+    const supervisionTimer = setInterval(() => {
+      if (activeRestart) {
+        return;
+      }
+      activeRestart = restartSupervisor.check()
+        .catch((error) => {
+          console.error("[restart-control] supervision check failed:", error);
+        })
+        .finally(() => {
+          activeRestart = null;
+        });
+    }, 5_000);
+    supervisionTimer.unref();
   }
 });
