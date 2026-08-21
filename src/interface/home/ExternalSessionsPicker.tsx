@@ -5,7 +5,7 @@ import { useMemo } from "react";
 import { StateManager } from "@/lib/state-manager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { FolderOpen, Search, SquareTerminal } from "lucide-react";
+import { FolderOpen, GitFork, Search, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -35,6 +35,8 @@ interface ExternalSessionsPickerProps {
   open: boolean;
   onClose: () => void;
   onResumed: (runId: string) => void;
+  canForkCurrent: boolean;
+  onForkCurrent: () => void;
 }
 
 function formatRelativeTime(isoDate: string): string {
@@ -56,7 +58,7 @@ function shortProjectPath(full: string): string {
   return `…/${parts.slice(-2).join("/")}`;
 }
 
-export function ExternalSessionsPicker({ open, onClose, onResumed }: ExternalSessionsPickerProps) {
+export function ExternalSessionsPicker({ open, onClose, onResumed, canForkCurrent, onForkCurrent }: ExternalSessionsPickerProps) {
   useI18nSnapshot();
   const runtimeApis = useRuntimeAPIs();
   const manager = useMemo(() => new StateManager({ resumingId: null as string | null, query: "", activeTab: "claude" as "claude" | "gemini" }), []);
@@ -118,6 +120,23 @@ export function ExternalSessionsPicker({ open, onClose, onResumed }: ExternalSes
             {t("externalSessions.title")}
           </DialogTitle>
         </DialogHeader>
+
+        {canForkCurrent && (
+          <div className="rounded-xl border border-border/70 bg-muted/20 p-4">
+            <div className="flex items-start gap-3">
+              <div className="rounded-lg bg-primary/10 p-2 text-primary"><GitFork className="h-4 w-4" /></div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">{t("externalSessions.currentFork.title")}</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("externalSessions.currentFork.description")}</p>
+                <Button type="button" size="sm" className="mt-3" onClick={() => { onClose(); onForkCurrent(); }}>
+                  {t("externalSessions.currentFork.action")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("externalSessions.externalSection")}</p>
 
         {/* Tabs Bar */}
         <div className="inline-flex rounded-xl border border-border/60 bg-muted/30 p-1 self-start">

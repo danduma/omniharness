@@ -698,6 +698,28 @@ async function waitForProcessExit(pid: number) {
 }
 
 describe("internal agent runtime HTTP API", () => {
+  it("fences new account spawns until the account is explicitly resumed", async () => {
+    const server = createAgentRuntimeServer();
+    const port = await listen(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const quiesced = await fetch(`${baseUrl}/accounts/account-a/quiesce`, { method: "POST" });
+    expect(quiesced.status).toBe(200);
+    await expect(quiesced.json()).resolves.toMatchObject({ fenced: true, liveAgents: [] });
+
+    const blocked = await fetch(`${baseUrl}/agents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "blocked", type: "claude", accountId: "account-a" }),
+    });
+    expect(blocked.status).toBe(409);
+    await expect(blocked.json()).resolves.toMatchObject({ error: expect.stringContaining("quiesced") });
+
+    const resumed = await fetch(`${baseUrl}/accounts/account-a/resume`, { method: "POST" });
+    expect(resumed.status).toBe(200);
+    await expect(resumed.json()).resolves.toEqual({ ok: true, accountId: "account-a", fenced: false });
+  });
+
   it("keeps doctor responsive when a provider endpoint hangs", async () => {
     const binDir = createTempDir("omni-runtime-doctor-bin-");
     createExecutable(binDir, "codex-acp", "#!/bin/sh\nexit 0\n");

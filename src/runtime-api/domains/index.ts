@@ -139,6 +139,26 @@ export function createRuntimeDomains({
         return post(`/api/runs/${encode(input.runId)}/answer`, input.body, options);
       },
     },
+    handoffs: {
+      getActive(input, options) {
+        return get(`/api/runs/${encode(input.runId)}/handoffs`, options) as ReturnType<RuntimeAPIs["handoffs"]["getActive"]>;
+      },
+      prepare(input, options) {
+        return post(`/api/runs/${encode(input.runId)}/handoffs`, input.body, options) as ReturnType<RuntimeAPIs["handoffs"]["prepare"]>;
+      },
+      get(input, options) {
+        return get(`/api/handoffs/${encode(input.handoffId)}?runId=${encode(input.sourceRunId)}`, options) as ReturnType<RuntimeAPIs["handoffs"]["get"]>;
+      },
+      revise(input, options) {
+        return patch(`/api/handoffs/${encode(input.handoffId)}?runId=${encode(input.sourceRunId)}`, input.body, options) as ReturnType<RuntimeAPIs["handoffs"]["revise"]>;
+      },
+      launch(input, options) {
+        return post(`/api/handoffs/${encode(input.handoffId)}/launch?runId=${encode(input.sourceRunId)}`, input.body, options) as ReturnType<RuntimeAPIs["handoffs"]["launch"]>;
+      },
+      cancel(input, options) {
+        return post(`/api/handoffs/${encode(input.handoffId)}/cancel?runId=${encode(input.sourceRunId)}`, input.body ?? {}, options) as ReturnType<RuntimeAPIs["handoffs"]["cancel"]>;
+      },
+    },
     goals: {
       get(input, options) {
         return get(`/api/runs/${encode(input.runId)}/goal`, options) as Promise<{
@@ -225,6 +245,14 @@ export function createRuntimeDomains({
           })}`,
           options,
         );
+      },
+      content(input, options) {
+        return request("GET", `/api/workers/${encodeURIComponent(input.workerId)}/entries${buildRuntimeQuery({
+          contentEntryId: input.entryId,
+        })}`, {
+          responseType: "blob",
+          signal: options?.signal,
+        }) as Promise<Blob>;
       },
       getPlan(input, options) {
         return get(
@@ -338,10 +366,28 @@ export function createRuntimeDomains({
         return patch(`/api/accounts/${encode(input.accountId)}`, input.body, options);
       },
       remove(input, options) {
-        return remove(`/api/accounts/${encode(input.accountId)}`, undefined, options);
+        return remove(`/api/accounts/${encode(input.accountId)}`, undefined, options) as ReturnType<RuntimeAPIs["accounts"]["remove"]>;
       },
       refreshStatus(input, options) {
-        return post(`/api/accounts/${encode(input.accountId)}/status`, {}, options);
+        return post(`/api/accounts/${encode(input.accountId)}/status`, {}, options) as ReturnType<RuntimeAPIs["accounts"]["refreshStatus"]>;
+      },
+      connectClaude(input, options) {
+        return post("/api/accounts/claude/connect", input, options) as ReturnType<RuntimeAPIs["accounts"]["connectClaude"]>;
+      },
+      getAuthOperation(input, options) {
+        return get(`/api/accounts/${encode(input.accountId)}/auth-operation`, options) as ReturnType<RuntimeAPIs["accounts"]["getAuthOperation"]>;
+      },
+      actOnAuthOperation(input, options) {
+        return post(`/api/accounts/${encode(input.accountId)}/auth-operation`, { action: input.action }, options) as ReturnType<RuntimeAPIs["accounts"]["actOnAuthOperation"]>;
+      },
+      logout(input, options) {
+        return post(`/api/accounts/${encode(input.accountId)}/logout`, {}, options) as ReturnType<RuntimeAPIs["accounts"]["logout"]>;
+      },
+      purge(input, options) {
+        return post(`/api/accounts/${encode(input.accountId)}/purge`, {
+          purge: true,
+          confirmAccountId: input.confirmAccountId,
+        }, options) as ReturnType<RuntimeAPIs["accounts"]["purge"]>;
       },
       codexStatus(options) {
         return get("/api/codex-auth/status", options);

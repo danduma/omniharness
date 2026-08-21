@@ -263,6 +263,7 @@ async function callEveryDomainMethod(apis: RuntimeAPIs) {
   await apis.conversations.interruptNextQueuedMessage({ runId: "run/1" });
   await apis.conversations.listExternalSessions({ projectPath: "/tmp/a" });
   await apis.workers.listEntries({ workerId: "worker/1", afterSeq: 3 });
+  await apis.workers.content({ workerId: "worker/1", entryId: "entry/1" });
   await apis.workers.get({ workerId: "worker/1", history: "full" });
   await apis.workers.prewarm({ workerType: "codex" });
   await apis.workers.answerElicitation({ workerId: "worker/1", body: { answer: "a" } });
@@ -290,6 +291,11 @@ async function callEveryDomainMethod(apis: RuntimeAPIs) {
   await apis.accounts.update({ accountId: "account/1", body: { enabled: true } });
   await apis.accounts.remove({ accountId: "account/1" });
   await apis.accounts.refreshStatus({ accountId: "account/1" });
+  await apis.accounts.connectClaude({ label: "Personal" });
+  await apis.accounts.getAuthOperation({ accountId: "account/1" });
+  await apis.accounts.actOnAuthOperation({ accountId: "account/1", action: "retry" });
+  await apis.accounts.logout({ accountId: "account/1" });
+  await apis.accounts.purge({ accountId: "account/1", confirmAccountId: "account/1" });
   await apis.accounts.codexStatus();
   await apis.notifications.load();
   await apis.notifications.subscribe({ subscription: {} });
@@ -310,7 +316,7 @@ describe.each([
     const { apis, calls } = createHarness();
     await callEveryDomainMethod(apis);
 
-    expect(calls).toHaveLength(60);
+    expect(calls).toHaveLength(66);
     expect(calls.map(({ method, path }) => `${method} ${path}`)).toEqual(
       expect.arrayContaining([
         "GET /api/auth/session",
@@ -321,12 +327,18 @@ describe.each([
         "GET /api/conversations/run%2F1/transcript?beforeSeq=4&limit=2",
         "GET /api/external-sessions?projectPath=%2Ftmp%2Fa",
         "GET /api/workers/worker%2F1/entries?afterSeq=3",
+        "GET /api/workers/worker%2F1/entries?contentEntryId=entry%2F1",
         "POST /api/fs/directories",
         "POST /api/attachments",
         "POST /api/git",
         "POST /api/planning/run%2F1/review",
         "GET /api/settings",
         "POST /api/accounts/account%2F1/status",
+        "POST /api/accounts/claude/connect",
+        "GET /api/accounts/account%2F1/auth-operation",
+        "POST /api/accounts/account%2F1/auth-operation",
+        "POST /api/accounts/account%2F1/logout",
+        "POST /api/accounts/account%2F1/purge",
         "GET /api/codex-auth/status",
         "POST /api/integrations/claude-model-gateway",
         "DELETE /api/notifications",

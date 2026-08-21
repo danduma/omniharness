@@ -307,7 +307,7 @@ export async function initializeWorkerGoalSession(
         });
         return { kind: "rejected" as const, reason: dispatched.reason };
     }
-    if (dispatched.kind === "superseded") {
+    if (dispatched.kind === "superseded" || dispatched.kind === "deferred") {
       emitNamedEvent({
         kind: "goal.reconciliation.refused",
         runId,

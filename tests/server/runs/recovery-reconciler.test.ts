@@ -342,6 +342,168 @@ describe("reconcileRunRecovery", () => {
     });
   });
 
+  it("resumes a direct worker that was already parked as lost with its session intact", async () => {
+    // Regression: the run latched here. `markNeedsUser` stamped the run
+    // `needs_recovery` and the worker `lost`, which removed the worker from the
+    // active scan, so every later tick re-derived `queue_blocked` and every
+    // Resume click was a no-op — with a resumable session on the row the whole
+    // time.
+    const { runId, workerId } = await createDirectRun();
+    await db.update(runs).set({
+      status: "needs_recovery",
+      lastError: "Queued message is blocked by a missing direct worker.",
+    }).where(eq(runs.id, runId));
+    await db.update(workers).set({ status: "lost", currentText: "" }).where(eq(workers.id, workerId));
+    await db.insert(queuedConversationMessages).values({
+      id: "queue-direct-latched",
+      runId,
+      targetWorkerId: workerId,
+      action: "steer",
+      content: "And also recover the session that is broken",
+      status: "failed",
+      lastError: `Ask failed: Agent not found: ${workerId}`,
+      createdAt: new Date(1),
+      updatedAt: new Date(1),
+      deliveredAt: null,
+    });
+    mockSpawnAgent.mockResolvedValue({
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "session-direct-1",
+      sessionMode: "full-access",
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    mockAskAgent.mockResolvedValue({ state: "idle", response: "Picked the work back up." });
+    mockGetAgent.mockResolvedValue({
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "session-direct-1",
+      sessionMode: "full-access",
+      lastText: "Picked the work back up.",
+      currentText: "",
+      outputEntries: [],
+      stderrBuffer: [],
+      stopReason: "end_turn",
+    });
+
+    const result = await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+    await waitForConversationBackgroundTasksForTests();
+
+    expect(result.action).toBe("resume_session");
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      name: workerId,
+      resumeSessionId: "session-direct-1",
+    }));
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(run?.status).not.toBe("needs_recovery");
+    expect(run?.lastError).toBeNull();
+  });
+
+  it("replaces a direct worker when the bridge rejects its saved session as not found", async () => {
+    // The bridge rejects a dead session as "Resource not found: <sessionId>",
+    // which the agent-missing matcher never covered, so a direct run whose
+    // provider session had been deleted fell straight through to needs_user
+    // with no action that could ever fix it.
+    const { runId, workerId } = await createDirectRun();
+    await db.insert(queuedConversationMessages).values({
+      id: "queue-direct-rejected",
+      runId,
+      targetWorkerId: workerId,
+      action: "steer",
+      content: "And also recover the session that is broken",
+      status: "failed",
+      lastError: `Ask failed: Agent not found: ${workerId}`,
+      createdAt: new Date(1),
+      updatedAt: new Date(1),
+      deliveredAt: null,
+    });
+    mockSpawnAgent.mockImplementation(async (params: { resumeSessionId?: string }) => {
+      if (params.resumeSessionId) {
+        throw new Error("failed to start claude agent via claude-agent-acp: Resource not found: session-direct-1");
+      }
+      return {
+        name: workerId,
+        type: "claude",
+        cwd: process.cwd(),
+        state: "idle",
+        sessionId: "session-direct-replacement",
+        sessionMode: "full-access",
+        lastText: "",
+        currentText: "",
+        stderrBuffer: [],
+        stopReason: null,
+      };
+    });
+
+    const result = await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+
+    expect(result.action).toBe("restart_direct_worker");
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const queued = await db.select().from(queuedConversationMessages)
+      .where(eq(queuedConversationMessages.id, "queue-direct-rejected")).get();
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(worker?.bridgeSessionId).toBe("session-direct-replacement");
+    expect(queued?.status).toBe("pending");
+    expect(run?.status).toBe("running");
+    expect(run?.lastError).toBeNull();
+  });
+
+  it("replaces a blocked direct worker and requeues its message when no session survives", async () => {
+    const { runId, workerId } = await createDirectRun();
+    await db.update(workers).set({
+      status: "lost",
+      bridgeSessionId: null,
+      bridgeSessionMode: null,
+    }).where(eq(workers.id, workerId));
+    await db.insert(queuedConversationMessages).values({
+      id: "queue-direct-no-session",
+      runId,
+      targetWorkerId: workerId,
+      action: "steer",
+      content: "Keep going please",
+      status: "failed",
+      lastError: `Ask failed: Agent not found: ${workerId}`,
+      createdAt: new Date(1),
+      updatedAt: new Date(1),
+      deliveredAt: null,
+    });
+    mockSpawnAgent.mockResolvedValue({
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "session-direct-fresh",
+      sessionMode: "full-access",
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    const result = await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+
+    expect(result.action).toBe("restart_direct_worker");
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.not.objectContaining({
+      resumeSessionId: expect.any(String),
+    }));
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const queued = await db.select().from(queuedConversationMessages)
+      .where(eq(queuedConversationMessages.id, "queue-direct-no-session")).get();
+    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
+    expect(worker?.bridgeSessionId).toBe("session-direct-fresh");
+    // The user's text must survive the worker swap.
+    expect(queued?.status).toBe("pending");
+    expect(queued?.lastError).toBeNull();
+    expect(incident).toMatchObject({ kind: "queue_blocked", status: "resolved" });
+  });
+
   it("retires a dead question when the resumed runtime owns a different question", async () => {
     const { runId, workerId } = await createDirectRun();
     const staleRequestId = 1785761272281;

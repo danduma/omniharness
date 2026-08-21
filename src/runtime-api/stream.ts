@@ -52,6 +52,7 @@ export function normalizeRuntimeStreamEvent(event: RuntimeStreamEvent) {
   if (
     event.type === "data"
     || event.type === "exit"
+    || event.type === "terminal.resync_required"
     || event.type === "update_error"
     || event.type === "worker.entry_appended"
     || event.type === "worker.plan_updated"

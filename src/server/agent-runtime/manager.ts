@@ -947,6 +947,7 @@ export class AgentRuntimeManager {
   readonly agents = new Map<string, AgentRecord>();
   private readonly chunkSubscribers = new Map<string, Set<(chunk: string) => void>>();
   private readonly workerPool = new WorkerPool();
+  private readonly startingAgentAccounts = new Map<string, string | null>();
   private readonly memoryTracer: MemoryTracer;
   private readonly pendingAgentReaps = new Map<string, NodeJS.Timeout>();
   private reapSweepTimer: NodeJS.Timeout | null = null;
@@ -1270,6 +1271,25 @@ export class AgentRuntimeManager {
   }
 
   async startAgent(input: StartAgentInput) {
+    const accountId = input.accountId?.trim() || null;
+    if (this.workerPool.isAccountFenced(accountId)) {
+      throw new RuntimeHttpError(409, `Account ${accountId} is quiesced for a lifecycle operation.`);
+    }
+    const name = input.name?.trim() || "pending-agent";
+    this.startingAgentAccounts.set(name, accountId);
+    try {
+      const result = await this.startAgentUnfenced(input);
+      if (this.workerPool.isAccountFenced(accountId)) {
+        await this.stopAgent(input.name).catch(() => false);
+        throw new RuntimeHttpError(409, `Account ${accountId} was quiesced while the agent was starting.`);
+      }
+      return result;
+    } finally {
+      this.startingAgentAccounts.delete(name);
+    }
+  }
+
+  private async startAgentUnfenced(input: StartAgentInput) {
     this.lastAgentUseAt = Date.now();
     const type = input.type?.trim() || "opencode";
     const gatewayOverlay = validateClaudeGatewayRuntimeRequest({ ...input, type });
@@ -1391,6 +1411,7 @@ export class AgentRuntimeManager {
           mcpServers,
           skillRoots,
           envFingerprint: computeEnvFingerprint(agentProcessEnv as NodeJS.ProcessEnv),
+          accountId: accountCredentials.account?.id ?? input.accountId?.trim() ?? null,
         })
       : null;
     const pooledMember = poolKey ? this.workerPool.checkout(poolKey) : null;
@@ -1692,6 +1713,7 @@ export class AgentRuntimeManager {
     const record: AgentRecord = {
       name,
       type,
+      accountId: accountCredentials.account?.id ?? input.accountId?.trim() ?? null,
       cwd,
       additionalDirectories,
       child,
@@ -1805,6 +1827,7 @@ export class AgentRuntimeManager {
         model: requestedModel,
         mode: requestedMode ?? null,
         env: input.env,
+        accountId: accountCredentials.account?.id ?? input.accountId?.trim() ?? null,
         mcpServers: input.mcpServers ?? [],
       });
     }
@@ -2197,6 +2220,7 @@ export class AgentRuntimeManager {
       mcpServers,
       skillRoots,
       envFingerprint: computeEnvFingerprint(agentProcessEnv as NodeJS.ProcessEnv),
+      accountId: accountCredentials.account?.id ?? input.accountId?.trim() ?? null,
     });
 
     const candidate = defaultCommandFor(type, requestedModel, requestedMode);
@@ -2211,7 +2235,8 @@ export class AgentRuntimeManager {
     // (e.g. the UI firing on focus+keystroke at the same instant) can both
     // pass needsWarm() before either calls beginInFlight(), and we end up
     // spawning two children for a pool that only ever holds one.
-    if (!this.workerPool.tryBeginWarm(poolKey)) {
+    const resolvedAccountId = accountCredentials.account?.id ?? input.accountId?.trim() ?? null;
+    if (!this.workerPool.tryBeginWarm(poolKey, resolvedAccountId)) {
       return { ok: true, key: poolKey, size: this.workerPool.countMembers(poolKey), warmed: false };
     }
     try {
@@ -2260,6 +2285,7 @@ export class AgentRuntimeManager {
         key: poolKey,
         type,
         cwd,
+        accountId: resolvedAccountId,
         recordRef,
         client,
         stderrBuffer,
@@ -2284,6 +2310,7 @@ export class AgentRuntimeManager {
     model: string | null;
     mode: string | null;
     env?: Record<string, string>;
+    accountId?: string | null;
     mcpServers: acp.McpServer[];
     additionalDirectories?: string[];
   }) {
@@ -2307,6 +2334,34 @@ export class AgentRuntimeManager {
     }
     for (const timer of this.pendingAgentReaps.values()) clearTimeout(timer);
     this.pendingAgentReaps.clear();
+  }
+
+  quiesceAccount(accountId: string) {
+    const normalized = accountId.trim();
+    if (!normalized) throw new RuntimeHttpError(400, "Account id is required.");
+    const pool = this.workerPool.quiesceAccount(normalized);
+    const liveAgents = [...this.agents.values()]
+      .filter((record) => record.accountId === normalized && record.state !== "stopped" && record.state !== "error")
+      .map((record) => ({ name: record.name, state: record.state }));
+    const startingAgents = [...this.startingAgentAccounts.entries()]
+      .filter(([, candidateAccountId]) => candidateAccountId === normalized)
+      .map(([name]) => name);
+    return {
+      ok: true as const,
+      accountId: normalized,
+      fenced: true as const,
+      prewarmedEvicted: pool.prewarmedEvicted,
+      startingCount: pool.startingCount + startingAgents.length,
+      startingAgents,
+      liveAgents,
+    };
+  }
+
+  resumeAccount(accountId: string) {
+    const normalized = accountId.trim();
+    if (!normalized) throw new RuntimeHttpError(400, "Account id is required.");
+    this.workerPool.resumeAccount(normalized);
+    return { ok: true as const, accountId: normalized, fenced: false as const };
   }
 
   private async spawnAgentConnection(input: {

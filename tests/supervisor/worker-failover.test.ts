@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 
 const { mockSpawnAgent, mockAskAgent, mockCancelAgent, mockGetAgent, mockExecFileSync } = vi.hoisted(() => ({
@@ -44,6 +44,10 @@ describe("attemptWorkerFailover", () => {
 
     const { db } = await import("@/server/db");
     const schema = await import("@/server/db/schema");
+    await db.delete(schema.conversationHandoffs);
+    await db.delete(schema.queuedConversationMessages);
+    await db.delete(schema.messages);
+    await db.delete(schema.artifactStreams);
     await db.delete(schema.executionEvents);
     await db.delete(schema.supervisorScheduledWakes);
     await db.delete(schema.recoveryIncidents);
@@ -57,7 +61,12 @@ describe("attemptWorkerFailover", () => {
     resetDurableSupervisorWakeSchedulerForTests();
   });
 
-  async function seedRun(allowedTypes: string[] = ["codex", "claude"]) {
+  afterEach(async () => {
+    const { waitForConversationBackgroundTasksForTests } = await import("@/server/conversations/worker-turn-gate");
+    await waitForConversationBackgroundTasksForTests(5_000);
+  });
+
+  async function seedRun(allowedTypes: string[] = ["codex", "claude"], mode = "implementation") {
     const { db } = await import("@/server/db");
     const schema = await import("@/server/db/schema");
     const planId = randomUUID();
@@ -73,7 +82,7 @@ describe("attemptWorkerFailover", () => {
     await db.insert(schema.runs).values({
       id: runId,
       planId,
-      mode: "implementation",
+      mode,
       status: "running",
       allowedWorkerTypes: JSON.stringify(allowedTypes),
       createdAt: now,
@@ -175,6 +184,47 @@ describe("attemptWorkerFailover", () => {
       entry.type === "supervisor_input"
       && entry.text.includes("# Failover Handoff")
     )).toBe(true);
+  });
+
+  it("creates a distinct target run for automatic direct-control cross-CLI quota recovery", async () => {
+    const runId = await seedRun(["codex", "claude"], "direct");
+    const workerId = await seedWorker(runId, "codex");
+    mockCancelAgent.mockResolvedValue(undefined);
+    mockGetAgent
+      .mockRejectedValueOnce(Object.assign(new Error("agent missing"), { status: 404 }))
+      .mockResolvedValue({ state: "idle", outputEntries: [], currentText: "", lastText: "continued", sessionId: "target-session", sessionMode: "full-access" });
+    mockSpawnAgent.mockResolvedValue({ state: "starting", sessionId: "target-session", sessionMode: "full-access" });
+    mockAskAgent.mockImplementation(async (_name, _prompt, _attachments, options) => {
+      await options?.onAccepted?.();
+      return { response: "Continued in the target session.", state: "idle", stopReason: "end_turn" };
+    });
+
+    const { attemptWorkerFailover } = await import("@/server/supervisor/worker-failover");
+    const result = await attemptWorkerFailover({
+      runId,
+      outgoingWorkerId: workerId,
+      outgoingWorkerType: "codex",
+      quotaText: "quota exhausted; try again in 30 minutes",
+      originalPrompt: "Refactor the auth module",
+      allowedTypes: ["codex", "claude"],
+      env: {},
+      cwd: "/tmp",
+      title: "Test worker",
+    });
+
+    expect(result.state, JSON.stringify(result)).toBe("handed_off");
+    if (result.state !== "handed_off") return;
+    expect(result.targetRunId).not.toBe(runId);
+    const { db } = await import("@/server/db");
+    const schema = await import("@/server/db/schema");
+    const source = await db.select().from(schema.runs).where(eq(schema.runs.id, runId)).get();
+    const target = await db.select().from(schema.runs).where(eq(schema.runs.id, result.targetRunId)).get();
+    const sourceWorkers = await db.select().from(schema.workers).where(eq(schema.workers.runId, runId));
+    const targetWorkers = await db.select().from(schema.workers).where(eq(schema.workers.runId, result.targetRunId));
+    expect(source?.status).toBe("cancelled");
+    expect(target?.originHandoffId).toBeTruthy();
+    expect(sourceWorkers.map((worker) => worker.type)).toEqual(["codex"]);
+    expect(targetWorkers.map((worker) => worker.type)).toEqual(["claude"]);
   });
 
   it("abandons a replacement without prompting it when Stop wins during spawn", async () => {

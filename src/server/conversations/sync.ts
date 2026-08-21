@@ -5,7 +5,7 @@ import { messages, queuedConversationMessages, recoveryIncidents, runs, workers 
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { listAgents, normalizeAgentRecord, type AgentRecord } from "@/server/bridge-client";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
-import { recordExecutionEvent } from "@/server/events/execution-event-store";
+import { listExecutionEventsForWorker, recordExecutionEvent } from "@/server/events/execution-event-store";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { persistRunFailure } from "@/server/runs/failures";
 import { isTerminalRunStatus } from "@/server/runs/status";
@@ -15,6 +15,14 @@ import { isRecoverableConnectionSupervisorError, isTransientSupervisorError } fr
 import { readWorkerOutputEntries, writeWorkerOutputEntries } from "@/server/workers/output-store";
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
 import { resolveRecoveryIncidentsDisprovedByActiveWork } from "@/server/runs/recovery-incidents";
+import {
+  annotateVerifiedDeadCredential,
+  annotateVerifiedLiveCredential,
+  hasVerifiedDeadCredentialMarker,
+  hasVerifiedLiveCredentialMarker,
+  isAuthShapedProviderFailure,
+} from "@/lib/provider-account-failures";
+import { markAccountLoginRequired } from "@/server/accounts/login-required";
 import { drainQueuedWorkerMessages } from "./queued-messages";
 import { trackConversationBackgroundTask } from "./worker-turn-gate";
 import {
@@ -27,6 +35,79 @@ const MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC = "Worker is idle with no recorded o
 
 function isDirectRunMode(mode: string | null | undefined) {
   return mode === "direct" || mode === "commit";
+}
+
+/**
+ * Bridge snapshots only know the provider's raw error. The run record may know
+ * more because the control plane independently probed the credential after
+ * that error. Never let a later snapshot downgrade that verified verdict back
+ * to unverified text: the marker drives both retry safety and the re-login UI.
+ */
+async function resolveSyncedFailureMessage(
+  runId: string,
+  workerId: string,
+  workerType: string,
+  persistedError: string | null,
+  bridgeError: string | null | undefined,
+) {
+  const incoming = bridgeError?.trim();
+  if (!incoming) return persistedError;
+  if (!isAuthShapedProviderFailure(incoming)) return incoming;
+  if (
+    hasVerifiedDeadCredentialMarker(persistedError)
+    || hasVerifiedLiveCredentialMarker(persistedError)
+  ) {
+    return persistedError;
+  }
+
+  // Versions before the durable-marker fix may already have overwritten the
+  // run with raw provider text. The independent probe result still exists in
+  // the append-only execution stream, so use it to self-heal on the next sync.
+  const verificationEvents = await listExecutionEventsForWorker(workerId, 25);
+  for (const event of verificationEvents) {
+    if (event.eventType !== "worker_credential_verified" || !event.details) continue;
+    let details: { accountId?: unknown; liveness?: unknown; detail?: unknown };
+    try {
+      details = JSON.parse(event.details) as typeof details;
+    } catch {
+      continue;
+    }
+    if (details.liveness !== "dead" && details.liveness !== "live") continue;
+
+    const accountId = typeof details.accountId === "string" && details.accountId.trim()
+      ? details.accountId.trim()
+      : null;
+    const reason = typeof details.detail === "string" ? details.detail : incoming;
+    const verdict = details.liveness;
+    if (verdict === "dead" && accountId) {
+      await markAccountLoginRequired({
+        accountId,
+        workerType,
+        reason,
+        source: "restart_credential_verdict_repair",
+      });
+    }
+    emitNamedEvent({
+      kind: "account.credential_verdict_recovered",
+      accountId: accountId ?? "default",
+      runId,
+      workerId,
+      workerType,
+      verdict,
+      source: "execution_event",
+    });
+    if (verdict === "dead") {
+      emitNamedEvent({
+        kind: "account.login_required",
+        accountId: accountId ?? "default",
+        workerType,
+        reason,
+      });
+      return annotateVerifiedDeadCredential(incoming, accountId);
+    }
+    return annotateVerifiedLiveCredential(incoming);
+  }
+  return incoming;
 }
 
 function hasAgentOutput(agent: ReturnType<typeof normalizeAgentRecord>) {
@@ -273,7 +354,7 @@ async function recordQueueDrainDecision(args: {
   });
 }
 
-async function drainQueuedWorkerMessagesWithObservation(args: {
+export async function drainQueuedWorkerMessagesWithObservation(args: {
   runId: string;
   workerId: string;
   workerStatus: string;
@@ -655,6 +736,23 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
       && isActiveLiveAgent(agent),
     );
     if (isTerminalRunStatus(run.status) && !staleBusyFailure && !selectedTerminalDirectRunStillStreaming) {
+      // A queue row written in the same beat that the run reached a terminal
+      // state would otherwise strand forever: this loop skips terminal runs,
+      // and the persisted loop below skips them too, so no drain is ever
+      // reached and the row sits `pending` for good — a restart does not help
+      // either, since boot recovery only reclaims rows stuck at `delivering`.
+      // Drain against the still-live agent rather than falling through the
+      // whole sync body, which would rewrite run and worker state as a side
+      // effect of what should only be a queue flush.
+      if (agent) {
+        await drainQueuedWorkerMessagesWithObservation({
+          runId: run.id,
+          workerId: worker.id,
+          workerStatus: agent.state,
+          source: "terminal_run_pending_queue",
+          snapshot: agent,
+        });
+      }
       continue;
     }
 
@@ -757,9 +855,12 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
         pendingElicitations: agent.pendingElicitations,
       });
     } else {
+      const syncedLastError = nextRunState === "failed"
+        ? await resolveSyncedFailureMessage(run.id, worker.id, worker.type, run.lastError, agent.lastError)
+        : null;
       await withSqliteBusyRetry(() => db.update(runs).set({
         status: nextRunState,
-        lastError: nextRunState === "failed" ? agent.lastError || run.lastError : null,
+        lastError: syncedLastError,
         failedAt: nextRunState === "failed" ? run.failedAt : null,
         updatedAt: new Date(),
       }).where(eq(runs.id, run.id)));

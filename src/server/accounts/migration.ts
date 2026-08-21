@@ -17,6 +17,7 @@ import {
 } from "@/server/db/schema";
 import { getAppRoot } from "@/server/app-root";
 import { emitNamedEvent } from "@/server/events/named-events";
+import { repairAccountsFromCredentialVerificationHistory } from "@/server/accounts/login-required";
 
 type AccountRow = typeof accounts.$inferSelect;
 
@@ -545,6 +546,7 @@ export async function runAccountInventoryMigration(
   const config = await importConfigAccounts(options.configPath ?? defaultConfigPath(), now, deletedAccountIds);
   const importedSettingAccounts = await importSettingsAccounts(now, settingRows, deletedAccountIds);
   await removeAccountsDeletedDuringMigration();
+  await repairAccountsFromCredentialVerificationHistory(now);
   return {
     normalizedExisting,
     importedConfigAccounts: config.imported,

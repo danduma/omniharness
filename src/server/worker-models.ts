@@ -150,6 +150,10 @@ function buildHardcodedCatalog(): WorkerModelCatalog {
   };
 }
 
+export function getBuiltInWorkerModelOptions(workerType: SupportedWorkerType): WorkerModelOption[] {
+  return [...buildHardcodedCatalog()[workerType]];
+}
+
 export function mergeClaudeGatewayModelsIntoCatalog(
   catalog: WorkerModelCatalog,
   input: { custom?: ClaudeGatewayModelInput[]; discovered?: ClaudeGatewayModelInput[] },

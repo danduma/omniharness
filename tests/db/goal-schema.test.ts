@@ -74,7 +74,7 @@ describe("goal control schema", () => {
 
     await initializeDatabaseSchema(client);
 
-    expect((await client.execute("PRAGMA user_version")).rows[0]?.user_version).toBe(7);
+    expect((await client.execute("PRAGMA user_version")).rows[0]?.user_version).toBe(8);
     expect((await client.execute("SELECT status FROM runs WHERE id = 'legacy-run'")).rows[0]).toMatchObject({ status: "running" });
     const tables = await client.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'run_goal%'");
     expect(tables.rows.map((row) => row.name).sort()).toEqual(["run_goal_operations", "run_goal_outbox", "run_goals"]);

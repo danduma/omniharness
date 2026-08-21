@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
 import { describe, expect, it, vi } from "vitest";
-import { computeEnvFingerprint, WorkerPool, type WorkerPoolMember } from "@/server/agent-runtime/worker-pool";
+import { computeEnvFingerprint, computeWorkerPoolKey, WorkerPool, type WorkerPoolMember } from "@/server/agent-runtime/worker-pool";
 
 type FakeChild = EventEmitter & {
   pid: number;
@@ -30,11 +30,12 @@ function fakeChild(pid = Math.floor(Math.random() * 100000)): FakeChild {
   return emitter;
 }
 
-function makeMember(key: string, opts: { warmedAt?: number; child?: FakeChild } = {}): WorkerPoolMember {
+function makeMember(key: string, opts: { warmedAt?: number; child?: FakeChild; accountId?: string | null } = {}): WorkerPoolMember {
   return {
     key,
     type: "gemini",
     cwd: "/tmp",
+    accountId: opts.accountId ?? null,
     recordRef: {},
     client: {} as WorkerPoolMember["client"],
     stderrBuffer: [],
@@ -80,6 +81,20 @@ describe("computeEnvFingerprint", () => {
       ...baseEnv,
       XDG_DATA_HOME: "/Users/tester/.omniharness/accounts/opencode/personal/data",
     }));
+  });
+
+  it("keeps otherwise identical prewarms separate by account id", () => {
+    const common = {
+      type: "claude",
+      cwd: "/tmp/project",
+      model: null,
+      mode: null,
+      mcpServers: [],
+      skillRoots: [],
+      envFingerprint: "same-env",
+    };
+    expect(computeWorkerPoolKey({ ...common, accountId: "account-a" }))
+      .not.toBe(computeWorkerPoolKey({ ...common, accountId: "account-b" }));
   });
 });
 
@@ -198,5 +213,37 @@ describe("WorkerPool periodic sweep", () => {
     const evicted = pool.sweepExpired(Number.MAX_SAFE_INTEGER);
     expect(evicted).toBe(1);
     expect(pool.countAll()).toBe(0);
+  });
+});
+
+describe("WorkerPool account fencing", () => {
+  it("atomically fences new warm reservations and evicts only that account's prewarms", () => {
+    const pool = new WorkerPool();
+    pool.setMaxPerKey(5);
+    const accountAChild = fakeChild();
+    const accountBChild = fakeChild();
+    pool.add(makeMember("a", { accountId: "account-a", child: accountAChild }));
+    pool.add(makeMember("b", { accountId: "account-b", child: accountBChild }));
+    expect(pool.tryBeginWarm("a-starting", "account-a")).toBe(true);
+
+    const result = pool.quiesceAccount("account-a");
+
+    expect(result).toEqual({ prewarmedEvicted: 1, startingCount: 1 });
+    expect(accountAChild.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(accountBChild.kill).not.toHaveBeenCalled();
+    expect(pool.tryBeginWarm("a-next", "account-a")).toBe(false);
+    expect(pool.checkout("a")).toBeNull();
+  });
+
+  it("allows the account again only after an explicit resume", () => {
+    const pool = new WorkerPool();
+    pool.quiesceAccount("account-a");
+    expect(pool.isAccountFenced("account-a")).toBe(true);
+    expect(pool.tryBeginWarm("a", "account-a")).toBe(false);
+
+    pool.resumeAccount("account-a");
+
+    expect(pool.isAccountFenced("account-a")).toBe(false);
+    expect(pool.tryBeginWarm("a", "account-a")).toBe(true);
   });
 });

@@ -418,6 +418,22 @@ export type AccountRecord = {
   createdAt: string;
   updatedAt: string | null;
 };
+export type ClaudeAccountAuthPhase = "authenticating" | "verifying" | "completed" | "failed" | "cancelled" | "interrupted";
+export type ClaudeAccountAuthOperation = {
+  id: string;
+  accountId: string;
+  phase: ClaudeAccountAuthPhase;
+  startedAt: string;
+  deadlineAt: string;
+  error: { code: string; message: string } | null;
+  terminal: { id: string } | null;
+};
+export type ClaudeAccountAuthResponse = {
+  account: AccountRecord;
+  operation: ClaudeAccountAuthOperation | null;
+};
+export type AccountRemovalResponse = { ok: true; accountId: string; profileDataPreserved: true };
+export type AccountPurgeResponse = { ok: true; accountId: string; profileDataPurged: true };
 export type SettingsTab = "general" | "models" | "credentials" | "agents" | "runtime" | "memory";
 
 export type ConversationSidebarTab = "projects" | "recent";

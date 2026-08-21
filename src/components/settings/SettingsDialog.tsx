@@ -20,6 +20,7 @@ import { AgentsSettingsPanel } from "./AgentsSettingsPanel";
 import { RuntimeSettingsPanel } from "./RuntimeSettingsPanel";
 import { ProjectMemorySettingsPanel } from "./ProjectMemorySettingsPanel";
 import { parseBooleanSetting } from "@/interface/home/utils";
+import type { ClaudeAccountAuthManager } from "@/interface/home/ClaudeAccountAuthManager";
 
 const SETTINGS_TABS: Array<{ value: SettingsTab; labelKey: string }> = [
   { value: "general", labelKey: "settings.tabs.general" },
@@ -61,6 +62,7 @@ interface SettingsDialogProps {
     mutate: () => void;
   };
   activeProjectPath: string | null;
+  claudeAccountAuthManager: ClaudeAccountAuthManager;
 }
 
 export function SettingsDialog({
@@ -85,6 +87,7 @@ export function SettingsDialog({
   resourceSnapshot,
   saveSettings,
   activeProjectPath,
+  claudeAccountAuthManager,
 }: SettingsDialogProps) {
   const appearancePreferences = useManagerSnapshot(appearancePreferencesManager);
   useI18nSnapshot();
@@ -176,6 +179,7 @@ export function SettingsDialog({
                 workerCatalogRefreshing={workerCatalogRefreshing}
                 secretStates={secretStates}
                 settingsDirtyKeys={settingsDraft.dirtyKeys}
+                claudeAccountAuthManager={claudeAccountAuthManager}
               />
             ) : null}
             {activeSettingsTab === "runtime" ? (

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, like } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
@@ -19,6 +19,23 @@ import {
   handleAccountStatusRequest,
   handleAccountsRequest,
 } from "@/runtime/http/routes/accounts";
+
+vi.mock("@/server/bridge-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/bridge-client")>();
+  return {
+    ...actual,
+    quiesceAccount: vi.fn(async (accountId: string) => ({
+      ok: true,
+      accountId,
+      fenced: true,
+      prewarmedEvicted: 0,
+      startingCount: 0,
+      startingAgents: [],
+      liveAgents: [],
+    })),
+    resumeAccount: vi.fn(async (accountId: string) => ({ ok: true, accountId, fenced: false })),
+  };
+});
 
 const DELETED_ACCOUNT_SETTING_PREFIX = "OMNIHARNESS_DELETED_ACCOUNT:";
 
@@ -118,7 +135,7 @@ describe("account management routes", () => {
     });
   });
 
-  it("refreshes stored account status without exposing auth material", async () => {
+  it("rejects client-supplied account status instead of treating it as provider truth", async () => {
     await db.insert(accounts).values({
       id: "codex-local",
       cliType: "codex",
@@ -133,10 +150,9 @@ describe("account management routes", () => {
       status: "available",
     }), { surface: "test", params: { id: "codex-local" } });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     const payload = await response.json();
-    expect(payload.status).toBe("available");
-    expect(payload.statusCheckedAt).toEqual(expect.any(String));
+    expect(payload.error.code).toBe("account.status_client_forbidden");
     expect(JSON.stringify(payload)).not.toContain("secret-local-session");
   });
 
@@ -238,7 +254,7 @@ describe("account management routes", () => {
       ), { surface: "test", params: { id: accountId } });
 
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({ ok: true, accountId });
+      await expect(response.json()).resolves.toEqual({ ok: true, accountId, profileDataPreserved: true });
       expect(await db.select().from(accounts).where(eq(accounts.id, accountId))).toHaveLength(0);
       expect(await db.select().from(accountSecrets).where(eq(accountSecrets.accountId, accountId))).toHaveLength(0);
       expect(await db.select().from(workerCredentialAllocations).where(eq(workerCredentialAllocations.accountId, accountId))).toHaveLength(0);
@@ -251,11 +267,12 @@ describe("account management routes", () => {
       expect(await db.select().from(workers).where(eq(workers.id, workerId))).toHaveLength(1);
       expect(await db.select().from(settings).where(eq(settings.key, deletedAccountSettingKey(accountId))).get())
         .toMatchObject({ value: accountId });
-      expect(getNamedEventsSince(0).events.map((entry) => entry.event)).toContainEqual({
-        kind: "account.deleted",
+      expect(getNamedEventsSince(0).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+        kind: "account.remove_completed",
         accountId,
         workerType: "claude",
-      });
+        profileDataPreserved: true,
+      }));
     } finally {
       await db.delete(creditEvents).where(eq(creditEvents.accountId, accountId));
       await db.delete(workerCredentialAllocations).where(eq(workerCredentialAllocations.accountId, accountId));

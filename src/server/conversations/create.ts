@@ -60,6 +60,7 @@ import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import { decodeClaudeGatewayModel } from "@/lib/claude-model-gateway";
 import { prepareClaudeGatewayLaunch } from "@/server/integrations/claude-model-gateway/worker-env";
+import { assertWorkspaceNotHandoffFenced } from "@/server/handoff/fence";
 
 
 function buildInitialWorkerPrompt(mode: ConversationMode, command: string, projectRoot: string) {
@@ -432,9 +433,17 @@ async function runInitialWorkerTurn(args: {
     notifyEventStreamSubscribers();
 
     const initialPrompt = buildInitialWorkerPrompt(args.mode, args.command, args.cwd);
+    const onAccepted = async () => {
+      await appendLifecycleEntry({
+        runId: args.runId,
+        workerId: args.workerId,
+        text: "Initial prompt accepted by worker runtime",
+        raw: { eventType: "worker.prompt_accepted" },
+      });
+    };
     const response = args.imageAttachments?.length
-      ? await askAgent(args.workerId, initialPrompt, args.imageAttachments)
-      : await askAgent(args.workerId, initialPrompt);
+      ? await askAgent(args.workerId, initialPrompt, args.imageAttachments, { onAccepted })
+      : await askAgent(args.workerId, initialPrompt, undefined, { onAccepted });
     let snapshot: AgentRecord | null = null;
     try {
       snapshot = await getAgent(args.workerId);
@@ -699,6 +708,13 @@ export async function createConversation(args: {
   requestedRunId?: string | null;
   attachments?: ChatAttachment[];
   externalClaudeSessionId?: string | null;
+  /** Internal lineage metadata. Public HTTP callers must not populate these fields. */
+  originHandoffId?: string | null;
+  parentRunId?: string | null;
+  forkedFromMessageId?: string | null;
+  gitBaselineJsonOverride?: string | null;
+  bypassCommitWorkerSettings?: boolean;
+  bypassHandoffFence?: boolean;
 }) {
   const command = args.command.trim();
   // Resolve the client request (which may be the "omni" alias) into the stored
@@ -717,7 +733,7 @@ export async function createConversation(args: {
   const mode = isExternalClaudeResume ? "direct" : resolvedRequest.runMode;
   const phase = isExternalClaudeResume ? null : resolvedRequest.phase;
   const usePlanner = !isExternalClaudeResume && (phase === "planning" || mode === "planning");
-  const commitWorkerSettings = mode === "commit"
+  const commitWorkerSettings = mode === "commit" && !args.bypassCommitWorkerSettings
     ? (await readCommitWorkflowSettings()).commitWorker
     : null;
   const effectivePreferredWorkerType = commitWorkerSettings?.workerType ?? args.preferredWorkerType;
@@ -755,6 +771,7 @@ export async function createConversation(args: {
     });
     createdWorktree = resolvedWorkspace.createdWorktree ?? null;
     const projectPath = resolvedWorkspace.projectPath;
+    if (!args.bypassHandoffFence) await assertWorkspaceNotHandoffFenced(projectPath);
     const attachments = normalizeChatAttachments(args.attachments ?? []);
     const attachmentsJson = serializeChatAttachments(attachments);
     const workerPrompt = appendAttachmentContext(command, attachments, {
@@ -796,8 +813,10 @@ export async function createConversation(args: {
     const commitWorkflowSettings = capturesImplementationWorkflow
       ? await readCommitWorkflowSettings()
       : { autoCommitMilestones: false, pushOnCommit: false };
-    const gitBaseline = capturesImplementationWorkflow && commitWorkflowSettings.autoCommitMilestones
-      ? captureGitBaseline(projectPath)
+    const gitBaseline = args.gitBaselineJsonOverride === undefined
+      ? capturesImplementationWorkflow && commitWorkflowSettings.autoCommitMilestones
+        ? captureGitBaseline(projectPath)
+        : null
       : null;
     const planId = randomUUID();
     const requestedRunId = args.requestedRunId?.trim() || null;
@@ -825,9 +844,14 @@ export async function createConversation(args: {
       preferredWorkerEffort: effectivePreferredWorkerEffort?.trim().toLowerCase() || null,
       preferredWorkerAccountId: effectivePreferredWorkerAccountId?.trim() || null,
       allowedWorkerTypes: JSON.stringify(allowedWorkerTypes),
+      parentRunId: args.parentRunId ?? null,
+      forkedFromMessageId: args.forkedFromMessageId ?? null,
+      originHandoffId: args.originHandoffId ?? null,
       autoCommitMilestones: commitWorkflowSettings.autoCommitMilestones,
       pushOnCommit: commitWorkflowSettings.pushOnCommit,
-      gitBaselineJson: gitBaseline ? JSON.stringify(gitBaseline) : null,
+      gitBaselineJson: args.gitBaselineJsonOverride === undefined
+        ? gitBaseline ? JSON.stringify(gitBaseline) : null
+        : args.gitBaselineJsonOverride,
       gitWorkspaceJson: resolvedWorkspace.runSnapshot ? JSON.stringify(resolvedWorkspace.runSnapshot) : null,
       completionCommitSha: null,
       status: usePlanner ? "starting" : "running",

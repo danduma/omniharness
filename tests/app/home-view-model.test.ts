@@ -291,7 +291,7 @@ describe("useHomeViewModel", () => {
     expect(viewModel.conversationFailure).toMatchObject({
       tone: "error",
       action: "Sign in again",
-      suggestion: "Run `claude` in a terminal and sign in with /login, then send your message again.",
+      suggestion: "Select Sign in again to reconnect this Claude account inside OmniHarness, then send your message again.",
     });
     expect(viewModel.conversationFailure?.message).toContain("claude-sub-1");
     // Neither the internal marker nor the spawn-readiness line reaches the user.

@@ -351,16 +351,10 @@ test("queued message drawer force-send arrow interrupts the active turn", () => 
   expect(sendNowIndex).toBeLessThan(cancelIndex);
 });
 
-test("new-conversation mode selection locks while the send mutation is pending", () => {
-  const modePickerSource = fs.readFileSync(
-    path.resolve(process.cwd(), "src/components/ConversationModePicker.tsx"),
-    "utf8"
-  );
-
-  expect(pageSource).toContain("disabled={isComposerSubmitting}");
-  expect(modePickerSource).toContain("disabled?: boolean");
-  expect(modePickerSource).toContain("disabled={disabled}");
-  expect(modePickerSource).toContain("if (disabled) {");
+test("new conversations no longer render a conversation mode picker", () => {
+  expect(fs.existsSync(path.resolve(process.cwd(), "src/components/ConversationModePicker.tsx"))).toBe(false);
+  expect(pageSource).not.toContain("ConversationModePicker");
+  expect(pageSource).not.toContain("setSelectedConversationMode={");
 });
 
 test("worker cards expose individual stop controls", () => {

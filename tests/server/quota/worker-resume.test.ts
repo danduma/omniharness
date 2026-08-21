@@ -168,6 +168,71 @@ describe("resumeQuotaExhaustedWorkers", () => {
     expect(await db.select().from(workers).where(eq(workers.runId, runId)).get()).toBeDefined();
   });
 
+  it("holds the worker busy for the whole resume turn so reconciliation cannot end the run", async () => {
+    // Exact regression: the resume reattached the session and then left the
+    // worker `idle` for the entire `askAgent` await. Once the incident resolves
+    // nothing pins `runs.status`, and `resolveDirectRunStatusFromWorkerOutput`
+    // reads an idle worker as a finished conversation — so the reconciliation
+    // sweep flipped the run to `done` mid-turn. Fifteen minutes later the agent
+    // returned a completed turn and `refuseLateQuotaRecovery` discarded all of
+    // it as a late callback with `reason: run_terminal`.
+    const { runId, workerId, run } = await insertRunWithQuotaIncident();
+    mockSpawnAgent.mockResolvedValue(agentSnapshot(workerId, "idle"));
+    mockGetAgent.mockResolvedValue(agentSnapshot(workerId, "idle"));
+
+    let releaseAsk: (value: { response: string; state: string }) => void = () => {};
+    mockAskAgent.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseAsk = resolve;
+    }));
+
+    const resume = resumeQuotaExhaustedWorkers({ run });
+    await vi.waitFor(() => expect(mockAskAgent).toHaveBeenCalledTimes(1));
+
+    const busyWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(busyWorker?.status).toBe("working");
+
+    // The sweep that used to end the conversation, run while the turn is live.
+    await expect(updateDirectRunStatusFromWorkerOutput({
+      runId,
+      workerId,
+      workerStatus: busyWorker?.status ?? "",
+      outputEntriesJson: busyWorker?.outputEntriesJson ?? "[]",
+    })).resolves.toBe("running");
+
+    releaseAsk({ response: "Finished the interrupted work.", state: "idle" });
+    await expect(resume).resolves.toMatchObject({ state: "resumed", resumedCount: 1 });
+
+    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+
+    expect(persistedRun?.status).not.toBe("done");
+    expect(persistedWorker?.outputLog).toContain("Finished the interrupted work.");
+    expect(events.some((event) => event.eventType === "worker_prompted")).toBe(true);
+    expect(events.some((event) => event.eventType === "quota_recovery_refused")).toBe(false);
+  });
+
+  it("parks the worker back on the quota block when the resume turn never lands", async () => {
+    // The busy status above must not strand the run as `running` when the ask
+    // fails: a resume that produced no turn belongs back in `quota_waiting`.
+    const { runId, workerId, run } = await insertRunWithQuotaIncident();
+    mockSpawnAgent.mockResolvedValue(agentSnapshot(workerId, "idle"));
+    mockGetAgent.mockResolvedValue(agentSnapshot(workerId, "idle"));
+    mockAskAgent.mockRejectedValueOnce(
+      new Error("Ask failed: Internal error: You've hit your session limit · resets 10pm (Europe/Madrid)"),
+    );
+
+    await resumeQuotaExhaustedWorkers({ run });
+
+    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(persistedWorker?.status).toBe("cred-exhausted");
+    await expect(updateDirectRunStatusFromWorkerOutput({
+      runId,
+      workerId,
+      workerStatus: persistedWorker?.status ?? "",
+    })).resolves.toBe("quota_waiting");
+  });
+
   it("appends the quota resume prompt only after delivery succeeds", async () => {
     const { runId, workerId, run } = await insertRunWithQuotaIncident();
     mockSpawnAgent.mockResolvedValue(agentSnapshot(workerId, "idle"));

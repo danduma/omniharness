@@ -1,13 +1,7 @@
 import { db } from "@/server/db";
 import {
-  accountSecrets,
-  accountUsageSnapshots,
   accounts,
-  creditEvents,
-  runs,
   settings,
-  workerCredentialAllocations,
-  workerTokenUsage,
 } from "@/server/db/schema";
 import { requireApiSession } from "@/server/auth/guards";
 import { toAccountDto } from "@/server/accounts/dto";
@@ -20,6 +14,7 @@ import { eq } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { errorResponse } from "@/server/api-errors";
 import { emitNamedEvent } from "@/server/events/named-events";
+import { getClaudeAccountAuthService } from "@/server/accounts/claude-account-auth-service";
 
 const ACCOUNT_TYPES = new Set(["subscription", "api", "external"]);
 const AUTH_MODES = new Set([
@@ -250,23 +245,8 @@ export const handleAccountDetailRequest: OmniHttpHandler = async (request, conte
     failedWorkerType = existing.cliType;
 
     if (isDelete) {
-      const rememberDeletion = accountDeletionSetting(id, true, new Date());
-      await db.batch([
-        db.update(runs).set({ preferredWorkerAccountId: null }).where(eq(runs.preferredWorkerAccountId, id)),
-        db.delete(creditEvents).where(eq(creditEvents.accountId, id)),
-        db.delete(workerCredentialAllocations).where(eq(workerCredentialAllocations.accountId, id)),
-        db.delete(workerTokenUsage).where(eq(workerTokenUsage.accountId, id)),
-        db.delete(accountUsageSnapshots).where(eq(accountUsageSnapshots.accountId, id)),
-        db.delete(accountSecrets).where(eq(accountSecrets.accountId, id)),
-        db.delete(accounts).where(eq(accounts.id, id)),
-        rememberDeletion,
-      ]);
-      emitNamedEvent({
-        kind: "account.deleted",
-        accountId: id,
-        workerType: existing.cliType,
-      });
-      return Response.json({ ok: true, accountId: id });
+      const service = await getClaudeAccountAuthService();
+      return Response.json(await service.remove(id));
     }
 
     const body = asRecord(await request.json());
@@ -389,25 +369,21 @@ export const handleAccountStatusRequest: OmniHttpHandler = async (request, conte
       return Response.json({ error: { code: "account.not_found", message: "Account not found." } }, { status: 404 });
     }
     const body = asRecord(await request.json().catch(() => ({})));
-    const requestedStatus = optionalString(body.status);
-    if (requestedStatus && !ACCOUNT_STATUSES.has(requestedStatus)) {
-      return jsonValidationError("status is not supported.");
+    if (Object.hasOwn(body, "status")) {
+      return Response.json({
+        error: {
+          code: "account.status_client_forbidden",
+          message: "Account status is determined by the provider probe.",
+        },
+      }, { status: 400 });
     }
-    const status = requestedStatus ?? existing.status ?? "unknown";
-    const now = new Date();
-    await db.update(accounts).set({
-      status,
-      statusCheckedAt: now,
-      updatedAt: now,
-    }).where(eq(accounts.id, id));
-    emitNamedEvent({
-      kind: "account.status_checked",
-      accountId: id,
-      workerType: existing.cliType,
-      status,
-    });
-    const row = await db.select().from(accounts).where(eq(accounts.id, id)).get();
-    return Response.json(toAccountDto(row!));
+    if (existing.cliType !== "claude") {
+      return Response.json({
+        error: { code: "account.status_unsupported", message: "Provider status refresh is not supported for this account." },
+      }, { status: 400 });
+    }
+    const service = await getClaudeAccountAuthService();
+    return Response.json(await service.refreshStatus(id));
   } catch (error) {
     return errorResponse(error, {
       status: 500,

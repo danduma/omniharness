@@ -560,6 +560,34 @@ export type PrewarmWorkerResult = {
   warmed: boolean;
 };
 
+export type AccountQuiesceResult = {
+  ok: true;
+  accountId: string;
+  fenced: true;
+  prewarmedEvicted: number;
+  startingCount: number;
+  startingAgents: string[];
+  liveAgents: Array<{ name: string; state: string }>;
+};
+
+export function quiesceAccount(accountId: string) {
+  return requestBridge<AccountQuiesceResult>(
+    `/accounts/${encodeURIComponent(accountId)}/quiesce`,
+    { method: "POST" },
+    "Quiesce account",
+    { retryIndefinitely: false },
+  );
+}
+
+export function resumeAccount(accountId: string) {
+  return requestBridge<{ ok: true; accountId: string; fenced: false }>(
+    `/accounts/${encodeURIComponent(accountId)}/resume`,
+    { method: "POST" },
+    "Resume account",
+    { retryIndefinitely: false },
+  );
+}
+
 export async function updateRuntimeSettings(env: Record<string, string>) {
   return requestBridge<{ ok: true; keys: string[] }>(
     "/runtime/settings",
@@ -647,7 +675,12 @@ export async function askAgent(
   name: string,
   prompt: string,
   imageAttachments?: Array<{ path: string; mimeType: string }>,
-  options: { signal?: AbortSignal; expectedTurnGeneration?: number } = {},
+  options: {
+    signal?: AbortSignal;
+    expectedTurnGeneration?: number;
+    /** Called after the runtime has accepted the prompt with a successful HTTP response. */
+    onAccepted?: () => void | Promise<void>;
+  } = {},
 ) {
   // Ambient by default: `runWorkerTurn` publishes the turn's signal, so stop and
   // steer reach this fetch without every intermediate caller threading it.
@@ -695,6 +728,7 @@ export async function askAgent(
           retryable: isAgentBusyError(detail) ? false : undefined,
         });
       }
+      await options.onAccepted?.();
       const result = await readAskStream(res, signal);
       // Some runtimes acknowledge cancellation with a normal terminal frame
       // instead of a connection error. Fence that late success as well.

@@ -14,7 +14,15 @@ import {
 } from "@/server/quota/worker-resume";
 import { clearResolvedQuotaIncidents } from "@/server/quota/type-blocking";
 import { refuseLateQuotaRecovery } from "@/server/quota/recovery";
-import { isRunPendingFailover } from "@/server/supervisor/worker-failover";
+import {
+  attemptWorkerFailover,
+  isRunPendingFailover,
+  loadPendingFailoverContext,
+} from "@/server/supervisor/worker-failover";
+import { parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
+import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
+import { HandoffInProgressError } from "@/server/handoff/fence";
+import { withRunWorkspaceMutationLock } from "@/server/handoff/workspace-lock";
 import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
 import { stopRunObserver } from "./observer";
 import { acquireSupervisorWakeLease, clearSupervisorWakeLease, releaseSupervisorWakeLease } from "./lease";
@@ -301,16 +309,63 @@ export async function executeSupervisorWake(runId: string) {
     return;
   }
 
-  const dueDurableWake = await claimDueDurableSupervisorWake(runId);
-  if (dueDurableWake) {
-    emitNamedEvent({
-      kind: "supervisor.durable_wake_claimed",
-      runId,
-      reason: dueDurableWake.reason,
-      source: dueDurableWake.source,
-    });
+  try {
+  let dueDurableWake: Awaited<ReturnType<typeof claimDueDurableSupervisorWake>> = null;
+  let run: typeof runs.$inferSelect | undefined;
+  let directWakeHandled = false;
+  await withRunWorkspaceMutationLock(runId, async () => {
+    dueDurableWake = await claimDueDurableSupervisorWake(runId);
+    if (dueDurableWake) {
+      emitNamedEvent({
+        kind: "supervisor.durable_wake_claimed",
+        runId,
+        reason: dueDurableWake.reason,
+        source: dueDurableWake.source,
+      });
+    }
+    run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    if (run && dueDurableWake && await shouldResumeQuotaWorkersWithoutSupervisor(run, dueDurableWake)) {
+      if (dueDurableWake.reason === "quota_wait") {
+        await resumeDirectRunAfterQuotaReset({ run, source: "durable_wake" });
+      } else {
+        await db.update(runs).set({ status: "running", failedAt: null, lastError: null, updatedAt: new Date() }).where(eq(runs.id, runId));
+      }
+      directWakeHandled = true;
+    }
+  });
+  if (directWakeHandled) {
+    await releaseSupervisorWakeLease(runId, leaseId);
+    return;
   }
-  const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+
+  // Direct/commit runs never instantiate Supervisor, so their observer-raised
+  // failover debt must be discharged here before the non-implementation early
+  // return below. The failover implementation creates a distinct target run;
+  // it never swaps the CLI in place on the source conversation.
+  if (run && run.mode !== "implementation") {
+    const pendingFailover = await loadPendingFailoverContext(runId);
+    if (pendingFailover) {
+      const allowedTypes = parseAllowedWorkerTypes(run.allowedWorkerTypes);
+      if (allowedTypes.length >= 2) {
+        const { env } = await readRuntimeEnvFromSettings();
+        await attemptWorkerFailover({
+          runId,
+          outgoingWorkerId: pendingFailover.worker.id,
+          outgoingWorkerType: pendingFailover.worker.type as typeof allowedTypes[number],
+          quotaText: pendingFailover.rawText,
+          originalPrompt: pendingFailover.worker.initialPrompt ?? "",
+          allowedTypes,
+          env,
+          cwd: pendingFailover.worker.cwd,
+          title: pendingFailover.worker.title ?? "",
+          existingBlock: pendingFailover.block,
+        });
+        await releaseSupervisorWakeLease(runId, leaseId);
+        return;
+      }
+    }
+  }
+
   if (run?.status === "quota_waiting" && !dueDurableWake) {
     if (await hasFutureDurableSupervisorWake(runId)) {
       // Bypass the quota-wait short-circuit when a failover is pending,
@@ -326,21 +381,6 @@ export async function executeSupervisorWake(runId: string) {
   }
 
   if (!run || !isRunnableImplementationRun(run)) {
-    if (run && dueDurableWake && await shouldResumeQuotaWorkersWithoutSupervisor(run, dueDurableWake)) {
-      if (dueDurableWake.reason === "quota_wait") {
-        await resumeDirectRunAfterQuotaReset({ run, source: "durable_wake" });
-      } else {
-        await db.update(runs).set({
-          status: "running",
-          failedAt: null,
-          lastError: null,
-          updatedAt: new Date(),
-        }).where(eq(runs.id, runId));
-      }
-      await releaseSupervisorWakeLease(runId, leaseId);
-      return;
-    }
-
     // Claiming the wake already deleted it, so a quota wake that lands here is
     // gone for good — say so instead of returning silently, and leave the open
     // incident for `resumeElapsedQuotaWaits` to pick up.
@@ -402,6 +442,16 @@ export async function executeSupervisorWake(runId: string) {
         return;
       }
     }
+  }
+
+  } catch (error) {
+    if (error instanceof HandoffInProgressError) {
+      emitNamedEvent({ kind: "supervisor.wake_skipped", runId, reason: "handoff_in_progress" });
+      await releaseSupervisorWakeLease(runId, leaseId);
+      return;
+    }
+    await releaseSupervisorWakeLease(runId, leaseId);
+    throw error;
   }
 
   inFlight.add(runId);

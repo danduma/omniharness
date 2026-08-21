@@ -17,6 +17,7 @@
  * `/api/events?snapshot=1` and resume from the new cursor.
  */
 import { notifyEventStreamSubscribers } from "./live-updates";
+import type { HandoffEvent } from "./handoff-events";
 import type { ClaudeSessionModelReason } from "@/lib/claude-session-model";
 import type { GoalAction, GoalPublishedEventKind, GoalSnapshot } from "@/shared/goal-plan";
 import { randomBytes } from "node:crypto";
@@ -62,6 +63,20 @@ export type SurfacedErrorCode =
   | "acp.compatibility.unsupported"
   | "account.invalid_explicit"
   | "account.login_required"
+  | "account.auth.binary_missing"
+  | "account.auth.spawn_failed"
+  | "account.auth.failed"
+  | "account.auth.timeout"
+  | "account.auth.status_invalid"
+  | "account.auth.isolation_failed"
+  | "account.auth.unsupported_cli"
+  | "account.auth.busy"
+  | "account.logout.failed"
+  | "account.remove.failed"
+  | "account.action.active_workers"
+  | "account.action.bridge_unavailable"
+  | "account.purge.failed"
+  | "account.purge.unsafe_path"
   | "account.delete.failed"
   | "account.quota_switch_failed"
   | "account.resolution_failed"
@@ -78,6 +93,13 @@ export type SurfacedErrorCode =
   | "worker.spawn.failed"
   | "worker.spawn.resource_exhausted"
   | "worker.failover.failed"
+  | "handoff.capture_failed"
+  | "handoff.revision_conflict"
+  | "handoff.target_unavailable"
+  | "handoff.source_changed"
+  | "handoff.launch_failed"
+  | "handoff.fork_required"
+  | "handoff.packet_version_unsupported"
   | "worker.bridge.fatal_stderr"
   | "worker.environment_mismatch"
   | "worker.idle.empty_output"
@@ -95,6 +117,7 @@ export type SurfacedErrorCode =
   | "worker.plan.event_publish_failed"
   | "worker.plan.binding_hydration_failed"
   | "worker.prompt.image_attachment_unreadable"
+  | "worker.output_content_unavailable"
   | "worker.model.version_unavailable"
   // The requested model's *family* is not offered at all. Substituting another
   // family is never correct, so the launch is refused instead.
@@ -446,7 +469,7 @@ export type SupervisorEvent =
   | {
       kind: "supervisor.wake_skipped";
       runId: string;
-      reason: "in_flight" | "lease_blocked" | "quota_wait_future_wake" | "run_not_runnable";
+      reason: "in_flight" | "lease_blocked" | "quota_wait_future_wake" | "run_not_runnable" | "handoff_in_progress";
     }
   | { kind: "supervisor.wake_scheduled"; runId: string; delayMs: number; source: "volatile" | "lease_retry" }
   | {
@@ -533,7 +556,28 @@ export type AccountEvent =
   | { kind: "account.updated"; accountId: string; workerType: string | null; changedKeys: string[] }
   | { kind: "account.deleted"; accountId: string; workerType: string | null }
   | { kind: "account.delete_failed"; accountId: string; workerType: string | null; reason: string }
-  | { kind: "account.status_checked"; accountId: string; workerType: string | null; status: string | null }
+  | { kind: "account.status_checked"; accountId: string; workerType: string | null; previousStatus?: string | null; status: string | null; source?: string; reason?: string }
+  | { kind: "account.auth_started"; accountId: string; operationId: string; workerType: "claude"; previousStatus: string | null; status: "authenticating" }
+  | { kind: "account.auth_terminal_ready"; accountId: string; operationId: string; workerType: "claude" }
+  | { kind: "account.auth_verifying"; accountId: string; operationId: string; workerType: "claude" }
+  | { kind: "account.auth_completed"; accountId: string; operationId: string; workerType: "claude"; status: "available" }
+  | { kind: "account.auth_failed"; accountId: string; operationId: string; workerType: "claude"; code: string; reason: string }
+  | { kind: "account.auth_cancelled"; accountId: string; operationId: string; workerType: "claude" }
+  | { kind: "account.auth_interrupted"; accountId: string; operationId: string; workerType: "claude"; recovered: boolean }
+  | { kind: "account.auth_exit_ignored"; accountId: string; operationId: string; workerType: "claude"; reason: "operation_missing" | "operation_replaced" | "operation_not_authenticating" | "cancel_owner_mismatch" }
+  | { kind: "account.auth_retry_refused"; accountId: string; operationId: string | null; workerType: "claude"; reason: string }
+  | { kind: "account.logout_started"; accountId: string; operationId: string; workerType: "claude" }
+  | { kind: "account.logout_completed"; accountId: string; operationId: string; workerType: "claude" }
+  | { kind: "account.logout_failed"; accountId: string; operationId: string; workerType: "claude"; reason: string }
+  | { kind: "account.logout_refused"; accountId: string; operationId: string | null; workerType: "claude"; reason: string; blockingWorkerCount: number }
+  | { kind: "account.remove_started"; accountId: string; operationId: string; workerType: string | null }
+  | { kind: "account.remove_completed"; accountId: string; operationId: string; workerType: string | null; profileDataPreserved: true }
+  | { kind: "account.remove_refused"; accountId: string; operationId: string | null; workerType: string | null; reason: string; blockingWorkerCount: number }
+  | { kind: "account.remove_failed"; accountId: string; operationId: string; workerType: string | null; reason: string }
+  | { kind: "account.purge_started"; accountId: string; operationId: string; workerType: "claude" }
+  | { kind: "account.purge_completed"; accountId: string; operationId: string; workerType: "claude" }
+  | { kind: "account.purge_refused"; accountId: string; operationId: string | null; workerType: "claude"; reason: string; blockingWorkerCount?: number }
+  | { kind: "account.purge_failed"; accountId: string; operationId: string; workerType: "claude"; reason: string }
   | {
       kind: "account.credential_selected";
       accountId: string;
@@ -556,6 +600,7 @@ export type AccountEvent =
       reason: string;
     }
   | { kind: "account.usage_recorded"; accountId: string; runId: string; workerId?: string; workerType: string; inputTokens: number; outputTokens: number; costUsd: number }
+  | { kind: "account.credential_verdict_recovered"; accountId: string; runId: string; workerId: string; workerType: string; verdict: "live" | "dead"; source: "execution_event" }
   | { kind: "account.login_required"; accountId: string; workerType: string; reason: string };
 
 export type ConversationEvent =
@@ -735,6 +780,7 @@ export type ArtifactStreamKindLabel =
   | "execution_events"
   | "supervisor_interventions"
   | "planning_review_findings"
+  | "handoff_packets"
   | "worker_entries";
 
 export type ArtifactEvent =
@@ -837,7 +883,8 @@ export type NamedEvent =
   | StreamDiagnosticEvent
   | ArtifactEvent
   | AcpEvent
-  | ClaudeModelGatewayEvent;
+  | ClaudeModelGatewayEvent
+  | HandoffEvent;
 
 // Internal: snapshot marker stored in the ring so `Last-Event-ID` resume
 // from immediately after a snapshot remains resolvable. The marker itself

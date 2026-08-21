@@ -66,6 +66,17 @@ async function insertRunAndWorker(workerType = "codex") {
 }
 
 describe("account allocator", () => {
+  it.each(["authenticating", "verifying", "auth_failed", "logging_out", "removing", "purging"])(
+    "never selects an enabled account in lifecycle status %s",
+    async (status) => {
+      await insertAccount({ id: `lifecycle-${status}`, cliType: "claude", enabled: true, status });
+
+      const allocation = await allocateWorkerAccount({ workerType: "claude", strategy: "priority" });
+
+      expect(allocation.account?.id).not.toBe(`lifecycle-${status}`);
+    },
+  );
+
   it("uses explicit account preferences and persists the worker allocation", async () => {
     const workerType = `codex-${randomUUID()}`;
     const accountId = await insertAccount({ cliType: workerType, priority: 1 });

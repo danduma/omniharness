@@ -4,6 +4,7 @@ import { eq, like } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
   clarifications,
+  conversationHandoffs,
   conversationReadMarkers,
   creditEvents,
   executionEvents,
@@ -29,12 +30,14 @@ import * as wakeSchedule from "@/server/supervisor/wake-schedule";
 import { resetDurableSupervisorWakeSchedulerForTests } from "@/server/supervisor/wake-schedule";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
 
-const { mockAskAgent, mockGetAgent, mockSpawnAgent, mockSupervisorRun, mockStopRunObserver } = vi.hoisted(() => ({
+const { mockAskAgent, mockGetAgent, mockSpawnAgent, mockSupervisorRun, mockStopRunObserver, mockAttemptWorkerFailover, mockLoadPendingFailoverContext } = vi.hoisted(() => ({
   mockAskAgent: vi.fn(),
   mockGetAgent: vi.fn(),
   mockSpawnAgent: vi.fn(),
   mockSupervisorRun: vi.fn(),
   mockStopRunObserver: vi.fn(),
+  mockAttemptWorkerFailover: vi.fn(),
+  mockLoadPendingFailoverContext: vi.fn(),
 }));
 
 vi.mock("@/server/supervisor", () => ({
@@ -55,6 +58,12 @@ vi.mock("@/server/bridge-client", () => ({
   spawnAgent: mockSpawnAgent,
 }));
 
+vi.mock("@/server/supervisor/worker-failover", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/server/supervisor/worker-failover")>(),
+  attemptWorkerFailover: mockAttemptWorkerFailover,
+  loadPendingFailoverContext: mockLoadPendingFailoverContext,
+}));
+
 import { cancelSupervisorWake, executeSupervisorWake, scheduleSupervisorWake } from "@/server/supervisor/wake";
 
 describe("executeSupervisorWake", () => {
@@ -65,11 +74,14 @@ describe("executeSupervisorWake", () => {
     mockSpawnAgent.mockReset();
     mockSupervisorRun.mockReset();
     mockStopRunObserver.mockReset();
+    mockAttemptWorkerFailover.mockReset();
+    mockLoadPendingFailoverContext.mockReset().mockResolvedValue(null);
     __resetNamedEventsForTests();
     resetDurableSupervisorWakeSchedulerForTests();
     await db.delete(planningReviewFindings);
     await db.delete(planningReviewRounds);
     await db.delete(planningReviewRuns);
+    await db.delete(conversationHandoffs);
     await db.delete(supervisorScheduledWakes);
     await db.delete(supervisorInterventions);
     await db.delete(executionEvents);
@@ -87,6 +99,47 @@ describe("executeSupervisorWake", () => {
     await db.delete(planItems);
     await db.delete(plans);
     await db.delete(settings).where(like(settings.key, "SUPERVISOR_WAKE_LEASE:%"));
+  });
+
+  it("routes a pending direct-run quota failover through a distinct-session handoff", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+    await db.insert(plans).values({ id: planId, path: "vibes/ad-hoc/direct-failover.md", status: "running", createdAt: now, updatedAt: now });
+    await db.insert(runs).values({ id: runId, planId, mode: "direct", status: "quota_waiting", allowedWorkerTypes: JSON.stringify(["codex", "claude"]), createdAt: now, updatedAt: now });
+    const worker = { id: workerId, runId, type: "codex", status: "cred-exhausted", cwd: "/tmp", title: "Direct", initialPrompt: "Continue", createdAt: now, updatedAt: now };
+    await db.insert(workers).values({ ...worker, outputLog: "", outputEntriesJson: "", currentText: "", lastText: "" });
+    const block = { incidentId: randomUUID(), quota: { rawText: "quota exhausted", provider: "codex", resetAt: null, retryAfterMs: null }, resumeAt: null, details: { failover_pending: true } };
+    mockLoadPendingFailoverContext.mockResolvedValue({ worker, rawText: "quota exhausted", block });
+    mockAttemptWorkerFailover.mockResolvedValue({ state: "handed_off", targetRunId: randomUUID(), newWorkerId: randomUUID(), newType: "claude" });
+
+    await executeSupervisorWake(runId);
+
+    expect(mockAttemptWorkerFailover).toHaveBeenCalledWith(expect.objectContaining({
+      runId,
+      outgoingWorkerId: workerId,
+      outgoingWorkerType: "codex",
+      allowedTypes: ["codex", "claude"],
+      existingBlock: block,
+    }));
+    expect(mockSupervisorRun).not.toHaveBeenCalled();
+  });
+
+  it("leaves a due durable wake intact when a handoff fence wins admission", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+    await db.insert(plans).values({ id: planId, path: "vibes/ad-hoc/fenced-wake.md", status: "running", createdAt: now, updatedAt: now });
+    await db.insert(runs).values({ id: runId, planId, mode: "direct", projectPath: process.cwd(), status: "quota_waiting", createdAt: now, updatedAt: now });
+    await db.insert(supervisorScheduledWakes).values({ runId, wakeAt: new Date(now.getTime() - 1_000), reason: "quota_wait", source: "test", createdAt: now, updatedAt: now });
+    const store = await import("@/server/handoff/store");
+    await store.createHandoffDraft({ id: "fenced-wake-handoff", sourceRunId: runId, sourceWorkerId: null, forkedFromMessageId: null, normalizedProjectPath: process.cwd(), reason: "manual_session", target: { workerType: "claude", model: null, effort: null, accountId: null }, targetSelectionHash: "selection" });
+
+    await executeSupervisorWake(runId);
+
+    expect(await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get()).toBeTruthy();
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual({ kind: "supervisor.wake_skipped", runId, reason: "handoff_in_progress" });
   });
 
   afterEach(() => {

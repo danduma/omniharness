@@ -145,7 +145,7 @@ export async function beginNewDirectConversation(page: Page, projectPath: string
   await expect(row).toBeVisible();
   const projectName = path.basename(projectPath);
   await row.getByTitle(`New conversation in ${projectName}`, { exact: true }).click();
-  await expect(page.getByRole("button", { name: "Direct control", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('[data-composer-input="true"]')).toBeVisible();
   await selectClaudeGpt56Low(page);
 }
 

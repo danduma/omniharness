@@ -104,6 +104,64 @@ describe("goal ACP control dispatch", () => {
     });
   });
 
+  it("defers when the lease names a worker the runtime no longer hosts", async () => {
+    const invokeExtension = vi.fn();
+    const sendSlashCommand = vi.fn();
+    const dispatcher = createGoalAcpDispatcher({
+      getAgent: vi.fn(async () => {
+        throw Object.assign(new Error("Get agent failed: not_found"), { status: 404 });
+      }),
+      invokeExtension,
+      sendSlashCommand,
+    });
+
+    expect(await dispatcher.dispatch(snapshot(), "set")).toEqual({ kind: "deferred", reason: "no_active_lease" });
+    expect(invokeExtension).not.toHaveBeenCalled();
+    expect(sendSlashCommand).not.toHaveBeenCalled();
+  });
+
+  it("rethrows a transport failure so it is not mistaken for a missing worker", async () => {
+    const dispatcher = createGoalAcpDispatcher({
+      getAgent: vi.fn(async () => {
+        throw new Error("Get agent failed: fetch failed (caused by: read ECONNRESET)");
+      }),
+      invokeExtension: vi.fn(),
+      sendSlashCommand: vi.fn(),
+    });
+
+    await expect(dispatcher.dispatch(snapshot(), "set")).rejects.toThrow(/ECONNRESET/);
+  });
+
+  it("uses recorded fallback capabilities when the rolling output buffer lost the command frame", async () => {
+    const sendSlashCommand = vi.fn(async () => ({ ok: true }));
+    const dispatcher = createGoalAcpDispatcher({
+      getAgent: vi.fn(async () => ({ agentCapabilities: {}, outputEntries: [{ type: "message", raw: {} }] })),
+      invokeExtension: vi.fn(),
+      sendSlashCommand,
+    });
+
+    const resumed = snapshot({
+      capabilities: { set: true, edit: true, pause: false, resume: false, clear: true, fallbackMethod: "/goal" },
+    });
+    expect(await dispatcher.dispatch(resumed, "set")).toMatchObject({ kind: "dispatched", method: "slash" });
+    expect(sendSlashCommand).toHaveBeenCalledWith("worker-1", "/goal Ship it");
+  });
+
+  it("still refuses an action the recorded fallback capabilities do not cover", async () => {
+    const sendSlashCommand = vi.fn();
+    const dispatcher = createGoalAcpDispatcher({
+      getAgent: vi.fn(async () => ({ agentCapabilities: {}, outputEntries: [] })),
+      invokeExtension: vi.fn(),
+      sendSlashCommand,
+    });
+
+    const resumed = snapshot({
+      capabilities: { set: true, edit: true, pause: false, resume: false, clear: true, fallbackMethod: "/goal" },
+    });
+    expect(await dispatcher.dispatch(resumed, "pause")).toMatchObject({ kind: "unsupported" });
+    expect(sendSlashCommand).not.toHaveBeenCalled();
+  });
+
   it("reapplies retry as a supported set operation", async () => {
     const invokeExtension = vi.fn(async () => ({ ok: true }));
     const dispatcher = createGoalAcpDispatcher({

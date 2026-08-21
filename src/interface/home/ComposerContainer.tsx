@@ -18,7 +18,6 @@ import { homeUiSetters, homeUiStateManager, type HomeUiState } from "./HomeUiSta
 import type {
   ComposerMode,
   ComposerWorkerOption,
-  ConversationModeOption,
   ProjectFilesResponse,
   QueuedConversationMessageRecord,
   WorkerModelOption,
@@ -50,7 +49,6 @@ export interface ComposerContainerProps {
   commandInputRef: React.RefObject<HTMLTextAreaElement | null>;
   selectedRunId: string | null;
   selectedConversationMode: ComposerMode;
-  setSelectedConversationMode: (value: ConversationModeOption) => void;
   currentProjectScope: string | null;
   projectFiles: string[];
   projectFilesIsFetched: boolean;
@@ -95,7 +93,6 @@ function ComposerContainerInner({
   commandInputRef,
   selectedRunId,
   selectedConversationMode,
-  setSelectedConversationMode,
   currentProjectScope,
   projectFiles,
   projectFilesIsFetched,
@@ -267,7 +264,6 @@ function ComposerContainerInner({
       handleSubmit={handleSubmit}
       selectedRunId={selectedRunId}
       selectedConversationMode={selectedConversationMode}
-      setSelectedConversationMode={setSelectedConversationMode}
       showMentionPicker={showMentionPicker}
       currentProjectScope={currentProjectScope}
       workspaceProjectPath={currentProjectScope}

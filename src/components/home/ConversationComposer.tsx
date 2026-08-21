@@ -4,7 +4,6 @@ import { ArrowUp, FileText, LoaderCircle, Plus, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ComposerModelPicker } from "@/components/composer/ComposerModelPicker";
 import { ComposerSelect } from "@/components/composer/ComposerSelect";
-import { ConversationModePicker, type ConversationModeOption } from "@/components/ConversationModePicker";
 import { MobileComposerSettings } from "@/components/composer/MobileComposerSettings";
 import type { ComposerMode } from "@/interface/home/types";
 import { QueuedMessageDrawer } from "./QueuedMessageDrawer";
@@ -33,7 +32,6 @@ interface ConversationComposerProps {
   handleSubmit: (event: React.FormEvent) => void;
   selectedRunId: string | null;
   selectedConversationMode: ComposerMode;
-  setSelectedConversationMode: (value: ConversationModeOption) => void;
   showMentionPicker: boolean;
   currentProjectScope: string | null;
   workspaceProjectPath: string | null;
@@ -102,7 +100,6 @@ function ConversationComposerInner({
   handleSubmit,
   selectedRunId,
   selectedConversationMode,
-  setSelectedConversationMode,
   showMentionPicker,
   currentProjectScope,
   workspaceProjectPath,
@@ -206,15 +203,6 @@ function ConversationComposerInner({
       }}
       className="group relative mx-auto max-w-3xl"
     >
-      {!selectedRunId ? (
-        <ConversationModePicker
-          // New conversations expose direct control only; existing Omni runs
-          // retain their stored mode and lifecycle behavior.
-          value={selectedConversationMode as ConversationModeOption}
-          onChange={setSelectedConversationMode}
-          disabled={isComposerSubmitting}
-        />
-      ) : null}
       <QueuedMessageDrawer
         messages={queuedMessages}
         cancellingMessageIds={cancellingQueuedMessageIds}

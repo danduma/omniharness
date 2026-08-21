@@ -46,6 +46,7 @@ export async function compactStaleArtifactStreams(options: {
     "execution_events",
     "supervisor_interventions",
     "planning_review_findings",
+    "handoff_packets",
   ];
 
   const candidates = await db

@@ -12,6 +12,12 @@ import { handleAuthStreamTicketRequest } from "./auth-stream-ticket";
 import { handleSettingsRequest } from "./settings";
 import { handleClaudeModelGatewayRequest } from "./claude-model-gateway";
 import { handleAccountDetailRequest, handleAccountStatusRequest, handleAccountsRequest } from "./accounts";
+import {
+  handleAccountAuthOperationRequest,
+  handleClaudeAccountConnectRequest,
+  handleClaudeAccountLogoutRequest,
+  handleClaudeAccountPurgeRequest,
+} from "./account-auth";
 import { handleAgentsRequest } from "./agents";
 import { handleAgentsCatalogRequest } from "./agents-catalog";
 import { handleAgentAcpRequest, handleAgentDetailRequest, handleAgentElicitationRequest, handleAgentPermissionRequest } from "./agent-detail";
@@ -50,6 +56,7 @@ import { handleRunResumeRequest } from "./run-resume";
 import { handleRunDeleteRequest, handleRunPatchRequest, handleRunPostRequest } from "./runs";
 import { handleGoalRequest } from "./goals";
 import { handleExternalSessionsRequest } from "./external-sessions";
+import { handleHandoffCancelRequest, handleHandoffLaunchRequest, handleHandoffRequest, handleRunHandoffsRequest } from "./handoffs";
 import {
   handleTerminalCreateRequest,
   handleTerminalDeleteRequest,
@@ -107,6 +114,11 @@ export function createOmniRuntimeHttpRegistry() {
     .route("PATCH", "/api/accounts/:id", handleAccountDetailRequest)
     .route("DELETE", "/api/accounts/:id", handleAccountDetailRequest)
     .route("POST", "/api/accounts/:id/status", handleAccountStatusRequest)
+    .route("POST", "/api/accounts/claude/connect", handleClaudeAccountConnectRequest)
+    .route("GET", "/api/accounts/:id/auth-operation", handleAccountAuthOperationRequest)
+    .route("POST", "/api/accounts/:id/auth-operation", handleAccountAuthOperationRequest)
+    .route("POST", "/api/accounts/:id/logout", handleClaudeAccountLogoutRequest)
+    .route("POST", "/api/accounts/:id/purge", handleClaudeAccountPurgeRequest)
     .route("GET", "/api/agents", handleAgentsRequest)
     .route("GET", "/api/agents/:name", handleAgentDetailRequest)
     .route("POST", "/api/agents/:name/elicitation", handleAgentElicitationRequest)
@@ -153,6 +165,12 @@ export function createOmniRuntimeHttpRegistry() {
     .route("POST", "/api/runs/:id/goal/actions", handleGoalRequest)
     .route("POST", "/api/runs/:id/answer", handleRunAnswerRequest)
     .route("POST", "/api/runs/:id/resume", handleRunResumeRequest)
+    .route("GET", "/api/runs/:id/handoffs", handleRunHandoffsRequest)
+    .route("POST", "/api/runs/:id/handoffs", handleRunHandoffsRequest)
+    .route("GET", "/api/handoffs/:id", handleHandoffRequest)
+    .route("PATCH", "/api/handoffs/:id", handleHandoffRequest)
+    .route("POST", "/api/handoffs/:id/launch", handleHandoffLaunchRequest)
+    .route("POST", "/api/handoffs/:id/cancel", handleHandoffCancelRequest)
     .route("GET", "/api/external-sessions", handleExternalSessionsRequest)
     .route("POST", "/api/terminals", handleTerminalCreateRequest)
     .route("GET", "/api/terminals/:id/stream", handleTerminalStreamRequest)
@@ -174,6 +192,12 @@ export { handleAuthStreamTicketRequest } from "./auth-stream-ticket";
 export { handleSettingsRequest } from "./settings";
 export { handleClaudeModelGatewayRequest } from "./claude-model-gateway";
 export { handleAccountDetailRequest, handleAccountStatusRequest, handleAccountsRequest } from "./accounts";
+export {
+  handleAccountAuthOperationRequest,
+  handleClaudeAccountConnectRequest,
+  handleClaudeAccountLogoutRequest,
+  handleClaudeAccountPurgeRequest,
+} from "./account-auth";
 export { handleAgentsRequest } from "./agents";
 export { handleAgentsCatalogRequest } from "./agents-catalog";
 export { handleAgentAcpRequest, handleAgentDetailRequest, handleAgentElicitationRequest, handleAgentPermissionRequest } from "./agent-detail";
@@ -212,6 +236,7 @@ export { handleRunResumeRequest } from "./run-resume";
 export { handleRunDeleteRequest, handleRunPatchRequest, handleRunPostRequest } from "./runs";
 export { handleGoalRequest } from "./goals";
 export { handleExternalSessionsRequest } from "./external-sessions";
+export { handleHandoffCancelRequest, handleHandoffLaunchRequest, handleHandoffRequest, handleRunHandoffsRequest } from "./handoffs";
 export {
   handleTerminalCreateRequest,
   handleTerminalDeleteRequest,

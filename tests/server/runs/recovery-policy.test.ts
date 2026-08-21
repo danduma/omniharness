@@ -88,6 +88,45 @@ describe("recovery policy", () => {
     expect(decision.action).toBe("resume_session");
   });
 
+  it("replaces the worker instead of dead-ending a blocked direct queue", () => {
+    // `needs_user` here was not a prompt but a dead end: Resume re-classified
+    // the run, landed on `queue_blocked` again, and returned needs_user again.
+    const decision = decideRecoveryAction({
+      runMode: "direct",
+      policy: DEFAULT_RECOVERY_POLICY,
+      autoAttemptCount: 0,
+      recoveryState: {
+        kind: "queue_blocked",
+        status: "needs_user",
+        message: "blocked",
+        recommendedAction: "manual_resume",
+        workerId: "worker-1",
+        queuedMessageId: "queue-1",
+      },
+    });
+
+    expect(decision.action).toBe("restart_direct_worker");
+  });
+
+  it("lets a forced resume act on a blocked direct queue with auto-recovery disabled", () => {
+    const decision = decideRecoveryAction({
+      runMode: "direct",
+      policy: { ...DEFAULT_RECOVERY_POLICY, autoRecoverDirectRuns: false },
+      autoAttemptCount: 9,
+      force: true,
+      recoveryState: {
+        kind: "queue_blocked",
+        status: "needs_user",
+        message: "blocked",
+        recommendedAction: "manual_resume",
+        workerId: "worker-1",
+        queuedMessageId: "queue-1",
+      },
+    });
+
+    expect(decision.action).toBe("restart_direct_worker");
+  });
+
   it("stops automation when attempt budget is exhausted", () => {
     const decision = decideRecoveryAction({
       runMode: "implementation",

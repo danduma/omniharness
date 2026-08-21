@@ -1689,10 +1689,14 @@ describe("POST /api/conversations", () => {
     expect(mockAskAgent).toHaveBeenCalledWith(
       createdWorker?.id,
       expect.stringContaining("Do not implement, edit files, run mutating commands, or otherwise change the workspace unless the user's latest message explicitly asks you to implement, edit, modify, fix, create, delete, run, apply, or change something."),
+      undefined,
+      expect.objectContaining({ onAccepted: expect.any(Function) }),
     );
     expect(mockAskAgent).toHaveBeenCalledWith(
       createdWorker?.id,
       expect.stringContaining(`User message:\n${command}`),
+      undefined,
+      expect.objectContaining({ onAccepted: expect.any(Function) }),
     );
   });
 

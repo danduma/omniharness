@@ -18,7 +18,7 @@ import { buildSupervisorTools } from "@/server/supervisor/tools";
 import { buildSupervisorTurnContext } from "@/server/supervisor/context";
 import { buildSupervisorModelMessages } from "@/server/supervisor/context-window";
 import { parseSupervisorToolCallFromMastra, SupervisorProtocolError } from "@/server/supervisor/protocol";
-import { retrySupervisorRequest } from "@/server/supervisor/retry";
+import { isMissingAgentError, retrySupervisorRequest } from "@/server/supervisor/retry";
 import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import { handleSupervisorQuotaExhaustion, handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import { getWorkerAuthenticationInfo, selectSpawnableWorkerType } from "@/server/supervisor/worker-availability";
@@ -203,16 +203,6 @@ function resolveWorkerSpawnMode(requestedMode: unknown, yoloModeEnabled: boolean
   }
 
   return yoloModeEnabled ? "full-access" : undefined;
-}
-
-function isMissingAgentError(error: unknown) {
-  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-  return message.includes("404")
-    || message.includes("not_found")
-    || message.includes("agent not found")
-    || message.includes("session not found")
-    || message.includes("invalid session identifier")
-    || message.includes("failed to load resumed session data from file");
 }
 
 function formatSupervisorError(error: unknown) {

@@ -52,7 +52,17 @@ function normalizeStrategy(value: AccountAllocationStrategy | null | undefined):
 function isUsable(account: AccountRow) {
   if (!account.enabled) return false;
   const status = account.status?.trim().toLowerCase();
-  return status !== "quota_exhausted" && status !== "login_required" && status !== "disabled";
+  return !new Set([
+    "quota_exhausted",
+    "login_required",
+    "disabled",
+    "authenticating",
+    "verifying",
+    "auth_failed",
+    "logging_out",
+    "removing",
+    "purging",
+  ]).has(status ?? "");
 }
 
 function envKeyFromAuthRef(authRef: string) {

@@ -104,6 +104,8 @@ export function streamRelativePath(id: ArtifactStreamId): string {
       return "supervisor-interventions.jsonl";
     case "planning_review_findings":
       return "planning-review-findings.jsonl";
+    case "handoff_packets":
+      return "handoff-packets.jsonl";
     default: {
       // Exhaustiveness guard.
       const _exhaustive: never = id.kind;

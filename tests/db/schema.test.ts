@@ -29,6 +29,25 @@ describe("db schema", () => {
     expect(schema).toHaveProperty("queuedConversationMessages");
     expect(schema).toHaveProperty("recoveryIncidents");
     expect(schema).toHaveProperty("supervisorScheduledWakes");
+    expect(schema).toHaveProperty("conversationHandoffs");
+    expect(schema.runs).toHaveProperty("originHandoffId");
+    expect(schema.runs).toHaveProperty("activeHandoffId");
+  });
+
+  it("installs the direct-run mixed CLI safety trigger without rejecting supervisor runs", async () => {
+    const client = createClient({ url: ":memory:" });
+    await (await import("@/server/db")).initializeDatabaseSchema(client);
+    const now = Date.now();
+    await client.execute({ sql: "INSERT INTO plans (id, path, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", args: ["p", "/tmp/p", "running", now, now] });
+    await client.execute({ sql: "INSERT INTO runs (id, plan_id, session_type, mode, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", args: ["direct", "p", "omni", "direct", "running", now, now] });
+    await client.execute({ sql: "INSERT INTO workers (id, run_id, type, status, cwd, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", args: ["w1", "direct", "codex", "idle", "/tmp", now, now] });
+    await expect(client.execute({ sql: "INSERT INTO workers (id, run_id, type, status, cwd, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", args: ["w1-alias", "direct", "codex-cli", "idle", "/tmp", now, now] })).resolves.toBeTruthy();
+    await expect(client.execute({ sql: "INSERT INTO workers (id, run_id, type, status, cwd, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", args: ["w2", "direct", "claude", "idle", "/tmp", now, now] })).rejects.toThrow("HANDOFF_REQUIRED");
+
+    await client.execute({ sql: "INSERT INTO runs (id, plan_id, session_type, mode, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", args: ["implementation", "p", "omni", "implementation", "running", now, now] });
+    await client.execute({ sql: "INSERT INTO workers (id, run_id, type, status, cwd, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", args: ["w3", "implementation", "codex", "idle", "/tmp", now, now] });
+    await expect(client.execute({ sql: "INSERT INTO workers (id, run_id, type, status, cwd, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", args: ["w4", "implementation", "claude", "idle", "/tmp", now, now] })).resolves.toBeTruthy();
+    await client.close();
   });
 
   it("persists durable worker terminal snapshots", () => {

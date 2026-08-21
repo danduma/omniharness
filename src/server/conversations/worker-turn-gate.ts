@@ -2,9 +2,12 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import { workers } from "@/server/db/schema";
+import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
+import { withRunWorkspaceMutationAdmission } from "@/server/handoff/workspace-lock";
 
 const workerTurnChains = new Map<string, Promise<void>>();
 const conversationMutationChains = new Map<string, Promise<void>>();
+const activeConversationMutation = new AsyncLocalStorage<string>();
 const backgroundTasks = new Set<Promise<void>>();
 const backgroundTasksByRunId = new Map<string, Set<Promise<void>>>();
 const conversationDeletionRequests = new Set<string>();
@@ -180,8 +183,46 @@ export async function isWorkerTurnGenerationCurrent(
   return record.turnGeneration === capturedGeneration;
 }
 
-export function runConversationMutation<T>(runId: string, task: () => Promise<T>): Promise<T> {
-  return runOnChain(conversationMutationChains, runId, task);
+export async function runConversationMutation<T>(runId: string, task: () => Promise<T>): Promise<T> {
+  if (activeConversationMutation.getStore() === runId) {
+    await assertRunNotHandoffFenced(runId);
+    return task();
+  }
+  let operation!: Promise<T>;
+  await withRunWorkspaceMutationAdmission(runId, () => {
+    operation = runOnChain(conversationMutationChains, runId, async () => {
+      await assertRunNotHandoffFenced(runId);
+      return activeConversationMutation.run(runId, task);
+    });
+  });
+  return operation;
+}
+
+/**
+ * Runs `task` with the ambient conversation-mutation marker cleared, so a
+ * `runConversationMutation` inside it takes the mutex instead of the reentrant
+ * fast path above. Needed when a mutation dispatches background work that must
+ * wait its turn rather than inherit the caller's lock: the marker propagates
+ * into promises and timers, so simply not awaiting the work is not enough.
+ */
+export function runDetachedFromConversationMutation<T>(task: () => T): T {
+  return activeConversationMutation.exit(task);
+}
+
+export async function waitForConversationMutations(runId: string, timeoutMs = 30_000): Promise<void> {
+  const operation = conversationMutationChains.get(runId);
+  if (!operation) return;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`Timed out waiting for conversation mutation ${runId}`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 export function trackConversationBackgroundTask<T>(

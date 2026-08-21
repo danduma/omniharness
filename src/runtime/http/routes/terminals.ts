@@ -62,6 +62,7 @@ export const handleTerminalCreateRequest: OmniHttpHandler = async (request) => {
       cwd,
       cols: toDimension(body.cols),
       rows: toDimension(body.rows),
+      ownerSessionId: auth.session?.id ?? "automation-session",
     });
     return Response.json({ terminalId: created.id, cols: created.cols, rows: created.rows, cwd });
   } catch (error) {
@@ -105,6 +106,9 @@ export const handleTerminalStreamRequest: OmniHttpHandler = async (request, cont
   let unsubscribeRevocation: (() => void) | null = null;
   let lastSeq = fromSeq;
   const authenticatedSessionId = ticketAuth?.session?.id ?? auth.session?.id ?? null;
+  if (!authenticatedSessionId || !manager.authorize(id, { sessionId: authenticatedSessionId })) {
+    return Response.json({ error: "Terminal not found" }, { status: 404 });
+  }
 
   const stream = createBoundedByteStream({
     start(controller) {
@@ -113,6 +117,13 @@ export const handleTerminalStreamRequest: OmniHttpHandler = async (request, cont
       };
 
       enqueue(`id: ${fromSeq}\nevent: connected\ndata: {}\n\n`);
+      const replayState = manager.replayState(id, fromSeq);
+      if (replayState?.resyncRequired) {
+        enqueue(`id: ${Math.max(fromSeq, replayState.oldestSeq - 1)}\nevent: terminal.resync_required\ndata: ${JSON.stringify({
+          requestedSeq: fromSeq,
+          oldestAvailableSeq: replayState.oldestSeq,
+        })}\n\n`);
+      }
       unsubscribe = manager.subscribe(id, fromSeq, {
         onChunk: (chunk) => {
           lastSeq = chunk.seq;
@@ -213,7 +224,12 @@ export const handleTerminalInputRequest: OmniHttpHandler = async (request, conte
   if (data === null) {
     return Response.json({ error: { code: "invalid_input", message: "Missing input data." } }, { status: 400 });
   }
-  const ok = getTerminalManager().write(id, data);
+  const manager = getTerminalManager();
+  const sessionId = auth.session?.id ?? "automation-session";
+  if (!manager.authorize(id, { sessionId })) {
+    return Response.json({ error: "Terminal not found" }, { status: 404 });
+  }
+  const ok = manager.write(id, data);
   if (!ok) {
     return Response.json({ error: "Terminal not found" }, { status: 404 });
   }
@@ -243,7 +259,12 @@ export const handleTerminalResizeRequest: OmniHttpHandler = async (request, cont
   if (cols === undefined || rows === undefined) {
     return Response.json({ error: { code: "invalid_input", message: "Missing cols/rows." } }, { status: 400 });
   }
-  const ok = getTerminalManager().resize(id, cols, rows);
+  const manager = getTerminalManager();
+  const sessionId = auth.session?.id ?? "automation-session";
+  if (!manager.authorize(id, { sessionId })) {
+    return Response.json({ error: "Terminal not found" }, { status: 404 });
+  }
+  const ok = manager.resize(id, cols, rows);
   if (!ok) {
     return Response.json({ error: "Terminal not found" }, { status: 404 });
   }
@@ -267,7 +288,12 @@ export const handleTerminalDeleteRequest: OmniHttpHandler = async (request, cont
   if (!id) {
     return Response.json({ error: "Terminal not found" }, { status: 404 });
   }
-  getTerminalManager().kill(id);
+  const manager = getTerminalManager();
+  const sessionId = auth.session?.id ?? "automation-session";
+  if (!manager.authorize(id, { sessionId })) {
+    return Response.json({ error: "Terminal not found" }, { status: 404 });
+  }
+  manager.kill(id);
   return Response.json({ ok: true });
 };
 

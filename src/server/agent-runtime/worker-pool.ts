@@ -18,6 +18,7 @@ export type WorkerPoolMember = {
   key: string;
   type: string;
   cwd: string;
+  accountId: string | null;
   recordRef: { current?: AgentRecord };
   client: acp.Client;
   stderrBuffer: string[];
@@ -38,6 +39,7 @@ export type WorkerPoolKeyInput = {
   mcpServers: acp.McpServer[];
   skillRoots: string[];
   envFingerprint: string;
+  accountId?: string | null;
 };
 
 const POOL_MEMBER_MAX_AGE_MS = 30 * 60_000;
@@ -78,6 +80,7 @@ export function computeWorkerPoolKey(input: WorkerPoolKeyInput): string {
     mcp: input.mcpServers,
     skills: input.skillRoots,
     env: input.envFingerprint,
+    account: input.accountId ?? null,
   });
   return createHash("sha256").update(payload).digest("hex").slice(0, 32);
 }
@@ -85,10 +88,16 @@ export function computeWorkerPoolKey(input: WorkerPoolKeyInput): string {
 export class WorkerPool {
   private readonly members = new Map<string, WorkerPoolMember[]>();
   private readonly inFlight = new Map<string, number>();
+  private readonly inFlightAccounts = new Map<string, string | null>();
+  private readonly fencedAccounts = new Set<string>();
   private maxPerKey = 1;
   private maxTotal = Number.POSITIVE_INFINITY;
 
   add(member: WorkerPoolMember): void {
+    if (member.accountId && this.fencedAccounts.has(member.accountId)) {
+      this.disposeMember(member);
+      return;
+    }
     if (!this.isAlive(member)) {
       this.disposeMember(member);
       return;
@@ -116,6 +125,10 @@ export class WorkerPool {
     if (!arr) return null;
     while (arr.length > 0) {
       const member = arr.shift()!;
+      if (member.accountId && this.fencedAccounts.has(member.accountId)) {
+        this.disposeMember(member);
+        continue;
+      }
       if (this.isAlive(member) && Date.now() - member.warmedAt < POOL_MEMBER_MAX_AGE_MS) {
         if (arr.length === 0) this.members.delete(key);
         return member;
@@ -137,22 +150,29 @@ export class WorkerPool {
    * already in flight or the per-key/global cap is reached. Eliminates the
    * needsWarm/beginInFlight race when concurrent prewarm requests arrive.
    */
-  tryBeginWarm(key: string): boolean {
+  tryBeginWarm(key: string, accountId: string | null = null): boolean {
+    if (accountId && this.fencedAccounts.has(accountId)) return false;
     const memberCount = this.members.get(key)?.length ?? 0;
     const inFlightCount = this.inFlight.get(key) ?? 0;
     if (memberCount + inFlightCount >= this.maxPerKey) return false;
     if (this.countAll() + this.countAllInFlight() >= this.maxTotal) return false;
     this.inFlight.set(key, inFlightCount + 1);
+    this.inFlightAccounts.set(key, accountId);
     return true;
   }
 
-  beginInFlight(key: string): void {
+  beginInFlight(key: string, accountId: string | null = null): void {
+    if (accountId && this.fencedAccounts.has(accountId)) return;
     this.inFlight.set(key, (this.inFlight.get(key) ?? 0) + 1);
+    this.inFlightAccounts.set(key, accountId);
   }
 
   endInFlight(key: string): void {
     const v = (this.inFlight.get(key) ?? 0) - 1;
-    if (v <= 0) this.inFlight.delete(key);
+    if (v <= 0) {
+      this.inFlight.delete(key);
+      this.inFlightAccounts.delete(key);
+    }
     else this.inFlight.set(key, v);
   }
 
@@ -178,6 +198,37 @@ export class WorkerPool {
     let total = 0;
     for (const v of this.inFlight.values()) total += v;
     return total;
+  }
+
+  isAccountFenced(accountId: string | null | undefined): boolean {
+    return Boolean(accountId && this.fencedAccounts.has(accountId));
+  }
+
+  quiesceAccount(accountId: string): { prewarmedEvicted: number; startingCount: number } {
+    this.fencedAccounts.add(accountId);
+    let prewarmedEvicted = 0;
+    for (const [key, members] of this.members) {
+      const keep: WorkerPoolMember[] = [];
+      for (const member of members) {
+        if (member.accountId === accountId) {
+          this.disposeMember(member);
+          prewarmedEvicted += 1;
+        } else {
+          keep.push(member);
+        }
+      }
+      if (keep.length === 0) this.members.delete(key);
+      else this.members.set(key, keep);
+    }
+    let startingCount = 0;
+    for (const [key, count] of this.inFlight) {
+      if (this.inFlightAccounts.get(key) === accountId) startingCount += count;
+    }
+    return { prewarmedEvicted, startingCount };
+  }
+
+  resumeAccount(accountId: string): void {
+    this.fencedAccounts.delete(accountId);
   }
 
   /**
@@ -237,6 +288,8 @@ export class WorkerPool {
     }
     this.members.clear();
     this.inFlight.clear();
+    this.inFlightAccounts.clear();
+    this.fencedAccounts.clear();
   }
 
   evictAll(): number {

@@ -33,7 +33,7 @@ import { createQueuedConversationMessage, type BusyMessageAction } from "./queue
 import { interruptWithDraftMessage } from "./queued-message-interrupt";
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
-import { isWorkerTurnAbortedError, isWorkerTurnSupersededError, runConversationMutation, runWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
+import { isWorkerTurnAbortedError, isWorkerTurnSupersededError, runConversationMutation, runDetachedFromConversationMutation, runWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 import { isManualStopCommand } from "@/interface/home/busy-message-behavior";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -54,6 +54,9 @@ import { recreateWorkerFromTranscript, type WorkerRecreationSelection } from "@/
 import { decodeClaudeGatewayModel } from "@/lib/claude-model-gateway";
 import { annotateVerifiedDeadCredential, annotateVerifiedLiveCredential, hasVerifiedDeadCredentialMarker, isAuthShapedProviderFailure } from "@/lib/provider-account-failures";
 import { supportsCredentialLivenessProbe, verifyAccountCredentialLiveness } from "@/server/accounts/credential-verification";
+import { assertDirectRunWorkerTypeInvariant } from "@/server/workers/direct-run-type-invariant";
+import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
+import { markAccountLoginRequired } from "@/server/accounts/login-required";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
@@ -187,6 +190,13 @@ async function reconcileDirectWorkerSelection(args: {
   const currentModel = args.worker.effectiveLaunchModel?.trim() || null;
   const currentEffort = args.worker.effectiveLaunchEffort?.trim().toLowerCase() || null;
   const typeChanged = normalizeWorkerType(args.worker.type) !== normalizeWorkerType(requestedType);
+  if (typeChanged) {
+    assertDirectRunWorkerTypeInvariant({
+      run: args.run,
+      existingWorkerTypes: [args.worker.type],
+      requestedWorkerType: requestedType,
+    });
+  }
   const modelChanged = Boolean(currentModel && requestedModel && currentModel !== requestedModel);
   const effortChanged = Boolean(currentEffort && requestedEffort && currentEffort !== requestedEffort);
   const accountChanged = Boolean(
@@ -781,6 +791,14 @@ async function resolveAuthFailureMessage(run: RunRecord, worker: WorkerRecord, m
   if (verification.liveness === "dead") {
     // Two independent requests agreed the credential is rejected. Nothing the
     // run can do fixes that, so say so instead of leaving the UI to guess.
+    if (accountId) {
+      await markAccountLoginRequired({
+        accountId,
+        workerType: worker.type,
+        reason: verification.detail,
+        source: "credential_verification",
+      });
+    }
     emitNamedEvent({
       kind: "account.login_required",
       accountId: accountId ?? "default",
@@ -1212,6 +1230,13 @@ async function applyWorkerPreferenceForMessage(args: {
   const nextPreferredWorkerAccountId = args.preferredWorkerAccountId?.trim() || null;
   const now = new Date();
 
+  const existingWorkerTypes = await db.select({ type: workers.type }).from(workers).where(eq(workers.runId, args.run.id));
+  assertDirectRunWorkerTypeInvariant({
+    run: args.run,
+    existingWorkerTypes: existingWorkerTypes.map((worker) => worker.type),
+    requestedWorkerType: nextWorkerType,
+  });
+
   await db.update(runs).set({
     preferredWorkerType: nextWorkerType,
     preferredWorkerModel: nextPreferredWorkerModel,
@@ -1459,6 +1484,33 @@ async function stopConversationFromManualStopCommand(run: RunRecord) {
   };
 }
 
+/**
+ * Attempts delivery of whatever is pending for `workerId` right after a row was
+ * enqueued, instead of waiting for a sync pass to observe a status transition.
+ * A message queued in the same beat that the worker went idle has no transition
+ * left to wait for, so the row would otherwise sit `pending` indefinitely.
+ *
+ * Imported lazily: `sync` pulls in the recovery and planning graphs, and this
+ * module sits underneath both of them.
+ */
+async function flushQueuedWorkerMessagesAfterEnqueue(runId: string, workerId: string) {
+  try {
+    const worker = await db.select({ status: workers.status }).from(workers).where(eq(workers.id, workerId)).get();
+    if (!worker) {
+      return;
+    }
+    const { drainQueuedWorkerMessagesWithObservation } = await import("./sync");
+    await drainQueuedWorkerMessagesWithObservation({
+      runId,
+      workerId,
+      workerStatus: worker.status,
+      source: "post_enqueue_flush",
+    });
+  } catch (error) {
+    console.error(`Post-enqueue queue flush failed for ${workerId}:`, error);
+  }
+}
+
 export async function sendConversationMessage(args: SendConversationMessageArgs) {
   return runConversationMutation(args.runId, () => sendConversationMessageUnlocked(args));
 }
@@ -1491,6 +1543,7 @@ async function sendConversationMessageUnlocked({
   if (!run) {
     throw Object.assign(new Error("Conversation not found"), { status: 404 });
   }
+  await assertRunNotHandoffFenced(runId);
   if (normalizedAttachments.length === 0 && isManualStopCommand(trimmedContent)) {
     const stopped = await stopConversationFromManualStopCommand(run);
     return stopped;
@@ -1551,6 +1604,16 @@ async function sendConversationMessageUnlocked({
       content: trimmedContent,
       attachments: normalizedAttachments,
       clientMessageId,
+    });
+    // `busyAction` is the client's intent for *if* the worker is busy, and the
+    // client decides that from a snapshot that may already be stale by the time
+    // the row lands. Try to flush regardless of what it guessed, rather than
+    // waiting for a sync pass to notice: the drain no-ops while the worker is
+    // genuinely mid-turn, and claiming is atomic on `status = 'pending'`, so an
+    // already-running delivery cannot double-send. Detached from this mutation
+    // so the drain queues behind it for the mutex instead of reentering it.
+    runDetachedFromConversationMutation(() => {
+      void flushQueuedWorkerMessagesAfterEnqueue(runId, worker.id);
     });
     return { ok: true, queuedMessage };
   }

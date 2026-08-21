@@ -33,6 +33,7 @@ import {
   runWorkerTurn,
 } from "@/server/conversations/worker-turn-gate";
 import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
+import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
 import { extractQuotaResetInfo } from "./reset-parser";
 import { clearResolvedQuotaIncidents } from "./type-blocking";
 import {
@@ -129,12 +130,31 @@ async function promptResumedQuotaWorker(args: {
   turnGeneration: number;
 }) {
   const prompt = buildQuotaResumePrompt(args.worker);
-  const response = await runWorkerTurn(args.worker.id, () => askAgent(
-    args.worker.id,
-    prompt,
-    undefined,
-    { expectedTurnGeneration: args.turnGeneration },
-  ));
+  const response = await runWorkerTurn(args.worker.id, async () => {
+    try {
+      return await askAgent(
+        args.worker.id,
+        prompt,
+        undefined,
+        { expectedTurnGeneration: args.turnGeneration },
+      );
+    } catch (error) {
+      // Park the worker back on the quota-blocked resting state when the resume
+      // turn never lands, so the run reconciles to `quota_waiting` again instead
+      // of sitting at `running` with nothing driving it. Guarded on both the
+      // turn generation and the busy status this call set, so a newer turn — or
+      // Stop — that already claimed the worker keeps its own status.
+      await db.update(workers).set({
+        status: "cred-exhausted",
+        updatedAt: new Date(),
+      }).where(and(
+        eq(workers.id, args.worker.id),
+        eq(workers.turnGeneration, args.turnGeneration),
+        eq(workers.status, "working"),
+      ));
+      throw error;
+    }
+  });
   const deliveryRefusal = await runQuotaRecoveryMutation(args.runId, async () => {
     const refused = await refuseLateQuotaRecovery({
       runId: args.runId,
@@ -294,6 +314,16 @@ export async function resumeQuotaExhaustedWorkers(args: {
         resumedWorker = await getAgent(worker.id, { retryIndefinitely: false });
       }
 
+      // `promptResumedQuotaWorker` awaits a full agent turn, which routinely runs
+      // for many minutes. The busy status has to be persisted in the same guarded
+      // mutation that resolves the incident: once the incident is resolved,
+      // nothing pins `runs.status` any more, and
+      // `resolveDirectRunStatusFromWorkerOutput` reads an `idle` worker as a
+      // finished conversation. Leaving the worker idle across the resume turn let
+      // the reconciliation sweep flip the run to `done` mid-turn, and the turn's
+      // result was then discarded by `refuseLateQuotaRecovery` as a late callback
+      // — the agent did the work and the user never saw any of it.
+      const willPromptResumedWorker = shouldPromptResumedWorker(resumedWorker.state);
       const resumeRefusal = await runQuotaRecoveryMutation(args.run.id, async () => {
         const refused = await refuseLateQuotaRecovery({
           runId: args.run.id,
@@ -303,7 +333,7 @@ export async function resumeQuotaExhaustedWorkers(args: {
         });
         if (refused) return refused;
         const updated = await db.update(workers).set({
-          status: resumedWorker.state,
+          status: willPromptResumedWorker ? "working" : resumedWorker.state,
           bridgeSessionId: resumedWorker.sessionId ?? sessionId,
           bridgeSessionMode: resumedWorker.sessionMode ?? worker.bridgeSessionMode ?? null,
           currentText: resumedWorker.currentText ?? "",
@@ -349,7 +379,7 @@ export async function resumeQuotaExhaustedWorkers(args: {
       }
       resumedCount += 1;
       notifyEventStreamSubscribers();
-      if (shouldPromptResumedWorker(resumedWorker.state)) {
+      if (willPromptResumedWorker) {
         const promptRefusal = await promptResumedQuotaWorker({
           runId: args.run.id,
           worker: {
@@ -532,6 +562,7 @@ export async function resumeDirectRunAfterQuotaReset(args: {
   run: typeof runs.$inferSelect;
   source: DirectQuotaResumeSource;
 }): Promise<ResumeQuotaWorkersResult> {
+  await assertRunNotHandoffFenced(args.run.id);
   const transitionRefusal = await runQuotaRecoveryMutation(args.run.id, async () => {
     const refused = await refuseLateQuotaRecovery({ runId: args.run.id, now: new Date() });
     if (refused) return refused;

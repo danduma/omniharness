@@ -20,9 +20,14 @@ import {
   trackConversationBackgroundTask,
 } from "@/server/conversations/worker-turn-gate";
 import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
+import {
+  isRejectedSavedSessionErrorMessage,
+  materializeProviderSessionFromWorkerStream,
+} from "@/server/workers/session-recovery";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { writeWorkerOutputEntries } from "@/server/workers/output-store";
 import { reconcileRecoveredHumanInputEntries } from "@/server/workers/human-input-entries";
+import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
 import {
   markRecoveryIncidentFailed,
   markRecoveryIncidentNeedsUser,
@@ -39,7 +44,11 @@ import {
   type RecoveryLiveAgentLike,
   type RecoveryState,
 } from "./recovery-state";
-import { restartImplementationRunFromLatestCheckpoint, setRunNeedsRecovery } from "./recovery-actions";
+import {
+  requeueRecoverableQueuedMessages,
+  restartImplementationRunFromLatestCheckpoint,
+  setRunNeedsRecovery,
+} from "./recovery-actions";
 
 function isCorruptResumeFileError(value: string | null | undefined) {
   return /failed to load resumed session data from file/i.test(value ?? "");
@@ -477,6 +486,168 @@ async function resumeSavedWorkerSession(args: {
   return { action: "resume_session" as const, runId: args.run.id, workerId: args.worker.id };
 }
 
+/**
+ * Replace a direct worker whose runtime agent is gone and no saved session can
+ * bring it back, then let the blocked queued message drain into the fresh one.
+ *
+ * Without this a direct run had no recovery action at all once its session was
+ * unusable — `queue_blocked` resolved to `needs_user`, and the Resume button
+ * that `needs_user` advertises re-entered the same branch and changed nothing.
+ */
+async function restartDirectWorker(args: {
+  run: typeof runs.$inferSelect;
+  worker: typeof workers.$inferSelect;
+  state: RecoveryState;
+  incidentId: string;
+  preserveQueuedMessages: boolean;
+}) {
+  const rejectedSessionId = args.worker.bridgeSessionId?.trim() || null;
+  await markRecoveryIncidentRecovering({
+    incidentId: args.incidentId,
+    runId: args.run.id,
+    workerId: args.worker.id,
+    decision: "restart_direct_worker",
+    details: {
+      queuedMessageId: args.state.queuedMessageId ?? null,
+      rejectedSessionId,
+    },
+  });
+  await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "recovery_direct_restart_started", {
+    summary: `Starting a fresh direct worker for ${args.worker.id}; its saved session cannot be resumed.`,
+    incidentId: args.incidentId,
+    queuedMessageId: args.state.queuedMessageId ?? null,
+    rejectedSessionId,
+  });
+
+  const yoloModeEnabled = await readWorkerYoloModeEnabled();
+  const workerMode = resolveWorkerLaunchMode(args.worker.bridgeSessionMode, yoloModeEnabled);
+  const { env: envParams } = await readRuntimeEnvFromSettings();
+  const launchSelection = resolveWorkerLaunchSelection(args.worker, args.run);
+  const spawnParams = {
+    type: args.worker.type,
+    cwd: args.worker.cwd,
+    name: args.worker.id,
+    ...(workerMode ? { mode: workerMode } : {}),
+    env: envParams,
+    ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
+    ...(launchSelection.model ? { model: launchSelection.model } : {}),
+    ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
+  };
+
+  // Before settling for an amnesiac worker, try to rebuild the provider session
+  // file from the transcript OmniHarness already has on disk. A replacement that
+  // remembers the conversation is worth a lot more than one that does not.
+  let spawned: AgentRecord | null = null;
+  if (rejectedSessionId) {
+    const materialized = await materializeProviderSessionFromWorkerStream({
+      type: args.worker.type,
+      runId: args.run.id,
+      workerId: args.worker.id,
+      sessionId: rejectedSessionId,
+      cwd: args.worker.cwd,
+      env: envParams,
+    }).catch(() => null);
+    if (materialized) {
+      await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "worker_session_materialized", {
+        summary: `Rebuilt ${materialized.provider} session ${rejectedSessionId} from the saved OmniHarness transcript.`,
+        incidentId: args.incidentId,
+        provider: materialized.provider,
+        sessionId: rejectedSessionId,
+        messageCount: materialized.messageCount,
+      });
+      spawned = await spawnAgent({
+        ...spawnParams,
+        resumeSessionId: rejectedSessionId,
+      }).catch(async (error: unknown) => {
+        await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "worker_session_materialized_resume_failed", {
+          summary: `Rebuilt session ${rejectedSessionId} still would not resume; falling back to a fresh worker.`,
+          incidentId: args.incidentId,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      }) as AgentRecord | null;
+    }
+  }
+
+  const resumedMaterializedSession = Boolean(spawned);
+  if (!spawned) {
+    await db.update(workers).set({
+      status: "starting",
+      bridgeSessionId: null,
+      bridgeSessionMode: null,
+      currentText: "",
+      updatedAt: new Date(),
+    }).where(eq(workers.id, args.worker.id));
+    spawned = await spawnAgent(spawnParams) as AgentRecord;
+  }
+
+  await db.update(workers).set({
+    status: spawned.state,
+    currentText: spawned.currentText,
+    lastText: spawned.lastText,
+    bridgeSessionId: spawned.sessionId ?? null,
+    bridgeSessionMode: spawned.sessionMode ?? args.worker.bridgeSessionMode ?? null,
+    updatedAt: new Date(),
+  }).where(eq(workers.id, args.worker.id));
+  emitNamedEvent({
+    kind: resumedMaterializedSession ? "worker.reattached" : "worker.recreated",
+    runId: args.run.id,
+    workerId: args.worker.id,
+  });
+  await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "worker_session_recreated", {
+    summary: resumedMaterializedSession
+      ? `Restored ${args.worker.id} from a session rebuilt out of the saved transcript.`
+      : `Started a fresh runtime worker for ${args.worker.id} after its saved session was lost.`,
+    incidentId: args.incidentId,
+    rejectedSessionId,
+    newSessionId: spawned.sessionId ?? null,
+    transcriptRestored: resumedMaterializedSession,
+    reason: "direct_queue_blocked",
+  });
+
+  // The blocked message is still `failed` with an agent-missing error. Put it
+  // back in the queue so the ordinary drain delivers it to the new worker;
+  // leaving it failed would recreate the worker and still lose the message.
+  const requeuedCount = args.preserveQueuedMessages
+    ? await requeueRecoverableQueuedMessages({ runId: args.run.id, workerId: args.worker.id })
+    : 0;
+  if (requeuedCount > 0) {
+    await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "queued_message_requeued", {
+      summary: `Requeued ${requeuedCount} blocked message(s) for ${args.worker.id}.`,
+      incidentId: args.incidentId,
+      requeuedCount,
+    });
+  }
+
+  await db.update(runs).set({
+    status: "running",
+    failedAt: null,
+    lastError: null,
+    updatedAt: new Date(),
+  }).where(eq(runs.id, args.run.id));
+  await markRecoveryIncidentResolved({
+    incidentId: args.incidentId,
+    runId: args.run.id,
+    workerId: args.worker.id,
+    summary: resumedMaterializedSession
+      ? `Restored ${args.worker.id} from its saved transcript.`
+      : `Replaced ${args.worker.id} with a fresh direct worker.`,
+    details: {
+      rejectedSessionId,
+      newSessionId: spawned.sessionId ?? null,
+      requeuedCount,
+      workerState: spawned.state,
+      transcriptRestored: resumedMaterializedSession,
+    },
+  });
+  return {
+    action: "restart_direct_worker" as const,
+    runId: args.run.id,
+    workerId: args.worker.id,
+    requeuedCount,
+  };
+}
+
 async function restartFromCheckpoint(args: {
   run: typeof runs.$inferSelect;
   workerId?: string | null;
@@ -525,6 +696,7 @@ export async function reconcileRunRecovery(args: {
   force?: boolean;
   source?: string;
 }) {
+  await assertRunNotHandoffFenced(args.runId);
   const { run, runWorkers, runMessages, runQueuedMessages } = await loadRunRecoveryInputs(args.runId);
   const state = classifyRunRecoveryState({
     run,
@@ -636,6 +808,23 @@ export async function reconcileRunRecovery(args: {
       return { ...result, recoveryState: state };
     }
 
+    if (decision.action === "restart_direct_worker") {
+      const worker = runWorkers.find((candidate) => candidate.id === state.workerId)
+        ?? runWorkers.slice().sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+      if (!worker) {
+        throw new Error("No direct worker is available to restart");
+      }
+      const result = await restartDirectWorker({
+        run,
+        worker,
+        state,
+        incidentId: incident.id,
+        preserveQueuedMessages: policy.preserveQueuedMessages,
+      });
+      notifyEventStreamSubscribers();
+      return { ...result, recoveryState: state };
+    }
+
     if (decision.action === "restart_from_checkpoint") {
       const result = await restartFromCheckpoint({
         run,
@@ -663,9 +852,44 @@ export async function reconcileRunRecovery(args: {
     return { action: "none" as const, runId: run.id, recoveryState: state };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
+    // The bridge rejects a dead session with wording the agent-missing matcher
+    // never covered ("Resource not found: <sessionId>"), so a resume that failed
+    // for exactly the reason recovery exists fell straight through to the user.
+    const savedSessionRejected = state.kind === "lost_worker_resumable"
+      && (isRecoverableAgentMissingError(reason) || isRejectedSavedSessionErrorMessage(reason));
+
+    if (savedSessionRejected && run.mode !== "implementation") {
+      // A direct run has no checkpoint to fall back to, so its only route back
+      // was the user — and Resume could not fix a session the provider has
+      // already deleted. Replace the worker instead, keeping the transcript.
+      const worker = runWorkers.find((candidate) => candidate.id === state.workerId);
+      if (worker) {
+        try {
+          const restartResult = await restartDirectWorker({
+            run,
+            worker,
+            state,
+            incidentId: incident.id,
+            preserveQueuedMessages: policy.preserveQueuedMessages,
+          });
+          notifyEventStreamSubscribers();
+          return { ...restartResult, recoveryState: state };
+        } catch (restartError) {
+          await markNeedsUser({
+            incidentId: incident.id,
+            runId: run.id,
+            workerId: state.workerId,
+            reason: restartError instanceof Error ? restartError.message : String(restartError),
+            state,
+          });
+          notifyEventStreamSubscribers();
+          return { action: "needs_user" as const, runId: run.id, recoveryState: state };
+        }
+      }
+    }
+
     if (
-      isRecoverableAgentMissingError(reason)
-      && state.kind === "lost_worker_resumable"
+      savedSessionRejected
       && run.mode === "implementation"
       && policy.restartFromCheckpointWhenSessionMissing
     ) {

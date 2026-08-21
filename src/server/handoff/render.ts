@@ -54,11 +54,11 @@ export function renderHandoffSeed(args: {
 }
 
 export const HANDOFF_REQUEST_PROMPT = (
-  "Your runtime has reported a quota exhaustion and you will be replaced by another agent. " +
-  "Stop work immediately. Reply with exactly one fenced block:\n\n" +
+  "Prepare a terse factual continuation report for another agent. " +
+  "Stop work immediately and reply with exactly one fenced block:\n\n" +
   "```omniharness-handoff\n" +
   "TASK: <one sentence describing what you were doing>\n" +
-  "PROGRESS: <what you have done — files touched, commits, test status>\n" +
+  "PROGRESS: <what you have done, including files touched, commits, and test status>\n" +
   "NEXT_STEPS: <what should be done next>\n" +
   "BLOCKERS: <known blockers, or \"none\">\n" +
   "OPEN_QUESTIONS: <questions for the next worker, or \"none\">\n" +

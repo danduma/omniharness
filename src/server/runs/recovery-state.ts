@@ -140,21 +140,49 @@ function findQueueBlockedMessage(
   )) ?? null;
 }
 
-export function classifyRunRecoveryState({
-  run,
-  workers,
-  liveAgents,
-  messages = [],
-  queuedMessages = [],
-  nowMs = Date.now(),
-}: {
+/**
+ * Find a worker holding a saved bridge session for a blocked queued message.
+ *
+ * The scan above only looks at workers whose row status is still "active".
+ * `markNeedsUser` parks a lost worker as `lost`, which is not an active status,
+ * so the act of asking the user for help removed the worker from the very scan
+ * that would have found its saved session on the next tick. The run then latched
+ * on `queue_blocked` forever, with a perfectly resumable session sitting unused
+ * in `workers.bridge_session_id`, and Resume was a no-op because it re-derived
+ * the same dead-end state. A saved session outranks a blocked queue regardless
+ * of what the worker row says.
+ */
+function findResumableWorkerForBlockedMessage(
+  runWorkers: RecoveryWorkerLike[],
+  blockedMessage: RecoveryQueuedMessageLike,
+) {
+  const hasSession = (worker: RecoveryWorkerLike) => Boolean(worker.bridgeSessionId?.trim());
+  const target = blockedMessage.targetWorkerId
+    ? runWorkers.find((worker) => worker.id === blockedMessage.targetWorkerId)
+    : null;
+  if (target) {
+    return hasSession(target) ? target : null;
+  }
+  return runWorkers.find(hasSession) ?? null;
+}
+
+type ClassifyRunRecoveryArgs = {
   run: RecoveryRunLike;
   workers: RecoveryWorkerLike[];
   liveAgents: RecoveryLiveAgentLike[];
   messages?: RecoveryMessageLike[];
   queuedMessages?: RecoveryQueuedMessageLike[];
   nowMs?: number;
-}): RecoveryState {
+};
+
+function classifyRunRecoveryEvidence({
+  run,
+  workers,
+  liveAgents,
+  messages = [],
+  queuedMessages = [],
+  nowMs = Date.now(),
+}: ClassifyRunRecoveryArgs): RecoveryState {
   const runStatus = normalizeStatus(run.status);
   if (runStatus === "recovering") {
     return {
@@ -162,15 +190,6 @@ export function classifyRunRecoveryState({
       status: "recovering",
       message: "Recovery is already in progress.",
       recommendedAction: "none",
-    };
-  }
-
-  if (runStatus === "needs_recovery") {
-    return {
-      kind: "needs_recovery",
-      status: "needs_user",
-      message: "This run needs manual recovery before it can continue.",
-      recommendedAction: "manual_resume",
     };
   }
 
@@ -244,6 +263,22 @@ export function classifyRunRecoveryState({
     };
   }
 
+  if (blockedMessage) {
+    const resumable = findResumableWorkerForBlockedMessage(runWorkers, blockedMessage);
+    if (resumable) {
+      return {
+        kind: "lost_worker_resumable",
+        status: "open",
+        message: "A queued message is blocked, but the worker has a saved session that can be resumed.",
+        recommendedAction: "resume_session",
+        workerId: resumable.id,
+        queuedMessageId: blockedMessage.id,
+        sessionId: resumable.bridgeSessionId?.trim() ?? null,
+        reason: blockedMessage.lastError,
+      };
+    }
+  }
+
   if (blockedMessage && run.mode !== "implementation") {
     return {
       kind: "queue_blocked",
@@ -273,5 +308,30 @@ export function classifyRunRecoveryState({
     status: "none",
     message: "Run has no recovery issue.",
     recommendedAction: "none",
+  };
+}
+
+export function classifyRunRecoveryState(args: ClassifyRunRecoveryArgs): RecoveryState {
+  const state = classifyRunRecoveryEvidence(args);
+  if (normalizeStatus(args.run.status) !== "needs_recovery") {
+    return state;
+  }
+
+  // A saved bridge session outranks the `needs_recovery` stamp. Returning
+  // `needs_recovery` before looking at the workers made the status self-sealing:
+  // `setRunNeedsRecovery` stamped the run and parked its worker as `lost`, and
+  // from then on no tick could see the session that would have resumed it — so
+  // Resume re-derived `needs_recovery` and did nothing, forever. Everything
+  // else still parks for the user, because a checkpoint restart has side
+  // effects the user may have parked the run to avoid.
+  if (state.kind === "lost_worker_resumable" && state.sessionId) {
+    return state;
+  }
+
+  return {
+    kind: "needs_recovery",
+    status: "needs_user",
+    message: "This run needs manual recovery before it can continue.",
+    recommendedAction: "manual_resume",
   };
 }

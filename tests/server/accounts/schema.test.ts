@@ -34,6 +34,14 @@ describe("account inventory schema", () => {
       status: "healthy",
       statusCheckedAt: now,
       metadataJson: JSON.stringify({ emailHash: "hash-only" }),
+      lifecycleOperationId: "operation-secret",
+      lifecycleOperationKind: "login",
+      lifecycleOperationOwner: "runner-secret",
+      lifecycleOperationStartedAt: now,
+      lifecycleOperationDeadlineAt: new Date(now.getTime() + 60_000),
+      lifecycleOperationErrorCode: null,
+      lifecyclePreviousStatus: "unknown",
+      lifecyclePreviousEnabled: false,
       createdAt: now,
       updatedAt: now,
     });
@@ -49,6 +57,11 @@ describe("account inventory schema", () => {
       enabled: true,
       priority: 3,
       status: "healthy",
+      lifecycleOperationId: "operation-secret",
+      lifecycleOperationKind: "login",
+      lifecycleOperationOwner: "runner-secret",
+      lifecyclePreviousStatus: "unknown",
+      lifecyclePreviousEnabled: false,
     });
 
     const dto = toAccountDto(row!);
@@ -65,6 +78,10 @@ describe("account inventory schema", () => {
     expect(JSON.stringify(dto)).not.toContain("cli-home:work-codex");
     expect(dto).not.toHaveProperty("authRef");
     expect(dto).not.toHaveProperty("metadataJson");
+    expect(dto).not.toHaveProperty("lifecycleOperationId");
+    expect(dto).not.toHaveProperty("lifecycleOperationOwner");
+    expect(JSON.stringify(dto)).not.toContain("operation-secret");
+    expect(JSON.stringify(dto)).not.toContain("runner-secret");
   });
 
   it("persists run account preference, secrets, allocations, usage rows, and usage snapshots", async () => {
