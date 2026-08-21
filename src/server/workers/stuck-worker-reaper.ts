@@ -16,7 +16,7 @@
  * re-deliver the last user message that has no follow-up response. The
  * user sees activity resume on its own.
  */
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
 import { messages, runs, workers } from "@/server/db/schema";
 import { askAgent, cancelAgent, getAgent, type AgentRecord } from "@/server/bridge-client";
@@ -32,6 +32,13 @@ import {
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { closeStaleHumanInputEntries } from "@/server/workers/human-input-entries";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
+import { emitNamedEvent } from "@/server/events/named-events";
+import { persistRunFailure } from "@/server/runs/failures";
+import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
+import {
+  isWorkerTurnAbortedError,
+  isWorkerTurnSupersededError,
+} from "@/server/conversations/worker-turn-gate";
 
 const DEFAULT_STUCK_TIMEOUT_MS = 5 * 60_000;
 const DIRECT_MODE_NAMES = ["direct"];
@@ -108,24 +115,38 @@ function bridgeHasOpenHumanInput(liveAgent: AgentRecord) {
 async function persistRedeliveredTurnResult(args: {
   worker: typeof workers.$inferSelect;
   responseText: string | null | undefined;
-}) {
+  turnGeneration: number;
+}): Promise<boolean> {
   const workerAfter = await db
     .select()
     .from(workers)
     .where(eq(workers.id, args.worker.id))
     .get();
-  if (!workerAfter || ["cancelled", "canceled"].includes(normalizeStatus(workerAfter.status))) {
-    return;
+  if (
+    !workerAfter
+    || workerAfter.turnGeneration !== args.turnGeneration
+    || ["cancelled", "canceled"].includes(normalizeStatus(workerAfter.status))
+  ) {
+    return false;
   }
 
   const snapshot = await readLiveAgent(args.worker.id);
   if (snapshot) {
-    await persistWorkerSnapshot(args.worker.id, snapshot);
+    await persistWorkerSnapshot(args.worker.id, snapshot, {
+      expectedTurnGeneration: args.turnGeneration,
+    });
   }
-  await db.update(workers).set({
+  const updated = await db.update(workers).set({
     status: snapshot?.state ?? "idle",
     updatedAt: new Date(),
-  }).where(eq(workers.id, args.worker.id));
+  }).where(and(
+    eq(workers.id, args.worker.id),
+    eq(workers.turnGeneration, args.turnGeneration),
+    eq(workers.status, "working"),
+  )).returning({ id: workers.id });
+  if (updated.length === 0) {
+    return false;
+  }
   await updateDirectRunStatusFromWorkerOutput({
     runId: args.worker.runId,
     workerId: args.worker.id,
@@ -137,6 +158,119 @@ async function persistRedeliveredTurnResult(args: {
     outputEntries: snapshot?.outputEntries,
     pendingPermissions: snapshot?.pendingPermissions,
     pendingElicitations: snapshot?.pendingElicitations,
+  });
+  return true;
+}
+
+async function claimRecoveredRedelivery(args: {
+  run: typeof runs.$inferSelect;
+  worker: typeof workers.$inferSelect;
+  idleMs: number;
+  messageId: string;
+}): Promise<{ turnGeneration: number } | null> {
+  return runQuotaRecoveryMutation(args.run.id, async () => {
+    const currentRun = await db.select().from(runs).where(eq(runs.id, args.run.id)).get();
+    const currentWorker = await db.select().from(workers).where(eq(workers.id, args.worker.id)).get();
+    const runStatus = normalizeStatus(currentRun?.status);
+    if (
+      !currentRun
+      || !currentWorker
+      || currentRun.archivedAt
+      || ["cancelled", "canceled"].includes(runStatus)
+      || ["cancelled", "canceled"].includes(normalizeStatus(currentWorker.status))
+      || currentWorker.turnGeneration !== args.worker.turnGeneration
+    ) {
+      emitNamedEvent({
+        kind: "worker.recovery_continuation_superseded",
+        runId: args.run.id,
+        workerId: args.worker.id,
+      });
+      return null;
+    }
+
+    const now = new Date();
+    const updatedWorker = await db.update(workers).set({
+      status: "working",
+      updatedAt: now,
+    }).where(and(
+      eq(workers.id, args.worker.id),
+      eq(workers.turnGeneration, currentWorker.turnGeneration),
+    )).returning({ id: workers.id });
+    if (updatedWorker.length === 0) {
+      emitNamedEvent({
+        kind: "worker.recovery_continuation_superseded",
+        runId: args.run.id,
+        workerId: args.worker.id,
+      });
+      return null;
+    }
+
+    await db.update(runs).set({
+      status: "running",
+      failedAt: null,
+      lastError: null,
+      updatedAt: now,
+    }).where(eq(runs.id, args.run.id));
+    if (normalizeStatus(currentWorker.status) !== "working") {
+      emitNamedEvent({
+        kind: "worker.status",
+        runId: args.run.id,
+        workerId: args.worker.id,
+        prev: currentWorker.status,
+        next: "working",
+      });
+    }
+    emitNamedEvent({
+      kind: "worker.recovery_continuation_started",
+      runId: args.run.id,
+      workerId: args.worker.id,
+    });
+    await recordExecutionEvent({
+      runId: args.run.id,
+      workerId: args.worker.id,
+      planItemId: null,
+      eventType: "recovery_continuation_started",
+      details: {
+        summary: `Continuing the interrupted turn for ${args.worker.id}.`,
+        idleSeconds: Math.round(args.idleMs / 1000),
+        redeliveredMessageId: args.messageId,
+      },
+    });
+    notifyEventStreamSubscribers();
+    return { turnGeneration: currentWorker.turnGeneration };
+  });
+}
+
+async function persistRecoveredRedeliveryFailure(args: {
+  runId: string;
+  workerId: string;
+  turnGeneration: number;
+  error: unknown;
+}): Promise<boolean> {
+  return runQuotaRecoveryMutation(args.runId, async () => {
+    const currentRun = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
+    if (!currentRun || ["cancelled", "canceled"].includes(normalizeStatus(currentRun.status))) {
+      return false;
+    }
+    const updated = await db.update(workers).set({
+      status: "error",
+      updatedAt: new Date(),
+    }).where(and(
+      eq(workers.id, args.workerId),
+      eq(workers.turnGeneration, args.turnGeneration),
+      eq(workers.status, "working"),
+    )).returning({ id: workers.id });
+    if (updated.length === 0) {
+      return false;
+    }
+    await persistRunFailure(args.runId, args.error, {
+      surface: {
+        code: "worker.resume.failed",
+        surface: "banner",
+        workerId: args.workerId,
+      },
+    });
+    return true;
   });
 }
 
@@ -334,16 +468,48 @@ export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<Re
           .get();
         const content = userMessage?.content?.trim();
         if (content) {
+          const claim = await claimRecoveredRedelivery({
+            run,
+            worker,
+            idleMs,
+            messageId: lastUserInputId,
+          });
+          if (!claim) {
+            skipped++;
+            notifyEventStreamSubscribers();
+            continue;
+          }
           try {
-            const response = await askAgent(worker.id, content);
+            const response = await askAgent(
+              worker.id,
+              content,
+              undefined,
+              { expectedTurnGeneration: claim.turnGeneration },
+            );
             // Persist the redelivered turn's outcome. Without this, the
             // worker row stayed 'working' after the turn completed and the
             // next sweep re-reaped (and re-ran) the same prompt forever.
-            await persistRedeliveredTurnResult({
+            const persisted = await persistRedeliveredTurnResult({
               worker,
               responseText: response.response ?? null,
+              turnGeneration: claim.turnGeneration,
             });
+            if (!persisted) {
+              emitNamedEvent({
+                kind: "worker.recovery_continuation_superseded",
+                runId: worker.runId,
+                workerId: worker.id,
+              });
+              skipped++;
+              notifyEventStreamSubscribers();
+              continue;
+            }
             recovered++;
+            emitNamedEvent({
+              kind: "worker.recovery_continuation_completed",
+              runId: worker.runId,
+              workerId: worker.id,
+            });
             await recordExecutionEvent({
               runId: worker.runId,
               workerId: worker.id,
@@ -358,10 +524,32 @@ export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<Re
             notifyEventStreamSubscribers();
             continue;
           } catch (error) {
-            await db.update(workers).set({
-              status: "error",
-              updatedAt: new Date(),
-            }).where(eq(workers.id, worker.id));
+            if (isWorkerTurnSupersededError(error) || isWorkerTurnAbortedError(error)) {
+              emitNamedEvent({
+                kind: "worker.recovery_continuation_superseded",
+                runId: worker.runId,
+                workerId: worker.id,
+              });
+              skipped++;
+              notifyEventStreamSubscribers();
+              continue;
+            }
+            const failed = await persistRecoveredRedeliveryFailure({
+              runId: worker.runId,
+              workerId: worker.id,
+              turnGeneration: claim.turnGeneration,
+              error,
+            });
+            if (!failed) {
+              emitNamedEvent({
+                kind: "worker.recovery_continuation_superseded",
+                runId: worker.runId,
+                workerId: worker.id,
+              });
+              skipped++;
+              notifyEventStreamSubscribers();
+              continue;
+            }
             await recordExecutionEvent({
               runId: worker.runId,
               workerId: worker.id,

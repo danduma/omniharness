@@ -4,6 +4,10 @@ import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { messages, plans, runs, workers } from "@/server/db/schema";
 import {
+  __resetNamedEventsForTests,
+  getNamedEventsSince,
+} from "@/server/events/named-events";
+import {
   __resetOutputStoreCachesForTests,
   readWorkerOutputEntries,
   writeWorkerOutputEntries,
@@ -109,6 +113,7 @@ async function writeUserInputEntry(runId: string, workerId: string, opts: {
 
 beforeEach(() => {
   __resetOutputStoreCachesForTests();
+  __resetNamedEventsForTests();
   mockAskAgent.mockReset();
   mockCancelAgent.mockReset();
   mockSpawnAgent.mockReset();
@@ -156,7 +161,124 @@ describe("reapStuckDirectWorkers", () => {
     }
     expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
     expect(mockResumeMissingDirectWorker).toHaveBeenCalledTimes(1);
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "continue");
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      workerId,
+      "continue",
+      undefined,
+      { expectedTurnGeneration: 0 },
+    );
+  });
+
+  it("persists the recovered turn as active before awaiting the re-delivered prompt", async () => {
+    const TEN_MIN_AGO = new Date(Date.now() - 10 * 60_000);
+    const { runId, workerId } = await setupRun({
+      mode: "direct",
+      workerStatus: "working",
+      workerUpdatedAt: TEN_MIN_AGO,
+    });
+
+    const userMessageId = randomUUID();
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "continue",
+      createdAt: TEN_MIN_AGO,
+    });
+    await writeUserInputEntry(runId, workerId, {
+      id: userMessageId,
+      text: "continue",
+      timestamp: TEN_MIN_AGO,
+    });
+
+    mockCancelAgent.mockResolvedValue({ ok: true });
+    mockResumeMissingDirectWorker.mockImplementation(async () => {
+      // Reproduce the real resume result from 054dc5ddea78: the recovered
+      // bridge agent is idle, so reconciliation temporarily settles both rows
+      // before the reaper re-delivers the interrupted prompt.
+      await db.update(workers).set({ status: "idle" }).where(eq(workers.id, workerId));
+      await db.update(runs).set({ status: "done" }).where(eq(runs.id, runId));
+      return { name: workerId, state: "idle" };
+    });
+
+    let resolveAsk!: (value: { response: string; state: string }) => void;
+    let markAskStarted!: () => void;
+    const askStarted = new Promise<void>((resolve) => {
+      markAskStarted = resolve;
+    });
+    const askResult = new Promise<{ response: string; state: string }>((resolve) => {
+      resolveAsk = resolve;
+    });
+    mockAskAgent.mockImplementation(async () => {
+      markAskStarted();
+      return askResult;
+    });
+
+    const sweep = reapStuckDirectWorkers();
+    await askStarted;
+    const workerWhileAsking = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const runWhileAsking = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const eventKindsWhileAsking = getNamedEventsSince(null, { runId })
+      .events
+      .map((entry) => entry.event.kind);
+
+    resolveAsk({ response: "finished", state: "idle" });
+    await sweep;
+
+    expect(workerWhileAsking?.status).toBe("working");
+    expect(runWhileAsking?.status).toBe("running");
+    expect(eventKindsWhileAsking).toContain("worker.recovery_continuation_started");
+  });
+
+  it("fails the run visibly when a recovered prompt cannot be re-delivered", async () => {
+    const TEN_MIN_AGO = new Date(Date.now() - 10 * 60_000);
+    const { runId, workerId } = await setupRun({
+      mode: "direct",
+      workerStatus: "working",
+      workerUpdatedAt: TEN_MIN_AGO,
+    });
+
+    const userMessageId = randomUUID();
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "continue",
+      createdAt: TEN_MIN_AGO,
+    });
+    await writeUserInputEntry(runId, workerId, {
+      id: userMessageId,
+      text: "continue",
+      timestamp: TEN_MIN_AGO,
+    });
+
+    mockCancelAgent.mockResolvedValue({ ok: true });
+    mockResumeMissingDirectWorker.mockImplementation(async () => {
+      await db.update(workers).set({ status: "idle" }).where(eq(workers.id, workerId));
+      await db.update(runs).set({ status: "done" }).where(eq(runs.id, runId));
+      return { name: workerId, state: "idle" };
+    });
+    mockAskAgent.mockRejectedValue(new Error("bridge disconnected during recovered turn"));
+
+    const outcome = await reapStuckDirectWorkers();
+
+    expect(outcome.ok).toBe(true);
+    const workerAfter = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const runAfter = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(workerAfter?.status).toBe("error");
+    expect(runAfter?.status).toBe("failed");
+    expect(runAfter?.lastError).toContain("bridge disconnected during recovered turn");
+    const surfaced = getNamedEventsSince(null, { runId }).events
+      .find((entry) => entry.event.kind === "error.surfaced");
+    expect(surfaced?.event).toMatchObject({
+      kind: "error.surfaced",
+      code: "worker.resume.failed",
+      surface: "banner",
+      runId,
+      workerId,
+    });
   });
 
   it("does not touch workers whose stream activity is recent", async () => {
@@ -365,7 +487,12 @@ describe("reapStuckDirectWorkers", () => {
 
     expect(outcome.ok).toBe(true);
     expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "continue");
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      workerId,
+      "continue",
+      undefined,
+      { expectedTurnGeneration: 0 },
+    );
   });
 
   it("leaves a worker alone when only the live bridge snapshot knows about the pending question", async () => {
@@ -632,7 +759,12 @@ describe("reapStuckDirectWorkers", () => {
     }
     expect(mockCancelAgent).not.toHaveBeenCalled();
     expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "continue");
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      workerId,
+      "continue",
+      undefined,
+      { expectedTurnGeneration: 0 },
+    );
   });
 
   it("respects OMNIHARNESS_WORKER_STUCK_TIMEOUT_MS override", async () => {
@@ -681,7 +813,12 @@ describe("reapStuckDirectWorkers", () => {
       // resolved, so the worker must not stay "working" (that's what caused
       // the endless re-reap loop) nor stay at the transient "stuck".
       expect(after?.status).toBe("idle");
-      expect(mockAskAgent).toHaveBeenCalledWith(workerId, "continue");
+      expect(mockAskAgent).toHaveBeenCalledWith(
+        workerId,
+        "continue",
+        undefined,
+        { expectedTurnGeneration: 0 },
+      );
     } finally {
       if (prev === undefined) delete process.env.OMNIHARNESS_WORKER_STUCK_TIMEOUT_MS;
       else process.env.OMNIHARNESS_WORKER_STUCK_TIMEOUT_MS = prev;
