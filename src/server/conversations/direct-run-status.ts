@@ -115,6 +115,7 @@ export function directWorkerOutputHasPendingHumanInput(source: WorkerOutputSourc
 
 // Trailing "?", tolerating closing quotes/brackets and trailing punctuation.
 const QUESTION_TAIL_PATTERN = /\?["'”’)\]]*[.\s]*$/;
+const OPTIONAL_FOLLOW_UP_OFFER_PATTERN = /(?:^|[.!]\s+)(?:do you want me to|would you like me to|want me to)\b[^?]*\?["'”’)\]]*[.\s]*$/i;
 
 function endsWithQuestion(text: string) {
   const lastLine = text
@@ -124,6 +125,16 @@ function endsWithQuestion(text: string) {
     .filter(Boolean)
     .at(-1);
   return Boolean(lastLine && QUESTION_TAIL_PATTERN.test(lastLine));
+}
+
+function endsWithOptionalFollowUpOffer(text: string) {
+  const lastLine = text
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1);
+  return Boolean(lastLine && OPTIONAL_FOLLOW_UP_OFFER_PATTERN.test(lastLine));
 }
 
 /**
@@ -142,7 +153,7 @@ export function directWorkerOutputAsksBlockingQuestion(source: WorkerOutputSourc
     latestVisibleEntryText(parseOutputEntriesJson(source.outputEntriesJson)),
   ]);
 
-  return endsWithQuestion(latestText);
+  return endsWithQuestion(latestText) && !endsWithOptionalFollowUpOffer(latestText);
 }
 
 export function resolveDirectRunStatusFromWorkerOutput(source: WorkerOutputSource) {
