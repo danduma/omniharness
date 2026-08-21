@@ -117,23 +117,22 @@ export function directWorkerOutputHasPendingHumanInput(source: WorkerOutputSourc
 const QUESTION_TAIL_PATTERN = /\?["'”’)\]]*[.\s]*$/;
 const OPTIONAL_FOLLOW_UP_OFFER_PATTERN = /(?:^|[.!]\s+)(?:do you want me to|would you like me to|want me to)\b[^?]*\?["'”’)\]]*[.\s]*$/i;
 
-function endsWithQuestion(text: string) {
-  const lastLine = text
+function lastNonEmptyLine(text: string) {
+  return text
     .trim()
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
     .at(-1);
+}
+
+function endsWithQuestion(text: string) {
+  const lastLine = lastNonEmptyLine(text);
   return Boolean(lastLine && QUESTION_TAIL_PATTERN.test(lastLine));
 }
 
 function endsWithOptionalFollowUpOffer(text: string) {
-  const lastLine = text
-    .trim()
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .at(-1);
+  const lastLine = lastNonEmptyLine(text);
   return Boolean(lastLine && OPTIONAL_FOLLOW_UP_OFFER_PATTERN.test(lastLine));
 }
 
