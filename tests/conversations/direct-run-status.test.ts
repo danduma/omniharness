@@ -127,14 +127,16 @@ describe("directWorkerOutputHasPendingHumanInput", () => {
   it("completes an idle direct worker after an optional post-completion offer", () => {
     expect(resolveDirectRunStatusFromWorkerOutput({
       workerStatus: "idle",
-      outputEntries: [{
-        type: "message",
-        text: [
-          "Both fixes are in, and the focused tests pass.",
-          "The runner still needs a restart before the earlier session picks up the change.",
-          "Want me to restart the runner?",
-        ].join("\n"),
-      }],
+      outputEntries: [
+        {
+          type: "message",
+          text: "Both fixes are in, and the focused tests pass.",
+        },
+        {
+          type: "message",
+          text: " a restart, cancel and resend in the UI. Want me to restart the runner?",
+        },
+      ],
     })).toBe("done");
   });
 
