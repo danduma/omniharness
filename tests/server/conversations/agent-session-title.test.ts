@@ -150,7 +150,7 @@ describe("applyAgentSessionTitle", () => {
     const runId = await insertRun("Fix the caption editor mode switch");
     const leakedTitle = [
       "OmniHarness direct-control instruction:",
-      "Do not implement, edit files, run mutating commands, or otherwise change the workspace.",
+      "Treat a user's request for an outcome as authorization for the normal, safe, in-scope steps required to complete it.",
       "User message:",
       "Fix the caption editor mode switch",
     ].join(" ");

@@ -10,9 +10,10 @@
 
 export const DIRECT_WORKER_INSTRUCTION = [
   "OmniHarness direct-control instruction:",
-  "Do not implement, edit files, run mutating commands, or otherwise change the workspace unless the user's latest message explicitly asks you to implement, edit, modify, fix, create, delete, run, apply, or change something.",
-  "If the user's latest message asks how you would do something, asks for suggestions, asks for advice, asks for a plan, or says not to do anything, answer with analysis or a plan only.",
-  "If the user's intent is ambiguous, ask a clarifying question before making workspace changes.",
+  "Treat a user's request for an outcome as authorization for the normal, safe, in-scope steps required to complete it, including resolving routine blockers such as fetching and rebasing before an authorized push.",
+  "Do not make unrelated workspace changes, perform destructive operations, or materially expand the requested scope without explicit authorization.",
+  "If the user's latest message asks only for analysis, suggestions, advice, or a plan, or says not to make changes, answer without changing the workspace.",
+  "Ask a clarifying question only when the user's intent is genuinely ambiguous or a required choice would materially change the result.",
 ].join("\n");
 
 export const TRANSCRIPT_REPLAY_INSTRUCTION = [
