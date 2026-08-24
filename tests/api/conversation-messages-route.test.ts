@@ -1528,7 +1528,7 @@ describe("POST /api/conversations/[id]/messages", () => {
     });
     expect(mockAskAgent).toHaveBeenCalledWith(
       workerId,
-      expect.stringContaining("Do not implement, edit files, run mutating commands, or otherwise change the workspace unless the user's latest message explicitly asks you to implement, edit, modify, fix, create, delete, run, apply, or change something."),
+      expect.stringContaining("Treat a user's request for an outcome as authorization for the normal, safe, in-scope steps required to complete it"),
       undefined,
       { expectedTurnGeneration: 0 },
     );
