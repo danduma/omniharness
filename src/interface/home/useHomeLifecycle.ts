@@ -14,8 +14,10 @@ import {
   getDefaultWorkersSidebarWidth,
   WORKER_OPTIONS,
 } from "./constants";
+import { composerDraftPersistence } from "./ComposerDraftPersistence";
 import { conversationNotificationManager } from "./ConversationNotificationManager";
 import { claudeModelGatewayManager } from "./ClaudeModelGatewayManager";
+import { homeUiStateManager } from "./HomeUiStateManager";
 import { LiveEventConnectionManager, LiveEventCursorManager } from "./LiveEventConnectionManager";
 import { acpPlanManager } from "./AcpPlanManager";
 import { goalPlanManager } from "./GoalPlanManager";
@@ -283,6 +285,15 @@ export function useHomeLifecycle({
     setSelectedModel,
     setSelectedRunId,
   ]);
+
+  // Declared after the route effect so the run selection is already settled and
+  // the restored draft lands on the conversation the user is actually looking
+  // at. Reads the manager directly because the persisted snapshot must reflect
+  // the composer at teardown, not at the last render.
+  useEffect(() => {
+    composerDraftPersistence.hydrate(homeUiStateManager);
+    return composerDraftPersistence.attach(homeUiStateManager);
+  }, []);
 
   useEffect(() => {
     if (!routeReady || !authEnabled || authConfigurationError || appUnlocked || !pairTokenFromUrl || redeemPairMutation.isPending || pairRedeemAttempted) {
