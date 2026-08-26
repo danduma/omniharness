@@ -5,6 +5,7 @@ import os from "os";
 import path from "path";
 import { promisify } from "util";
 import { TRANSCRIPT_REPLAY_INSTRUCTION } from "@/server/conversations/harness-prompt-preambles";
+import { readVisibleConversationTranscript } from "@/server/conversations/visible-transcript";
 import { isBridgeOutputEntry, type WorkerEntry } from "@/server/workers/entries-types";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
 
@@ -59,14 +60,9 @@ function formatTranscriptEntry(entry: WorkerEntry) {
   return `${entry.type}: ${text}`;
 }
 
-export async function buildTranscriptReplayPrompt(args: {
-  runId: string;
-  workerId: string;
-  nextUserPrompt: string;
-}) {
-  const entries = await readWorkerOutputEntries(args.runId, args.workerId);
+function renderTranscriptReplayPrompt(entries: WorkerEntry[], nextUserPrompt: string) {
   const transcript = entries
-    .map((entry) => formatTranscriptEntry(entry as WorkerEntry))
+    .map((entry) => formatTranscriptEntry(entry))
     .filter((line): line is string => Boolean(line))
     .join("\n\n");
   const trimmedTranscript = transcript.length > MAX_TRANSCRIPT_REPLAY_CHARS
@@ -80,8 +76,41 @@ export async function buildTranscriptReplayPrompt(args: {
     trimmedTranscript || "(No transcript text was captured.)",
     "",
     "Next user prompt:",
-    args.nextUserPrompt,
+    nextUserPrompt,
   ].join("\n");
+}
+
+export async function buildTranscriptReplayPrompt(args: {
+  runId: string;
+  workerId: string;
+  nextUserPrompt: string;
+}) {
+  const entries = await readWorkerOutputEntries(args.runId, args.workerId);
+  return renderTranscriptReplayPrompt(entries as WorkerEntry[], args.nextUserPrompt);
+}
+
+/**
+ * Rebuild provider context for an edited checkpoint from the same run-wide,
+ * branch-aware transcript the conversation UI renders. A conversation can
+ * span several worker JSONLs after cancellation and recreation, so reading a
+ * single worker would silently lose still-visible history from earlier ones.
+ */
+export async function buildConversationTranscriptReplayPromptBeforeEntry(args: {
+  runId: string;
+  targetEntryId: string;
+  nextUserPrompt: string;
+}) {
+  const { entries } = await readVisibleConversationTranscript(args.runId);
+  const targetIndex = entries.findIndex((entry) => entry.id === args.targetEntryId);
+  if (targetIndex < 0) {
+    return null;
+  }
+  const prefix = entries.slice(0, targetIndex);
+  return {
+    prompt: renderTranscriptReplayPrompt(prefix, args.nextUserPrompt),
+    targetWorkerId: entries[targetIndex]?.workerId ?? null,
+    sourceWorkerIds: [...new Set(prefix.map((entry) => entry.workerId))],
+  };
 }
 
 export function parseGeminiSearchedChatsDir(value: string | null | undefined) {

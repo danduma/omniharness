@@ -15,6 +15,7 @@ import {
   shouldIndex,
 } from "@/server/artifacts/stream-index";
 import { emitNamedEvent } from "@/server/events/named-events";
+import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import type {
   WorkerEntry,
 } from "@/server/workers/entries-types";
@@ -551,6 +552,60 @@ function runOnChain<T>(runId: string, workerId: string, task: () => Promise<T>):
   });
 }
 
+/**
+ * Serialize a worker-state fence with every append to that worker's JSONL.
+ * Rewinds advance the turn generation through this boundary, so provider
+ * output that was already queued either lands before the rewind calculates
+ * its superseded range or observes the newer generation and is rejected.
+ */
+export function withWorkerOutputWriteFence<T>(
+  runId: string,
+  workerId: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  return runOnChain(runId, workerId, () => withWorkerFileLock(runId, workerId, task));
+}
+
+async function readWorkerTurnGenerationMatch(workerId: string, expectedTurnGeneration?: number) {
+  if (expectedTurnGeneration === undefined) {
+    return { matches: true, currentTurnGeneration: null };
+  }
+  const [{ db }, { workers: workersTable }] = await Promise.all([
+    import("@/server/db"),
+    import("@/server/db/schema"),
+  ]);
+  const worker = await db.select({ turnGeneration: workersTable.turnGeneration })
+    .from(workersTable)
+    .where(eq(workersTable.id, workerId))
+    .get();
+  return {
+    matches: worker?.turnGeneration === expectedTurnGeneration,
+    currentTurnGeneration: worker?.turnGeneration ?? null,
+  };
+}
+
+async function recordStaleWorkerOutputIgnored(args: {
+  runId: string;
+  workerId: string;
+  expectedTurnGeneration: number;
+  currentTurnGeneration: number | null;
+  source: "entry_append" | "snapshot_batch";
+}) {
+  emitNamedEvent({ kind: "worker.stale_output_ignored", ...args });
+  await recordExecutionEvent({
+    runId: args.runId,
+    workerId: args.workerId,
+    planItemId: null,
+    eventType: "stale_worker_output_ignored",
+    details: {
+      summary: `Ignored stale ${args.source === "snapshot_batch" ? "provider snapshot" : "worker entry"} output from ${args.workerId}.`,
+      expectedTurnGeneration: args.expectedTurnGeneration,
+      currentTurnGeneration: args.currentTurnGeneration,
+      source: args.source,
+    },
+  });
+}
+
 function clearChainCaches(runId: string, workerId: string) {
   const key = chainKey(runId, workerId);
   nextSeqByKey.delete(key);
@@ -1028,15 +1083,32 @@ async function setStreamCursor(
 export type AppendWorkerEntryResult = {
   entry: WorkerEntry;
   appended: boolean;
+  rejectedReason?: "turn_generation_changed";
 };
 
 export async function appendWorkerEntryWithResult(
   runId: string,
   workerId: string,
   entry: Omit<WorkerEntry, "seq">,
+  options: { expectedTurnGeneration?: number } = {},
 ): Promise<AppendWorkerEntryResult> {
   return runOnChain(runId, workerId, async () => {
     return withWorkerFileLock(runId, workerId, async (paths) => {
+      const generation = await readWorkerTurnGenerationMatch(workerId, options.expectedTurnGeneration);
+      if (!generation.matches) {
+        await recordStaleWorkerOutputIgnored({
+          runId,
+          workerId,
+          expectedTurnGeneration: options.expectedTurnGeneration!,
+          currentTurnGeneration: generation.currentTurnGeneration,
+          source: "entry_append",
+        });
+        return {
+          entry: { ...(entry as WorkerEntry), seq: 0 },
+          appended: false,
+          rejectedReason: "turn_generation_changed" as const,
+        };
+      }
       // If a compaction race somehow stranded the plaintext file under .gz,
       // expand it first so cache refresh sees the live transcript rather
       // than the lock-created empty placeholder.
@@ -1136,13 +1208,25 @@ export async function writeWorkerOutputEntries(
   runId: string,
   workerId: string,
   entries: AgentRecord["outputEntries"],
+  options: { expectedTurnGeneration?: number } = {},
 ) {
   if (!Array.isArray(entries) || entries.length === 0) {
-    return;
+    return true;
   }
 
-  await runOnChain(runId, workerId, async () => {
-    await withWorkerFileLock(runId, workerId, async (paths) => {
+  return runOnChain(runId, workerId, async () => {
+    return withWorkerFileLock(runId, workerId, async (paths) => {
+      const generation = await readWorkerTurnGenerationMatch(workerId, options.expectedTurnGeneration);
+      if (!generation.matches) {
+        await recordStaleWorkerOutputIgnored({
+          runId,
+          workerId,
+          expectedTurnGeneration: options.expectedTurnGeneration!,
+          currentTurnGeneration: generation.currentTurnGeneration,
+          source: "snapshot_batch",
+        });
+        return false;
+      }
       await expandWorkerOutputFileInternal(paths);
       // Never resume numbering above a head that isn't on disk.
       await healStrandedStreamHead(runId, workerId, paths);
@@ -1184,7 +1268,7 @@ export async function writeWorkerOutputEntries(
         newEntries.push(entry);
       }
       if (newEntries.length === 0) {
-        return;
+        return true;
       }
 
       const key = chainKey(runId, workerId);
@@ -1255,6 +1339,7 @@ export async function writeWorkerOutputEntries(
           seq: highestAppendedSeq,
         });
       }
+      return true;
     });
   });
 }

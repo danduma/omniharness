@@ -12,7 +12,11 @@ import { isTerminalRunStatus } from "@/server/runs/status";
 import { isLongWorkerCompletionText } from "@/server/supervisor/worker-completion";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { isRecoverableConnectionSupervisorError, isTransientSupervisorError } from "@/server/supervisor/retry";
-import { readWorkerOutputEntries, writeWorkerOutputEntries } from "@/server/workers/output-store";
+import {
+  readWorkerOutputEntries,
+  withWorkerOutputWriteFence,
+  writeWorkerOutputEntries,
+} from "@/server/workers/output-store";
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
 import { resolveRecoveryIncidentsDisprovedByActiveWork } from "@/server/runs/recovery-incidents";
 import {
@@ -454,11 +458,19 @@ async function clearStaleDirectCurrentText(run: typeof runs.$inferSelect, worker
     return false;
   }
 
-  await withSqliteBusyRetry(() => db.update(workers).set({
-    currentText: "",
-    lastText: worker.lastText || worker.currentText,
-    updatedAt: new Date(),
-  }).where(eq(workers.id, worker.id)));
+  const cleared = await withWorkerOutputWriteFence(run.id, worker.id, () => (
+    withSqliteBusyRetry(() => db.update(workers).set({
+      currentText: "",
+      lastText: worker.lastText || worker.currentText,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(workers.id, worker.id),
+      eq(workers.turnGeneration, worker.turnGeneration),
+    )).returning({ id: workers.id }).get())
+  ));
+  if (!cleared) {
+    return true;
+  }
   notifyEventStreamSubscribers();
   return true;
 }
@@ -765,21 +777,36 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
       && worker.status.trim().toLowerCase().split(":")[0]?.trim() === "idle"
       && isIdleLiveAgentWithoutOutput(agent)
     ) {
-      await withSqliteBusyRetry(() => db.update(workers).set({
-        status: "error",
-        cwd: agent.cwd || worker.cwd,
-        currentText: agent.currentText,
-        lastText: agent.lastText,
-        outputLog: EMPTY_IDLE_WORKER_OUTPUT_DIAGNOSTIC,
-        updatedAt: new Date(),
-      }).where(eq(workers.id, worker.id)));
-      await persistRunFailure(run.id, new Error(EMPTY_IDLE_WORKER_OUTPUT_DIAGNOSTIC), {
-        surface: { code: "worker.idle.empty_output", workerId: worker.id },
+      await withWorkerOutputWriteFence(run.id, worker.id, async () => {
+        const failedWorker = await withSqliteBusyRetry(() => db.update(workers).set({
+          status: "error",
+          cwd: agent.cwd || worker.cwd,
+          currentText: agent.currentText,
+          lastText: agent.lastText,
+          outputLog: EMPTY_IDLE_WORKER_OUTPUT_DIAGNOSTIC,
+          updatedAt: new Date(),
+        }).where(and(
+          eq(workers.id, worker.id),
+          eq(workers.turnGeneration, worker.turnGeneration),
+        )).returning({ id: workers.id }).get());
+        if (failedWorker) {
+          await persistRunFailure(run.id, new Error(EMPTY_IDLE_WORKER_OUTPUT_DIAGNOSTIC), {
+            surface: { code: "worker.idle.empty_output", workerId: worker.id },
+          });
+        }
       });
       continue;
     }
 
-    await writeWorkerOutputEntries(run.id, worker.id, agent.outputEntries);
+    const outputPersisted = await writeWorkerOutputEntries(
+      run.id,
+      worker.id,
+      agent.outputEntries,
+      { expectedTurnGeneration: worker.turnGeneration },
+    );
+    if (!outputPersisted) {
+      continue;
+    }
     const nextRunState = resolveSyncedRunState(run, agent);
     const quiescedDirectWorker = isDirectRunMode(run.mode) && directLiveAgentHasCompletedTurn(agent);
     const nextWorkerStatus = quiescedDirectWorker ? "idle" : agent.state;
@@ -791,13 +818,19 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
       || worker.lastText !== agent.lastText;
     const workerUpdatedAt = new Date();
     if (workerChanged) {
-      await withSqliteBusyRetry(() => db.update(workers).set({
+      const workerUpdated = await withSqliteBusyRetry(() => db.update(workers).set({
         status: nextWorkerStatus,
         cwd: nextWorkerCwd,
         currentText: nextWorkerCurrentText,
         lastText: agent.lastText,
         updatedAt: workerUpdatedAt,
-      }).where(eq(workers.id, worker.id)));
+      }).where(and(
+        eq(workers.id, worker.id),
+        eq(workers.turnGeneration, worker.turnGeneration),
+      )).returning({ id: workers.id }).get());
+      if (!workerUpdated) {
+        continue;
+      }
     }
     if (worker.status !== nextWorkerStatus) {
       emitNamedEvent({
@@ -855,15 +888,24 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
         pendingElicitations: agent.pendingElicitations,
       });
     } else {
-      const syncedLastError = nextRunState === "failed"
-        ? await resolveSyncedFailureMessage(run.id, worker.id, worker.type, run.lastError, agent.lastError)
-        : null;
-      await withSqliteBusyRetry(() => db.update(runs).set({
-        status: nextRunState,
-        lastError: syncedLastError,
-        failedAt: nextRunState === "failed" ? run.failedAt : null,
-        updatedAt: new Date(),
-      }).where(eq(runs.id, run.id)));
+      await withWorkerOutputWriteFence(run.id, worker.id, async () => {
+        const current = await db.select({ turnGeneration: workers.turnGeneration })
+          .from(workers)
+          .where(eq(workers.id, worker.id))
+          .get();
+        if (current?.turnGeneration !== worker.turnGeneration) {
+          return;
+        }
+        const syncedLastError = nextRunState === "failed"
+          ? await resolveSyncedFailureMessage(run.id, worker.id, worker.type, run.lastError, agent.lastError)
+          : null;
+        await withSqliteBusyRetry(() => db.update(runs).set({
+          status: nextRunState,
+          lastError: syncedLastError,
+          failedAt: nextRunState === "failed" ? run.failedAt : null,
+          updatedAt: new Date(),
+        }).where(eq(runs.id, run.id)));
+      });
     }
     if (staleBusyFailure && nextRunState !== "failed") {
       await clearMatchingRunFailureMessage(run);
@@ -903,13 +945,20 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
     }
 
     if (await isEmptyIdlePersistedWorker(worker)) {
-      await withSqliteBusyRetry(() => db.update(workers).set({
-        status: "error",
-        outputLog: MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC,
-        updatedAt: new Date(),
-      }).where(eq(workers.id, worker.id)));
-      await persistRunFailure(run.id, new Error(MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC), {
-        surface: { code: "worker.idle.missing_output", workerId: worker.id },
+      await withWorkerOutputWriteFence(run.id, worker.id, async () => {
+        const failedWorker = await withSqliteBusyRetry(() => db.update(workers).set({
+          status: "error",
+          outputLog: MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC,
+          updatedAt: new Date(),
+        }).where(and(
+          eq(workers.id, worker.id),
+          eq(workers.turnGeneration, worker.turnGeneration),
+        )).returning({ id: workers.id }).get());
+        if (failedWorker) {
+          await persistRunFailure(run.id, new Error(MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC), {
+            surface: { code: "worker.idle.missing_output", workerId: worker.id },
+          });
+        }
       });
       continue;
     }
@@ -953,10 +1002,19 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
         source: "persisted_direct_completion",
       });
     } else {
-      await withSqliteBusyRetry(() => db.update(runs).set({
-        status: nextRunState,
-        updatedAt: new Date(),
-      }).where(eq(runs.id, run.id)));
+      await withWorkerOutputWriteFence(run.id, worker.id, async () => {
+        const current = await db.select({ turnGeneration: workers.turnGeneration })
+          .from(workers)
+          .where(eq(workers.id, worker.id))
+          .get();
+        if (current?.turnGeneration !== worker.turnGeneration) {
+          return;
+        }
+        await withSqliteBusyRetry(() => db.update(runs).set({
+          status: nextRunState,
+          updatedAt: new Date(),
+        }).where(eq(runs.id, run.id)));
+      });
     }
   }
 }

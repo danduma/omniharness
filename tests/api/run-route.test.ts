@@ -1796,7 +1796,12 @@ describe("POST /api/runs/[id]", () => {
       name: oldWorkerId,
       resumeSessionId: "saved-stream-session",
     }));
-    expect(mockAskAgent).toHaveBeenCalledWith(oldWorkerId, "rerun this direct prompt");
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      oldWorkerId,
+      "rerun this direct prompt",
+      undefined,
+      { expectedTurnGeneration: 1 },
+    );
     expect(storedWorkers.map((worker) => worker.id)).toEqual([oldWorkerId]);
     expect(storedWorkers[0]?.bridgeSessionId).toBe("saved-stream-session");
     expect(storedMessages.map((message) => message.id)).toEqual([firstMessageId, rerunMessageId]);
@@ -1935,6 +1940,7 @@ describe("POST /api/runs/[id]", () => {
       latestWorkerId,
       expect.stringContaining("here, this one"),
       [{ path: getAppDataPath(attachment.storagePath), mimeType: "image/png" }],
+      { expectedTurnGeneration: 1 },
     );
     expect(mockAskAgent.mock.calls[0]?.[1]).toContain(`path: ${getAppDataPath(attachment.storagePath)}`);
 
@@ -2155,7 +2161,12 @@ describe("POST /api/runs/[id]", () => {
       effort: "high",
       resumeSessionId: "saved-session",
     }));
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, "continue the walkthrough");
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      workerId,
+      "continue the walkthrough",
+      undefined,
+      { expectedTurnGeneration: 1 },
+    );
     expect(updatedRun?.status).toBe("done");
     expect(updatedRun?.lastError).toBeNull();
     expect(updatedRun?.failedAt).toBeNull();
@@ -2279,7 +2290,12 @@ describe("POST /api/runs/[id]", () => {
     expect(mockSpawnAgent).toHaveBeenNthCalledWith(2, expect.not.objectContaining({
       resumeSessionId: expect.any(String),
     }));
-    expect(mockAskAgent).toHaveBeenLastCalledWith(workerId, expect.stringContaining("continue the direct task"));
+    expect(mockAskAgent).toHaveBeenLastCalledWith(
+      workerId,
+      expect.stringContaining("continue the direct task"),
+      undefined,
+      { expectedTurnGeneration: 1 },
+    );
 
     const [updatedRun, updatedWorker, events, errorMessages] = await Promise.all([
       db.select().from(runs).where(eq(runs.id, runId)).get(),
@@ -2597,6 +2613,7 @@ describe("POST /api/runs/[id]", () => {
       newWorkerId,
       expect.stringContaining(`path: ${getAppDataPath(attachment.storagePath)}`),
       [{ path: getAppDataPath(attachment.storagePath), mimeType: "image/png" }],
+      { expectedTurnGeneration: 0 },
     );
 
     const workersAfter = await db.select().from(workers).where(eq(workers.runId, runId));
@@ -2709,7 +2726,12 @@ describe("POST /api/runs/[id]", () => {
       resumeSessionId: expect.any(String),
     }));
     expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("recover this direct turn"));
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      workerId,
+      expect.stringContaining("recover this direct turn"),
+      undefined,
+      { expectedTurnGeneration: 1 },
+    );
 
     const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
@@ -2828,7 +2850,12 @@ describe("POST /api/runs/[id]", () => {
       name: workerId,
       resumeSessionId: "missing-session",
     }));
-    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("recover this direct turn"));
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      workerId,
+      expect.stringContaining("recover this direct turn"),
+      undefined,
+      { expectedTurnGeneration: 1 },
+    );
 
     const updatedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     const resumeEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
@@ -2910,7 +2937,8 @@ describe("POST /api/runs/[id]", () => {
     expect(remainingMessages.at(-1)?.role).toBe("user");
     expect(fs.readFileSync(adHocAbsolutePath, "utf-8")).toContain("new prompt");
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
-    expect(mockAskAgent).toHaveBeenCalledWith(expect.any(String), "new prompt");
+    const replayPrompt = String(mockAskAgent.mock.calls.at(-1)?.[1] ?? "");
+    expect(replayPrompt).toContain("Next user prompt:\nnew prompt");
   });
 
   it("persists direct edit rerun session metadata before the first ask returns", async () => {
@@ -3085,7 +3113,12 @@ describe("POST /api/runs/[id]", () => {
       model: "gpt-5.4",
       effort: "medium",
     }));
-    expect(mockAskAgent).toHaveBeenCalledWith(expect.any(String), "forked prompt");
+    expect(mockAskAgent).toHaveBeenCalledWith(
+      expect.any(String),
+      "forked prompt",
+      undefined,
+      { expectedTurnGeneration: 0 },
+    );
   });
 
   it("forks a direct conversation into a new branch-backed worktree", async () => {

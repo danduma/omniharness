@@ -33,6 +33,7 @@ export async function appendWorkerSessionMetadata(args: {
   sessionId: string | null | undefined;
   sessionMode?: string | null;
   source: string;
+  expectedTurnGeneration?: number;
 }) {
   const sessionId = args.sessionId?.trim();
   if (!sessionId) {
@@ -52,7 +53,7 @@ export async function appendWorkerSessionMetadata(args: {
       sessionMode: args.sessionMode?.trim() || null,
       source: args.source,
     },
-  });
+  }, { expectedTurnGeneration: args.expectedTurnGeneration });
 }
 
 export async function readWorkerSessionMetadata(runId: string, workerId: string): Promise<WorkerSessionMetadata | null> {
