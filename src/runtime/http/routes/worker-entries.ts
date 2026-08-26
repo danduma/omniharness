@@ -14,6 +14,7 @@ import { readWorkerPlan } from "@/server/agent-runtime/acp/plan-stream";
 import { emitNamedEvent } from "@/server/events/named-events";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { startSlowProbe } from "@/server/slow-probe";
+import { elideInlineImageContentData } from "@/shared/worker-entries";
 
 const DEFAULT_TAIL_LIMIT = 100;
 const MAX_TAIL_LIMIT = 1000;
@@ -34,6 +35,24 @@ function parseAfterSeq(value: string | null): number {
     return 0;
   }
   return parsed;
+}
+
+/**
+ * Trade inline image payloads for content pointers on the way out.
+ *
+ * The stream persists whole images so they stay decodable forever, but sending
+ * them inline would push megabytes of base64 through every transcript page.
+ * The client resolves each pointer once, on demand, against the
+ * `?contentEntryId=` route above.
+ */
+function elideEntryContent<T extends { entries: Array<{ id: string; type: string; raw?: unknown }> }>(
+  result: T,
+  workerId: string,
+): T {
+  return {
+    ...result,
+    entries: result.entries.map((entry) => elideInlineImageContentData(entry, workerId)),
+  };
 }
 
 function inferRunIdFromWorkerId(workerId: string) {
@@ -163,7 +182,7 @@ export const handleWorkerEntriesRequest: OmniHttpHandler = async (request, conte
     if (beforeSeq != null) {
       const result = await readWorkerEntriesBefore(runId, workerId, beforeSeq, limit ?? DEFAULT_TAIL_LIMIT);
       probe.mark("readBefore");
-      return Response.json(result);
+      return Response.json(elideEntryContent(result, workerId));
     }
 
     // Tail-first initial load: only `limit` (no afterSeq). Returns the
@@ -173,7 +192,7 @@ export const handleWorkerEntriesRequest: OmniHttpHandler = async (request, conte
       const tail = await readWorkerEntriesTail(runId, workerId, limit);
       if (tail) {
         probe.mark("readTail");
-        return Response.json(tail);
+        return Response.json(elideEntryContent(tail, workerId));
       }
       // tail-scan couldn't prove the boundary; fall through to full read.
     }
@@ -181,7 +200,10 @@ export const handleWorkerEntriesRequest: OmniHttpHandler = async (request, conte
     // Existing live-tail path: entries strictly newer than afterSeq.
     const result = await readWorkerEntriesSince(runId, workerId, afterSeq);
     probe.mark(`readEntries[${result._path ?? "?"}]`);
-    return Response.json({ entries: result.entries, latestSeq: result.latestSeq });
+    return Response.json(elideEntryContent(
+      { entries: result.entries, latestSeq: result.latestSeq },
+      workerId,
+    ));
   } catch (error) {
     return errorResponse(error, {
       status: 500,

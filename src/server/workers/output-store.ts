@@ -18,6 +18,7 @@ import { emitNamedEvent } from "@/server/events/named-events";
 import type {
   WorkerEntry,
 } from "@/server/workers/entries-types";
+import { preserveInlineImageContentData } from "@/shared/worker-entries";
 
 type OutputEntry = WorkerEntry;
 
@@ -435,7 +436,12 @@ export function compactEntryForHistory<T extends CompactableEntry>(entry: T): T 
   return {
     ...entry,
     text,
-    raw: entry.raw === undefined ? undefined : compactHistoryRawValue(entry.raw),
+    raw: entry.raw === undefined
+      ? undefined
+      // An inline image payload is the content itself, not a diagnostic blob;
+      // the generic per-string truncator would leave the transcript holding an
+      // undecodable prefix of every image the worker produced.
+      : preserveInlineImageContentData(entry.type, entry.raw, compactHistoryRawValue(entry.raw)),
   };
 }
 
@@ -947,7 +953,7 @@ async function healStrandedStreamHead(
  * must be re-joined (see `reassembleArchivedEntries`) or the transcript comes
  * back shredded mid-word.
  */
-async function readFromRuntimeOutputArchive(workerId: string): Promise<WorkerEntry[]> {
+export async function readFromRuntimeOutputArchive(workerId: string): Promise<WorkerEntry[]> {
   const archivePath = path.join(
     process.cwd(),
     ".omniharness",

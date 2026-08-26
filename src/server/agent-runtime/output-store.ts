@@ -3,6 +3,7 @@ import { appendFileSync, closeSync, createReadStream, existsSync, mkdirSync, ope
 import { basename, dirname, join } from "path";
 import { createInterface } from "readline";
 import type { AgentRecord, OutputArchivePage, OutputArchiveStats, OutputEntry } from "./types";
+import { preserveInlineImageContentData } from "@/shared/worker-entries";
 
 const LIVE_TEXT_FIELD_CHARS = 100_000;
 const LIVE_OUTPUT_ENTRY_LIMIT = 80;
@@ -125,7 +126,11 @@ function createArchiveEntry(input: OutputEntryInput): OutputEntry {
     toolCallId: input.toolCallId,
     toolKind: input.toolKind,
     status: input.status,
-    raw: compactRawValue(input.raw, isToolEntry ? ARCHIVE_TOOL_RAW_STRING_CHARS : ARCHIVE_RAW_STRING_CHARS),
+    raw: preserveInlineImageContentData(
+      input.type,
+      input.raw,
+      compactRawValue(input.raw, isToolEntry ? ARCHIVE_TOOL_RAW_STRING_CHARS : ARCHIVE_RAW_STRING_CHARS),
+    ),
   };
 }
 
@@ -138,7 +143,13 @@ function toLiveEntry(entry: OutputEntry): OutputEntry {
     text: entry.type === "message"
       ? entry.text
       : truncateString(entry.text, LIVE_OUTPUT_ENTRY_TEXT_CHARS),
-    raw: compactRawValue(entry.raw, LIVE_RAW_STRING_CHARS),
+    // Inline image payloads are conversation content for the same reason, and
+    // the live entry is what reaches the durable worker stream.
+    raw: preserveInlineImageContentData(
+      entry.type,
+      entry.raw,
+      compactRawValue(entry.raw, LIVE_RAW_STRING_CHARS),
+    ),
   };
 }
 

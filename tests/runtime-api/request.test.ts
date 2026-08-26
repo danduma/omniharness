@@ -3,6 +3,7 @@ import {
   createFetchRuntimeRequest,
   isRuntimeTransportFailure,
   normalizeRuntimeHttpError,
+  runtimeErrorMessage,
 } from "@/runtime-api/request";
 
 describe("createFetchRuntimeRequest", () => {
@@ -63,6 +64,42 @@ describe("createFetchRuntimeRequest", () => {
     });
     expect(result).toBeInstanceOf(Blob);
     expect(Array.from(new Uint8Array(await (result as Blob).arrayBuffer()))).toEqual([1, 2, 3]);
+  });
+
+  it("reads a failed binary request's error body as JSON", async () => {
+    // Honouring responseType on a failure would hand back an opaque Blob and
+    // strip the only description of what went wrong.
+    const fetchImpl: typeof fetch = vi.fn(async () => new Response(
+      JSON.stringify({ error: { message: "Generated image data is unavailable." } }),
+      { status: 404, headers: { "content-type": "application/json" } },
+    ));
+    const request = createFetchRuntimeRequest({ fetchImpl, surface: "web" });
+
+    await expect(request("GET", "/api/workers/w1/entries?contentEntryId=e1", {
+      responseType: "blob",
+    })).rejects.toMatchObject({
+      code: "runtime.http_404",
+      message: "Generated image data is unavailable.",
+    });
+  });
+});
+
+describe("runtimeErrorMessage", () => {
+  it("describes a RuntimeApiError instead of stringifying it to [object Object]", () => {
+    const error = normalizeRuntimeHttpError({
+      status: 404,
+      body: { error: { message: "Generated image data is unavailable." } },
+      surface: "web",
+    });
+
+    expect(runtimeErrorMessage(error)).toBe("Generated image data is unavailable.");
+    expect(runtimeErrorMessage(error)).not.toContain("[object Object]");
+  });
+
+  it("falls back for Errors and values carrying no message", () => {
+    expect(runtimeErrorMessage(new Error("boom"))).toBe("boom");
+    expect(runtimeErrorMessage("plain")).toBe("plain");
+    expect(runtimeErrorMessage({ message: "" })).toBe("[object Object]");
   });
 });
 

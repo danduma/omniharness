@@ -116,3 +116,111 @@ export function isBridgeOutputEntry(entry: WorkerEntry): boolean {
 export function isServerProducedEntry(entry: WorkerEntry): boolean {
   return SERVER_TYPES.has(entry.type);
 }
+
+// ---------------------------------------------------------------------------
+// Inline image content.
+//
+// An `agent_content`/`user_content` entry can carry a whole image as base64 in
+// `raw.content.data`. Those bytes are conversation content, not disposable
+// runtime diagnostics, and the worker stream is their only durable home — so
+// the generic raw-string truncators must leave them intact, exactly as
+// `toLiveEntry` already exempts assistant message text. Truncating them
+// instead produced a stream whose images could never be decoded again.
+//
+// The payload is still bounded, just far above a realistic screenshot. The cap
+// is expressed in base64 characters and sized to match the 25 MB decoded ceiling
+// enforced on the read side by `src/server/workers/entry-content.ts`.
+// ---------------------------------------------------------------------------
+
+/** 25 MB of decoded bytes, expressed as base64 characters (4 chars per 3 bytes). */
+export const IMAGE_CONTENT_DATA_CHARS = Math.ceil((25 * 1024 * 1024) / 3) * 4;
+
+const IMAGE_CONTENT_TYPES: ReadonlySet<WorkerEntryType> = new Set<WorkerEntryType>([
+  "agent_content",
+  "user_content",
+]);
+
+/** Pointer the client resolves through `GET /api/workers/:id/entries?contentEntryId=`. */
+export type WorkerEntryContentPointer = {
+  workerId: string;
+  entryId: string;
+};
+
+function asContentRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+/**
+ * The inline base64 image payload on this entry's raw notification, or null
+ * when the entry does not carry one.
+ */
+export function inlineImageContentData(
+  entryType: WorkerEntryType | string | undefined,
+  raw: unknown,
+): string | null {
+  if (!IMAGE_CONTENT_TYPES.has(entryType as WorkerEntryType)) {
+    return null;
+  }
+  const content = asContentRecord(asContentRecord(raw)?.content);
+  if (content?.type !== "image" || typeof content.data !== "string") {
+    return null;
+  }
+  return content.data;
+}
+
+/**
+ * Re-attach the untruncated image payload to an already-compacted `raw`.
+ *
+ * Compaction stays generic — it still walks and bounds every other string in
+ * the notification — and this restores only the one field the transcript
+ * cannot regenerate. Payloads past the cap keep whatever the compactor
+ * produced, so the read side reports them as unavailable rather than handing
+ * back a corrupt image.
+ */
+export function preserveInlineImageContentData(
+  entryType: WorkerEntryType | string | undefined,
+  originalRaw: unknown,
+  compactedRaw: unknown,
+): unknown {
+  const data = inlineImageContentData(entryType, originalRaw);
+  if (data === null || data.length > IMAGE_CONTENT_DATA_CHARS) {
+    return compactedRaw;
+  }
+  const compacted = asContentRecord(compactedRaw);
+  const content = asContentRecord(compacted?.content);
+  if (!compacted || !content) {
+    return compactedRaw;
+  }
+  return { ...compacted, content: { ...content, data } };
+}
+
+/**
+ * Swap an inline image payload for a content pointer before the entry crosses
+ * the HTTP boundary.
+ *
+ * The stream stores whole images; sending them inline would put megabytes of
+ * base64 into every transcript page. The client fetches the bytes once, on
+ * demand, from the dedicated content route instead.
+ */
+export function elideInlineImageContentData<T extends { id: string; type: string; raw?: unknown }>(
+  entry: T,
+  workerId: string,
+): T {
+  if (inlineImageContentData(entry.type, entry.raw) === null) {
+    return entry;
+  }
+  const raw = asContentRecord(entry.raw);
+  const content = asContentRecord(raw?.content);
+  if (!raw || !content) {
+    return entry;
+  }
+  const pointer: WorkerEntryContentPointer = { workerId, entryId: entry.id };
+  const nextContent: Record<string, unknown> = { ...content, omniWorkerContent: pointer };
+  delete nextContent.data;
+  return {
+    ...entry,
+    raw: { ...raw, content: nextContent },
+  };
+}

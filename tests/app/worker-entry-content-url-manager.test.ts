@@ -53,4 +53,29 @@ describe("WorkerEntryContentUrlManager", () => {
       url: "",
     });
   });
+
+  it("surfaces the server's message for a RuntimeApiError rejection", async () => {
+    const module = await import("@/interface/home/WorkerEntryContentUrlManager").catch(() => null);
+    expect(module).not.toBeNull();
+    if (!module) return;
+
+    const manager = new module.WorkerEntryContentUrlManager({
+      createObjectUrl: vi.fn(),
+      revokeObjectUrl: vi.fn(),
+    });
+    const reference = { workerId: "worker-1", entryId: "image-1" };
+
+    // RuntimeApiError is a plain object, never an Error. Stringifying it
+    // rendered every failed image as "Agent content unavailable: [object Object]".
+    manager.acquire(reference, async () => {
+      throw {
+        code: "runtime.http_404",
+        message: "Generated image data is unavailable.",
+        surface: "web",
+      };
+    });
+    await vi.waitFor(() => expect(manager.getContentState(reference).status).toBe("error"));
+
+    expect(manager.getContentState(reference).error).toBe("Generated image data is unavailable.");
+  });
 });

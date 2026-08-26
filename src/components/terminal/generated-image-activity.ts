@@ -6,6 +6,14 @@ export type GeneratedImageItem = {
   mimeType: string;
   data?: string;
   reference?: WorkerEntryContentReference;
+  /**
+   * True only when the originating tool actually produced the image. Most
+   * images in a transcript are files the agent opened — screenshots, mockups,
+   * assets — so the gallery must not claim they were generated.
+   */
+  generated: boolean;
+  /** File name of the image the tool read, when the call named one. */
+  name?: string;
 };
 
 export type GeneratedImagesActivity = {
@@ -22,10 +30,78 @@ const TURN_BOUNDARY_TYPES = new Set([
   "user_message_chunk",
 ]);
 
+// Codex titles its image tool "Image generation"; other agents surface names
+// like `generate_image` or `dalle`. Anything that does not match is treated as
+// a plain image the agent obtained, which is the safe claim to make.
+const IMAGE_GENERATION_PATTERN = /image[\s_-]*generation|generat\w*[\s_-]*images?\b|creat\w*[\s_-]*images?\b|dall[\s._-]*e|imagen|midjourney/i;
+
+type ImageToolCall = {
+  title: string;
+  toolName?: string;
+  kind?: string;
+  path?: string;
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function asNonEmptyString(value: unknown) {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/** The file path a read-style tool call names, in either place ACP puts it. */
+function toolCallPath(raw: Record<string, unknown> | null) {
+  const fromInput = asNonEmptyString(asRecord(raw?.rawInput)?.file_path);
+  if (fromInput) {
+    return fromInput;
+  }
+  const locations = Array.isArray(raw?.locations) ? raw.locations : [];
+  return asNonEmptyString(asRecord(locations[0])?.path);
+}
+
+function readToolCall(entry: WorkerEntry): ImageToolCall {
+  const raw = asRecord(entry.raw);
+  return {
+    title: entry.text,
+    toolName: asNonEmptyString(asRecord(asRecord(raw?._meta)?.claudeCode)?.toolName),
+    kind: entry.toolKind ?? asNonEmptyString(raw?.kind),
+    path: toolCallPath(raw),
+  };
+}
+
+/**
+ * Merge a later `tool_call_update` over the pending `tool_call`. The pending
+ * record carries a placeholder title ("Read File") and no path; the update
+ * carries both, but a completion-only update carries neither.
+ */
+function mergeToolCall(previous: ImageToolCall | undefined, next: ImageToolCall): ImageToolCall {
+  if (!previous) {
+    return next;
+  }
+  return {
+    title: next.path ? next.title : previous.title,
+    toolName: next.toolName ?? previous.toolName,
+    kind: next.kind ?? previous.kind,
+    path: next.path ?? previous.path,
+  };
+}
+
+function isFileReadToolCall(tool: ImageToolCall) {
+  return tool.kind === "read" || /^read\b/i.test(tool.toolName ?? "");
+}
+
+function isGeneratedByToolCall(tool: ImageToolCall | undefined) {
+  if (!tool || isFileReadToolCall(tool)) {
+    return false;
+  }
+  return IMAGE_GENERATION_PATTERN.test(`${tool.toolName ?? ""} ${tool.title}`);
+}
+
+function fileName(path: string | undefined) {
+  return path?.split(/[\\/]/).pop() || undefined;
 }
 
 function entryWorkerId(entry: WorkerEntry, fallbackWorkerId: string | undefined) {
@@ -36,9 +112,13 @@ function entryWorkerId(entry: WorkerEntry, fallbackWorkerId: string | undefined)
 }
 
 /**
- * Project generated-image protocol entries into one stable gallery per user
- * turn. The worker stream remains the persistence authority; this is only a
- * display projection over the loaded window.
+ * Project image protocol entries into one stable gallery per user turn. The
+ * worker stream remains the persistence authority; this is only a display
+ * projection over the loaded window.
+ *
+ * Images reach the transcript from any tool that returns image content, and in
+ * practice most of them are screenshots the agent read back rather than
+ * anything it generated, so each item records which one it is.
  */
 export function buildGeneratedImagesActivity(
   entries: readonly WorkerEntry[],
@@ -46,11 +126,24 @@ export function buildGeneratedImagesActivity(
 ): GeneratedImagesActivity[] {
   const turnByWorker = new Map<string, string>();
   const galleries = new Map<string, GeneratedImagesActivity>();
+  // The runtime appends a tool call's content entries after the call record
+  // that produced them, so a single forward pass always knows the origin of
+  // the image it is looking at.
+  const toolCalls = new Map<string, ImageToolCall>();
 
   for (const entry of entries) {
     const owner = entryWorkerId(entry, fallbackWorkerId) ?? "unowned";
     if (TURN_BOUNDARY_TYPES.has(entry.type)) {
       turnByWorker.set(owner, entry.id);
+      continue;
+    }
+    if (entry.type === "tool_call" || entry.type === "tool_call_update") {
+      if (entry.toolCallId) {
+        toolCalls.set(
+          entry.toolCallId,
+          mergeToolCall(toolCalls.get(entry.toolCallId), readToolCall(entry)),
+        );
+      }
       continue;
     }
     if (entry.type !== "agent_content") {
@@ -66,13 +159,24 @@ export function buildGeneratedImagesActivity(
     const turnId = turnByWorker.get(owner) ?? `before-loaded-turn:${entry.id}`;
     const galleryKey = `${owner}\u0000${turnId}`;
     const existing = galleries.get(galleryKey);
+    // The server elides inline payloads into an explicit pointer; prefer it
+    // over the owner-derived guess, which only holds for entries whose worker
+    // could be resolved from the loaded window.
+    const pointer = asRecord(content.omniWorkerContent);
+    const tool = entry.toolCallId
+      ? toolCalls.get(entry.toolCallId)
+      : undefined;
     const image: GeneratedImageItem = {
       id: entry.id,
       mimeType: typeof content.mimeType === "string" ? content.mimeType : "image/png",
       data: typeof content.data === "string" ? content.data : undefined,
-      reference: owner === "unowned"
-        ? undefined
-        : { workerId: owner, entryId: entry.id },
+      generated: isGeneratedByToolCall(tool),
+      name: fileName(tool?.path),
+      reference: typeof pointer?.workerId === "string" && typeof pointer.entryId === "string"
+        ? { workerId: pointer.workerId, entryId: pointer.entryId }
+        : owner === "unowned"
+          ? undefined
+          : { workerId: owner, entryId: entry.id },
     };
 
     if (existing) {

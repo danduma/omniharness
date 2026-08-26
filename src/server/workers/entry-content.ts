@@ -3,7 +3,8 @@ import { constants, promises as fs } from "node:fs";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { workers } from "@/server/db/schema";
-import { readWorkerOutputEntries } from "@/server/workers/output-store";
+import { readFromRuntimeOutputArchive, readWorkerOutputEntries } from "@/server/workers/output-store";
+import { inlineImageContentData } from "@/shared/worker-entries";
 
 const MAX_WORKER_CONTENT_BYTES = 25 * 1024 * 1024;
 const SUPPORTED_IMAGE_MIME_TYPES = new Set([
@@ -48,6 +49,23 @@ function decodeCompleteBase64(data: string): Buffer | null {
   }
   const body = Buffer.from(normalized, "base64");
   return body.length > 0 ? body : null;
+}
+
+function decodeInlineImage(entryType: string | undefined, raw: unknown): Buffer | null {
+  const data = inlineImageContentData(entryType, raw);
+  return data === null ? null : decodeCompleteBase64(data);
+}
+
+/**
+ * The same entry as recorded in the agent runtime's output archive.
+ *
+ * The archive is a separate, looser-bounded copy of every bridge record. It is
+ * rotated and pruned, so it is a best-effort fallback only — never the
+ * authority. Returns null when the archive is gone or never held the payload.
+ */
+async function decodeArchivedImage(workerId: string, entryId: string): Promise<Buffer | null> {
+  const archived = findLatestEntryById(await readFromRuntimeOutputArchive(workerId), entryId);
+  return archived ? decodeInlineImage(archived.type, archived.raw) : null;
 }
 
 async function readCodexGeneratedImage(cwd: string, uri: string): Promise<Buffer> {
@@ -113,9 +131,8 @@ export async function readWorkerEntryContent(workerId: string, entryId: string) 
 
   const entries = await readWorkerOutputEntries(worker.runId, worker.id);
   const entry = findLatestEntryById(entries, entryId);
-  const raw = asRecord(entry?.raw);
-  const content = asRecord(raw?.content);
-  if (entry?.type !== "agent_content" || content?.type !== "image") {
+  const content = asRecord(asRecord(entry?.raw)?.content);
+  if (!entry || content?.type !== "image") {
     throw new WorkerEntryContentError("Generated image entry not found.", 404);
   }
 
@@ -124,7 +141,12 @@ export async function readWorkerEntryContent(workerId: string, entryId: string) 
     throw new WorkerEntryContentError("Generated image type is not supported.", 415);
   }
 
-  const inlineBody = typeof content.data === "string" ? decodeCompleteBase64(content.data) : null;
+  const inlineBody = decodeInlineImage(entry.type, entry.raw)
+    // Streams written before image payloads were exempted from raw-string
+    // compaction hold only a truncated prefix of the base64. The runtime
+    // archive bounds the same record far more loosely, so it can still answer
+    // for those older transcripts.
+    ?? await decodeArchivedImage(workerId, entryId);
   if (inlineBody) {
     if (inlineBody.length > MAX_WORKER_CONTENT_BYTES) {
       throw new WorkerEntryContentError("Generated image exceeds the supported size limit.", 413);

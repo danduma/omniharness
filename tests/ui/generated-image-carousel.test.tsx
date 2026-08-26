@@ -100,6 +100,58 @@ test("generated images are an always-visible numbered carousel for their turn", 
   expect(html).not.toContain("Agent content");
 });
 
+test("screenshots the agent read back are labelled as plain images by file name", () => {
+  Object.assign(globalThis, { React });
+  const entries: WorkerEntry[] = [
+    {
+      id: "turn-1",
+      seq: 1,
+      type: "user_input",
+      text: "Check the panel",
+      timestamp: "2026-08-25T10:00:01.000Z",
+      authorRole: "user",
+    },
+    {
+      id: "tool-1",
+      seq: 2,
+      type: "tool_call",
+      text: "Read File",
+      toolCallId: "read-tool-1",
+      toolKind: "read",
+      timestamp: "2026-08-25T10:00:02.000Z",
+      authorRole: "assistant",
+      raw: { _meta: { claudeCode: { toolName: "Read" } }, kind: "read", locations: [] },
+    },
+    {
+      id: "tool-1-update",
+      seq: 3,
+      type: "tool_call_update",
+      text: "Read /tmp/translate-panel-screenshots/desktop-dark.png",
+      toolCallId: "read-tool-1",
+      toolKind: "read",
+      timestamp: "2026-08-25T10:00:03.000Z",
+      authorRole: "assistant",
+      raw: {
+        kind: "read",
+        locations: [{ line: 1, path: "/tmp/translate-panel-screenshots/desktop-dark.png" }],
+        rawInput: { file_path: "/tmp/translate-panel-screenshots/desktop-dark.png" },
+      },
+    },
+    generatedImage("read-image-1", 4, "read-tool-1"),
+  ];
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries,
+    workerId: "run-worker-1",
+    showTextSizeControl: false,
+    summarizeWorkBlocks: true,
+  }));
+
+  expect(html).not.toContain("Generated images");
+  expect(html).toContain("Images");
+  expect(html).toContain("desktop-dark.png");
+});
+
 test("generated images after a new user input form a separate carousel", () => {
   Object.assign(globalThis, { React });
   const entries: WorkerEntry[] = [
