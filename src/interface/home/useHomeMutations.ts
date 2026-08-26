@@ -678,10 +678,19 @@ export function useHomeMutations({
       if (!context) {
         return;
       }
-      if (context.optimisticQueuedMessageId) {
+      const queuedSendWasAcknowledged = Boolean(
+        context.optimisticQueuedMessageId
+        && !busyMessageQueueManager.getSnapshot().pendingQueuedMessageIds.has(context.optimisticQueuedMessageId),
+      );
+      const sentMessageWasAcknowledged = Boolean(
+        context.optimisticMessageId
+        && !sentConversationMessagesManager.getInFlightMessageIds().has(context.optimisticMessageId),
+      );
+      const sendWasAcknowledged = queuedSendWasAcknowledged || sentMessageWasAcknowledged;
+      if (context.optimisticQueuedMessageId && !queuedSendWasAcknowledged) {
         busyMessageQueueManager.failQueueSend(context.optimisticQueuedMessageId);
       }
-      if (context.optimisticMessageId) {
+      if (context.optimisticMessageId && !sentMessageWasAcknowledged) {
         sentConversationMessagesManager.failSend(context.optimisticMessageId);
         setState((current) => resolveOptimisticSentConversationMessage(current, context.optimisticMessageId!, null));
       }
@@ -689,7 +698,8 @@ export function useHomeMutations({
       // already typed or attached something new.
       const snapshot = homeUiStateManager.getSnapshot();
       if (
-        context.composerCleared
+        !sendWasAcknowledged
+        && context.composerCleared
         && ownsConversationSideEffects({
           runId: variables.runId,
           currentSelectedRunId: snapshot.selectedRunId,

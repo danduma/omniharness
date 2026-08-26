@@ -1,0 +1,10 @@
+# Server Acknowledgement Must End Transport-Pending UI
+
+**Date:** 2026-08-26
+**Context:** OmniHarness direct-control conversation sends, optimistic messages, queued messages, and SSE reconciliation
+**Symptom:** A direct conversation displayed `Connecting to CLI...` forever and kept the composer disabled even though the server had accepted the message, delivered it to the worker, and completed the run.
+**Root Cause:** The UI treated React Query's still-pending POST as authoritative after the POST response was lost. The event stream had already acknowledged the client-generated message ID, but only the optimistic message manager consumed that acknowledgement; the pending assistant indicator and composer continued reading the transport promise directly. Queued-message snapshots also did not clear their optimistic pending-send ID.
+**Fix:** Treat a matching durable message or queued-message ID from the event stream as the terminal acknowledgement of the client send. Pending assistant and composer state now require both an unsettled transport and an unacknowledged client message ID. Authoritative queued rows clear pending queue sends, server-decided queue rows acknowledge optimistic transcript sends, and late transport failures no longer remove or restore UI state that the server already accepted.
+**Verification:** Red-green regression coverage in `tests/app/direct-control-activity.test.ts`, `tests/app/sent-conversation-messages-manager.test.ts`, and `tests/app/busy-message-queue-manager.test.ts`; affected UI/source tests; and `pnpm build:interface:web`.
+**Prevention:** For optimistic mutations, distinguish transport completion from operation acknowledgement. Give every mutation a stable owner token, reconcile it against authoritative stream state, and derive visible pending/disabled state from the unacknowledged token rather than an unbounded request promise.
+**Skill/Doc Updates:** No shared skill update was needed because `client-server-state-invariants` already requires stable owner tokens and server-authoritative terminal state. This project note records the concrete OmniHarness failure mode and its affected managers.

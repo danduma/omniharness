@@ -220,6 +220,28 @@ describe("shouldShowDirectControlPendingAssistant", () => {
       selectedWorkerIds: ["run-a-worker-1"],
     })).toBe("run-a-worker-1");
   });
+
+  it("does not expose a pending direct-send worker after the stream acknowledges a lost POST response", () => {
+    expect(resolvePendingConversationWorkerId({
+      isPending: true,
+      mutationRunId: "run-a",
+      selectedRunId: "run-a",
+      isImplementationConversation: false,
+      selectedWorkerIds: ["run-a-worker-1"],
+      pendingMessageId: "message-1",
+      unacknowledgedMessageIds: new Set(),
+    })).toBeNull();
+
+    expect(resolvePendingConversationWorkerId({
+      isPending: true,
+      mutationRunId: "run-a",
+      selectedRunId: "run-a",
+      isImplementationConversation: false,
+      selectedWorkerIds: ["run-a-worker-1"],
+      pendingMessageId: "message-1",
+      unacknowledgedMessageIds: new Set(["message-1"]),
+    })).toBe("run-a-worker-1");
+  });
 });
 
 describe("shouldShowDirectControlWorkingIndicator", () => {

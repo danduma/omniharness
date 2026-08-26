@@ -144,6 +144,10 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
         (message) => !isStaleServerAbsentActiveMessage(message, current.serverAbsentMessageUpdatedAtById),
       );
       const incomingIds = new Set(incomingMessages.map((message) => message.id));
+      const pendingQueuedMessageIds = new Set(current.pendingQueuedMessageIds);
+      for (const incomingId of incomingIds) {
+        pendingQueuedMessageIds.delete(incomingId);
+      }
       // A row whose POST is still in flight is not "gone from the server", it
       // has not reached the server yet. Leave it out of the absence
       // bookkeeping entirely so it is neither dropped now nor rejected as
@@ -201,6 +205,7 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
         queuedMessageArraysEqual(current.queuedMessages, queuedMessages)
         && setsEqual(current.cancellingMessageIds, cancellingMessageIds)
         && setsEqual(current.interruptingMessageIds, interruptingMessageIds)
+        && setsEqual(current.pendingQueuedMessageIds, pendingQueuedMessageIds)
         && mapsEqual(current.serverAbsentMessageUpdatedAtById, serverAbsentMessageUpdatedAtById)
       ) {
         return current;
@@ -210,6 +215,7 @@ export class BusyMessageQueueManager extends StateManager<BusyMessageQueueState>
         queuedMessages,
         cancellingMessageIds,
         interruptingMessageIds,
+        pendingQueuedMessageIds,
         serverAbsentMessageUpdatedAtById,
       };
     }, notify);

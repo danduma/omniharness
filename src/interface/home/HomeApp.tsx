@@ -1135,11 +1135,20 @@ export function HomeApp({
   });
 
   // Composer state
-  const isSendingSelectedConversationMessage = isMutationPendingForSelectedRun({
+  const isSelectedConversationMessageTransportPending = isMutationPendingForSelectedRun({
     isPending: sendConversationMessage.isPending,
     mutationRunId: sendConversationMessage.variables?.runId,
     selectedRunId,
   });
+  const pendingConversationMessageId = sendConversationMessage.variables?.clientMessageId ?? null;
+  const unacknowledgedConversationMessageIds = sendConversationMessage.variables?.busyAction === "queue"
+    ? busyMessageQueueState.pendingQueuedMessageIds
+    : sendingUserMessageIds;
+  const isSendingSelectedConversationMessage = isSelectedConversationMessageTransportPending
+    && (
+      !pendingConversationMessageId
+      || unacknowledgedConversationMessageIds.has(pendingConversationMessageId)
+    );
   const isSendingSelectedQueuedMessage = isMutationPendingForSelectedRun({
     isPending: sendQueuedMessageNow.isPending,
     mutationRunId: sendQueuedMessageNow.variables?.runId,
@@ -1165,6 +1174,8 @@ export function HomeApp({
     selectedRunId,
     isImplementationConversation,
     selectedWorkerIds: selectedRunWorkersForDisplay.map((worker) => worker.id),
+    pendingMessageId: pendingConversationMessageId,
+    unacknowledgedMessageIds: unacknowledgedConversationMessageIds,
   });
   const directRunningConversationWorkerId = isDirectConversation
     && (selectedRun?.mode === "direct" || selectedRun?.mode === "commit")
