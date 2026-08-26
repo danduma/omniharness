@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { messages, plans, runs } from "@/server/db/schema";
+import { messages, plans, runs, workers } from "@/server/db/schema";
 import {
   applyAgentSessionTitle,
   extractAgentSessionTitle,
@@ -357,5 +357,127 @@ describe("repairLeakedConversationTitles", () => {
         title: "Fix the sidebar",
       }),
     );
+  });
+});
+
+/**
+ * The Codex ACP adapter publishes `createPromptFallbackTitle(prompt)` whenever
+ * its thread has no name, so a prompt short enough to clear the length bound
+ * and free of any preamble arrives looking exactly like a real title.
+ */
+describe("applyAgentSessionTitle prompt echoes", () => {
+  beforeEach(async () => {
+    await db.delete(messages);
+    await db.delete(workers);
+    await db.delete(runs);
+    await db.delete(plans);
+    __resetNamedEventsForTests();
+  });
+
+  async function seedRun(args: { title: string; userMessage?: string; initialPrompt?: string }) {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const now = new Date();
+    await db.insert(plans).values({
+      id: planId,
+      path: `vibes/ad-hoc/${planId}.md`,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: args.title,
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (args.userMessage) {
+      await db.insert(messages).values({
+        id: randomUUID(),
+        runId,
+        role: "user",
+        kind: "checkpoint",
+        content: args.userMessage,
+        createdAt: now,
+      });
+    }
+    if (args.initialPrompt) {
+      await db.insert(workers).values({
+        id: `${runId}-worker-1`,
+        runId,
+        type: "codex",
+        status: "working",
+        cwd: "/workspace",
+        initialPrompt: args.initialPrompt,
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    return runId;
+  }
+
+  async function readTitle(runId: string) {
+    const row = await db.select({ title: runs.title }).from(runs).where(eq(runs.id, runId)).get();
+    return row?.title ?? null;
+  }
+
+  it("rejects a candidate that is the user's message handed back", async () => {
+    const runId = await seedRun({ title: "Commit", userMessage: "Commit" });
+
+    expect(await applyAgentSessionTitle({ runId, title: "Commit" })).toBe("rejected");
+    expect(getNamedEventsSince(0).events.map((entry) => entry.event)).toContainEqual(
+      expect.objectContaining({ kind: "conversation.title_rejected", runId, reason: "prompt_echo" }),
+    );
+  });
+
+  it("rejects an echo that only differs by the whitespace the adapter collapsed", async () => {
+    const runId = await seedRun({
+      title: "Local to cloud",
+      userMessage: "Local to\n  cloud",
+    });
+
+    expect(await applyAgentSessionTitle({ runId, title: "Local to cloud" })).toBe("rejected");
+  });
+
+  it("rejects an echo the adapter truncated", async () => {
+    const prompt = "Investigate why the sidebar loses its scroll position on reload";
+    const runId = await seedRun({ title: "Investigate why", userMessage: prompt });
+
+    expect(await applyAgentSessionTitle({ runId, title: "Investigate why the sidebar…" })).toBe("rejected");
+  });
+
+  it("rejects an echo of the worker's launch prompt even when no message row survives", async () => {
+    const runId = await seedRun({ title: "Fix the export", initialPrompt: "Fix the export" });
+
+    expect(await applyAgentSessionTitle({ runId, title: "Fix the export" })).toBe("rejected");
+  });
+
+  it("keeps a real title that merely opens with the same words", async () => {
+    // A good summary of a short request looks like its opening words. Only an
+    // exact or truncated match counts as an echo.
+    const runId = await seedRun({
+      title: "Fix the login button on mobile, it does nothing when tapped",
+      userMessage: "Fix the login button on mobile, it does nothing when tapped",
+    });
+
+    expect(await applyAgentSessionTitle({ runId, title: "Fix the login button" })).toBe("applied");
+    expect(await readTitle(runId)).toBe("Fix the login button");
+  });
+
+  it("keeps a title the provider actually generated", async () => {
+    const runId = await seedRun({
+      title: "commit, push, pull, sync everything",
+      userMessage: "commit, push, pull, sync everything",
+    });
+
+    expect(await applyAgentSessionTitle({ runId, title: "Sync and push everything" })).toBe("applied");
+    expect(await readTitle(runId)).toBe("Sync and push everything");
   });
 });

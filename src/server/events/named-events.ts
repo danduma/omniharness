@@ -617,7 +617,13 @@ export type ConversationEvent =
   | {
       kind: "conversation.title_updated";
       runId: string;
-      source: "agent_session" | "harness_llm" | "harness_fallback" | "leak_repair";
+      source:
+        | "agent_session"
+        | "agent_transcript"
+        | "agent_thread_index"
+        | "harness_llm"
+        | "harness_fallback"
+        | "leak_repair";
       title: string;
     }
   | {
@@ -625,9 +631,11 @@ export type ConversationEvent =
       runId: string;
       workerId: string;
       workerType: string;
-      streamCandidateStatus: "missing" | "rejected";
+      streamCandidateStatus: "not_applicable" | "missing" | "rejected";
+      // Named for Claude's transcript, which was the only provider store when
+      // this event was added; Codex's thread index reports through it too.
       transcriptCandidateStatus: "not_applicable" | "missing" | "rejected";
-      fallback: "harness_llm";
+      fallback: "initial_title" | "harness_llm";
     }
   | {
       kind: "conversation.title_generation_failed";
@@ -639,8 +647,8 @@ export type ConversationEvent =
   | {
       kind: "conversation.title_rejected";
       runId: string;
-      source: "agent_session";
-      reason: "prompt_leak" | "too_long";
+      source: "agent_session" | "agent_transcript" | "agent_thread_index";
+      reason: "prompt_leak" | "too_long" | "prompt_echo";
       titleLength: number;
       titlePreview: string;
     }
