@@ -299,8 +299,25 @@ export type WorkerEvent =
   | { kind: "worker.spawned"; runId: string; workerId: string; workerType: string }
   | { kind: "worker.status"; runId: string; workerId: string; prev: string; next: string }
   | { kind: "worker.terminal"; runId: string; workerId: string; status: string }
+  | { kind: "worker.turn_preempted"; runId: string; workerId: string; reason: "conversation_recovery" }
   | { kind: "worker.reattached"; runId: string; workerId: string }
   | { kind: "worker.recreated"; runId: string; workerId: string }
+  | {
+      kind: "worker.stale_status_ignored";
+      runId: string;
+      workerId: string;
+      currentWorkerId: string;
+      attemptedStatus: string;
+      reason: "worker_cancelled" | "newer_worker_owns_run";
+    }
+  | {
+      kind: "worker.stale_output_ignored";
+      runId: string;
+      workerId: string;
+      expectedTurnGeneration: number;
+      currentTurnGeneration: number | null;
+      source: "entry_append" | "snapshot_batch";
+    }
   | {
       kind: "worker.selection_deferred";
       runId: string;

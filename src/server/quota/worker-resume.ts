@@ -189,7 +189,9 @@ async function promptResumedQuotaWorker(args: {
   let snapshot: AgentRecord | null = null;
   try {
     snapshot = await getAgent(args.worker.id, { retryIndefinitely: false });
-    await persistWorkerSnapshot(args.worker.id, snapshot);
+    await persistWorkerSnapshot(args.worker.id, snapshot, {
+      expectedTurnGeneration: args.turnGeneration,
+    });
   } catch {
     // The ask response is still the durable fallback when the bridge snapshot is unavailable.
   }
@@ -198,6 +200,7 @@ async function promptResumedQuotaWorker(args: {
     workerId: args.worker.id,
     responseText: response.response,
     snapshot,
+    expectedTurnGeneration: args.turnGeneration,
   });
   const latestWorker = await db.select().from(workers).where(eq(workers.id, args.worker.id)).get();
 

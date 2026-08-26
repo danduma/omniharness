@@ -15,6 +15,7 @@ export async function appendAskResponseFallbackEntry(args: {
   workerId: string;
   responseText: string | null | undefined;
   snapshot: SnapshotLike;
+  expectedTurnGeneration?: number;
 }) {
   const text = args.responseText?.trim();
   if (!text || snapshotHasAssistantMessage(args.snapshot)) {
@@ -26,5 +27,6 @@ export async function appendAskResponseFallbackEntry(args: {
     workerId: args.workerId,
     text,
     raw: { source: "ask_response_fallback" },
+    expectedTurnGeneration: args.expectedTurnGeneration,
   });
 }

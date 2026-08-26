@@ -92,6 +92,7 @@ export async function reconcileRecoveredHumanInputEntries(args: {
   activeElicitationRequestIds: readonly number[];
   activePermissionRequestIds: readonly number[];
   reason?: string;
+  expectedTurnGeneration?: number;
 }): Promise<ReconcileHumanInputResult> {
   const entries = await readWorkerOutputEntries(args.runId, args.workerId);
   const activeElicitationIds = new Set(args.activeElicitationRequestIds);
@@ -127,7 +128,9 @@ export async function reconcileRecoveredHumanInputEntries(args: {
   ];
 
   if (terminalEntries.length > 0) {
-    await writeWorkerOutputEntries(args.runId, args.workerId, terminalEntries);
+    await writeWorkerOutputEntries(args.runId, args.workerId, terminalEntries, {
+      expectedTurnGeneration: args.expectedTurnGeneration,
+    });
   }
   if (staleElicitationIds.length > 0) {
     emitNamedEvent({
@@ -172,6 +175,7 @@ export async function closeStaleHumanInputEntries(args: {
   kind: HumanInputKind;
   requestId?: number;
   reason?: string;
+  expectedTurnGeneration?: number;
 }): Promise<number> {
   try {
     const worker = await db.select().from(workers).where(eq(workers.id, args.workerId)).get();
@@ -190,7 +194,7 @@ export async function closeStaleHumanInputEntries(args: {
     const noun = args.kind === "elicitation" ? "Question" : "Permission";
     const reason = args.reason?.trim() || "the worker is no longer waiting for it";
     const timestamp = new Date().toISOString();
-    await writeWorkerOutputEntries(worker.runId, args.workerId, open.map((requestId): AgentOutputEntry => ({
+    const persisted = await writeWorkerOutputEntries(worker.runId, args.workerId, open.map((requestId): AgentOutputEntry => ({
       id: randomUUID(),
       type: args.kind,
       status: "cancelled",
@@ -199,9 +203,9 @@ export async function closeStaleHumanInputEntries(args: {
       authorRole: "system",
       channel: "system",
       raw: { requestId, decision: "cancel", action: "cancel", reconciled: true },
-    })));
+    })), { expectedTurnGeneration: args.expectedTurnGeneration });
 
-    return open.length;
+    return persisted ? open.length : 0;
   } catch {
     return 0;
   }

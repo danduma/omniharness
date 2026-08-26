@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { plans, runs } from "@/server/db/schema";
+import { executionEvents, plans, runs, workers } from "@/server/db/schema";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 
 const { mockRunMilestoneAutoCommit } = vi.hoisted(() => ({
   mockRunMilestoneAutoCommit: vi.fn(),
@@ -20,6 +21,9 @@ import {
 describe("directWorkerOutputHasPendingHumanInput", () => {
   beforeEach(async () => {
     mockRunMilestoneAutoCommit.mockReset();
+    __resetNamedEventsForTests();
+    await db.delete(executionEvents);
+    await db.delete(workers);
     await db.delete(runs);
     await db.delete(plans);
   });
@@ -201,5 +205,79 @@ describe("directWorkerOutputHasPendingHumanInput", () => {
     const run = await db.select().from(runs).where(eq(runs.id, "run-direct-awaiting-noop")).get();
     expect(run?.status).toBe("awaiting_user");
     expect(run?.updatedAt).toEqual(originalUpdatedAt);
+  });
+
+  it("ignores a late terminal snapshot from an older worker after its replacement starts", async () => {
+    const now = new Date("2026-08-26T12:20:00.000Z");
+    await db.insert(plans).values({
+      id: "plan-stale-worker-status",
+      path: "vibes/ad-hoc/stale-worker-status.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: "run-stale-worker-status",
+      planId: "plan-stale-worker-status",
+      mode: "direct",
+      title: "Replacement owns status",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values([
+      {
+        id: "run-stale-worker-status-worker-1",
+        runId: "run-stale-worker-status",
+        type: "claude",
+        status: "cancelled",
+        cwd: process.cwd(),
+        workerNumber: 1,
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: "run-stale-worker-status-worker-2",
+        runId: "run-stale-worker-status",
+        type: "claude",
+        status: "working",
+        cwd: process.cwd(),
+        workerNumber: 2,
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        createdAt: new Date(now.getTime() + 1_000),
+        updatedAt: new Date(now.getTime() + 1_000),
+      },
+    ]);
+
+    await updateDirectRunStatusFromWorkerOutput({
+      runId: "run-stale-worker-status",
+      workerId: "run-stale-worker-status-worker-1",
+      workerStatus: "idle",
+      responseText: "Late response from the cancelled turn.",
+    });
+
+    const run = await db.select().from(runs).where(eq(runs.id, "run-stale-worker-status")).get();
+    expect(run?.status).toBe("running");
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, "run-stale-worker-status"));
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        workerId: "run-stale-worker-status-worker-1",
+        eventType: "stale_direct_worker_status_ignored",
+      }),
+    ]));
+    expect(getNamedEventsSince(0, { runId: "run-stale-worker-status" }).events.map((entry) => entry.event)).toContainEqual(
+      expect.objectContaining({
+        kind: "worker.stale_status_ignored",
+        workerId: "run-stale-worker-status-worker-1",
+        currentWorkerId: "run-stale-worker-status-worker-2",
+      }),
+    );
   });
 });

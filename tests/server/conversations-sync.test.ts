@@ -1599,7 +1599,7 @@ describe("syncConversationSessions", () => {
       createdAt: new Date(now.getTime() + 3),
       updatedAt: new Date(now.getTime() + 3),
     });
-    mockRespondElicitation.mockRejectedValueOnce(new Error("Respond elicitation failed: no_pending_elicitations"));
+    mockRespondElicitation.mockRejectedValue(new Error("Respond elicitation failed: no_pending_elicitations"));
 
     await syncConversationSessions([
       {
@@ -1638,6 +1638,15 @@ describe("syncConversationSessions", () => {
         stopReason: null,
       },
     ], { selectedRunId: runId });
+
+    // Closing the stale elicitation is intentionally detached; generation-
+    // fenced stream persistence can outlive the first sync promise before the
+    // replacement delivery is registered as a tracked background turn.
+    await vi.waitFor(() => expect(mockAskAgent).toHaveBeenCalledWith(
+      workerId,
+      expect.stringContaining("answer the pending direct question"),
+    ));
+    await waitForConversationBackgroundTasksForTests();
 
     const queued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, "queued-already-answered")).get();
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));

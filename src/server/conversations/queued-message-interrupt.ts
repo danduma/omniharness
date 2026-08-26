@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { askAgent, cancelAgentTurn } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
@@ -414,10 +414,17 @@ async function deliverInterruptedQueuedMessage(args: {
         return;
       }
 
-      await db.update(workers).set({
+      const workerClaimed = await db.update(workers).set({
         status: "working",
         updatedAt: new Date(),
-      }).where(eq(workers.id, worker.id));
+      }).where(and(
+        eq(workers.id, worker.id),
+        eq(workers.turnGeneration, generation),
+      )).returning({ id: workers.id }).get();
+      if (!workerClaimed) {
+        await releaseSupersededRow(false);
+        return;
+      }
 
       const deliveredAt = new Date();
       await appendUserInputOnDelivery({
@@ -433,7 +440,12 @@ async function deliverInterruptedQueuedMessage(args: {
           sizeBytes: attachment.size,
           storagePath: attachment.storagePath,
         })),
+        expectedTurnGeneration: generation,
       });
+      if (!(await isStillCurrent())) {
+        notifyEventStreamSubscribers();
+        return;
+      }
       await db.insert(messages).values(userMessage);
       appendedToTranscript = true;
       notifyEventStreamSubscribers();
@@ -464,11 +476,15 @@ async function deliverInterruptedQueuedMessage(args: {
           nextUserPrompt: workerPrompt,
           source: "steer",
           reason: "provider_session_diagnostic_after_steer",
+          expectedTurnGeneration: generation,
         });
         await db.update(workers).set({
           status: "working",
           updatedAt: new Date(),
-        }).where(eq(workers.id, worker.id));
+        }).where(and(
+          eq(workers.id, worker.id),
+          eq(workers.turnGeneration, generation),
+        ));
         response = imageAttachments.length
           ? await askAgent(worker.id, recreated.replayPrompt, imageAttachments)
           : await askAgent(worker.id, recreated.replayPrompt);
@@ -488,6 +504,7 @@ async function deliverInterruptedQueuedMessage(args: {
         response,
         deliveredAt: finishedAt,
         userInputEntryId: userMessage.id,
+        expectedTurnGeneration: generation,
       });
 
       if (!(await isStillCurrent(true))) {

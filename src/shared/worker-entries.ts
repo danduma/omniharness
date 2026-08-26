@@ -82,6 +82,63 @@ export interface WorkerEntry {
   normalizedPlan?: import("./acp-plan").AcpPlanItem[];
 }
 
+/**
+ * Collapse append-only revisions and cross-worker copies of one logical entry
+ * into the item the conversation UI renders. Position comes from the first
+ * appearance; content comes from the latest revision; timestamp placement
+ * follows the newest worker that owns a copy of the entry.
+ */
+export function coalesceWorkerEntriesById(
+  entries: ReadonlyArray<WorkerEntry>,
+  workerOrder: ReadonlyArray<string> = [],
+): WorkerEntry[] {
+  const workerRank = new Map(workerOrder.map((workerId, index) => [workerId, index]));
+  const rankOf = (entry: WorkerEntry) => {
+    const workerId = (entry as WorkerEntry & { workerId?: unknown }).workerId;
+    return typeof workerId === "string" ? workerRank.get(workerId) ?? -1 : -1;
+  };
+
+  const positionByKey = new Map<string, number>();
+  const placementByKey = new Map<string, { timestamp: string; rank: number }>();
+  const result: WorkerEntry[] = [];
+  for (const entry of entries) {
+    const key = typeof entry.id === "string" && entry.id ? entry.id : null;
+    if (!key) {
+      result.push(entry);
+      continue;
+    }
+    const existingPosition = positionByKey.get(key);
+    if (existingPosition === undefined) {
+      positionByKey.set(key, result.length);
+      if (entry.timestamp) {
+        placementByKey.set(key, { timestamp: entry.timestamp, rank: rankOf(entry) });
+      }
+      result.push(entry);
+      continue;
+    }
+
+    const held = placementByKey.get(key);
+    const candidate = entry.timestamp;
+    const candidateRank = rankOf(entry);
+    let preservedTimestamp = candidate;
+    if (held && candidate) {
+      const keepCandidate = candidateRank > held.rank
+        || (candidateRank === held.rank && candidate < held.timestamp);
+      preservedTimestamp = keepCandidate ? candidate : held.timestamp;
+      placementByKey.set(key, {
+        timestamp: preservedTimestamp,
+        rank: Math.max(candidateRank, held.rank),
+      });
+    } else if (held) {
+      preservedTimestamp = held.timestamp;
+    } else if (candidate) {
+      placementByKey.set(key, { timestamp: candidate, rank: candidateRank });
+    }
+    result[existingPosition] = { ...entry, timestamp: preservedTimestamp };
+  }
+  return result;
+}
+
 const BRIDGE_TYPES: ReadonlySet<WorkerEntryType> = new Set<WorkerEntryType>([
   "message",
   "thought",

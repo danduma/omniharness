@@ -1,6 +1,6 @@
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
-import { asc, eq } from "drizzle-orm";
-import { askAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
+import { and, asc, eq } from "drizzle-orm";
+import { askAgent, cancelAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { executionEvents, messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -16,6 +16,7 @@ import {
 import { buildDirectWorkerPrompt } from "@/server/conversations/direct-worker-prompt";
 import {
   isWorkerTurnSupersededError,
+  isWorkerTurnGenerationCurrent,
   runWorkerTurn,
   trackConversationBackgroundTask,
 } from "@/server/conversations/worker-turn-gate";
@@ -25,7 +26,7 @@ import {
   materializeProviderSessionFromWorkerStream,
 } from "@/server/workers/session-recovery";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
-import { writeWorkerOutputEntries } from "@/server/workers/output-store";
+import { withWorkerOutputWriteFence, writeWorkerOutputEntries } from "@/server/workers/output-store";
 import { reconcileRecoveredHumanInputEntries } from "@/server/workers/human-input-entries";
 import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
 import {
@@ -98,6 +99,7 @@ async function finishRecoveredDirectTurn(args: {
   resumed: AgentRecord;
   incidentId: string;
 }) {
+  const expectedTurnGeneration = args.worker.turnGeneration;
   emitNamedEvent({
     kind: "worker.recovery_continuation_started",
     runId: args.run.id,
@@ -109,23 +111,33 @@ async function finishRecoveredDirectTurn(args: {
   });
 
   try {
+    if (!await isWorkerTurnGenerationCurrent(args.worker.id, expectedTurnGeneration)) {
+      throw new Error("Worker turn was superseded by a newer worker turn");
+    }
     const response = await askAgent(args.worker.id, INTERRUPTED_DIRECT_TURN_PROMPT);
     const snapshot = await getAgent(args.worker.id).catch(() => null);
     if (snapshot) {
-      await persistWorkerSnapshot(args.worker.id, snapshot);
+      await persistWorkerSnapshot(args.worker.id, snapshot, { expectedTurnGeneration });
     }
     await appendAskResponseFallbackEntry({
       runId: args.run.id,
       workerId: args.worker.id,
       responseText: response.response,
       snapshot,
+      expectedTurnGeneration,
     });
 
     const finalWorkerStatus = snapshot?.state ?? response.state ?? "idle";
-    await db.update(workers).set({
+    const workerUpdated = await db.update(workers).set({
       status: finalWorkerStatus,
       updatedAt: new Date(),
-    }).where(eq(workers.id, args.worker.id));
+    }).where(and(
+      eq(workers.id, args.worker.id),
+      eq(workers.turnGeneration, expectedTurnGeneration),
+    )).returning({ id: workers.id }).get();
+    if (!workerUpdated) {
+      throw new Error("Worker turn was superseded by a newer worker turn");
+    }
     await updateDirectRunStatusFromWorkerOutput({
       runId: args.run.id,
       workerId: args.worker.id,
@@ -151,7 +163,10 @@ async function finishRecoveredDirectTurn(args: {
     // The incident was already resolved when the session came back; the
     // continuation only reopens it if it fails outright.
   } catch (error) {
-    if (isWorkerTurnSupersededError(error)) {
+    if (
+      isWorkerTurnSupersededError(error)
+      || !await isWorkerTurnGenerationCurrent(args.worker.id, expectedTurnGeneration)
+    ) {
       emitNamedEvent({
         kind: "worker.recovery_continuation_superseded",
         runId: args.run.id,
@@ -165,10 +180,16 @@ async function finishRecoveredDirectTurn(args: {
     }
     const reason = error instanceof Error ? error.message : String(error);
     if (/\bagent is busy\b/i.test(reason)) {
-      await db.update(workers).set({
+      const busyWorkerRetained = await db.update(workers).set({
         status: "working",
         updatedAt: new Date(),
-      }).where(eq(workers.id, args.worker.id));
+      }).where(and(
+        eq(workers.id, args.worker.id),
+        eq(workers.turnGeneration, expectedTurnGeneration),
+      )).returning({ id: workers.id }).get();
+      if (!busyWorkerRetained) {
+        return;
+      }
       emitNamedEvent({
         kind: "worker.recovery_continuation_completed",
         runId: args.run.id,
@@ -177,32 +198,40 @@ async function finishRecoveredDirectTurn(args: {
       return;
     }
 
-    await setRunNeedsRecovery({ runId: args.run.id, reason });
-    await db.update(workers).set({
-      status: "error",
-      currentText: "",
-      updatedAt: new Date(),
-    }).where(eq(workers.id, args.worker.id));
-    await markRecoveryIncidentNeedsUser({
-      incidentId: args.incidentId,
-      runId: args.run.id,
-      workerId: args.worker.id,
-      reason,
-      details: { continuationFailed: true },
-    });
-    emitNamedEvent({
-      kind: "error.surfaced",
-      code: "worker.resume.failed",
-      message: reason,
-      surface: "banner",
-      runId: args.run.id,
-      workerId: args.worker.id,
-      cause: error instanceof Error ? { name: error.name, message: error.message } : null,
-    });
-    await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "recovery_continuation_failed", {
-      summary: `Could not continue the interrupted turn for ${args.worker.id}.`,
-      incidentId: args.incidentId,
-      reason,
+    await withWorkerOutputWriteFence(args.run.id, args.worker.id, async () => {
+      const failedWorker = await db.update(workers).set({
+        status: "error",
+        currentText: "",
+        updatedAt: new Date(),
+      }).where(and(
+        eq(workers.id, args.worker.id),
+        eq(workers.turnGeneration, expectedTurnGeneration),
+      )).returning({ id: workers.id }).get();
+      if (!failedWorker) {
+        return;
+      }
+      await setRunNeedsRecovery({ runId: args.run.id, reason });
+      await markRecoveryIncidentNeedsUser({
+        incidentId: args.incidentId,
+        runId: args.run.id,
+        workerId: args.worker.id,
+        reason,
+        details: { continuationFailed: true },
+      });
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "worker.resume.failed",
+        message: reason,
+        surface: "banner",
+        runId: args.run.id,
+        workerId: args.worker.id,
+        cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+      });
+      await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "recovery_continuation_failed", {
+        summary: `Could not continue the interrupted turn for ${args.worker.id}.`,
+        incidentId: args.incidentId,
+        reason,
+      });
     });
   } finally {
     notifyEventStreamSubscribers();
@@ -330,6 +359,7 @@ async function resumeSavedWorkerSession(args: {
   state: RecoveryState;
   incidentId: string;
 }) {
+  const expectedTurnGeneration = args.worker.turnGeneration;
   const sessionId = args.state.sessionId || args.worker.bridgeSessionId;
   if (!sessionId) {
     throw new Error("No saved worker session is available");
@@ -351,10 +381,16 @@ async function resumeSavedWorkerSession(args: {
     incidentId: args.incidentId,
     sessionId,
   });
-  await db.update(workers).set({
+  const recoveryClaimed = await db.update(workers).set({
     status: "recovering",
     updatedAt: new Date(),
-  }).where(eq(workers.id, args.worker.id));
+  }).where(and(
+    eq(workers.id, args.worker.id),
+    eq(workers.turnGeneration, expectedTurnGeneration),
+  )).returning({ id: workers.id }).get();
+  if (!recoveryClaimed) {
+    return { action: "none" as const, runId: args.run.id, workerId: args.worker.id };
+  }
 
   let resumed: AgentRecord;
   let recreatedFromMissingSession = false;
@@ -381,12 +417,18 @@ async function resumeSavedWorkerSession(args: {
       reason,
       sessionId,
     });
-    await db.update(workers).set({
+    const recreationClaimed = await db.update(workers).set({
       status: "starting",
       bridgeSessionId: null,
       bridgeSessionMode: null,
       updatedAt: new Date(),
-    }).where(eq(workers.id, args.worker.id));
+    }).where(and(
+      eq(workers.id, args.worker.id),
+      eq(workers.turnGeneration, expectedTurnGeneration),
+    )).returning({ id: workers.id }).get();
+    if (!recreationClaimed) {
+      return { action: "none" as const, runId: args.run.id, workerId: args.worker.id };
+    }
     resumed = await spawnAgent({
       type: args.worker.type,
       cwd: args.worker.cwd,
@@ -415,7 +457,16 @@ async function resumeSavedWorkerSession(args: {
     : "running";
 
   if (resumed.outputEntries) {
-    await writeWorkerOutputEntries(args.run.id, args.worker.id, resumed.outputEntries);
+    const outputPersisted = await writeWorkerOutputEntries(
+      args.run.id,
+      args.worker.id,
+      resumed.outputEntries,
+      { expectedTurnGeneration },
+    );
+    if (!outputPersisted) {
+      await cancelAgent(args.worker.id).catch(() => undefined);
+      return { action: "none" as const, runId: args.run.id, workerId: args.worker.id };
+    }
   }
   await reconcileRecoveredHumanInputEntries({
     runId: args.run.id,
@@ -423,53 +474,65 @@ async function resumeSavedWorkerSession(args: {
     activeElicitationRequestIds: (resumed.pendingElicitations ?? []).map((entry) => entry.requestId),
     activePermissionRequestIds: (resumed.pendingPermissions ?? []).map((entry) => entry.requestId),
     reason: "the runner restarted and the recovered runtime no longer owns this request",
+    expectedTurnGeneration,
   });
 
-  await db.update(workers).set({
-    status: continueInterruptedDirectTurn ? "working" : resumed.state,
-    currentText: resumed.currentText,
-    lastText: resumed.lastText,
-    bridgeSessionId: resumed.sessionId ?? (recreatedFromMissingSession ? null : sessionId),
-    bridgeSessionMode: resumed.sessionMode ?? args.worker.bridgeSessionMode ?? null,
-    updatedAt: new Date(),
-  }).where(eq(workers.id, args.worker.id));
-  emitNamedEvent({
-    kind: recreatedFromMissingSession ? "worker.recreated" : "worker.reattached",
-    runId: args.run.id,
-    workerId: args.worker.id,
-  });
-  if (recreatedFromMissingSession) {
-    await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "worker_session_recreated", {
-      summary: `Started a fresh runtime worker for ${args.worker.id} after its saved session was rejected.`,
-      rejectedSessionId: sessionId,
-      newSessionId: resumed.sessionId ?? null,
-      reason: "recovery_resume_missing_agent",
+  const recoveryPersisted = await withWorkerOutputWriteFence(args.run.id, args.worker.id, async () => {
+    const workerUpdated = await db.update(workers).set({
+      status: continueInterruptedDirectTurn ? "working" : resumed.state,
+      currentText: resumed.currentText,
+      lastText: resumed.lastText,
+      bridgeSessionId: resumed.sessionId ?? (recreatedFromMissingSession ? null : sessionId),
+      bridgeSessionMode: resumed.sessionMode ?? args.worker.bridgeSessionMode ?? null,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(workers.id, args.worker.id),
+      eq(workers.turnGeneration, expectedTurnGeneration),
+    )).returning({ id: workers.id }).get();
+    if (!workerUpdated) {
+      return false;
+    }
+
+    emitNamedEvent({
+      kind: recreatedFromMissingSession ? "worker.recreated" : "worker.reattached",
+      runId: args.run.id,
+      workerId: args.worker.id,
     });
-  }
-  await db.update(runs).set({
-    status: nextRunStatus,
-    failedAt: null,
-    lastError: null,
-    updatedAt: new Date(),
-  }).where(eq(runs.id, args.run.id));
-  // The incident is "this worker's session was lost". Restoring it is done the
-  // moment the resumed agent is persisted. Any continuation turn that follows is
-  // ordinary work — the worker row already says `working` and the run says
-  // `running`, which is what the normal progress UI is for. Holding the incident
-  // open until that turn ends left the recovery banner claiming OmniHarness was
-  // still restoring the session for as long as the agent kept working, which
-  // reads as a hung backend.
-  await markRecoveryIncidentResolved({
-    incidentId: args.incidentId,
-    runId: args.run.id,
-    workerId: args.worker.id,
-    summary: `Resumed ${args.worker.id} from saved session.`,
-    details: {
-      sessionId,
-      workerState: continueInterruptedDirectTurn ? "working" : resumed.state,
-      ...(continueInterruptedDirectTurn ? { continuationPending: true } : {}),
-    },
+    if (recreatedFromMissingSession) {
+      await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "worker_session_recreated", {
+        summary: `Started a fresh runtime worker for ${args.worker.id} after its saved session was rejected.`,
+        rejectedSessionId: sessionId,
+        newSessionId: resumed.sessionId ?? null,
+        reason: "recovery_resume_missing_agent",
+      });
+    }
+    await db.update(runs).set({
+      status: nextRunStatus,
+      failedAt: null,
+      lastError: null,
+      updatedAt: new Date(),
+    }).where(eq(runs.id, args.run.id));
+    // The incident is "this worker's session was lost". Restoring it is done the
+    // moment the resumed agent is persisted. Any continuation turn that follows is
+    // ordinary work — the worker row already says `working` and the run says
+    // `running`, which is what the normal progress UI is for.
+    await markRecoveryIncidentResolved({
+      incidentId: args.incidentId,
+      runId: args.run.id,
+      workerId: args.worker.id,
+      summary: `Resumed ${args.worker.id} from saved session.`,
+      details: {
+        sessionId,
+        workerState: continueInterruptedDirectTurn ? "working" : resumed.state,
+        ...(continueInterruptedDirectTurn ? { continuationPending: true } : {}),
+      },
+    });
+    return true;
   });
+  if (!recoveryPersisted) {
+    await cancelAgent(args.worker.id).catch(() => undefined);
+    return { action: "none" as const, runId: args.run.id, workerId: args.worker.id };
+  }
   if (continueInterruptedDirectTurn) {
     const continuation = runWorkerTurn(args.worker.id, () => finishRecoveredDirectTurn({
       run: args.run,

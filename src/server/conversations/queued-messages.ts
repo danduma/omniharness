@@ -17,7 +17,12 @@ import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallba
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
 import { closeStaleHumanInputEntries } from "@/server/workers/human-input-entries";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
-import { runConversationMutation, runWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
+import {
+  isWorkerTurnGenerationCurrent,
+  runConversationMutation,
+  runWorkerTurn,
+  trackConversationBackgroundTask,
+} from "./worker-turn-gate";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 import { persistRunFailure } from "@/server/runs/failures";
 import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
@@ -353,13 +358,20 @@ async function answerPendingWorkerElicitation(args: {
       kind: "elicitation",
       requestId: elicitation.requestId,
       reason: "the worker stopped waiting for an answer",
+      expectedTurnGeneration: args.worker.turnGeneration,
     });
     return false;
   }
-  await db.update(workers).set({
+  const workerClaimed = await db.update(workers).set({
     status: "working",
     updatedAt: args.deliveredAt,
-  }).where(eq(workers.id, args.worker.id));
+  }).where(and(
+    eq(workers.id, args.worker.id),
+    eq(workers.turnGeneration, args.worker.turnGeneration),
+  )).returning({ id: workers.id }).get();
+  if (!workerClaimed) {
+    return false;
+  }
   await db.update(runs).set({
     status: "running",
     failedAt: null,
@@ -382,23 +394,29 @@ export async function persistDeliveredWorkerResponse({
   response,
   deliveredAt,
   userInputEntryId,
+  expectedTurnGeneration,
 }: {
   run: WorkerResponseRun;
   workerId: string;
   response: WorkerAskResponse;
   deliveredAt: Date;
   userInputEntryId: string;
+  expectedTurnGeneration: number;
 }) {
   const snapshot = await Promise.resolve(getAgent(workerId)).catch(() => null);
   if (snapshot) {
-    await persistWorkerSnapshot(workerId, snapshot);
+    await persistWorkerSnapshot(workerId, snapshot, { expectedTurnGeneration });
   }
   await appendAskResponseFallbackEntry({
     runId: run.id,
     workerId,
     responseText: response.response,
     snapshot,
+    expectedTurnGeneration,
   });
+  if (!await isWorkerTurnGenerationCurrent(workerId, expectedTurnGeneration)) {
+    return;
+  }
   await assertQueuedDeliveryProducedOutput({
     runId: run.id,
     workerId,
@@ -407,10 +425,16 @@ export async function persistDeliveredWorkerResponse({
     snapshot,
   });
 
-  await db.update(workers).set({
+  const workerUpdated = await db.update(workers).set({
     status: snapshot?.state ?? response.state,
     updatedAt: deliveredAt,
-  }).where(eq(workers.id, workerId));
+  }).where(and(
+    eq(workers.id, workerId),
+    eq(workers.turnGeneration, expectedTurnGeneration),
+  )).returning({ id: workers.id }).get();
+  if (!workerUpdated) {
+    return;
+  }
 
   await resolveRecoveryIncidentsAfterHealthyTurn({
     runId: run.id,
@@ -645,11 +669,19 @@ async function deliverQueuedWorkerSteering(args: {
           sizeBytes: attachment.size,
           storagePath: attachment.storagePath,
         })),
+        expectedTurnGeneration: args.worker.turnGeneration,
       });
+      if (!await isWorkerTurnGenerationCurrent(args.worker.id, args.worker.turnGeneration)) {
+        return false;
+      }
       args.onUserInputAppended?.();
+      return true;
     };
 
-    if (await queuedMessageStatus(args.messageId) !== "delivering") {
+    if (
+      await queuedMessageStatus(args.messageId) !== "delivering"
+      || !await isWorkerTurnGenerationCurrent(args.worker.id, args.worker.turnGeneration)
+    ) {
       notifyEventStreamSubscribers();
       return;
     }
@@ -667,7 +699,9 @@ async function deliverQueuedWorkerSteering(args: {
       content: args.userText,
       deliveredAt,
     })) {
-      await appendQueuedUserInput(deliveredAt);
+      if (!await appendQueuedUserInput(deliveredAt)) {
+        return;
+      }
       await db.update(queuedConversationMessages).set({
         status: "delivered",
         lastError: null,
@@ -687,7 +721,9 @@ async function deliverQueuedWorkerSteering(args: {
     // Anchor the user's message before the ask: this is the user-initiated
     // send-now path, and the bridge starts streaming output during askAgent, so
     // appending afterwards would order the reply ahead of the prompt.
-    await appendQueuedUserInput(deliveredAt);
+    if (!await appendQueuedUserInput(deliveredAt)) {
+      return;
+    }
     notifyEventStreamSubscribers();
 
     if (await queuedMessageStatus(args.messageId) !== "delivering") {
@@ -706,6 +742,7 @@ async function deliverQueuedWorkerSteering(args: {
       response,
       deliveredAt,
       userInputEntryId: args.userMessageId ?? args.messageId,
+      expectedTurnGeneration: args.worker.turnGeneration,
     });
     // Worker response now lives in the unified worker stream; the
     // legacy role:"worker" messages row is no longer written.
@@ -1108,6 +1145,7 @@ async function drainQueuedImplementationMessagesUnlocked(runId: string) {
               sizeBytes: attachment.size,
               storagePath: attachment.storagePath,
             })),
+            expectedTurnGeneration: worker.turnGeneration,
           });
           await db.insert(messages).values(userMessage);
           await db.insert(messages).values({
@@ -1125,6 +1163,7 @@ async function drainQueuedImplementationMessagesUnlocked(runId: string) {
             response,
             deliveredAt,
             userInputEntryId: userMessage.id,
+            expectedTurnGeneration: worker.turnGeneration,
           });
           // Worker response now lives in the unified worker stream.
           await db.update(queuedConversationMessages).set({
@@ -1303,6 +1342,7 @@ async function drainQueuedWorkerMessagesUnlocked({
             sizeBytes: attachment.size,
             storagePath: attachment.storagePath,
           })),
+          expectedTurnGeneration: worker.turnGeneration,
         });
         await db.insert(messages).values(userMessage);
         await db.update(queuedConversationMessages).set({
@@ -1322,11 +1362,17 @@ async function drainQueuedWorkerMessagesUnlocked({
     }
 
     try {
-      await runWorkerTurn(workerId, async () => {
-        await db.update(workers).set({
+      const turnDelivered = await runWorkerTurn(workerId, async () => {
+        const workerClaimed = await db.update(workers).set({
           status: "working",
           updatedAt: startedAt,
-        }).where(eq(workers.id, workerId));
+        }).where(and(
+          eq(workers.id, workerId),
+          eq(workers.turnGeneration, worker.turnGeneration),
+        )).returning({ id: workers.id }).get();
+        if (!workerClaimed) {
+          return false;
+        }
         const snapshotBeforeAsk = snapshot ?? await Promise.resolve(getAgent(workerId)).catch(() => null);
         const deliveredAt = new Date();
         if (await answerPendingWorkerElicitation({
@@ -1349,6 +1395,7 @@ async function drainQueuedWorkerMessagesUnlocked({
               sizeBytes: attachment.size,
               storagePath: attachment.storagePath,
             })),
+            expectedTurnGeneration: worker.turnGeneration,
           });
           await db.insert(messages).values(userMessage);
           await db.update(queuedConversationMessages).set({
@@ -1362,7 +1409,7 @@ async function drainQueuedWorkerMessagesUnlocked({
             queuedMessageId: record.id,
             delivery: "elicitation",
           }, workerId);
-          return;
+          return true;
         }
 
         // Anchor the user's message before the ask. The turn can block for its
@@ -1387,6 +1434,7 @@ async function drainQueuedWorkerMessagesUnlocked({
             sizeBytes: attachment.size,
             storagePath: attachment.storagePath,
           })),
+          expectedTurnGeneration: worker.turnGeneration,
         });
         notifyEventStreamSubscribers();
 
@@ -1401,6 +1449,7 @@ async function drainQueuedWorkerMessagesUnlocked({
           response,
           deliveredAt,
           userInputEntryId: userMessage.id,
+          expectedTurnGeneration: worker.turnGeneration,
         });
         // Worker response now lives in the unified worker stream.
         await db.update(queuedConversationMessages).set({
@@ -1413,7 +1462,23 @@ async function drainQueuedWorkerMessagesUnlocked({
           summary: `Delivered queued message to ${workerId}.`,
           queuedMessageId: record.id,
         }, workerId);
+        return true;
       });
+      if (!turnDelivered) {
+        await db.update(queuedConversationMessages).set({
+          status: "pending",
+          lastError: null,
+          updatedAt: new Date(),
+        }).where(and(
+          eq(queuedConversationMessages.id, record.id),
+          eq(queuedConversationMessages.status, "delivering"),
+        ));
+        await insertQueueExecutionEvent(runId, "queued_message_superseded", {
+          summary: `Requeued ${record.id} because a newer worker turn took over before delivery.`,
+          queuedMessageId: record.id,
+        }, workerId);
+        continue;
+      }
       deliveredCount += 1;
     } catch (error) {
       if (await handleQueuedWorkerQuotaError({

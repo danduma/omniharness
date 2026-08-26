@@ -33,13 +33,19 @@ import {
 } from "@/lib/chat-attachments";
 import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/supervisor/worker-types";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
-import { findWorkerEntrySeqById, readWorkerLatestSeq, readWorkerOutputEntries } from "@/server/workers/output-store";
+import {
+  findWorkerEntrySeqById,
+  readWorkerLatestSeq,
+  readWorkerOutputEntries,
+  withWorkerOutputWriteFence,
+} from "@/server/workers/output-store";
 import { parseSupersededSeqRanges, serializeSupersededSeqRanges } from "@/lib/superseded-entries";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { appendWorkerSessionMetadata, readWorkerSessionMetadata } from "@/server/workers/session-metadata";
 import {
   buildTranscriptReplayPrompt,
+  buildConversationTranscriptReplayPromptBeforeEntry,
   canRecreateRejectedSavedSession,
   isProviderSessionDiagnosticErrorMessage,
   isRejectedSavedSessionErrorMessage,
@@ -63,7 +69,19 @@ import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget,
 import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
 import { reconcileRecoveredHumanInputEntries } from "@/server/workers/human-input-entries";
 import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
-import { runConversationMutation } from "@/server/conversations/worker-turn-gate";
+import {
+  abortWorkerTurn,
+  advanceWorkerTurnGeneration,
+  beginConversationRecoveryPreemption,
+  finishConversationRecoveryPreemption,
+  isConversationRecoveryPreemptionCurrent,
+  isWorkerTurnAbortedError,
+  isWorkerTurnGenerationCurrent,
+  isWorkerTurnSupersededError,
+  runConversationMutation,
+  runConversationRecoveryWorkerTurn,
+  runWorkerTurn,
+} from "@/server/conversations/worker-turn-gate";
 
 export type RecoveryAction = "retry" | "edit" | "fork";
 
@@ -134,15 +152,31 @@ async function cancelRunWorkers(runId: string) {
   const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
 
   for (const worker of runWorkers) {
+    abortWorkerTurn(worker.id, "conversation rewind");
+    const cancelledAt = new Date();
+    const alreadyCancelled = ["cancelled", "canceled"].includes(worker.status.trim().toLowerCase());
+    if (!alreadyCancelled) {
+      await withWorkerOutputWriteFence(runId, worker.id, () => (
+        advanceWorkerTurnGeneration(worker.id, {
+          status: "cancelled",
+          clearCurrentText: true,
+          updatedAt: cancelledAt,
+        })
+      ));
+      emitNamedEvent({
+        kind: "worker.status",
+        runId,
+        workerId: worker.id,
+        prev: worker.status,
+        next: "cancelled",
+      });
+      emitNamedEvent({ kind: "worker.terminal", runId, workerId: worker.id, status: "cancelled" });
+    }
     try {
       await cancelAgent(worker.id);
     } catch {
       // best-effort cancellation before cleanup
     }
-    await db.update(workers).set({
-      status: "cancelled",
-      updatedAt: new Date(),
-    }).where(eq(workers.id, worker.id));
   }
 
   const workerIds = runWorkers.map((worker) => worker.id);
@@ -278,8 +312,13 @@ async function startDirectRerun(
   content: string,
   userInputId?: string,
   attachments: ChatAttachment[] = [],
+  options: {
+    replayTargetMessageId?: string | null;
+    recoveryEpoch?: number;
+  } = {},
 ) {
   const { workerId, workerNumber } = await allocateWorkerIdentity(run.id);
+  const expectedTurnGeneration = 0;
   const cwd = run.projectPath || process.cwd();
   const allowedWorkerTypes = parseAllowedWorkerTypes(run.allowedWorkerTypes);
   const workerType = run.preferredWorkerType?.trim()
@@ -319,7 +358,43 @@ async function startDirectRerun(
   const workerAccountId = accountAllocation?.account?.id ?? null;
 
   let spawned = false;
+  const retireSupersededRecoveryWorker = async () => {
+    if (
+      options.recoveryEpoch === undefined
+      || isConversationRecoveryPreemptionCurrent(run.id, options.recoveryEpoch)
+    ) {
+      return false;
+    }
+    await withWorkerOutputWriteFence(run.id, workerId, () => (
+      advanceWorkerTurnGeneration(workerId, {
+        status: "cancelled",
+        clearCurrentText: true,
+        updatedAt: new Date(),
+      })
+    ));
+    emitNamedEvent({
+      kind: "worker.turn_preempted",
+      runId: run.id,
+      workerId,
+      reason: "conversation_recovery",
+    });
+    emitNamedEvent({
+      kind: "worker.status",
+      runId: run.id,
+      workerId,
+      prev: "starting",
+      next: "cancelled",
+    });
+    emitNamedEvent({ kind: "worker.terminal", runId: run.id, workerId, status: "cancelled" });
+    if (spawned) {
+      await cancelAgent(workerId).catch(() => undefined);
+    }
+    return true;
+  };
   try {
+    if (await retireSupersededRecoveryWorker()) {
+      return;
+    }
     const agent = await spawnAgent({
       type: workerType,
       cwd,
@@ -331,20 +406,31 @@ async function startDirectRerun(
       effort: launchSelection.effort ?? undefined,
     });
     spawned = true;
-    await db.update(workers).set({
+    if (await retireSupersededRecoveryWorker()) {
+      return;
+    }
+    const spawnedWorkerClaimed = await db.update(workers).set({
       type: agent.type || workerType,
       status: "working",
       cwd: agent.cwd || cwd,
       bridgeSessionId: agent.sessionId ?? null,
       bridgeSessionMode: agent.sessionMode ?? null,
       updatedAt: new Date(),
-    }).where(eq(workers.id, workerId));
+    }).where(and(
+      eq(workers.id, workerId),
+      eq(workers.turnGeneration, expectedTurnGeneration),
+    )).returning({ id: workers.id }).get();
+    if (!spawnedWorkerClaimed) {
+      await cancelAgent(workerId).catch(() => undefined);
+      return;
+    }
     await appendWorkerSessionMetadata({
       runId: run.id,
       workerId,
       sessionId: agent.sessionId ?? null,
       sessionMode: agent.sessionMode ?? null,
       source: "direct-rerun",
+      expectedTurnGeneration,
     });
     await appendUserInputOnDelivery({
       id: userInputId,
@@ -359,6 +445,7 @@ async function startDirectRerun(
         sizeBytes: attachment.size,
         storagePath: attachment.storagePath,
       })),
+      expectedTurnGeneration,
     });
     if (userInputId) {
       // The message now exists on this worker, so the copy the rewound worker
@@ -376,11 +463,46 @@ async function startDirectRerun(
         resolvePath: (storagePath) => getAppDataPath(storagePath),
         imagesInlined: true,
       });
-      const workerPrompt = buildDirectWorkerPrompt(run.mode, workerContent, cwd);
+      const nextUserPrompt = buildDirectWorkerPrompt(run.mode, workerContent, cwd);
+      const replay = options.replayTargetMessageId
+        ? await buildConversationTranscriptReplayPromptBeforeEntry({
+          runId: run.id,
+          targetEntryId: options.replayTargetMessageId,
+          nextUserPrompt,
+        })
+        : null;
+      if (options.replayTargetMessageId && !replay) {
+        throw new Error(`Cannot reconstruct the visible conversation before edited checkpoint ${options.replayTargetMessageId}.`);
+      }
+      const workerPrompt = replay?.prompt ?? nextUserPrompt;
+      if (replay && options.replayTargetMessageId) {
+        await recordExecutionEvent({
+          runId: run.id,
+          workerId,
+          planItemId: null,
+          eventType: "worker_session_recreated_from_transcript",
+          details: {
+            summary: `Started ${workerId} with run-wide visible conversation context before the edited checkpoint.`,
+            sourceRunId: run.id,
+            sourceWorkerIds: replay.sourceWorkerIds,
+            targetWorkerId: replay.targetWorkerId,
+            targetMessageId: options.replayTargetMessageId,
+            sessionId: agent.sessionId ?? null,
+            transcriptReplay: true,
+          },
+          createdAt: new Date(),
+        });
+        emitNamedEvent({ kind: "worker.recreated", runId: run.id, workerId });
+      }
       const imageAttachments = resolveImageAttachments(attachments, getAppDataPath);
-      response = imageAttachments.length
-        ? await askAgent(workerId, workerPrompt, imageAttachments)
-        : await askAgent(workerId, workerPrompt);
+      const ask = () => (
+        imageAttachments.length
+          ? askAgent(workerId, workerPrompt, imageAttachments, { expectedTurnGeneration })
+          : askAgent(workerId, workerPrompt, undefined, { expectedTurnGeneration })
+      );
+      response = options.recoveryEpoch === undefined
+        ? await runWorkerTurn(workerId, ask)
+        : await runConversationRecoveryWorkerTurn(run.id, options.recoveryEpoch, workerId, ask);
     } catch (error) {
       const quotaResult = await handleDirectWorkerAskQuotaError({
         runId: run.id,
@@ -396,7 +518,7 @@ async function startDirectRerun(
     let snapshot: AgentRecord | null = null;
     try {
       snapshot = await getAgent(workerId);
-      await persistWorkerSnapshot(workerId, snapshot);
+      await persistWorkerSnapshot(workerId, snapshot, { expectedTurnGeneration });
     } catch {
       // The bridge may have already dropped a failed direct worker; the ask response still determines the visible state.
     }
@@ -405,12 +527,13 @@ async function startDirectRerun(
       workerId,
       responseText: response.response,
       snapshot,
+      expectedTurnGeneration,
     });
 
     if (!hasVisibleWorkerOutput(response.response, snapshot)) {
       const failureMessage = buildEmptyWorkerOutputMessage(snapshot, response.state);
 
-      await db.update(workers).set({
+      const failedWorker = await db.update(workers).set({
         type: snapshot?.type || agent.type || workerType,
         status: "error",
         cwd: snapshot?.cwd || agent.cwd || cwd,
@@ -418,11 +541,16 @@ async function startDirectRerun(
         bridgeSessionId: snapshot?.sessionId ?? agent.sessionId ?? null,
         bridgeSessionMode: snapshot?.sessionMode ?? agent.sessionMode ?? null,
         updatedAt: new Date(),
-      }).where(eq(workers.id, workerId));
+      }).where(and(
+        eq(workers.id, workerId),
+        eq(workers.turnGeneration, expectedTurnGeneration),
+      )).returning({ id: workers.id }).get();
 
-      await persistRunFailure(run.id, new Error(failureMessage), {
-        surface: { code: "recovery.run_failed", workerId },
-      });
+      if (failedWorker) {
+        await persistRunFailure(run.id, new Error(failureMessage), {
+          surface: { code: "recovery.run_failed", workerId },
+        });
+      }
       return;
     }
 
@@ -434,18 +562,34 @@ async function startDirectRerun(
       bridgeSessionId: snapshot?.sessionId ?? agent.sessionId ?? null,
       bridgeSessionMode: snapshot?.sessionMode ?? agent.sessionMode ?? null,
       updatedAt: new Date(),
-    }).where(eq(workers.id, workerId));
+    }).where(and(
+      eq(workers.id, workerId),
+      eq(workers.turnGeneration, expectedTurnGeneration),
+    ));
   } catch (error) {
+    if (
+      isWorkerTurnAbortedError(error)
+      || isWorkerTurnSupersededError(error)
+      || !await isWorkerTurnGenerationCurrent(workerId, expectedTurnGeneration)
+    ) {
+      return;
+    }
     const failureMessage = formatErrorMessage(error);
     const code = spawned ? "worker.initial.turn_failed" : "worker.spawn.failed";
     const failedAt = new Date();
-    await db.update(workers).set({
+    const failedWorker = await db.update(workers).set({
       status: "error",
       outputLog: failureMessage,
       currentText: "",
       lastText: "",
       updatedAt: failedAt,
-    }).where(eq(workers.id, workerId));
+    }).where(and(
+      eq(workers.id, workerId),
+      eq(workers.turnGeneration, expectedTurnGeneration),
+    )).returning({ id: workers.id }).get();
+    if (!failedWorker) {
+      return;
+    }
     emitNamedEvent({
       kind: "worker.status",
       runId: run.id,
@@ -564,6 +708,7 @@ async function resumeDirectRunFromSavedSession(
   run: typeof runs.$inferSelect,
   targetMessage: typeof messages.$inferSelect,
   content: string,
+  recoveryEpoch: number,
 ) {
   const worker = await selectDirectRecoveryWorker(run.id, targetMessage.id);
   const sessionId = worker?.bridgeSessionId?.trim();
@@ -580,6 +725,7 @@ async function resumeDirectRunFromSavedSession(
     });
     return null;
   }
+  const expectedTurnGeneration = worker.turnGeneration;
 
   const laterMessages = await db.select().from(messages).where(eq(messages.runId, run.id));
   const laterMessageIds = laterMessages
@@ -755,6 +901,10 @@ async function resumeDirectRunFromSavedSession(
   if (!resumedWorker) {
     throw new Error(`Failed to recover worker ${worker.id}.`);
   }
+  if (!await isWorkerTurnGenerationCurrent(worker.id, expectedTurnGeneration)) {
+    await cancelAgent(worker.id).catch(() => undefined);
+    return { runId: run.id };
+  }
 
   const resumedAt = new Date();
   await recordExecutionEvent({
@@ -782,6 +932,7 @@ async function resumeDirectRunFromSavedSession(
     activeElicitationRequestIds: (resumedWorker.pendingElicitations ?? []).map((entry) => entry.requestId),
     activePermissionRequestIds: (resumedWorker.pendingPermissions ?? []).map((entry) => entry.requestId),
     reason: "the worker was resumed for a retry and the recovered runtime no longer owns this request",
+    expectedTurnGeneration,
   });
   emitNamedEvent({
     kind: recreatedFromRejectedEmptySession || replayPrompt ? "worker.recreated" : "worker.reattached",
@@ -794,15 +945,19 @@ async function resumeDirectRunFromSavedSession(
     bridgeSessionId: resumedWorker.sessionId ?? (recreatedFromRejectedEmptySession ? null : sessionId),
     bridgeSessionMode: resumedWorker.sessionMode ?? sessionMode ?? null,
     updatedAt: resumedAt,
-  }).where(eq(workers.id, worker.id));
+  }).where(and(
+    eq(workers.id, worker.id),
+    eq(workers.turnGeneration, expectedTurnGeneration),
+  ));
   await appendWorkerSessionMetadata({
     runId: run.id,
     workerId: worker.id,
     sessionId: resumedWorker.sessionId ?? (recreatedFromRejectedEmptySession ? null : sessionId),
     sessionMode: resumedWorker.sessionMode ?? sessionMode ?? null,
     source: "direct-retry",
+    expectedTurnGeneration,
   });
-  await persistWorkerSnapshot(worker.id, resumedWorker);
+  await persistWorkerSnapshot(worker.id, resumedWorker, { expectedTurnGeneration });
 
   await db.update(runs).set({
     status: "running",
@@ -830,10 +985,19 @@ async function resumeDirectRunFromSavedSession(
   const retryImages = resolveImageAttachments(parseChatAttachmentsJson(targetMessage.attachmentsJson), getAppDataPath);
   let response;
   try {
-    response = retryImages.length
-      ? await askAgent(worker.id, retryPrompt, retryImages)
-      : await askAgent(worker.id, retryPrompt);
+    response = await runConversationRecoveryWorkerTurn(run.id, recoveryEpoch, worker.id, () => (
+      retryImages.length
+        ? askAgent(worker.id, retryPrompt, retryImages, { expectedTurnGeneration })
+        : askAgent(worker.id, retryPrompt, undefined, { expectedTurnGeneration })
+    ));
   } catch (error) {
+    if (
+      isWorkerTurnAbortedError(error)
+      || isWorkerTurnSupersededError(error)
+      || !await isWorkerTurnGenerationCurrent(worker.id, expectedTurnGeneration)
+    ) {
+      return { runId: run.id };
+    }
     if (isProviderSessionDiagnosticErrorMessage(formatErrorMessage(error))) {
       const recreated = await recreateWorkerFromTranscript({
         run,
@@ -841,18 +1005,31 @@ async function resumeDirectRunFromSavedSession(
         nextUserPrompt: retryPrompt,
         source: "direct-retry",
         reason: "provider_session_diagnostic_after_direct_retry",
+        expectedTurnGeneration,
       });
       resumedWorker = recreated.worker;
       replayPrompt = recreated.replayPrompt;
       await db.update(workers).set({
         status: "working",
         updatedAt: new Date(),
-      }).where(eq(workers.id, worker.id));
+      }).where(and(
+        eq(workers.id, worker.id),
+        eq(workers.turnGeneration, expectedTurnGeneration),
+      ));
       try {
-        response = retryImages.length
-          ? await askAgent(worker.id, recreated.replayPrompt, retryImages)
-          : await askAgent(worker.id, recreated.replayPrompt);
+        response = await runConversationRecoveryWorkerTurn(run.id, recoveryEpoch, worker.id, () => (
+          retryImages.length
+            ? askAgent(worker.id, recreated.replayPrompt, retryImages, { expectedTurnGeneration })
+            : askAgent(worker.id, recreated.replayPrompt, undefined, { expectedTurnGeneration })
+        ));
       } catch (retryError) {
+        if (
+          isWorkerTurnAbortedError(retryError)
+          || isWorkerTurnSupersededError(retryError)
+          || !await isWorkerTurnGenerationCurrent(worker.id, expectedTurnGeneration)
+        ) {
+          return { runId: run.id };
+        }
         if (isProviderSessionDiagnosticErrorMessage(formatErrorMessage(retryError))) {
           throw new Error(userFacingProviderSessionErrorMessage(formatErrorMessage(retryError)));
         }
@@ -862,7 +1039,7 @@ async function resumeDirectRunFromSavedSession(
       let busySnapshot: AgentRecord | null = null;
       try {
         busySnapshot = await getAgent(worker.id);
-        await persistWorkerSnapshot(worker.id, busySnapshot);
+        await persistWorkerSnapshot(worker.id, busySnapshot, { expectedTurnGeneration });
       } catch {
         // The busy response itself proves the worker is alive; avoid failing recovery.
       }
@@ -871,7 +1048,10 @@ async function resumeDirectRunFromSavedSession(
         bridgeSessionId: busySnapshot?.sessionId ?? resumedWorker.sessionId ?? (recreatedFromRejectedEmptySession ? null : sessionId),
         bridgeSessionMode: busySnapshot?.sessionMode ?? resumedWorker.sessionMode ?? sessionMode ?? null,
         updatedAt: new Date(),
-      }).where(eq(workers.id, worker.id));
+      }).where(and(
+        eq(workers.id, worker.id),
+        eq(workers.turnGeneration, expectedTurnGeneration),
+      ));
       await recordExecutionEvent({
         runId: run.id,
         workerId: worker.id,
@@ -904,11 +1084,12 @@ async function resumeDirectRunFromSavedSession(
     text: content,
     deliveredAt: new Date(),
     attachments: workerEntryAttachments(targetMessage),
+    expectedTurnGeneration,
   });
   let snapshot: AgentRecord | null = null;
   try {
     snapshot = await getAgent(worker.id);
-    await persistWorkerSnapshot(worker.id, snapshot);
+    await persistWorkerSnapshot(worker.id, snapshot, { expectedTurnGeneration });
   } catch {
     // The restored worker response is enough to update the conversation.
   }
@@ -917,6 +1098,7 @@ async function resumeDirectRunFromSavedSession(
     workerId: worker.id,
     responseText: response.response,
     snapshot,
+    expectedTurnGeneration,
   });
 
   const completedAt = new Date();
@@ -924,7 +1106,10 @@ async function resumeDirectRunFromSavedSession(
   await db.update(workers).set({
     status: finalWorkerStatus,
     updatedAt: completedAt,
-  }).where(eq(workers.id, worker.id));
+  }).where(and(
+    eq(workers.id, worker.id),
+    eq(workers.turnGeneration, expectedTurnGeneration),
+  ));
   // Worker response now lives in the unified worker stream.
   await updateDirectRunStatusFromWorkerOutput({
     runId: run.id,
@@ -1068,7 +1253,7 @@ async function handleDirectWorkerAskQuotaError(args: {
   };
 }
 
-async function recoverRunUnlocked(args: RecoverRunArgs) {
+async function recoverRunUnlocked(args: RecoverRunArgs, recoveryEpoch?: number) {
   await assertRunNotHandoffFenced(args.runId);
   const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
   if (!run) {
@@ -1113,9 +1298,11 @@ async function recoverRunUnlocked(args: RecoverRunArgs) {
     throw new Error("Recovery actions are only available in direct control conversations");
   }
   const targetAttachments = parseChatAttachmentsJson(targetMessage.attachmentsJson);
-
+  if (recoveryEpoch === undefined) {
+    throw new Error("Direct recovery is missing its admission generation");
+  }
   if (args.action === "retry") {
-    const resumed = await resumeDirectRunFromSavedSession(run, targetMessage, nextContent);
+    const resumed = await resumeDirectRunFromSavedSession(run, targetMessage, nextContent, recoveryEpoch);
     if (resumed) {
       return resumed;
     }
@@ -1287,13 +1474,71 @@ async function recoverRunUnlocked(args: RecoverRunArgs) {
     updatedAt: new Date(),
   }).where(eq(runs.id, args.runId));
 
-  await startDirectRerun(run, nextContent, args.targetMessageId, targetAttachments);
+  await startDirectRerun(run, nextContent, args.targetMessageId, targetAttachments, {
+    replayTargetMessageId: args.targetMessageId,
+    recoveryEpoch,
+  });
 
   return { runId: args.runId };
 }
 
-export function recoverRun(args: RecoverRunArgs) {
-  return runConversationMutation(args.runId, () => recoverRunUnlocked(args));
+export async function recoverRun(args: RecoverRunArgs) {
+  // A queued delivery deliberately holds the conversation mutation while its
+  // provider turn runs. Preempt the local turn before joining that queue so an
+  // agent blocked on an elicitation cannot prevent edit/retry from ever
+  // reaching the cancellation and generation-advance phase.
+  const [run, targetMessage, runWorkers] = await Promise.all([
+    db.select({ id: runs.id, mode: runs.mode }).from(runs).where(eq(runs.id, args.runId)).get(),
+    db.select({ id: messages.id, role: messages.role, runId: messages.runId })
+      .from(messages)
+      .where(and(eq(messages.id, args.targetMessageId), eq(messages.runId, args.runId)))
+      .get(),
+    db.select({ id: workers.id }).from(workers).where(eq(workers.runId, args.runId)),
+  ]);
+  let recoveryEpoch: number | undefined;
+  if (
+    run
+    && ["direct", "commit"].includes(run.mode)
+    && targetMessage?.role === "user"
+    && targetMessage.runId === args.runId
+  ) {
+    recoveryEpoch = beginConversationRecoveryPreemption(args.runId, "newer conversation recovery");
+    for (const worker of runWorkers) {
+      abortWorkerTurn(worker.id, "conversation recovery preemption");
+      const previous = await db.select({ status: workers.status })
+        .from(workers)
+        .where(eq(workers.id, worker.id))
+        .get();
+      await withWorkerOutputWriteFence(args.runId, worker.id, () => (
+        advanceWorkerTurnGeneration(worker.id, {
+          status: "cancelled",
+          clearCurrentText: true,
+          updatedAt: new Date(),
+        })
+      ));
+      emitNamedEvent({
+        kind: "worker.turn_preempted",
+        runId: args.runId,
+        workerId: worker.id,
+        reason: "conversation_recovery",
+      });
+      emitNamedEvent({
+        kind: "worker.status",
+        runId: args.runId,
+        workerId: worker.id,
+        prev: previous?.status ?? "unknown",
+        next: "cancelled",
+      });
+      emitNamedEvent({ kind: "worker.terminal", runId: args.runId, workerId: worker.id, status: "cancelled" });
+    }
+  }
+  try {
+    return await runConversationMutation(args.runId, () => recoverRunUnlocked(args, recoveryEpoch));
+  } finally {
+    if (recoveryEpoch !== undefined) {
+      finishConversationRecoveryPreemption(args.runId, recoveryEpoch);
+    }
+  }
 }
 
 export async function forkRunIntoWorktree(args: ForkRunWorktreeArgs) {

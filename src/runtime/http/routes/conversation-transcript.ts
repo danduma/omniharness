@@ -21,12 +21,14 @@ import { runs, workers } from "@/server/db/schema";
 import { parseSupersededSeqRanges, type SupersededSeqRange, withoutSupersededEntries } from "@/lib/superseded-entries";
 import { readWorkerEntriesBefore, readWorkerEntriesSince, readWorkerEntriesTail } from "@/server/workers/output-store";
 import type { WorkerEntry } from "@/server/workers/entries-types";
+import {
+  compareConversationTranscriptEntries as compareTranscriptEntries,
+  excludeDiagnosticTranscriptEntries as excludeDiagnosticEntries,
+  sortConversationTranscriptEntries as sortTranscriptEntries,
+  type ConversationTranscriptEntry,
+} from "@/server/conversations/visible-transcript";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { startSlowProbe } from "@/server/slow-probe";
-
-interface ConversationTranscriptEntry extends WorkerEntry {
-  workerId: string;
-}
 
 interface AfterToken {
   // Highest contiguous seq the client has consumed from each worker.
@@ -70,30 +72,6 @@ function encodeAfterToken(token: AfterToken): string {
   return Buffer.from(JSON.stringify(token), "utf8").toString("base64url");
 }
 
-function entryTimestampMs(entry: WorkerEntry): number {
-  if (!entry.timestamp) return 0;
-  const ms = Date.parse(entry.timestamp);
-  return Number.isFinite(ms) ? ms : 0;
-}
-
-// Sort comparator for the merged transcript. Primary key: timestamp ms
-// (so user input lands next to the worker turn it triggered, even
-// across workers). Secondary: worker creation order (older worker
-// first). Tertiary: per-worker seq.
-function compareTranscriptEntries(
-  a: ConversationTranscriptEntry,
-  b: ConversationTranscriptEntry,
-  workerCreationOrder: Map<string, number>,
-): number {
-  const at = entryTimestampMs(a);
-  const bt = entryTimestampMs(b);
-  if (at !== bt) return at - bt;
-  const ao = workerCreationOrder.get(a.workerId) ?? Number.MAX_SAFE_INTEGER;
-  const bo = workerCreationOrder.get(b.workerId) ?? Number.MAX_SAFE_INTEGER;
-  if (ao !== bo) return ao - bo;
-  return (a.seq ?? 0) - (b.seq ?? 0);
-}
-
 function latestReturnedSeq(entries: WorkerEntry[]) {
   return entries.reduce((latest, entry) => {
     const seq = typeof entry.seq === "number" && Number.isFinite(entry.seq)
@@ -111,18 +89,6 @@ function earliestReturnedSeq(entries: WorkerEntry[]) {
     if (seq <= 0) return earliest;
     return earliest === 0 || seq < earliest ? seq : earliest;
   }, 0);
-}
-
-function excludeDiagnosticEntries(entries: WorkerEntry[]) {
-  return entries.filter((entry) => !entry.diagnosticOnly);
-}
-
-function sortTranscriptEntries(
-  entries: ConversationTranscriptEntry[],
-  workerCreationOrder: Map<string, number>,
-) {
-  entries.sort((a, b) => compareTranscriptEntries(a, b, workerCreationOrder));
-  return entries;
 }
 
 function emptyTranscriptResponse(workerIds: string[] = []) {

@@ -37,6 +37,7 @@ export type AppendUserInputArgs = {
   attachments?: WorkerEntryAttachment[];
   /** Optional stable id (e.g. from a messages row) so dedup across recovery works. */
   id?: string;
+  expectedTurnGeneration?: number;
 };
 
 export type AppendSupervisorInputArgs = {
@@ -80,6 +81,7 @@ export type AppendAssistantMessageArgs = {
   text: string;
   timestamp?: Date;
   raw?: unknown;
+  expectedTurnGeneration?: number;
 };
 
 export type AppendSessionLifecycleArgs = AppendLifecycleArgs & {
@@ -90,8 +92,11 @@ function persistAndAnnounce(args: {
   runId: string;
   workerId: string;
   entry: Omit<WorkerEntry, "seq">;
+  expectedTurnGeneration?: number;
 }): Promise<WorkerEntry | null> {
-  return appendWorkerEntryWithResult(args.runId, args.workerId, args.entry).then((result) => {
+  return appendWorkerEntryWithResult(args.runId, args.workerId, args.entry, {
+    expectedTurnGeneration: args.expectedTurnGeneration,
+  }).then((result) => {
     const persisted = result.entry;
     if (!result.appended || typeof persisted.seq !== "number" || persisted.seq <= 0) {
       return persisted;
@@ -119,6 +124,7 @@ export async function appendUserInputOnDelivery(args: AppendUserInputArgs): Prom
       channel: "stdin",
       attachments: args.attachments,
     },
+    expectedTurnGeneration: args.expectedTurnGeneration,
   });
 }
 
@@ -135,6 +141,7 @@ export async function appendSessionInputEntry(args: AppendSessionInputArgs): Pro
       channel: args.channel ?? "stdin",
       attachments: args.attachments,
     },
+    expectedTurnGeneration: args.expectedTurnGeneration,
   });
 }
 
@@ -171,6 +178,7 @@ export async function appendAssistantMessageEntry(args: AppendAssistantMessageAr
       channel: "agent",
       raw: args.raw,
     },
+    expectedTurnGeneration: args.expectedTurnGeneration,
   });
 }
 

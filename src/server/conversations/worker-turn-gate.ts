@@ -7,6 +7,8 @@ import { withRunWorkspaceMutationAdmission } from "@/server/handoff/workspace-lo
 
 const workerTurnChains = new Map<string, Promise<void>>();
 const conversationMutationChains = new Map<string, Promise<void>>();
+const conversationRecoveryEpochs = new Map<string, number>();
+const conversationRecoveryWorkers = new Map<string, Set<string>>();
 const activeConversationMutation = new AsyncLocalStorage<string>();
 const backgroundTasks = new Set<Promise<void>>();
 const backgroundTasksByRunId = new Map<string, Set<Promise<void>>>();
@@ -86,6 +88,63 @@ export function runWorkerTurn<T>(workerId: string, task: (signal: AbortSignal) =
       if (workerTurnAborts.get(workerId) === controller) {
         workerTurnAborts.delete(workerId);
       }
+    }
+  });
+}
+
+/**
+ * Start a new recovery admission generation before waiting for the conversation
+ * mutex. Registered recovery turns are aborted synchronously, while turns that
+ * have not reached `runConversationRecoveryWorkerTurn` yet fail its epoch check.
+ * Together those two sides close the worker-snapshot race between overlapping
+ * edits/retries.
+ */
+export function beginConversationRecoveryPreemption(runId: string, reason?: string): number {
+  const nextEpoch = (conversationRecoveryEpochs.get(runId) ?? 0) + 1;
+  conversationRecoveryEpochs.set(runId, nextEpoch);
+  for (const workerId of conversationRecoveryWorkers.get(runId) ?? []) {
+    abortWorkerTurn(workerId, reason ?? "newer conversation recovery");
+  }
+  return nextEpoch;
+}
+
+export function finishConversationRecoveryPreemption(runId: string, expectedEpoch: number): void {
+  if (
+    conversationRecoveryEpochs.get(runId) === expectedEpoch
+    && !conversationRecoveryWorkers.has(runId)
+  ) {
+    conversationRecoveryEpochs.delete(runId);
+  }
+}
+
+export function isConversationRecoveryPreemptionCurrent(runId: string, expectedEpoch: number): boolean {
+  return conversationRecoveryEpochs.get(runId) === expectedEpoch;
+}
+
+export function runConversationRecoveryWorkerTurn<T>(
+  runId: string,
+  expectedEpoch: number,
+  workerId: string,
+  task: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  if (conversationRecoveryEpochs.get(runId) !== expectedEpoch) {
+    return Promise.reject(new Error(`Worker turn superseded by a newer worker turn: ${workerId}`));
+  }
+
+  const registeredWorkers = conversationRecoveryWorkers.get(runId) ?? new Set<string>();
+  registeredWorkers.add(workerId);
+  conversationRecoveryWorkers.set(runId, registeredWorkers);
+
+  const turn = runWorkerTurn(workerId, async (signal) => {
+    if (conversationRecoveryEpochs.get(runId) !== expectedEpoch) {
+      throw new Error(`Worker turn superseded by a newer worker turn: ${workerId}`);
+    }
+    return task(signal);
+  });
+  return turn.finally(() => {
+    registeredWorkers.delete(workerId);
+    if (registeredWorkers.size === 0 && conversationRecoveryWorkers.get(runId) === registeredWorkers) {
+      conversationRecoveryWorkers.delete(runId);
     }
   });
 }
@@ -309,6 +368,8 @@ export async function waitForConversationBackgroundTasksForTests(timeoutMs = 1_0
 export function __resetWorkerTurnChainsForTests() {
   workerTurnChains.clear();
   conversationMutationChains.clear();
+  conversationRecoveryEpochs.clear();
+  conversationRecoveryWorkers.clear();
   backgroundTasks.clear();
   backgroundTasksByRunId.clear();
   conversationDeletionRequests.clear();

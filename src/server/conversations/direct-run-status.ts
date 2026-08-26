@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
 import { recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
@@ -184,6 +184,43 @@ export async function updateDirectRunStatusFromWorkerOutput(args: WorkerOutputSo
   const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
   if (!run || (run.mode !== "direct" && run.mode !== "commit")) {
     return null;
+  }
+
+  if (args.workerId) {
+    const runWorkers = await db.select({ id: workers.id, status: workers.status })
+      .from(workers)
+      .where(eq(workers.runId, args.runId))
+      .orderBy(desc(workers.createdAt), desc(workers.workerNumber), desc(workers.id));
+    const currentWorker = runWorkers[0];
+    const sourceWorker = runWorkers.find((worker) => worker.id === args.workerId);
+    const sourceWorkerStatus = normalizeWorkerStatus(sourceWorker?.status);
+    const sourceWorkerCancelled = sourceWorkerStatus === "cancelled" || sourceWorkerStatus === "canceled";
+    if (currentWorker && (sourceWorkerCancelled || currentWorker.id !== args.workerId)) {
+      const attemptedStatus = resolveDirectRunStatusFromWorkerOutput(args);
+      const reason = sourceWorkerCancelled ? "worker_cancelled" : "newer_worker_owns_run";
+      emitNamedEvent({
+        kind: "worker.stale_status_ignored",
+        runId: args.runId,
+        workerId: args.workerId,
+        currentWorkerId: currentWorker.id,
+        attemptedStatus,
+        reason,
+      });
+      await recordExecutionEvent({
+        runId: args.runId,
+        workerId: args.workerId,
+        planItemId: null,
+        eventType: "stale_direct_worker_status_ignored",
+        details: {
+          summary: `Ignored a status update from superseded worker ${args.workerId}.`,
+          currentWorkerId: currentWorker.id,
+          attemptedStatus,
+          retainedStatus: run.status,
+          reason,
+        },
+      });
+      return run.status;
+    }
   }
 
   const quotaIncident = await db.select({ id: recoveryIncidents.id })

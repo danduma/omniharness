@@ -50,7 +50,10 @@ export function serializeWorkerOutputEntries(
   }
 }
 
-async function seedInitialDirectUserPrompt(worker: typeof workers.$inferSelect) {
+async function seedInitialDirectUserPrompt(
+  worker: typeof workers.$inferSelect,
+  expectedTurnGeneration?: number,
+) {
   const initialPrompt = worker.initialPrompt.trim();
   if (!initialPrompt) {
     return;
@@ -88,6 +91,7 @@ async function seedInitialDirectUserPrompt(worker: typeof workers.$inferSelect) 
       sizeBytes: attachment.size,
       storagePath: attachment.storagePath,
     })),
+    expectedTurnGeneration,
   });
 }
 
@@ -216,8 +220,16 @@ export async function persistWorkerSnapshot(
   }
 
   if (Array.isArray(snapshot.outputEntries) && snapshot.outputEntries.length > 0) {
-    await seedInitialDirectUserPrompt(worker);
-    await writeWorkerOutputEntries(worker.runId, workerId, snapshot.outputEntries);
+    await seedInitialDirectUserPrompt(worker, options.expectedTurnGeneration);
+    const outputPersisted = await writeWorkerOutputEntries(
+      worker.runId,
+      workerId,
+      snapshot.outputEntries,
+      { expectedTurnGeneration: options.expectedTurnGeneration },
+    );
+    if (!outputPersisted) {
+      return;
+    }
   }
   if (
     snapshot.outputEntries?.length
@@ -234,6 +246,7 @@ export async function persistWorkerSnapshot(
     sessionId: snapshot.sessionId,
     sessionMode: snapshot.sessionMode,
     source: "snapshot",
+    expectedTurnGeneration: options.expectedTurnGeneration,
   });
   await db.update(workers).set({
     currentText: snapshot.currentText,

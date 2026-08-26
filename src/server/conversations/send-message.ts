@@ -33,7 +33,15 @@ import { createQueuedConversationMessage, type BusyMessageAction } from "./queue
 import { interruptWithDraftMessage } from "./queued-message-interrupt";
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
-import { isWorkerTurnAbortedError, isWorkerTurnSupersededError, runConversationMutation, runDetachedFromConversationMutation, runWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
+import {
+  isWorkerTurnAbortedError,
+  isWorkerTurnGenerationCurrent,
+  isWorkerTurnSupersededError,
+  runConversationMutation,
+  runDetachedFromConversationMutation,
+  runWorkerTurn,
+  trackConversationBackgroundTask,
+} from "./worker-turn-gate";
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 import { isManualStopCommand } from "@/interface/home/busy-message-behavior";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -999,6 +1007,7 @@ async function continueWorkerConversation({
           sizeBytes: attachment.size,
           storagePath: attachment.storagePath,
         })),
+        expectedTurnGeneration,
       });
       userInputAppended = true;
       onUserInputAppended?.();
@@ -1018,6 +1027,11 @@ async function continueWorkerConversation({
       promptOverride,
       expectedTurnGeneration,
     );
+    if (!await isWorkerTurnGenerationCurrent(worker.id, expectedTurnGeneration)) {
+      onUserInputAppended?.();
+      notifyEventStreamSubscribers();
+      return;
+    }
     if (!userInputAppended) {
       // Append user_input on delivery — `askDirectWorkerWithResume` has
       // resolved successfully, so the prompt definitely reached the
@@ -1034,13 +1048,18 @@ async function continueWorkerConversation({
 
     const snapshot = await Promise.resolve(getAgent(worker.id)).catch(() => null);
     if (snapshot) {
-      await persistWorkerSnapshot(worker.id, snapshot);
+      await persistWorkerSnapshot(worker.id, snapshot, { expectedTurnGeneration });
+    }
+    if (!await isWorkerTurnGenerationCurrent(worker.id, expectedTurnGeneration)) {
+      notifyEventStreamSubscribers();
+      return;
     }
     await appendAskResponseFallbackEntry({
       runId: run.id,
       workerId: worker.id,
       responseText: response.response,
       snapshot,
+      expectedTurnGeneration,
     });
 
     const workerAfterSnapshot = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
@@ -1052,7 +1071,10 @@ async function continueWorkerConversation({
     await db.update(workers).set({
       status: snapshot?.state ?? response.state,
       updatedAt: new Date(),
-    }).where(eq(workers.id, worker.id));
+    }).where(and(
+      eq(workers.id, worker.id),
+      eq(workers.turnGeneration, expectedTurnGeneration),
+    ));
 
     await resolveRecoveryIncidentsAfterHealthyTurn({
       runId: run.id,
@@ -1096,6 +1118,10 @@ async function continueWorkerConversation({
     // A stop or steer aborted this turn deliberately. Marking the worker
     // `error` and failing the run here would turn every stop into a red banner.
     if (isWorkerTurnSupersededError(error) || isWorkerTurnAbortedError(error)) {
+      notifyEventStreamSubscribers();
+      return;
+    }
+    if (!await isWorkerTurnGenerationCurrent(worker.id, expectedTurnGeneration)) {
       notifyEventStreamSubscribers();
       return;
     }
