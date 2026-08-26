@@ -685,6 +685,7 @@ first prompt is persisted through the ordinary unified worker conversation strea
 | `worker-reattach` | Observer revival closes orphaned human-input requests, emits `worker.human_input_reconciled`, then emits `worker.reattached` |
 | `session-types` | Direct / planning / implementation conversation creation |
 | `conversation-continuation` | Mid-conversation SSE drop + reconnect; nothing lost |
+| `conversation-title-fallback` | Missing provider title sources emit an observable decision before the harness title update |
 | `plan-improvement-flow` | Review start + worker spawn + restart-resync end-to-end |
 | `real-restart` | **Real subprocess** kill+respawn: sqlite persists, ring resets, client gets `stream.resync_required` |
 | `direct-mode-rerun` | User pressing "re-run" — same content sent twice persists as two rows in order |

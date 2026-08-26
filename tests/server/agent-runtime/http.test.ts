@@ -1117,10 +1117,12 @@ exec /bin/sh "$@"
     });
 
     expect(spawnResponse.status).toBe(201);
+    const spawned = await spawnResponse.json();
     const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
     const initialize = events.find((event) => event.method === "initialize");
     const scopedClaudeConfigDir = initialize.selectedCliStorageEnv.CLAUDE_CONFIG_DIR;
     expect(scopedClaudeConfigDir).toBe(join(projectDir, ".omniharness", "cli-home", "claude"));
+    expect(spawned.claudeConfigDir).toBe(scopedClaudeConfigDir);
     expect(existsSync(join(scopedClaudeConfigDir, "skills", "improve", "SKILL.md"))).toBe(true);
 
     const stopResponse = await fetch(`${baseUrl}/agents/claude-skills-worker`, { method: "DELETE" });

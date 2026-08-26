@@ -37,6 +37,7 @@ export interface AgentRecord {
     expiresAt: string | null;
   } | null;
   sessionMode?: string | null;
+  claudeConfigDir?: string | null;
   lastError?: string | null;
   contextUsage?: {
     inputTokens?: number | null;

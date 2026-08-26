@@ -678,7 +678,6 @@ const RUN_LOG_ONLY_EVENT_TYPES = new Set([
   "auth.session_revoked",
   "clarification_resolved",
   "clarifications_requested",
-  "conversation_title_generation_failed",
   "plan_items_synced",
   "run_failed",
   "supervisor_context_compacted",
