@@ -15,6 +15,14 @@ test("the file viewer menu copies the full file path", () => {
   expect(source).toContain("navigator.clipboard.writeText");
 });
 
+test("the file viewer menu copies the loaded file contents", () => {
+  const source = readSource("src/components/home/FileViewerPanel.tsx");
+
+  expect(source).toContain('t("fileViewer.menu.copyContents")');
+  expect(source).toContain("navigator.clipboard.writeText(content)");
+  expect(source).toContain("disabled={!fileQuery.data}");
+});
+
 test("session file links expose Open and Copy path in a context menu", () => {
   const markdownSource = readSource("src/components/MarkdownContent.tsx");
   const terminalSource = readSource("src/components/Terminal.tsx");

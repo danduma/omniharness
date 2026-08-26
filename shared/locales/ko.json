@@ -287,6 +287,7 @@
   "fileViewer.menu.wordWrap": "자동 줄바꿈",
   "fileViewer.menu.renderMarkdown": "마크다운 렌더링",
   "fileViewer.menu.copyFullPath": "전체 경로 복사",
+  "fileViewer.menu.copyContents": "파일 내용 복사",
   "fileViewer.menu.refresh": "새로 고침",
   "projectFile.menu.open": "열기",
   "projectFile.menu.copyPath": "경로 복사",

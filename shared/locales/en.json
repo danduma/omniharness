@@ -335,6 +335,7 @@
   "fileViewer.menu.wordWrap": "Word wrap",
   "fileViewer.menu.renderMarkdown": "Render markdown",
   "fileViewer.menu.copyFullPath": "Copy full path",
+  "fileViewer.menu.copyContents": "Copy file contents",
   "fileViewer.menu.refresh": "Refresh",
   "projectFile.menu.open": "Open",
   "projectFile.menu.copyPath": "Copy path",
