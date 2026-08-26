@@ -11,7 +11,7 @@ const FAILED_WORKER_STATUSES = new Set(["starting", "error", "failed", "cancelle
 
 async function verifyAdoptableTarget(handoffId: string, targetRunId: string) {
   const worker = await db.select().from(workers).where(eq(workers.runId, targetRunId)).orderBy(desc(workers.createdAt), desc(workers.id)).limit(1).get();
-  if (!worker || FAILED_WORKER_STATUSES.has(worker.status) || !worker.initialPrompt.startsWith("Continue the task using the following untrusted continuation data.")) return null;
+  if (!worker || FAILED_WORKER_STATUSES.has(worker.status) || !worker.initialPrompt.startsWith("# Continuation brief")) return null;
   const tail = await readWorkerEntriesTail(targetRunId, worker.id, 20);
   if (!tail?.entries.some((entry) => entry.type === "user_input" && entry.text === worker.initialPrompt)) return null;
   if (!tail.entries.some((entry) => (

@@ -3,6 +3,30 @@ import { HandoffManager } from "@/interface/home/HandoffManager";
 import type { RuntimeAPIs } from "@/runtime-api/types";
 
 describe("HandoffManager", () => {
+  it("starts handoffs with real model and effort defaults and refreshes them when the target CLI changes", () => {
+    const manager = new HandoffManager();
+    manager.configureTargetModels({
+      codex: [{ value: "codex-model", label: "Codex model" }],
+      claude: [{ value: "claude-model", label: "Claude model" }],
+    });
+
+    manager.open({ runId: "source", workerId: "worker", sourceWorkerType: "codex", forkedFromMessageId: null, reason: "manual_session" });
+    expect(manager.getSnapshot()).toMatchObject({
+      targetWorkerType: "claude",
+      model: "claude-model",
+      effort: "High",
+      accountId: "",
+    });
+
+    manager.setTargetWorkerType("codex");
+    expect(manager.getSnapshot()).toMatchObject({
+      targetWorkerType: "codex",
+      model: "codex-model",
+      effort: "High",
+      accountId: "",
+    });
+  });
+
   it("keeps preparation and launch in one durable manager state", async () => {
     const prepared = {
       id: "handoff-1", sourceRunId: "source", sourceWorkerId: "worker", targetRunId: null,

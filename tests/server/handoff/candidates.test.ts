@@ -22,4 +22,22 @@ describe("selectWorkerEntryCandidates", () => {
     expect(JSON.stringify(result)).not.toContain("private reasoning");
     expect(JSON.stringify(result)).not.toContain("later answer");
   });
+
+  it("keeps useful earlier assistant context when the latest worker output is only a quota error", () => {
+    const result = selectWorkerEntryCandidates([
+      entry(1, "message", "Confirmed that Safari exports are falling back to the slow path.", "assistant"),
+      entry(2, "message", "You've hit your session limit · resets 3:20pm", "assistant"),
+    ], null);
+
+    expect(result.recentAssistantSummary).toContain("Safari exports");
+    expect(result.recentAssistantSummary).not.toContain("session limit");
+  });
+
+  it("deduplicates user messages replayed into replacement worker streams", () => {
+    const first = entry(1, "user_input", "Check the export path", "user");
+    const replay = { ...entry(2, "user_input", "Check the export path", "user"), id: first.id };
+    const result = selectWorkerEntryCandidates([first, replay], null);
+
+    expect(result.recentUserMessages).toEqual(["Check the export path"]);
+  });
 });

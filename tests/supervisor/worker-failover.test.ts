@@ -2,12 +2,13 @@ import { randomUUID } from "crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 
-const { mockSpawnAgent, mockAskAgent, mockCancelAgent, mockGetAgent, mockExecFileSync } = vi.hoisted(() => ({
+const { mockSpawnAgent, mockAskAgent, mockCancelAgent, mockGetAgent, mockExecFileSync, mockBuildPersistedHandoff } = vi.hoisted(() => ({
   mockSpawnAgent: vi.fn(),
   mockAskAgent: vi.fn(),
   mockCancelAgent: vi.fn(),
   mockGetAgent: vi.fn(),
   mockExecFileSync: vi.fn(),
+  mockBuildPersistedHandoff: vi.fn(),
 }));
 
 vi.mock("@/server/bridge-client", () => ({
@@ -22,6 +23,10 @@ vi.mock("child_process", async (importOriginal) => ({
   execFileSync: mockExecFileSync,
 }));
 
+vi.mock("@/server/handoff/request", () => ({
+  buildPersistedHandoff: mockBuildPersistedHandoff,
+}));
+
 describe("attemptWorkerFailover", () => {
   beforeEach(async () => {
     mockSpawnAgent.mockReset();
@@ -29,6 +34,16 @@ describe("attemptWorkerFailover", () => {
     mockCancelAgent.mockReset();
     mockGetAgent.mockReset();
     mockExecFileSync.mockReset();
+    mockBuildPersistedHandoff.mockReset();
+    mockBuildPersistedHandoff.mockResolvedValue({
+      task: "Refactor the auth module",
+      progress: "Persisted conversation and workspace context",
+      nextSteps: "Continue from persisted state",
+      source: "synthetic",
+      outgoingWorkerType: "codex",
+      outgoingWorkerId: "source-worker",
+      reason: "quota_exhausted",
+    });
     mockGetAgent.mockResolvedValue({
       outputEntries: [],
       currentText: "",
@@ -122,15 +137,43 @@ describe("attemptWorkerFailover", () => {
     return workerId;
   }
 
+  it("never prompts the quota-exhausted worker for a handoff", async () => {
+    const runId = await seedRun(["codex", "claude"]);
+    const workerId = await seedWorker(runId, "codex");
+    mockAskAgent.mockResolvedValue({
+      response: "Replacement continued from persisted context.",
+      state: "idle",
+      stopReason: "end_turn",
+    });
+    mockCancelAgent.mockResolvedValue(undefined);
+    mockSpawnAgent.mockResolvedValueOnce({
+      sessionId: "session-claude-persisted",
+      sessionMode: "full-access",
+      state: "starting",
+    });
+
+    const { attemptWorkerFailover } = await import("@/server/supervisor/worker-failover");
+    const result = await attemptWorkerFailover({
+      runId,
+      outgoingWorkerId: workerId,
+      outgoingWorkerType: "codex",
+      quotaText: "quota exhausted; try again in 30 minutes",
+      originalPrompt: "Refactor the auth module",
+      allowedTypes: ["codex", "claude"],
+      env: {},
+      cwd: "/tmp",
+      title: "Test worker",
+    });
+
+    expect(result.state).toBe("failed_over");
+    expect(mockAskAgent.mock.calls.some(([agentId]) => agentId === workerId)).toBe(false);
+  });
+
   it("emits the full failover lifecycle when a replacement is available", async () => {
     const runId = await seedRun(["codex", "claude"]);
     const workerId = await seedWorker(runId, "codex");
 
     mockAskAgent.mockResolvedValueOnce({
-      response: "```omniharness-handoff\nTASK: refactor auth\nPROGRESS: wrote tests\nNEXT_STEPS: run tests\n```",
-      state: "stopped",
-      stopReason: "end_turn",
-    }).mockResolvedValueOnce({
       response: "Replacement continued from handoff.",
       state: "idle",
       stopReason: "end_turn",
@@ -158,11 +201,10 @@ describe("attemptWorkerFailover", () => {
     expect(result.state, JSON.stringify(result)).toBe("failed_over");
     if (result.state !== "failed_over") return;
     expect(result.newType).toBe("claude");
-    expect(mockAskAgent).toHaveBeenCalledTimes(2);
-    expect(mockAskAgent.mock.calls[0]?.[0]).toBe(workerId);
-    expect(mockAskAgent.mock.calls[1]?.[0]).toBe(result.newWorkerId);
-    expect(mockAskAgent.mock.calls[1]?.[1]).toContain("# Failover Handoff");
-    expect(mockAskAgent.mock.calls[1]?.[1]).toContain("TASK:** refactor auth");
+    expect(mockAskAgent).toHaveBeenCalledTimes(1);
+    expect(mockAskAgent.mock.calls[0]?.[0]).toBe(result.newWorkerId);
+    expect(mockAskAgent.mock.calls[0]?.[1]).toContain("# Failover Handoff");
+    expect(mockAskAgent.mock.calls[0]?.[1]).toContain("TASK:** Refactor the auth module");
 
     const { __getRingForTests } = await import("@/server/events/named-events");
     const events = __getRingForTests();
@@ -194,7 +236,14 @@ describe("attemptWorkerFailover", () => {
       .mockRejectedValueOnce(Object.assign(new Error("agent missing"), { status: 404 }))
       .mockResolvedValue({ state: "idle", outputEntries: [], currentText: "", lastText: "continued", sessionId: "target-session", sessionMode: "full-access" });
     mockSpawnAgent.mockResolvedValue({ state: "starting", sessionId: "target-session", sessionMode: "full-access" });
-    mockAskAgent.mockImplementation(async (_name, _prompt, _attachments, options) => {
+    mockAskAgent.mockImplementation(async (_name, prompt, _attachments, options) => {
+      if (prompt.startsWith("Summarize the persisted handoff evidence")) {
+        return {
+          response: "```omniharness-handoff\nTASK: Refactor the auth module\nPROGRESS: Persisted context captured\nNEXT_STEPS: Continue implementation\nBLOCKERS: none\nOPEN_QUESTIONS: none\nRELEVANT_FILES: none\n```",
+          state: "idle",
+          stopReason: "end_turn",
+        };
+      }
       await options?.onAccepted?.();
       return { response: "Continued in the target session.", state: "idle", stopReason: "end_turn" };
     });
@@ -231,11 +280,6 @@ describe("attemptWorkerFailover", () => {
     const runId = await seedRun(["codex", "claude"]);
     const workerId = await seedWorker(runId, "codex");
 
-    mockAskAgent.mockResolvedValueOnce({
-      response: "```omniharness-handoff\nTASK: x\nPROGRESS: y\nNEXT_STEPS: z\n```",
-      state: "stopped",
-      stopReason: "end_turn",
-    });
     mockCancelAgent.mockResolvedValue(undefined);
     mockSpawnAgent.mockImplementationOnce(async () => {
       const { db } = await import("@/server/db");
@@ -265,7 +309,7 @@ describe("attemptWorkerFailover", () => {
     });
 
     expect(result).toMatchObject({ state: "ignored", reason: "run_terminal" });
-    expect(mockAskAgent).toHaveBeenCalledTimes(1);
+    expect(mockAskAgent).not.toHaveBeenCalled();
     const { db } = await import("@/server/db");
     const schema = await import("@/server/db/schema");
     const run = await db.select().from(schema.runs).where(eq(schema.runs.id, runId)).get();
@@ -279,7 +323,7 @@ describe("attemptWorkerFailover", () => {
   it("does not reserve or announce a replacement when Stop wins before reservation", async () => {
     const runId = await seedRun(["codex", "claude"]);
     const workerId = await seedWorker(runId, "codex");
-    mockAskAgent.mockImplementationOnce(async () => {
+    mockBuildPersistedHandoff.mockImplementationOnce(async () => {
       const { db } = await import("@/server/db");
       const schema = await import("@/server/db/schema");
       const { runQuotaRecoveryMutation } = await import("@/server/quota/recovery-mutation");
@@ -290,9 +334,13 @@ describe("attemptWorkerFailover", () => {
           .where(eq(schema.workers.runId, runId));
       });
       return {
-        response: "```omniharness-handoff\nTASK: x\nPROGRESS: y\nNEXT_STEPS: z\n```",
-        state: "stopped",
-        stopReason: "end_turn",
+        task: "x",
+        progress: "y",
+        nextSteps: "z",
+        source: "synthetic",
+        outgoingWorkerType: "codex",
+        outgoingWorkerId: workerId,
+        reason: "quota_exhausted",
       };
     });
 
@@ -439,17 +487,15 @@ describe("attemptWorkerFailover", () => {
     }));
   });
 
-  it("falls back to a synthetic handoff when the outgoing worker times out", async () => {
+  it("reconstructs the handoff without waiting for the outgoing worker", async () => {
     const runId = await seedRun(["codex", "claude"]);
     const workerId = await seedWorker(runId, "codex");
 
-    mockAskAgent
-      .mockImplementationOnce(() => new Promise(() => undefined))
-      .mockResolvedValueOnce({
-        response: "Replacement continued from synthetic handoff.",
-        state: "idle",
-        stopReason: "end_turn",
-      });
+    mockAskAgent.mockResolvedValueOnce({
+      response: "Replacement continued from persisted handoff.",
+      state: "idle",
+      stopReason: "end_turn",
+    });
     mockSpawnAgent.mockResolvedValueOnce({
       sessionId: "session-claude-1",
       sessionMode: "full-access",
@@ -467,7 +513,6 @@ describe("attemptWorkerFailover", () => {
       env: {},
       cwd: "/tmp",
       title: "Test worker",
-      handoffTimeoutMs: 100,
     });
 
     expect(result.state).toBe("failed_over");
@@ -480,10 +525,6 @@ describe("attemptWorkerFailover", () => {
     const workerId = await seedWorker(runId, "codex");
 
     mockAskAgent.mockResolvedValueOnce({
-      response: "```omniharness-handoff\nTASK: x\nPROGRESS: y\nNEXT_STEPS: z\n```",
-      state: "stopped",
-      stopReason: "end_turn",
-    }).mockResolvedValueOnce({
       response: "Gemini continued from handoff.",
       state: "idle",
       stopReason: "end_turn",

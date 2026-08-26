@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { cancelAgent, getAgent, askAgent } from "@/server/bridge-client";
+import { cancelAgent, getAgent } from "@/server/bridge-client";
 import { createConversation } from "@/server/conversations/create";
 import {
   abortWorkerTurn,
@@ -29,13 +29,12 @@ import {
   type HandoffTargetSelection,
 } from "@/shared/handoff";
 import { gatherHandoffCandidates } from "./candidates";
-import { compileHybridHandoffPacket, recomputeHybridHandoffContentHash, renderHybridHandoffSeed, type CompileHybridHandoffInput } from "./compiler";
+import { compileHybridHandoffPacket, recomputeHybridHandoffContentHash, renderHybridHandoffSeed } from "./compiler";
 import { createHandoffCoordinator, HandoffCoordinatorError, type PrepareHandoffInput } from "./coordinator";
-import { parseHandoffReply } from "./parser";
-import { HANDOFF_REQUEST_PROMPT } from "./render";
 import { completeHandoffLaunch, createHandoffDraft, getHandoffById, saveHandoffPacket, transitionHandoff } from "./store";
 import { computeWorkspaceFingerprint } from "./workspace-state";
 import { redactHandoffList, redactHandoffText, sanitizeProjectRelativePath } from "./redaction";
+import { summarizeHandoffWithTarget } from "./target-summarizer";
 import type { HandoffAdvisoryPatch } from "@/shared/handoff";
 import { withWorkspaceMutationLock } from "./workspace-lock";
 import { decodeClaudeGatewayModel } from "@/lib/claude-model-gateway";
@@ -78,11 +77,6 @@ export async function validateTargetLaunchOptions(target: HandoffTargetSelection
   const knownAlias = target.workerType === "claude" && CLAUDE_MODEL_ALIASES.has(model.toLowerCase());
   const knownGatewayModel = target.workerType === "claude" && decodeClaudeGatewayModel(model) !== null;
   if (!knownModels.has(model) && !knownAlias && !knownGatewayModel) throw new HandoffCoordinatorError("handoff_target_unavailable", `Model "${model}" is not available for the ${target.workerType} CLI.`);
-}
-
-function lines(value: string | undefined): string[] {
-  if (!value?.trim() || value.trim().toLowerCase() === "none") return [];
-  return value.split(/\r?\n/).map((entry) => entry.replace(/^\s*[-*]\s*/, "").trim()).filter(Boolean);
 }
 
 async function readSource(input: PrepareHandoffInput) {
@@ -188,38 +182,6 @@ async function terminateSource(source: Awaited<ReturnType<typeof readSource>>): 
   return { confirmed: false };
 }
 
-async function requestAdvisory(source: Awaited<ReturnType<typeof readSource>>, input: PrepareHandoffInput): Promise<CompileHybridHandoffInput["advisory"] | null> {
-  if (!source.worker || input.reason === "quota_exhausted") return null;
-  const snapshot = await getAgent(source.worker.id, { retryIndefinitely: false }).catch(() => null);
-  if (!snapshot || snapshot.state !== "idle") return null;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 4_000);
-  try {
-    const response = await askAgent(source.worker.id, HANDOFF_REQUEST_PROMPT, undefined, { signal: controller.signal });
-    const parsed = parseHandoffReply({
-      text: response.response,
-      outgoingWorkerType: normalizeWorkerType(source.worker.type),
-      outgoingWorkerId: source.worker.id,
-      reason: input.reason,
-    });
-    if (!parsed.ok) return null;
-    return {
-      currentObjective: parsed.report.task,
-      completed: lines(parsed.report.progress),
-      remaining: lines(parsed.report.nextSteps),
-      blockers: lines(parsed.report.blockers),
-      openQuestions: lines(parsed.report.openQuestions),
-      decisions: [],
-      relevantFiles: parsed.report.relevantFiles ?? [],
-      summarySource: "outgoing_worker",
-    };
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 export async function restoreSourceAfterUnsuccessfulHandoff(handoff: HandoffRecordDto, options: { forceNeedsRecovery?: boolean } = {}) {
   const futureWake = await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, handoff.sourceRunId)).get();
   if (options.forceNeedsRecovery) await db.delete(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, handoff.sourceRunId));
@@ -264,6 +226,8 @@ async function settleFailure(handoff: HandoffRecordDto, code: string, message: s
   }
   const surfacedCode = code === "handoff_launch_failed"
     ? "handoff.launch_failed"
+    : code === "handoff_summary_failed"
+      ? "handoff.summary_failed"
     : code === "handoff_source_changed"
       ? "handoff.source_changed"
       : code === "handoff_target_unavailable"
@@ -328,12 +292,18 @@ const unlockedHandoffCoordinator = createHandoffCoordinator({
       claimExpiresAt: new Date(Date.now() + HANDOFF_READY_MAX_LIFETIME_MS),
     }));
   },
-  requestAdvisory,
   terminateSource,
   gatherCandidates: (source, input) => gatherHandoffCandidates({
     runId: source.run.id,
     workerId: source.worker?.id ?? null,
     forkedFromMessageId: input.forkedFromMessageId,
+  }),
+  summarizePacket: (source, input, handoff, packet) => summarizeHandoffWithTarget({
+    handoffId: handoff.id,
+    sourceRunId: source.run.id,
+    projectPath: source.run.projectPath ?? source.worker?.cwd ?? process.cwd(),
+    target: input.target,
+    packet,
   }),
   compilePacket: compileHybridHandoffPacket,
   savePacket: (handoff, packet, candidates) => saveHandoffPacket({

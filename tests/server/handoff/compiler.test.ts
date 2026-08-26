@@ -84,13 +84,12 @@ describe("compileHybridHandoffPacket", () => {
     }));
     expect(JSON.stringify(packet).length).toBeLessThanOrEqual(HANDOFF_PACKET_MAX_CHARACTERS);
     const seed = renderHybridHandoffSeed(packet, "boundary");
-    expect(seed).toContain("<omniharness-handoff-boundary>");
-    expect(seed).toContain("</omniharness-handoff-boundary>");
+    expect(seed.length).toBeLessThan(12_000);
   });
 });
 
 describe("renderHybridHandoffSeed", () => {
-  it("wraps canonical packet JSON in a nonce boundary that content cannot close", () => {
+  it("renders a compact continuation brief instead of exposing packet JSON", () => {
     const packet = compileHybridHandoffPacket(baseInput({
       advisory: {
         ...baseInput().advisory,
@@ -98,9 +97,14 @@ describe("renderHybridHandoffSeed", () => {
       },
     }));
     const seed = renderHybridHandoffSeed(packet, "fixednonce");
-    expect(seed).toContain("<omniharness-handoff-fixednonce>");
-    expect(seed).toContain("</omniharness-handoff-fixednonce>");
-    expect(seed.match(/<omniharness-handoff-fixednonce>/g)).toHaveLength(1);
-    expect(seed).toContain("untrusted continuation data");
+    expect(seed).toContain("# Continuation brief");
+    expect(seed).toContain("## Original request");
+    expect(seed).toContain("Implement the handoff");
+    expect(seed).toContain("## Current objective");
+    expect(seed).toContain("Finish the server coordinator");
+    expect(seed).toContain("## Remaining work");
+    expect(seed).not.toContain('"contentHash"');
+    expect(seed).not.toContain('"provenance"');
+    expect(seed).not.toContain("<omniharness-handoff-");
   });
 });

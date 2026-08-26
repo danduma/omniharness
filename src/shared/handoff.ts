@@ -9,9 +9,10 @@ export const AUTOMATIC_HANDOFF_COOLDOWN_MS = 60_000;
 
 export type HandoffReason = "manual_session" | "manual_message" | "quota_exhausted";
 export type HandoffStatus = "capturing" | "ready" | "launching" | "needs_recovery" | "completed" | "failed" | "cancelled";
-export type HandoffSummarySource = "outgoing_worker" | "recent_assistant" | "synthetic" | "hybrid";
+export type HandoffSummarySource = "outgoing_worker" | "target_summarizer" | "recent_assistant" | "synthetic" | "hybrid";
 export type HandoffErrorCode =
   | "handoff.capture_failed"
+  | "handoff.summary_failed"
   | "handoff.revision_conflict"
   | "handoff.target_unavailable"
   | "handoff.source_changed"
