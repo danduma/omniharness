@@ -27,7 +27,7 @@ import {
   workerCounters,
   workers,
 } from "@/server/db/schema";
-import { persistWorkerSnapshot } from "@/server/workers/snapshots";
+import { __resetTitleMissReportingForTests, persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { __resetOutputStoreCachesForTests, readWorkerOutputEntries } from "@/server/workers/output-store";
 import { __resetAgentTranscriptTitleCacheForTests } from "@/server/conversations/agent-transcript-title";
 import { buildInitialConversationTitle } from "@/server/conversations/initial-title";
@@ -37,6 +37,7 @@ describe("persistWorkerSnapshot initial direct prompt ordering", () => {
   beforeEach(async () => {
     __resetOutputStoreCachesForTests();
     __resetNamedEventsForTests();
+    __resetTitleMissReportingForTests();
     await db.delete(planningReviewFindings);
     await db.delete(planningReviewRounds);
     await db.delete(planningReviewRuns);
@@ -198,7 +199,7 @@ describe("persistWorkerSnapshot initial direct prompt ordering", () => {
     vi.unstubAllEnvs();
   });
 
-  it("generates a harness title from the opening exchange when provider title sources are empty", async () => {
+  it("keeps the initial title and reports the miss when the CLI names nothing", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;
@@ -249,26 +250,26 @@ describe("persistWorkerSnapshot initial direct prompt ordering", () => {
       outputEntries: [],
     });
 
+    // No model is asked to invent one: the conversation keeps the first line
+    // of what the user typed, which is what the sidebar already showed.
     const run = await db.select({ title: runs.title }).from(runs).where(eq(runs.id, runId)).get();
-    expect(run?.title).toBe("Investigate Why Conversation Titles Never Load");
-    expect(getNamedEventsSince(0).events.map((entry) => entry.event)).toContainEqual(
+    expect(run?.title).toBe(buildInitialConversationTitle(initialPrompt));
+
+    const emitted = getNamedEventsSince(0).events.map((entry) => entry.event);
+    expect(emitted).toContainEqual(
       expect.objectContaining({
         kind: "conversation.title_sources_missing",
         runId,
         workerId,
-        fallback: "harness_llm",
+        fallback: "initial_title",
       }),
     );
-    expect(getNamedEventsSince(0).events.map((entry) => entry.event)).toContainEqual(
-      expect.objectContaining({
-        kind: "conversation.title_updated",
-        runId,
-        source: "harness_llm",
-      }),
+    expect(emitted).not.toContainEqual(
+      expect.objectContaining({ kind: "conversation.title_updated", runId }),
     );
   });
 
-  it("does not regenerate when the harness title is identical to the initial title", async () => {
+  it("reports the miss once however many snapshots the worker persists", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;

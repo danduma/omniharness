@@ -3,13 +3,15 @@ import { homedir } from "os";
 import { join } from "path";
 
 /**
- * The title Claude Code generated for its own session.
+ * The title Claude Code recorded for its own session.
  *
- * Interactive Claude sessions can append
- * `{"type":"ai-title","aiTitle":"…","sessionId":"…"}` to their transcript
- * and revise it as the work changes shape. ACP-spawned sessions do not
- * reliably produce this record, so this reader is an opportunistic source;
- * the harness title generator remains the guaranteed fallback.
+ * Two records can carry one. `{"type":"custom-title","customTitle":"…"}` is
+ * what the user typed at `/rename`, and it outranks everything else because it
+ * is the only title anyone asked for explicitly. `{"type":"ai-title","aiTitle":
+ * "…","sessionId":"…"}` is the one the CLI generates and revises as the work
+ * changes shape. Interactive sessions produce it; ACP-spawned sessions do not
+ * reliably do so, so this reader is opportunistic and a null result is the
+ * normal case rather than a fault.
  *
  * `session_info_update` (the ACP route) would be the obvious channel, but
  * Claude Code does not send it: zero occurrences across ~135k captured stream
@@ -31,11 +33,29 @@ export function __resetAgentTranscriptTitleCacheForTests() {
   titleCache.clear();
 }
 
-export function extractLatestAiTitle(text: string): string | null {
-  let latest: string | null = null;
+const TITLE_RECORDS = [
+  { type: "custom-title", field: "customTitle" },
+  { type: "ai-title", field: "aiTitle" },
+] as const;
+
+/**
+ * The last title of each kind in the text. A later untitled record is not a
+ * retraction, and a rename is not undone by the generator running again, so
+ * each kind is tracked independently and ranked by the caller.
+ */
+export function extractLatestTranscriptTitles(text: string) {
+  const latest: { customTitle: string | null; aiTitle: string | null } = {
+    customTitle: null,
+    aiTitle: null,
+  };
+
   for (const line of text.split("\n")) {
     // A tail read starts mid-record, and unparseable lines are expected.
-    if (!line.startsWith("{") || !line.includes("\"ai-title\"")) {
+    if (!line.startsWith("{")) {
+      continue;
+    }
+    const record = TITLE_RECORDS.find((candidate) => line.includes(`"${candidate.type}"`));
+    if (!record) {
       continue;
     }
     let parsed: unknown;
@@ -47,54 +67,77 @@ export function extractLatestAiTitle(text: string): string | null {
     if (!parsed || typeof parsed !== "object") {
       continue;
     }
-    const record = parsed as { type?: unknown; aiTitle?: unknown };
-    if (record.type !== "ai-title" || typeof record.aiTitle !== "string") {
+    const fields = parsed as { type?: unknown; customTitle?: unknown; aiTitle?: unknown };
+    if (fields.type !== record.type) {
       continue;
     }
-    const trimmed = record.aiTitle.trim();
+    const value = fields[record.field];
+    if (typeof value !== "string") {
+      continue;
+    }
+    const trimmed = value.trim();
     if (trimmed) {
-      latest = trimmed;
+      latest[record.field] = trimmed;
     }
   }
+
   return latest;
 }
 
-function claudeProjectsDir(configDir?: string) {
-  const root = configDir?.trim() || process.env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), ".claude");
-  return join(root, "projects");
+export function extractLatestAiTitle(text: string): string | null {
+  const { customTitle, aiTitle } = extractLatestTranscriptTitles(text);
+  return customTitle ?? aiTitle;
+}
+
+function claudeProjectsDirs(args: { configDir?: string; configDirs?: readonly string[] }) {
+  const roots = [
+    args.configDir,
+    ...(args.configDirs ?? []),
+    process.env.CLAUDE_CONFIG_DIR,
+    join(homedir(), ".claude"),
+  ]
+    .map((root) => root?.trim())
+    .filter((root): root is string => Boolean(root));
+  return [...new Set(roots)].map((root) => join(root, "projects"));
 }
 
 /**
  * Claude Code names the project directory after the cwd with separators
  * replaced, which is the fast path. That encoding is not a contract, so a miss
  * falls back to locating the file by session id — a uuid, and therefore
- * unambiguous across projects.
+ * unambiguous across projects and across config dirs.
  */
-async function resolveTranscriptPath(args: { sessionId: string; cwd: string; configDir?: string }) {
-  const projectsDir = claudeProjectsDir(args.configDir);
+async function resolveTranscriptPath(args: {
+  sessionId: string;
+  cwd: string;
+  configDir?: string;
+  configDirs?: readonly string[];
+}) {
   const fileName = `${args.sessionId}.jsonl`;
-  const direct = join(projectsDir, args.cwd.replace(/\//g, "-"), fileName);
-  try {
-    await stat(direct);
-    return direct;
-  } catch {
-    // Fall through to the scan.
-  }
-
-  let projectDirs: string[];
-  try {
-    projectDirs = await readdir(projectsDir);
-  } catch {
-    return null;
-  }
-
-  for (const dirName of projectDirs) {
-    const candidate = join(projectsDir, dirName, fileName);
+  for (const projectsDir of claudeProjectsDirs(args)) {
+    const direct = join(projectsDir, args.cwd.replace(/\//g, "-"), fileName);
     try {
-      await stat(candidate);
-      return candidate;
+      await stat(direct);
+      return direct;
+    } catch {
+      // Fall through to the scan.
+    }
+
+    let projectDirs: string[];
+    try {
+      projectDirs = await readdir(projectsDir);
     } catch {
       continue;
+    }
+
+    for (const dirName of projectDirs) {
+      const candidate = join(projectsDir, dirName, fileName);
+      try {
+        await stat(candidate);
+        return candidate;
+      } catch {
+        continue;
+      }
     }
   }
   return null;
@@ -116,6 +159,7 @@ export async function readAgentSessionTitleFromTranscript(args: {
   sessionId: string;
   cwd: string;
   configDir?: string;
+  configDirs?: readonly string[];
 }): Promise<string | null> {
   const path = await resolveTranscriptPath(args);
   if (!path) {

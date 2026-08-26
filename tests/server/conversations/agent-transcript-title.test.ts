@@ -145,3 +145,66 @@ describe("readAgentSessionTitleFromTranscript", () => {
     })).toBeNull();
   });
 });
+
+/**
+ * `/rename` writes this record. It is the only title anyone asked for
+ * explicitly, so it outranks the one the CLI generates for itself.
+ */
+function customTitleLine(title: string, sessionId = "session-1") {
+  return JSON.stringify({ type: "custom-title", customTitle: title, sessionId });
+}
+
+describe("custom titles", () => {
+  let configDir: string;
+
+  beforeEach(() => {
+    __resetAgentTranscriptTitleCacheForTests();
+    configDir = mkdtempSync(join(tmpdir(), "omni-claude-config-"));
+  });
+
+  function writeTranscript(sessionId: string, lines: string[]) {
+    const dir = join(configDir, "projects", "-workspace-app");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${sessionId}.jsonl`), `${lines.join("\n")}\n`);
+  }
+
+  it("prefers the name the user typed at /rename", async () => {
+    writeTranscript("session-e", [
+      aiTitleLine("Generated title", "session-e"),
+      customTitleLine("What the user called it", "session-e"),
+    ]);
+
+    expect(await readAgentSessionTitleFromTranscript({
+      sessionId: "session-e",
+      cwd: "/workspace/app",
+      configDir,
+    })).toBe("What the user called it");
+  });
+
+  it("keeps the rename even when the generator runs again afterwards", async () => {
+    // Regenerating is not a retraction of a name the user chose.
+    writeTranscript("session-f", [
+      customTitleLine("What the user called it", "session-f"),
+      aiTitleLine("Generated title", "session-f"),
+    ]);
+
+    expect(await readAgentSessionTitleFromTranscript({
+      sessionId: "session-f",
+      cwd: "/workspace/app",
+      configDir,
+    })).toBe("What the user called it");
+  });
+
+  it("searches every config dir the worker could have used", async () => {
+    const otherConfigDir = mkdtempSync(join(tmpdir(), "omni-claude-config-alt-"));
+    const dir = join(otherConfigDir, "projects", "-workspace-app");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "session-g.jsonl"), `${aiTitleLine("Found in the account home", "session-g")}\n`);
+
+    expect(await readAgentSessionTitleFromTranscript({
+      sessionId: "session-g",
+      cwd: "/workspace/app",
+      configDirs: [configDir, otherConfigDir],
+    })).toBe("Found in the account home");
+  });
+});
