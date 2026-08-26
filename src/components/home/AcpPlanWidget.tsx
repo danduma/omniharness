@@ -185,8 +185,8 @@ export function AcpPlanWidget({ owner }: { owner: PlanSurfaceOwner }) {
 
   if (!owner.ownsWidget || !owner.runId || !owner.workerId || !owner.plan?.visible) return null;
   const currentOwnerKey = `${owner.runId}/${owner.workerId}`;
-  const completionPhase = presentation.completionPlanKey === currentPlanKey
-    ? presentation.completionPhase
+  const completionPhase = currentPlanKey
+    ? acpPlanPresentationManager.getCompletionPhase(owner.runId, owner.workerId, currentPlanKey)
     : "idle";
   if (completionPhase === "dismissed") return null;
   const expanded = completionPhase === "celebrating" || completionPhase === "fading"
