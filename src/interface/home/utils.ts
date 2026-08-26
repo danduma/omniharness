@@ -311,13 +311,16 @@ export function mergePendingSentConversationMessages(
     return { state: incomingState, settledMessageIds: [] };
   }
 
-  const serverMessageIds = new Set((incomingState.messages || []).map((message) => message.id));
+  const serverAcknowledgedMessageIds = new Set([
+    ...(incomingState.messages || []).map((message) => message.id),
+    ...(incomingState.queuedMessages || []).map((message) => message.id),
+  ]);
   const incomingRunsById = new Map((incomingState.runs || []).map((run) => [run.id, run]));
   const settledMessageIds: string[] = [];
   let nextState = incomingState;
 
   for (const [messageId, message] of pendingMessages) {
-    if (serverMessageIds.has(messageId)) {
+    if (serverAcknowledgedMessageIds.has(messageId)) {
       settledMessageIds.push(messageId);
       continue;
     }

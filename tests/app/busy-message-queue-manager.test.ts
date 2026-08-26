@@ -165,6 +165,19 @@ describe("BusyMessageQueueManager optimistic queue sends", () => {
     expect(manager.getQueuedMessagesForRun("run-a").map((message) => message.id)).toEqual(["client-generated-id"]);
   });
 
+  it("settles a pending queue send when the authoritative server row arrives before the POST response", () => {
+    const manager = new BusyMessageQueueManager();
+    const optimistic = buildQueuedMessage({ id: "client-generated-id", runId: "run-a" });
+    manager.beginQueueSend(optimistic);
+
+    manager.setQueuedMessages([{
+      ...optimistic,
+      updatedAt: "2026-05-25T00:00:01.000Z",
+    }], { runId: "run-a", notify: false });
+
+    expect(manager.getSnapshot().pendingQueuedMessageIds.has("client-generated-id")).toBe(false);
+  });
+
   it("swaps in place when the server adopts the client id", () => {
     const manager = new BusyMessageQueueManager();
     manager.beginQueueSend(buildQueuedMessage({ id: "client-generated-id", runId: "run-a" }));

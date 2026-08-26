@@ -179,6 +179,8 @@ export function resolvePendingConversationWorkerId(args: {
   selectedRunId: string | null | undefined;
   isImplementationConversation: boolean;
   selectedWorkerIds: readonly string[];
+  pendingMessageId?: string | null;
+  unacknowledgedMessageIds?: ReadonlySet<string>;
 }) {
   if (args.isImplementationConversation) {
     return null;
@@ -189,6 +191,18 @@ export function resolvePendingConversationWorkerId(args: {
     mutationRunId: args.mutationRunId,
     selectedRunId: args.selectedRunId,
   })) {
+    return null;
+  }
+
+  // The HTTP response can be lost after the server has accepted the message.
+  // Once the event stream carries the same client-generated id, server state
+  // owns the lifecycle and the transport promise must no longer keep the UI in
+  // "Connecting" forever.
+  if (
+    args.pendingMessageId
+    && args.unacknowledgedMessageIds
+    && !args.unacknowledgedMessageIds.has(args.pendingMessageId)
+  ) {
     return null;
   }
 

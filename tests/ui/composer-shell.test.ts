@@ -301,8 +301,10 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain('selectedRunPhase !== "planning"');
   expect(pageSource).toContain('selectedRun.status === "running"');
   expect(pageSource).toContain("const busyConversationWorkerId = !isImplementationConversation");
-  expect(pageSource).toContain("const isSendingSelectedConversationMessage = isMutationPendingForSelectedRun({");
+  expect(pageSource).toContain("const isSelectedConversationMessageTransportPending = isMutationPendingForSelectedRun({");
   expect(pageSource).toContain("mutationRunId: sendConversationMessage.variables?.runId");
+  expect(pageSource).toContain("const isSendingSelectedConversationMessage = isSelectedConversationMessageTransportPending");
+  expect(pageSource).toContain("unacknowledgedConversationMessageIds.has(pendingConversationMessageId)");
   expect(pageSource).toContain("const pendingConversationWorkerId = resolvePendingConversationWorkerId({");
   expect(pageSource).toContain("selectedWorkerIds: selectedRunWorkersForDisplay.map((worker) => worker.id)");
   expect(pageSource).toContain("const directRunningConversationWorkerId = isDirectConversation");

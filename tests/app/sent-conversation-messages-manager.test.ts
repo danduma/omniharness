@@ -82,6 +82,32 @@ describe("SentConversationMessagesManager", () => {
     expect(manager.getPendingMessages().size).toBe(0);
   });
 
+  it("treats an authoritative queued row as acknowledgement when the POST response is lost", () => {
+    const manager = new SentConversationMessagesManager();
+    const message = buildMessage();
+    manager.beginSend(message);
+
+    const merged = mergePendingSentConversationMessages(
+      buildState({
+        queuedMessages: [{
+          id: message.id,
+          runId: message.runId,
+          targetWorkerId: "run-1-worker-1",
+          action: "steer",
+          content: message.content,
+          status: "delivering",
+          createdAt: message.createdAt,
+          updatedAt: message.createdAt,
+        }],
+      }),
+      manager.getPendingMessages(),
+      manager.getInFlightMessageIds(),
+    );
+
+    expect(merged.state.messages).toEqual([]);
+    expect(merged.settledMessageIds).toEqual([message.id]);
+  });
+
   it("drops the row when the send fails", () => {
     const manager = new SentConversationMessagesManager();
     const message = buildMessage();
