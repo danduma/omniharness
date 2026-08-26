@@ -1185,7 +1185,7 @@ function PendingAssistantActivity({ status }: { status: TerminalPendingAssistant
             animationDuration: "1.15s",
           }}
         >
-          {character}
+          {character === " " ? "\u00a0" : character}
         </span>
       ))}
     </div>

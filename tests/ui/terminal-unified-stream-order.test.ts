@@ -68,6 +68,20 @@ test("unified stream displays the initial user message before lifecycle and thin
   expect(text.indexOf("Convert the crowded mobile bottom bar into a menu")).toBeLessThan(text.indexOf("Thinking"));
 });
 
+test("pending assistant animation preserves spaces between words", () => {
+  Object.assign(globalThis, { React });
+
+  const html = renderToStaticMarkup(React.createElement(Terminal, {
+    entries: [],
+    showPendingAssistantIndicator: true,
+    pendingAssistantStatus: "connecting",
+    showTextSizeControl: false,
+  }));
+
+  expect(html).toContain('aria-label="Connecting to CLI..."');
+  expect(html.match(/>\u00a0<\/span>/g)).toHaveLength(2);
+});
+
 test("native conversation terminal starts at meaningful output without chasing pending space", () => {
   expect(shouldTerminalScrollToLatest({
     variant: "native",
