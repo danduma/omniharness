@@ -1977,8 +1977,8 @@ function WorkerEntryContentImage({
       href={content.url}
       target="_blank"
       rel="noreferrer noopener"
-      aria-label={t("terminal.generatedImages.openFullSize", { image: alt })}
-      title={t("terminal.generatedImages.openFullSize", { image: alt })}
+      aria-label={t("terminal.images.openFullSize", { image: alt })}
+      title={t("terminal.images.openFullSize", { image: alt })}
       className="group/image relative block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       {image}
@@ -2004,7 +2004,7 @@ function GeneratedImageMedia({ image, label }: { image: GeneratedImageItem; labe
   if (!image.data) {
     return (
       <p className="px-4 py-16 text-center text-sm text-destructive" role="alert">
-        {t("terminal.protocol.contentUnavailable", { error: t("terminal.generatedImages.missingData") })}
+        {t("terminal.protocol.contentUnavailable", { error: t("terminal.images.missingData") })}
       </p>
     );
   }
@@ -2015,8 +2015,8 @@ function GeneratedImageMedia({ image, label }: { image: GeneratedImageItem; labe
       href={source}
       target="_blank"
       rel="noreferrer noopener"
-      aria-label={t("terminal.generatedImages.openFullSize", { image: label })}
-      title={t("terminal.generatedImages.openFullSize", { image: label })}
+      aria-label={t("terminal.images.openFullSize", { image: label })}
+      title={t("terminal.images.openFullSize", { image: label })}
       className="group/image relative block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <img src={source} alt={label} width={960} height={640} className={imageClassName} />
@@ -2038,7 +2038,14 @@ function GeneratedImagesCarousel({ activity }: { activity: GeneratedImagesActivi
     return null;
   }
 
-  const imageLabel = t("terminal.generatedImages.imageLabel", { number: selectedIndex + 1 });
+  // Only claim generation when every image in the turn actually came from an
+  // image-generating tool; screenshots and other read-back files are just
+  // images.
+  const title = activity.images.every((image) => image.generated)
+    ? t("terminal.images.generatedTitle")
+    : t("terminal.images.title");
+  const imageLabel = selectedImage.name
+    ?? t("terminal.images.imageLabel", { number: selectedIndex + 1 });
   const selectImage = (index: number) => terminalUiManager.setGeneratedImageIndex(
     activity.id,
     index,
@@ -2048,14 +2055,14 @@ function GeneratedImagesCarousel({ activity }: { activity: GeneratedImagesActivi
   return (
     <section
       className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm dark:border-white/10 dark:bg-[#111317]"
-      aria-label={t("terminal.generatedImages.title")}
+      aria-label={title}
     >
       <div className="flex items-center justify-between gap-3 border-b border-border/70 px-3.5 py-2.5 dark:border-white/10">
         <h3 className="text-sm font-semibold tracking-tight text-foreground">
-          {t("terminal.generatedImages.title")}
+          {title}
         </h3>
         <span className="font-mono text-xs text-muted-foreground" aria-live="polite">
-          {t("terminal.generatedImages.position", {
+          {t("terminal.images.position", {
             number: selectedIndex + 1,
             count: activity.images.length,
           })}
@@ -2070,8 +2077,8 @@ function GeneratedImagesCarousel({ activity }: { activity: GeneratedImagesActivi
               className="absolute left-4 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-sm backdrop-blur-sm transition-colors hover:bg-black/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 disabled:cursor-not-allowed disabled:opacity-35"
               onClick={() => selectImage(selectedIndex - 1)}
               disabled={selectedIndex === 0}
-              aria-label={t("terminal.generatedImages.previous")}
-              title={t("terminal.generatedImages.previous")}
+              aria-label={t("terminal.images.previous")}
+              title={t("terminal.images.previous")}
             >
               <ChevronLeft className="h-5 w-5" aria-hidden="true" />
             </button>
@@ -2080,8 +2087,8 @@ function GeneratedImagesCarousel({ activity }: { activity: GeneratedImagesActivi
               className="absolute right-4 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-sm backdrop-blur-sm transition-colors hover:bg-black/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 disabled:cursor-not-allowed disabled:opacity-35"
               onClick={() => selectImage(selectedIndex + 1)}
               disabled={selectedIndex === activity.images.length - 1}
-              aria-label={t("terminal.generatedImages.next")}
-              title={t("terminal.generatedImages.next")}
+              aria-label={t("terminal.images.next")}
+              title={t("terminal.images.next")}
             >
               <ChevronRight className="h-5 w-5" aria-hidden="true" />
             </button>
@@ -2090,14 +2097,14 @@ function GeneratedImagesCarousel({ activity }: { activity: GeneratedImagesActivi
       </div>
       <div className="flex flex-wrap items-center justify-center gap-1.5 border-t border-border/70 px-3 py-2.5 dark:border-white/10">
         {activity.images.map((image, index) => {
-          const label = t("terminal.generatedImages.imageLabel", { number: index + 1 });
+          const label = image.name ?? t("terminal.images.imageLabel", { number: index + 1 });
           const selected = index === selectedIndex;
           return (
             <button
               key={image.id}
               type="button"
               className={cn(
-                "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "max-w-[12rem] truncate rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 selected
                   ? "border-foreground/20 bg-foreground text-background"
                   : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground dark:border-white/10 dark:bg-white/5",

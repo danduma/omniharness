@@ -4,6 +4,7 @@ import { useEffect, useMemo } from "react";
 import { StateManager } from "@/lib/state-manager";
 import { useManagerSelector } from "@/lib/use-manager-snapshot";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
+import { runtimeErrorMessage } from "@/runtime-api/request";
 import { t } from "@/lib/i18n";
 
 export type WorkerEntryContentReference = {
@@ -74,7 +75,7 @@ export class WorkerEntryContentUrlManager extends StateManager<WorkerEntryConten
         return;
       }
       if (!blob.type.toLowerCase().startsWith("image/")) {
-        throw new Error(t("terminal.generatedImages.invalidResponse"));
+        throw new Error(t("terminal.images.invalidResponse"));
       }
       const url = this.createObjectUrl(blob);
       this.patch((state) => ({
@@ -93,7 +94,7 @@ export class WorkerEntryContentUrlManager extends StateManager<WorkerEntryConten
           [key]: {
             status: "error",
             url: "",
-            error: error instanceof Error ? error.message : String(error),
+            error: runtimeErrorMessage(error),
           },
         },
       }));

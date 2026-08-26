@@ -68,6 +68,21 @@ export function isRuntimeTransportFailure(error: unknown) {
   return typeof (error as { code?: unknown } | null | undefined)?.code !== "string";
 }
 
+/**
+ * Human-readable text for a rejection from the runtime API.
+ *
+ * `RuntimeApiError` is a plain object literal, never an `Error`, so the usual
+ * `error instanceof Error ? error.message : String(error)` shorthand renders
+ * it as "[object Object]" and throws away the server's message.
+ */
+export function runtimeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  const message = (error as { message?: unknown } | null | undefined)?.message;
+  return typeof message === "string" && message.length > 0 ? message : String(error);
+}
+
 export type RuntimeDomainRequest = (
   method: string,
   path: string,
@@ -140,6 +155,24 @@ export function createFetchRuntimeRequest({
       } satisfies RuntimeApiError;
     }
 
+    // Failures answer in JSON whatever the success-path body type is. Reading
+    // a failed blob/arrayBuffer reply in its declared type would discard the
+    // server's `code` and `message` and leave the caller holding a bare status.
+    if (!response.ok) {
+      const text = await response.text();
+      let errorBody: unknown;
+      try {
+        errorBody = parseRuntimeBody(text);
+      } catch {
+        errorBody = text;
+      }
+      throw normalizeRuntimeHttpError({
+        status: response.status,
+        body: errorBody,
+        surface,
+      });
+    }
+
     let parsedBody: unknown;
     if (options.responseType === "blob") {
       parsedBody = await response.blob();
@@ -152,13 +185,6 @@ export function createFetchRuntimeRequest({
       } catch {
         parsedBody = text;
       }
-    }
-    if (!response.ok) {
-      throw normalizeRuntimeHttpError({
-        status: response.status,
-        body: parsedBody,
-        surface,
-      });
     }
     if (options.includeResponseMetadata) {
       return {
