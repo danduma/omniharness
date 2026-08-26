@@ -13,7 +13,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { OmniHarnessMark } from "@/components/OmniHarnessMark";
 import { CliBrandIcon } from "@/components/cli-brand-icons";
+import { centeredScrollTop, clampScrollTop } from "@/components/home/conversation-sidebar-scroll";
 import { PRODUCT_NAME, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "@/interface/home/constants";
+import { mobileConversationSwipeManager } from "@/interface/home/MobileConversationSwipeManager";
 import { RunnerControls } from "@/interface/runners/RunnerControls";
 import { isRunUnread, resolveRunLatestUnreadTimestamp } from "@/lib/conversation-state";
 import { getConversationVisualKind, type ConversationVisualKind } from "@/lib/conversation-visuals";
@@ -60,6 +62,25 @@ class ConversationSidebarScrollManager extends StateManager<{
 }
 
 const conversationSidebarScrollManager = new ConversationSidebarScrollManager();
+
+function findConversationRunRow(viewport: HTMLElement, runId: string) {
+  return Array.from(viewport.querySelectorAll<HTMLElement>("[data-conversation-run-id]"))
+    .find((row) => row.dataset.conversationRunId === runId) ?? null;
+}
+
+/**
+ * Centring via `scrollIntoView` also scrolls every scrollable ancestor (the
+ * drawer, the document) and rounds against the row's animated position, so the
+ * offset is measured here and written to the list viewport alone.
+ */
+function centeredScrollTopForRow(viewport: HTMLElement, row: HTMLElement) {
+  return centeredScrollTop({
+    scrollHeight: viewport.scrollHeight,
+    clientHeight: viewport.clientHeight,
+    rowTop: row.getBoundingClientRect().top - viewport.getBoundingClientRect().top + viewport.scrollTop,
+    rowHeight: row.offsetHeight,
+  });
+}
 
 type ProjectDragState = {
   /**
@@ -815,7 +836,24 @@ const ConversationSidebar = memo(function ConversationSidebar({
     () => conversationSidebarHydrationManager.getSnapshot(),
   );
   const scrollAreaRef = useRef<HTMLDivElement>(null);
-  const scrollRestoreAttemptedRef = useRef(false);
+  const scrollSettledRef = useRef(false);
+  const programmaticScrollTopRef = useRef<number | null>(null);
+  const handleSidebarPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    mobileConversationSwipeManager.start(event, runnerControlsMode === "mobile");
+  }, [runnerControlsMode]);
+  const handleSidebarPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (mobileConversationSwipeManager.move(event, "left")) {
+      onCollapse?.();
+    }
+  }, [onCollapse]);
+  const handleSidebarPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (mobileConversationSwipeManager.finish(event, "left")) {
+      onCollapse?.();
+    }
+  }, [onCollapse]);
+  const handleSidebarPointerCancel = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    mobileConversationSwipeManager.cancel(event.pointerId);
+  }, []);
   const sidebarContentKey = useMemo(
     () => visibleProjectGroups
       .map((group) => `${group.path}:${group.runs.map((run) => run.id).join(",")}`)
@@ -838,39 +876,69 @@ const ConversationSidebar = memo(function ConversationSidebar({
     const saveScrollPosition = () => {
       conversationSidebarScrollManager.setScrollTop(runnerControlsMode, viewport.scrollTop);
     };
-    viewport.addEventListener("scroll", saveScrollPosition, { passive: true });
+    const handleScroll = () => {
+      const programmaticScrollTop = programmaticScrollTopRef.current;
+      if (programmaticScrollTop === null || Math.abs(viewport.scrollTop - programmaticScrollTop) > 1) {
+        // The user is driving the list now, so pending centring attempts stop.
+        scrollSettledRef.current = true;
+      }
+      saveScrollPosition();
+    };
+    viewport.addEventListener("scroll", handleScroll, { passive: true });
     return () => {
       saveScrollPosition();
-      viewport.removeEventListener("scroll", saveScrollPosition);
+      viewport.removeEventListener("scroll", handleScroll);
     };
   }, [getScrollViewport, mounted, runnerControlsMode]);
 
   useLayoutEffect(() => {
-    if (!mounted || scrollRestoreAttemptedRef.current) {
+    if (!mounted || scrollSettledRef.current) {
       return;
     }
     const viewport = getScrollViewport();
     if (!viewport) {
       return;
     }
+    const applyScrollTop = (scrollTop: number) => {
+      programmaticScrollTopRef.current = scrollTop;
+      viewport.scrollTop = scrollTop;
+    };
+    const selectedRow = runnerControlsMode === "mobile" && selectedRunId
+      ? findConversationRunRow(viewport, selectedRunId)
+      : null;
+    if (selectedRow) {
+      // Centring outranks the remembered offset: that offset was saved when the
+      // drawer last closed — usually right after tapping a run, with the tapped
+      // row wherever the finger happened to land — so restoring it leaves the
+      // current run off centre.
+      applyScrollTop(centeredScrollTopForRow(viewport, selectedRow));
+      scrollSettledRef.current = true;
+      // The drawer paints a frame after mount, so anything that settles late
+      // (runner controls, brand icons) would nudge the row off centre. One
+      // re-measure covers that, and it backs off once the user scrolls.
+      const frame = requestAnimationFrame(() => {
+        const programmaticScrollTop = programmaticScrollTopRef.current;
+        if (!selectedRow.isConnected || programmaticScrollTop === null) {
+          return;
+        }
+        if (Math.abs(viewport.scrollTop - programmaticScrollTop) > 1) {
+          return;
+        }
+        applyScrollTop(centeredScrollTopForRow(viewport, selectedRow));
+      });
+      return () => {
+        cancelAnimationFrame(frame);
+      };
+    }
     const savedScrollTop = conversationSidebarScrollManager.getScrollTop(runnerControlsMode);
     if (savedScrollTop !== undefined) {
-      const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-      viewport.scrollTop = Math.min(savedScrollTop, maxScrollTop);
-      scrollRestoreAttemptedRef.current = true;
-      return;
+      applyScrollTop(clampScrollTop(savedScrollTop, viewport.scrollHeight, viewport.clientHeight));
     }
     if (runnerControlsMode !== "mobile" || !selectedRunId) {
-      scrollRestoreAttemptedRef.current = true;
-      return;
+      scrollSettledRef.current = true;
     }
-    const selectedRow = Array.from(viewport.querySelectorAll<HTMLElement>("[data-conversation-run-id]"))
-      .find((row) => row.dataset.conversationRunId === selectedRunId);
-    if (!selectedRow) {
-      return;
-    }
-    selectedRow.scrollIntoView({ block: "center" });
-    scrollRestoreAttemptedRef.current = true;
+    // A mobile drawer whose selected row has not rendered yet stays unsettled so
+    // that centring still runs once the run streams into the list.
   }, [getScrollViewport, mounted, runnerControlsMode, selectedRunId, sidebarContentKey]);
 
   useEffect(() => {
@@ -892,7 +960,14 @@ const ConversationSidebar = memo(function ConversationSidebar({
   }
 
   return (
-    <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f1f1f0] dark:bg-muted/30">
+    <div
+      data-conversation-sidebar-surface={runnerControlsMode}
+      className="relative flex h-full min-h-0 w-full touch-pan-y touch-pinch-zoom flex-col overflow-hidden bg-[#f1f1f0] dark:bg-muted/30 lg:touch-auto"
+      onPointerDown={handleSidebarPointerDown}
+      onPointerMove={handleSidebarPointerMove}
+      onPointerUp={handleSidebarPointerUp}
+      onPointerCancel={handleSidebarPointerCancel}
+    >
       <div className="space-y-1 px-3 pb-3 pt-2 lg:px-3 lg:pb-3 lg:pt-2">
         <div className="flex items-center gap-1.5">
           <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -969,7 +1044,11 @@ const ConversationSidebar = memo(function ConversationSidebar({
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        <ScrollArea ref={scrollAreaRef} className="h-full px-3">
+        <ScrollArea
+          ref={scrollAreaRef}
+          className="h-full px-3"
+          viewportClassName="touch-pan-y touch-pinch-zoom lg:touch-auto"
+        >
           <div className="space-y-3 pb-4 pt-0.5">
           <div className="ml-2 mr-1 flex items-center justify-between">
             <div className="flex items-center gap-1">

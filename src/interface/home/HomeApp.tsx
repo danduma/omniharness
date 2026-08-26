@@ -753,6 +753,9 @@ export function HomeApp({
 
   // Layout controller
   const layout = useHomeLayoutController();
+  const handleOpenMobileConversationList = useCallback(() => {
+    setMobileNavOpen(true);
+  }, [setMobileNavOpen]);
   const terminalPaneRef = useRef<HTMLDivElement | null>(null);
   useTerminalPanelResize(isResizingTerminalPanel, terminalPaneRef);
 
@@ -1586,6 +1589,7 @@ export function HomeApp({
           projectRoot={currentProjectScope}
           onOpenProjectFile={actions.handleOpenProjectFile}
           onOpenWorkerActivity={handleOpenWorkerActivity}
+          onOpenMobileConversationList={handleOpenMobileConversationList}
           onRespondElicitation={(input) => respondElicitation.mutateAsync(input)}
           onRespondPermission={(input) => respondPermission.mutate(input)}
           respondingElicitationRequestId={respondElicitation.isPending && respondElicitation.variables?.workerId === vm.primaryConversationAgent?.name ? respondElicitation.variables.requestId : null}

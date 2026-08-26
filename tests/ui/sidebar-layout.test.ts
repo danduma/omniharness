@@ -743,10 +743,22 @@ test("conversation sidebar remembers scroll across mobile drawer remounts", () =
   expect(conversationSidebarSource).toContain("scrollTopBySurface");
   expect(conversationSidebarSource).toContain("const scrollAreaRef = useRef<HTMLDivElement>(null);");
   expect(conversationSidebarSource).toContain('data-slot="scroll-area-viewport"');
-  expect(conversationSidebarSource).toContain("scrollRestoreAttemptedRef");
-  expect(conversationSidebarSource).toContain("scrollIntoView({ block: \"center\" })");
+  expect(conversationSidebarSource).toContain("scrollSettledRef");
   expect(conversationSidebarSource).toContain("conversationSidebarScrollManager.setScrollTop");
   expect(conversationSidebarSource).toContain('ref={scrollAreaRef}');
+});
+
+test("mobile drawer centres the selected run instead of restoring a stale offset", () => {
+  // The remembered offset must never pre-empt centring, so the selected row is
+  // resolved before `getScrollTop` is consulted.
+  const centringIndex = conversationSidebarSource.indexOf("centeredScrollTopForRow(viewport, selectedRow)");
+  const restoreIndex = conversationSidebarSource.indexOf("conversationSidebarScrollManager.getScrollTop(runnerControlsMode)");
+  expect(centringIndex).toBeGreaterThan(-1);
+  expect(restoreIndex).toBeGreaterThan(centringIndex);
+  // Centring writes the list viewport only; scrollIntoView would drag every
+  // scrollable ancestor along with it.
+  expect(conversationSidebarSource).not.toContain("scrollIntoView({ block: \"center\" })");
+  expect(conversationSidebarSource).toContain("programmaticScrollTopRef");
 });
 
 test("direct conversations render the user transcript next to the worker surface", () => {
