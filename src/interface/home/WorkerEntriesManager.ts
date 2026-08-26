@@ -22,7 +22,7 @@
  * it as the entry payload.
  */
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
-import type { WorkerEntry } from "@/shared/worker-entries";
+import { coalesceWorkerEntriesById, type WorkerEntry } from "@/shared/worker-entries";
 import type { RuntimeAPIs } from "@/runtime-api/types";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
 
@@ -57,58 +57,7 @@ import { useRuntimeAPIs } from "@/runtime-api/provider";
  * timestamp is kept, which is the conservative choice: a message stays where
  * it already is.
  */
-export function coalesceWorkerEntriesById(
-  entries: ReadonlyArray<WorkerEntry>,
-  workerOrder: ReadonlyArray<string> = [],
-): WorkerEntry[] {
-  const workerRank = new Map(workerOrder.map((workerId, index) => [workerId, index]));
-  const rankOf = (entry: WorkerEntry) => {
-    const workerId = (entry as { workerId?: unknown }).workerId;
-    return typeof workerId === "string" ? workerRank.get(workerId) ?? -1 : -1;
-  };
-
-  const positionByKey = new Map<string, number>();
-  const placementByKey = new Map<string, { timestamp: string; rank: number }>();
-  const result: WorkerEntry[] = [];
-  for (const entry of entries) {
-    const key = typeof entry.id === "string" && entry.id ? entry.id : null;
-    if (!key) {
-      result.push(entry);
-      continue;
-    }
-    const existingPosition = positionByKey.get(key);
-    if (existingPosition === undefined) {
-      positionByKey.set(key, result.length);
-      if (entry.timestamp) {
-        placementByKey.set(key, { timestamp: entry.timestamp, rank: rankOf(entry) });
-      }
-      result.push(entry);
-    } else {
-      const held = placementByKey.get(key);
-      const candidate = entry.timestamp;
-      const candidateRank = rankOf(entry);
-      let preservedTimestamp = candidate;
-      if (held && candidate) {
-        // Smaller ISO string compares as earlier datetime for the same
-        // timezone offset — all our timestamps are emitted with a `Z` suffix,
-        // so string compare matches Date compare.
-        const keepCandidate = candidateRank > held.rank
-          || (candidateRank === held.rank && candidate < held.timestamp);
-        preservedTimestamp = keepCandidate ? candidate : held.timestamp;
-        placementByKey.set(key, {
-          timestamp: preservedTimestamp,
-          rank: Math.max(candidateRank, held.rank),
-        });
-      } else if (held) {
-        preservedTimestamp = held.timestamp;
-      } else if (candidate) {
-        placementByKey.set(key, { timestamp: candidate, rank: candidateRank });
-      }
-      result[existingPosition] = { ...entry, timestamp: preservedTimestamp };
-    }
-  }
-  return result;
-}
+export { coalesceWorkerEntriesById };
 
 type WorkerEntryStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
