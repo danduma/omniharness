@@ -287,6 +287,7 @@
   "fileViewer.menu.wordWrap": "自动换行",
   "fileViewer.menu.renderMarkdown": "渲染 Markdown",
   "fileViewer.menu.copyFullPath": "复制完整路径",
+  "fileViewer.menu.copyContents": "复制文件内容",
   "fileViewer.menu.refresh": "刷新",
   "projectFile.menu.open": "打开",
   "projectFile.menu.copyPath": "复制路径",

@@ -287,6 +287,7 @@
   "fileViewer.menu.wordWrap": "行の折り返し",
   "fileViewer.menu.renderMarkdown": "Markdown を表示",
   "fileViewer.menu.copyFullPath": "フルパスをコピー",
+  "fileViewer.menu.copyContents": "ファイルの内容をコピー",
   "fileViewer.menu.refresh": "更新",
   "projectFile.menu.open": "開く",
   "projectFile.menu.copyPath": "パスをコピー",

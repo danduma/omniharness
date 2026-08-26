@@ -287,6 +287,7 @@
   "fileViewer.menu.wordWrap": "Ajuste de línea",
   "fileViewer.menu.renderMarkdown": "Renderizar Markdown",
   "fileViewer.menu.copyFullPath": "Copiar ruta completa",
+  "fileViewer.menu.copyContents": "Copiar contenido del archivo",
   "fileViewer.menu.refresh": "Actualizar",
   "projectFile.menu.open": "Abrir",
   "projectFile.menu.copyPath": "Copiar ruta",

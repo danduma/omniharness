@@ -114,6 +114,15 @@ export function FileViewerPanel({
                 <span>{t("fileViewer.menu.copyFullPath")}</span>
               </DropdownMenuItem>
               <DropdownMenuItem
+                disabled={!fileQuery.data}
+                onClick={() => {
+                  void navigator.clipboard.writeText(content);
+                }}
+              >
+                <Copy className="h-4 w-4" />
+                <span>{t("fileViewer.menu.copyContents")}</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
                 onClick={() => {
                   void fileQuery.refetch();
                 }}
