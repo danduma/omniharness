@@ -6,10 +6,11 @@ import { cn } from "@/lib/utils"
 
 function ScrollArea({
   className,
+  viewportClassName,
   children,
   ref,
   ...props
-}: React.ComponentPropsWithRef<"div">) {
+}: React.ComponentPropsWithRef<"div"> & { viewportClassName?: string }) {
   return (
     <div
       data-slot="scroll-area"
@@ -19,7 +20,10 @@ function ScrollArea({
     >
       <div
         data-slot="scroll-area-viewport"
-        className="size-full overflow-auto rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 [scrollbar-width:thin]"
+        className={cn(
+          "size-full overflow-auto rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 [scrollbar-width:thin]",
+          viewportClassName,
+        )}
         tabIndex={props.tabIndex ?? 0}
       >
         {children}

@@ -30,6 +30,7 @@ import type { ProjectFileReference } from "@/lib/project-file-links";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "@/interface/home/GitWorkspaceManager";
 import { preflightConfirmationActionsManager } from "@/interface/home/PreflightConfirmationActionsManager";
+import { mobileConversationSwipeManager } from "@/interface/home/MobileConversationSwipeManager";
 import { useWorkerStream } from "@/interface/home/WorkerEntriesManager";
 import { shouldShowDirectControlWorkingIndicator } from "@/interface/home/direct-control-activity";
 import { InlineElicitation, type ElicitationResponseInput } from "@/components/agent-interactions/InlineElicitation";
@@ -49,6 +50,7 @@ import { RunRecoveryNotice } from "./RunRecoveryNotice";
 import { UserInputMessage, type UserInputMessageAction } from "./UserInputMessage";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useIsCompactLayout } from "@/hooks/use-mobile";
 
 const Terminal = lazy(
   () => import("@/components/Terminal").then((m) => ({ default: m.Terminal })),
@@ -706,6 +708,7 @@ interface ConversationMainProps {
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
   onOpenWorkerActivity?: (workerId: string) => void;
+  onOpenMobileConversationList: () => void;
   onRespondElicitation?: (input: ElicitationResponseInput) => void;
   onRespondPermission?: (input: PermissionResponseInput) => void;
   respondingElicitationRequestId?: number | null;
@@ -867,12 +870,14 @@ const ConversationMain = memo(function ConversationMain({
   projectRoot,
   onOpenProjectFile,
   onOpenWorkerActivity,
+  onOpenMobileConversationList,
   onRespondElicitation,
   onRespondPermission,
   respondingElicitationRequestId = null,
   respondingPermissionRequestId = null,
 }: ConversationMainProps) {
   const i18nSnapshot = useI18nSnapshot();
+  const isCompactLayout = useIsCompactLayout();
   const { hasOutputBelow } = useManagerSnapshot(conversationMainManager);
   const { handledMessageIds: handledPreflightConfirmationMessageIds } = useManagerSnapshot(preflightConfirmationActionsManager);
   const selectedRunIsTerminal = isTerminalRunStatus(selectedRun?.status);
@@ -1150,6 +1155,22 @@ const ConversationMain = memo(function ConversationMain({
       behavior: "smooth",
     });
   };
+  const handleConversationPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    mobileConversationSwipeManager.start(event, isCompactLayout);
+  }, [isCompactLayout]);
+  const handleConversationPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (mobileConversationSwipeManager.move(event)) {
+      onOpenMobileConversationList();
+    }
+  }, [onOpenMobileConversationList]);
+  const handleConversationPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (mobileConversationSwipeManager.finish(event)) {
+      onOpenMobileConversationList();
+    }
+  }, [onOpenMobileConversationList]);
+  const handleConversationPointerCancel = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    mobileConversationSwipeManager.cancel(event.pointerId);
+  }, []);
   const confirmForkMessageIntoWorktree = () => {
     if (!forkWorkspaceDialog || !forkWorkspaceSnapshot || !forkBranchName.trim() || !forkCheckoutPath.trim()) {
       return;
@@ -1168,8 +1189,14 @@ const ConversationMain = memo(function ConversationMain({
   };
 
   return (
-  <div className="relative min-h-0 flex-1">
-  <ScrollArea className="h-full" ref={scrollRef}>
+  <div
+    className="relative min-h-0 flex-1"
+    onPointerDown={handleConversationPointerDown}
+    onPointerMove={handleConversationPointerMove}
+    onPointerUp={handleConversationPointerUp}
+    onPointerCancel={handleConversationPointerCancel}
+  >
+  <ScrollArea className="h-full" viewportClassName="touch-pan-y touch-pinch-zoom lg:touch-auto" ref={scrollRef}>
     {selectedRunId ? (
       isDirectConversation ? (
         <div
