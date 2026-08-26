@@ -94,6 +94,7 @@ export type AgentRecord = {
     expiresAt: string | null;
   } | null;
   sessionMode: string | null;
+  claudeConfigDir: string | null;
   contextUsage: {
     inputTokens: number | null;
     outputTokens: number | null;

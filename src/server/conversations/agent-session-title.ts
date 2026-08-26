@@ -49,7 +49,7 @@ function agentSessionTitleRejection(title: string): AgentSessionTitleRejection |
 /**
  * The title the agent chose for its own session.
  *
- * Claude Code reports this over ACP as a `session_info_update`, which
+ * ACP adapters may report this as a `session_info_update`, which
  * `normalizeSessionUpdate` flattens to
  * `{ type: "session_info", text: update.title ?? update.updatedAt ?? "", raw }`.
  * Until now nothing consumed it: the entry was appended to the worker output

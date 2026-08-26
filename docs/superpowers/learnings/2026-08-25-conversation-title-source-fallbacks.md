@@ -1,0 +1,10 @@
+# Provider Metadata Is Not a Guaranteed Conversation Title Source
+
+**Date:** 2026-08-25
+**Context:** OmniHarness conversation titles, ACP worker snapshots, and lifecycle observability
+**Symptom:** New conversations kept the first-line temporary title indefinitely even after the first agent turn completed.
+**Root Cause:** The title pipeline treated optional provider metadata as complete coverage. Codex's ACP session title is an echoed harness prompt and is correctly rejected, while ACP-spawned Claude sessions stopped writing `ai-title` transcript records. The both-missing branch returned silently, and Claude transcript lookup used the runner's config directory instead of the worker's selected account-scoped directory.
+**Fix:** Kept provider titles as opportunistic overrides, restored a harness-owned supervisor-model generator grounded in the first user message and first assistant reply, passed the worker runtime's exact Claude config directory through snapshots, guarded late title writes with the initial-title value, bounded duplicate generation attempts, and emitted typed missing-source, update, and generation-failure events. Removed the obsolete frontend execution-event kind.
+**Verification:** Red-green regression coverage in `tests/server/conversation-title.test.ts`, `tests/server/worker-snapshot-initial-prompt.test.ts`, and `tests/server/agent-runtime/http.test.ts`; 77 targeted title/runtime tests passed; all 53 lifecycle tests passed; `pnpm typecheck`, targeted ESLint, and `pnpm build:interface:web` completed successfully.
+**Prevention:** Treat provider metadata as optional unless the protocol guarantees it for every launch mode. Every fallback decision must be a named event, and any filesystem lookup for provider state must use the exact launch environment rather than ambient runner variables. External title generation must use a compare-and-set write so a late result cannot overwrite a newer manual or provider title.
+**Skill/Doc Updates:** No general skill update was needed. The repository's lifecycle observability specification already prohibits silent decision branches; this fix applies that existing rule to title generation.

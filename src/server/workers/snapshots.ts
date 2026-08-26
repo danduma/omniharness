@@ -15,10 +15,12 @@ import {
   extractAgentSessionTitle,
 } from "@/server/conversations/agent-session-title";
 import { readAgentSessionTitleFromTranscript } from "@/server/conversations/agent-transcript-title";
+import { queueConversationTitleGeneration } from "@/server/conversation-title";
 
 type PersistableWorkerSnapshot = Pick<AgentRecord, "outputEntries" | "currentText" | "lastText"> & {
   sessionId?: string | null;
   sessionMode?: string | null;
+  claudeConfigDir?: string | null;
 };
 
 /**
@@ -88,19 +90,19 @@ async function seedInitialDirectUserPrompt(worker: typeof workers.$inferSelect) 
 }
 
 /**
- * Take the title the agent generated for itself, in preference to anything
- * derived from the user's first message.
+ * Take a provider-generated title when one exists, then fall back to the
+ * harness title generator after the first assistant reply.
  *
- * Two sources, checked cheapest-first. The ACP `session_info_update` route is
- * the one the protocol intends, but Claude Code does not currently send it;
- * its title lives in its own session transcript instead, found by the session
- * id already recorded on the worker.
+ * Provider sources are checked cheapest-first. ACP `session_info_update` is
+ * useful when an adapter sends a genuine title. Claude's transcript title is
+ * opportunistic because ACP-spawned Claude sessions may never write one.
  */
 async function adoptAgentGeneratedTitle(
   worker: typeof workers.$inferSelect,
   snapshot: PersistableWorkerSnapshot,
 ) {
   const streamTitle = extractAgentSessionTitle(snapshot.outputEntries);
+  let streamCandidateStatus: "missing" | "rejected" = "missing";
   if (streamTitle) {
     // A rejected stream title (Codex echoes the prompt here rather than
     // summarising it) is not an answer, so keep looking.
@@ -108,16 +110,43 @@ async function adoptAgentGeneratedTitle(
     if (outcome !== "rejected") {
       return;
     }
+    streamCandidateStatus = "rejected";
   }
 
   const sessionId = (snapshot.sessionId ?? worker.bridgeSessionId)?.trim();
-  if (!sessionId || !worker.cwd) {
-    return;
+  const transcriptLookupAttempted = worker.type === "claude" && Boolean(sessionId && worker.cwd);
+  let transcriptCandidateStatus: "not_applicable" | "missing" | "rejected" = transcriptLookupAttempted
+    ? "missing"
+    : "not_applicable";
+  if (transcriptLookupAttempted && sessionId) {
+    const transcriptTitle = await readAgentSessionTitleFromTranscript({
+      sessionId,
+      cwd: worker.cwd,
+      configDir: snapshot.claudeConfigDir ?? undefined,
+    });
+    if (transcriptTitle) {
+      const outcome = await applyAgentSessionTitle({ runId: worker.runId, title: transcriptTitle });
+      if (outcome !== "rejected") {
+        return;
+      }
+      transcriptCandidateStatus = "rejected";
+    }
   }
-  const transcriptTitle = await readAgentSessionTitleFromTranscript({ sessionId, cwd: worker.cwd });
-  if (transcriptTitle) {
-    await applyAgentSessionTitle({ runId: worker.runId, title: transcriptTitle });
-  }
+
+  const assistantReply = snapshot.outputEntries
+      ?.find((entry) => entry.type === "message" && entry.status !== "archived")
+      ?.text.trim()
+    || snapshot.lastText?.trim()
+    || snapshot.currentText?.trim()
+    || "";
+  await queueConversationTitleGeneration({
+    runId: worker.runId,
+    workerId: worker.id,
+    workerType: worker.type,
+    assistantReply,
+    streamCandidateStatus,
+    transcriptCandidateStatus,
+  });
 }
 
 export async function persistWorkerSnapshot(
@@ -137,6 +166,14 @@ export async function persistWorkerSnapshot(
   if (Array.isArray(snapshot.outputEntries) && snapshot.outputEntries.length > 0) {
     await seedInitialDirectUserPrompt(worker);
     await writeWorkerOutputEntries(worker.runId, workerId, snapshot.outputEntries);
+  }
+  if (
+    snapshot.outputEntries?.length
+    || snapshot.lastText?.trim()
+    || snapshot.currentText?.trim()
+    || snapshot.sessionId?.trim()
+    || worker.bridgeSessionId?.trim()
+  ) {
     await adoptAgentGeneratedTitle(worker, snapshot);
   }
   await appendWorkerSessionMetadata({

@@ -43,6 +43,7 @@ export type SurfacedErrorCode =
   | "conversation.delete.worker_cancel_failed"
   | "conversation.continue.failed"
   | "conversation.delivery_refused"
+  | "conversation.title_generation_failed"
   | "external_session.import_failed"
   | "process.spawn.failed"
   | "process.cwd.invalid"
@@ -616,8 +617,24 @@ export type ConversationEvent =
   | {
       kind: "conversation.title_updated";
       runId: string;
-      source: "agent_session" | "leak_repair";
+      source: "agent_session" | "harness_llm" | "harness_fallback" | "leak_repair";
       title: string;
+    }
+  | {
+      kind: "conversation.title_sources_missing";
+      runId: string;
+      workerId: string;
+      workerType: string;
+      streamCandidateStatus: "missing" | "rejected";
+      transcriptCandidateStatus: "not_applicable" | "missing" | "rejected";
+      fallback: "harness_llm";
+    }
+  | {
+      kind: "conversation.title_generation_failed";
+      runId: string;
+      workerId: string;
+      reason: string;
+      fallbackTitle: string;
     }
   | {
       kind: "conversation.title_rejected";

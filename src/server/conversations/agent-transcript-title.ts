@@ -5,12 +5,11 @@ import { join } from "path";
 /**
  * The title Claude Code generated for its own session.
  *
- * The CLI appends `{"type":"ai-title","aiTitle":"…","sessionId":"…"}` to its
- * session transcript and rewrites it as the work changes shape — the same
- * string it pushes to the terminal title bar. The escape sequence is
- * ephemeral, but the record is durable, so the transcript is the readable
- * source. OmniHarness used to pay a separate supervisor LLM call to
- * re-summarise the user's first message instead; this is both better and free.
+ * Interactive Claude sessions can append
+ * `{"type":"ai-title","aiTitle":"…","sessionId":"…"}` to their transcript
+ * and revise it as the work changes shape. ACP-spawned sessions do not
+ * reliably produce this record, so this reader is an opportunistic source;
+ * the harness title generator remains the guaranteed fallback.
  *
  * `session_info_update` (the ACP route) would be the obvious channel, but
  * Claude Code does not send it: zero occurrences across ~135k captured stream

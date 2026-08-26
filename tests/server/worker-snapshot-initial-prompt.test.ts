@@ -30,10 +30,13 @@ import {
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { __resetOutputStoreCachesForTests, readWorkerOutputEntries } from "@/server/workers/output-store";
 import { __resetAgentTranscriptTitleCacheForTests } from "@/server/conversations/agent-transcript-title";
+import { buildInitialConversationTitle } from "@/server/conversations/initial-title";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 
 describe("persistWorkerSnapshot initial direct prompt ordering", () => {
   beforeEach(async () => {
     __resetOutputStoreCachesForTests();
+    __resetNamedEventsForTests();
     await db.delete(planningReviewFindings);
     await db.delete(planningReviewRounds);
     await db.delete(planningReviewRuns);
@@ -142,7 +145,7 @@ describe("persistWorkerSnapshot initial direct prompt ordering", () => {
       join(projectDir, `${sessionId}.jsonl`),
       `${JSON.stringify({ type: "ai-title", aiTitle: "Debug duplicate sent message race condition", sessionId })}\n`,
     );
-    vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
+    vi.stubEnv("CLAUDE_CONFIG_DIR", mkdtempSync(join(tmpdir(), "omni-wrong-claude-home-")));
     __resetAgentTranscriptTitleCacheForTests();
 
     await db.insert(plans).values({
@@ -176,10 +179,10 @@ describe("persistWorkerSnapshot initial direct prompt ordering", () => {
       createdAt: new Date(0),
       updatedAt: new Date(0),
     });
-
     await persistWorkerSnapshot(workerId, {
       currentText: "",
       lastText: "",
+      claudeConfigDir: configDir,
       outputEntries: [
         {
           id: "bridge-entry-title",
@@ -193,6 +196,140 @@ describe("persistWorkerSnapshot initial direct prompt ordering", () => {
     const run = await db.select({ title: runs.title }).from(runs).where(eq(runs.id, runId)).get();
     expect(run?.title).toBe("Debug duplicate sent message race condition");
     vi.unstubAllEnvs();
+  });
+
+  it("generates a harness title from the opening exchange when provider title sources are empty", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const initialPrompt = "Investigate why conversation titles never load after the first agent response.";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/generated-title.md",
+      status: "running",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: buildInitialConversationTitle(initialPrompt),
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace",
+      initialPrompt,
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: initialPrompt,
+      createdAt: new Date(0),
+    });
+
+    await persistWorkerSnapshot(workerId, {
+      currentText: "",
+      lastText: "The provider title channels are empty, so I traced the fallback path.",
+      outputEntries: [],
+    });
+
+    const run = await db.select({ title: runs.title }).from(runs).where(eq(runs.id, runId)).get();
+    expect(run?.title).toBe("Investigate Why Conversation Titles Never Load");
+    expect(getNamedEventsSince(0).events.map((entry) => entry.event)).toContainEqual(
+      expect.objectContaining({
+        kind: "conversation.title_sources_missing",
+        runId,
+        workerId,
+        fallback: "harness_llm",
+      }),
+    );
+    expect(getNamedEventsSince(0).events.map((entry) => entry.event)).toContainEqual(
+      expect.objectContaining({
+        kind: "conversation.title_updated",
+        runId,
+        source: "harness_llm",
+      }),
+    );
+  });
+
+  it("does not regenerate when the harness title is identical to the initial title", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const initialPrompt = "Fix Bug";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/idempotent-title.md",
+      status: "running",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: initialPrompt,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace",
+      initialPrompt,
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: initialPrompt,
+      createdAt: new Date(0),
+    });
+    const snapshot = {
+      currentText: "",
+      lastText: "I found and fixed the bug.",
+      outputEntries: [{
+        id: "assistant-reply",
+        type: "message" as const,
+        text: "I found and fixed the bug.",
+        timestamp: new Date(1000).toISOString(),
+      }],
+    };
+
+    await persistWorkerSnapshot(workerId, snapshot);
+    await persistWorkerSnapshot(workerId, snapshot);
+
+    const sourceMisses = getNamedEventsSince(0).events
+      .map((entry) => entry.event)
+      .filter((event) => event.kind === "conversation.title_sources_missing" && event.runId === runId);
+    expect(sourceMisses).toHaveLength(1);
   });
 
   // The agent reports its own session title over ACP. It used to be appended
