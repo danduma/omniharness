@@ -538,6 +538,7 @@ export function HomeApp({
     workerCatalogData: workerCatalogQuery.data,
     readMarkers: effectiveReadMarkers,
   });
+  handoffManager.configureTargetModels(workerCatalogQuery.data?.workerModels);
 
   // Auto-expand project when a session or draft project is selected
   useEffect(() => {
@@ -1722,7 +1723,12 @@ export function HomeApp({
 
       <AttachmentImagePreviewDialog />
 
-      <CrossCliHandoffDialog onCompleted={(runId) => actions.handleSelectRun(runId)} />
+      <CrossCliHandoffDialog
+        onCompleted={(runId) => actions.handleSelectRun(runId)}
+        workerModels={workerCatalogQuery.data?.workerModels}
+        accounts={state.accounts}
+        themeMode={themeMode}
+      />
 
       <ExternalSessionsPicker
         open={showExternalSessionsPicker}

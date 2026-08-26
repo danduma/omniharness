@@ -52,17 +52,3 @@ export function renderHandoffSeed(args: {
   lines.push(`Please continue from where the previous worker left off.`);
   return lines.join("\n");
 }
-
-export const HANDOFF_REQUEST_PROMPT = (
-  "Prepare a terse factual continuation report for another agent. " +
-  "Stop work immediately and reply with exactly one fenced block:\n\n" +
-  "```omniharness-handoff\n" +
-  "TASK: <one sentence describing what you were doing>\n" +
-  "PROGRESS: <what you have done, including files touched, commits, and test status>\n" +
-  "NEXT_STEPS: <what should be done next>\n" +
-  "BLOCKERS: <known blockers, or \"none\">\n" +
-  "OPEN_QUESTIONS: <questions for the next worker, or \"none\">\n" +
-  "RELEVANT_FILES: <comma-separated list of files the next worker should read first>\n" +
-  "```\n\n" +
-  "Be terse and factual. Do not start new work."
-);

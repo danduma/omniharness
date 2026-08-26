@@ -1,5 +1,7 @@
 import { StateManager } from "@/lib/state-manager";
+import { getWorkerModelOptions } from "@/interface/home/utils";
 import type { RuntimeAPIs } from "@/runtime-api/types";
+import type { WorkerModelCatalog } from "@/shared/home-types";
 import type { HandoffReason, HandoffRecordDto } from "@/shared/handoff";
 import type { SupportedWorkerType } from "@/shared/worker-types";
 
@@ -30,13 +32,22 @@ const INITIAL: HandoffManagerState = { request: null, targetWorkerType: "claude"
 
 export class HandoffManager extends StateManager<HandoffManagerState> {
   private api: RuntimeAPIs["handoffs"] | null = null;
+  private targetModels: Partial<WorkerModelCatalog> | undefined;
   private requestGeneration = 0;
   constructor() { super(INITIAL); }
   configure(api: RuntimeAPIs["handoffs"]) { this.api = api; }
+  configureTargetModels(targetModels: Partial<WorkerModelCatalog> | undefined) { this.targetModels = targetModels; }
+  private getTargetDefaults(targetWorkerType: SupportedWorkerType) {
+    return {
+      model: getWorkerModelOptions(this.targetModels, targetWorkerType)[0]?.value ?? "",
+      effort: "High",
+      accountId: "",
+    };
+  }
   open(request: HandoffDialogRequest) {
     const generation = ++this.requestGeneration;
     const targetWorkerType = request.sourceWorkerType === "claude" ? "codex" : "claude";
-    this.update({ ...INITIAL, request, targetWorkerType });
+    this.update({ ...INITIAL, request, targetWorkerType, ...this.getTargetDefaults(targetWorkerType) });
     void this.api?.getActive({ runId: request.runId }).then((response) => {
       if (generation !== this.requestGeneration) return;
       const current = this.getSnapshot();
@@ -54,7 +65,10 @@ export class HandoffManager extends StateManager<HandoffManagerState> {
     }).catch(() => undefined);
   }
   close() { if (!this.getSnapshot().preparing && !this.getSnapshot().launching) { this.requestGeneration += 1; this.update(INITIAL); } }
-  setTargetWorkerType(value: SupportedWorkerType) { this.patch({ targetWorkerType: value, handoff: null, error: null }); }
+  setTargetWorkerType(value: SupportedWorkerType) {
+    if (value === this.getSnapshot().targetWorkerType) return;
+    this.patch({ targetWorkerType: value, ...this.getTargetDefaults(value), handoff: null, error: null });
+  }
   setModel(value: string) { this.patch({ model: value, handoff: null }); }
   setEffort(value: string) { this.patch({ effort: value, handoff: null }); }
   setAccountId(value: string) { this.patch({ accountId: value, handoff: null }); }

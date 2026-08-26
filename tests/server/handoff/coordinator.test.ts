@@ -32,9 +32,18 @@ function dependencies(calls: string[]): HandoffCoordinatorDependencies {
     getSource: async () => ({ run: { id: "source", mode: "direct", projectPath: "/tmp/project", status: "running", gitBaselineJson: null }, worker: { id: "worker-source", type: "codex", status: "working", bridgeSessionId: "session" } }),
     validateTarget: async () => { calls.push("validate"); },
     createDraft: async () => { calls.push("draft"); return record(); },
-    requestAdvisory: async () => null,
     terminateSource: async () => { calls.push("terminate"); return { confirmed: true }; },
     gatherCandidates: async () => { calls.push("gather"); return { sourceSeq: 10, workspace: { fingerprint: "workspace" } } as never; },
+    summarizePacket: async () => ({
+      currentObjective: null,
+      completed: [],
+      remaining: [],
+      blockers: [],
+      openQuestions: [],
+      decisions: [],
+      relevantFiles: [],
+      summarySource: "target_summarizer",
+    }),
     compilePacket: () => ({ contentHash: "packet" } as HybridHandoffPacketV1),
     savePacket: async () => { calls.push("save"); return ready; },
     markSourcePrepared: async () => { calls.push("prepared"); },
@@ -50,6 +59,128 @@ function dependencies(calls: string[]): HandoffCoordinatorDependencies {
 }
 
 describe("handoff coordinator", () => {
+  it("uses a disposable target summarizer before saving the launch packet", async () => {
+    const calls: string[] = [];
+    const emitted: string[] = [];
+    const deps = dependencies(calls);
+    deps.gatherCandidates = async () => ({
+      originalRequest: "Investigate slow exports",
+      currentObjective: "Add Safari coverage",
+      recentUserMessages: ["Investigate slow exports", "Add Safari coverage"],
+      recentAssistantSummary: "Safari uses the slow path",
+      queuedMessages: [],
+      verification: [],
+      sourceSeq: 10,
+      plans: [],
+      specs: [],
+      generatedOutputs: [],
+      workspace: {
+        projectRootLabel: "project",
+        fingerprint: "workspace",
+        baselineCommit: null,
+        currentHead: null,
+        dirtyBeforeSession: null,
+        modifiedFiles: [],
+        untrackedFiles: [],
+        commitsCreated: [],
+        warnings: [],
+      },
+    } as never);
+    let finalInput: Parameters<HandoffCoordinatorDependencies["compilePacket"]>[0] | null = null;
+    deps.compilePacket = (input) => {
+      finalInput = input;
+      return { contentHash: `packet-${input.advisory.summarySource}` } as HybridHandoffPacketV1;
+    };
+    deps.summarizePacket = (async () => {
+      calls.push("summarize-target");
+      return {
+        currentObjective: "Add Safari coverage",
+        completed: ["Confirmed the Safari-only fallback"],
+        remaining: ["Add a real Safari regression test"],
+        blockers: [],
+        openQuestions: [],
+        decisions: [],
+        relevantFiles: ["src/export.ts"],
+        summarySource: "target_summarizer",
+      };
+    }) as never;
+    deps.emit = (event) => { emitted.push(event.kind); };
+    const coordinator = createHandoffCoordinator(deps);
+
+    await coordinator.prepare({ sourceRunId: "source", sourceWorkerId: "worker-source", forkedFromMessageId: null, reason: "manual_session", target: { workerType: "claude", model: null, effort: null, accountId: null } });
+
+    expect(calls).toContain("summarize-target");
+    expect(calls.indexOf("gather")).toBeLessThan(calls.indexOf("summarize-target"));
+    expect(calls.indexOf("summarize-target")).toBeLessThan(calls.indexOf("save"));
+    expect(finalInput!.advisory.completed).toContain("Confirmed the Safari-only fallback");
+    expect(emitted).toContain("handoff.summary_started");
+    expect(emitted).toContain("handoff.summary_completed");
+  });
+
+  it("fails preparation visibly instead of launching with unsummarized evidence", async () => {
+    const calls: string[] = [];
+    const emitted: Array<{ kind: string; code?: unknown }> = [];
+    const deps = dependencies(calls);
+    deps.summarizePacket = async () => { throw new Error("malformed summary"); };
+    deps.emit = (event) => { emitted.push(event); };
+    const coordinator = createHandoffCoordinator(deps);
+
+    await expect(coordinator.prepare({ sourceRunId: "source", sourceWorkerId: "worker-source", forkedFromMessageId: null, reason: "manual_session", target: { workerType: "claude", model: null, effort: null, accountId: null } })).rejects.toMatchObject({ code: "handoff_summary_failed" });
+
+    expect(calls).not.toContain("save");
+    expect(emitted).toContainEqual(expect.objectContaining({ kind: "handoff.summary_failed" }));
+    expect(emitted).toContainEqual(expect.objectContaining({ kind: "handoff.failed", code: "handoff_summary_failed" }));
+  });
+
+  it("never asks the source worker to prepare the handoff", async () => {
+    const calls: string[] = [];
+    const deps = dependencies(calls);
+    const coordinator = createHandoffCoordinator(deps);
+
+    await coordinator.prepare({ sourceRunId: "source", sourceWorkerId: "worker-source", forkedFromMessageId: null, reason: "manual_session", target: { workerType: "claude", model: null, effort: null, accountId: null } });
+
+    expect("requestAdvisory" in deps).toBe(false);
+  });
+
+  it("does not repeat the latest user message as synthetic remaining work", async () => {
+    const calls: string[] = [];
+    const deps = dependencies(calls);
+    let compiledInput: Parameters<HandoffCoordinatorDependencies["compilePacket"]>[0] | null = null;
+    deps.gatherCandidates = async () => ({
+      originalRequest: "Investigate slow exports",
+      currentObjective: "Add Safari coverage",
+      recentUserMessages: ["Investigate slow exports", "Add Safari coverage"],
+      recentAssistantSummary: "Safari uses the slow path",
+      queuedMessages: [],
+      verification: [],
+      sourceSeq: 10,
+      plans: [],
+      specs: [],
+      generatedOutputs: [],
+      workspace: {
+        projectRootLabel: "project",
+        fingerprint: "workspace",
+        baselineCommit: null,
+        currentHead: null,
+        dirtyBeforeSession: null,
+        modifiedFiles: [],
+        untrackedFiles: [],
+        commitsCreated: [],
+        warnings: [],
+      },
+    } as never);
+    deps.compilePacket = (input) => {
+      compiledInput = input;
+      return { contentHash: "packet" } as HybridHandoffPacketV1;
+    };
+    const coordinator = createHandoffCoordinator(deps);
+
+    await coordinator.prepare({ sourceRunId: "source", sourceWorkerId: "worker-source", forkedFromMessageId: null, reason: "manual_session", target: { workerType: "claude", model: null, effort: null, accountId: null } });
+
+    expect(compiledInput).not.toBeNull();
+    expect(compiledInput!.advisory.remaining).toEqual([]);
+  });
+
   it("confirms source termination before gathering final state and allowing target launch", async () => {
     const calls: string[] = [];
     const coordinator = createHandoffCoordinator(dependencies(calls));

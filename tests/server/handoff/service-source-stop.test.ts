@@ -12,8 +12,15 @@ beforeEach(async () => {
   process.env.OMNIHARNESS_ROOT = tempRoot;
   vi.resetModules();
   vi.doMock("@/server/bridge-client", () => ({
-    askAgent: vi.fn(),
-    cancelAgent: vi.fn().mockRejectedValue(Object.assign(new Error("bridge transport unavailable"), { status: 503 })),
+    spawnAgent: vi.fn().mockResolvedValue({ state: "idle", sessionId: "summary-session", sessionMode: "read-only" }),
+    askAgent: vi.fn().mockResolvedValue({
+      response: "```omniharness-handoff\nTASK: Continue the task\nPROGRESS: Captured persisted context\nNEXT_STEPS: Continue implementation\nBLOCKERS: none\nOPEN_QUESTIONS: none\nRELEVANT_FILES: none\n```",
+      state: "idle",
+    }),
+    cancelAgent: vi.fn().mockImplementation(async (name: string) => {
+      if (name.startsWith("handoff-summary-")) return { ok: true };
+      throw Object.assign(new Error("bridge transport unavailable"), { status: 503 });
+    }),
     getAgent: vi.fn().mockRejectedValue(Object.assign(new Error("bridge transport unavailable"), { status: 503 })),
   }));
   vi.doMock("@/server/supervisor/worker-availability", () => ({ isSpawnableWorkerType: () => ({ ok: true }) }));

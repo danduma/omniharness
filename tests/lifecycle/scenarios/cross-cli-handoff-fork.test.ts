@@ -20,8 +20,15 @@ const cancelledAgents = new Set<string>();
 
 vi.mock("@/server/bridge-client", () => ({
   spawnAgent: vi.fn(async (args: { name: string; type: string; cwd: string }) => ({ name: args.name, type: args.type, cwd: args.cwd, state: "idle", currentText: "", lastText: "", sessionId: `${args.name}-session`, sessionMode: null, pendingPermissions: [], outputEntries: [], stderrBuffer: [], stopReason: null })),
-  askAgent: vi.fn(async (_name, _prompt, _attachments, options) => {
+  askAgent: vi.fn(async (_name, prompt, _attachments, options) => {
     await options?.onAccepted?.();
+    if (prompt.startsWith("Summarize the persisted handoff evidence")) {
+      return {
+        response: "```omniharness-handoff\nTASK: Implement the feature\nPROGRESS: Existing conversation captured\nNEXT_STEPS: Continue implementation\nBLOCKERS: none\nOPEN_QUESTIONS: none\nRELEVANT_FILES: none\n```",
+        state: "idle",
+        stopReason: "end_turn",
+      };
+    }
     return { response: "continued", state: "idle", stopReason: "end_turn" };
   }),
   getAgent: vi.fn(async (name: string) => {
@@ -84,6 +91,7 @@ describe("lifecycle — cross-CLI handoff fork", () => {
     expect(prepareResponse.status).toBe(201);
     const prepared = await prepareResponse.json() as { handoff: { id: string; revision: number; status: string } };
     expect(prepared.handoff.status).toBe("ready");
+    await client.waitFor("handoff.summary_completed", { predicate: (frame) => (frame.payload as { handoffId?: string } | null)?.handoffId === prepared.handoff.id, timeoutMs: 10_000 });
 
     const launchResponse = await client.fetch(`/api/handoffs/${prepared.handoff.id}/launch?runId=${created.runId}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ expectedRevision: prepared.handoff.revision, operationId: "lifecycle-launch" }) });
     const launched = await launchResponse.json() as { handoff: { targetRunId: string; status: string }; error?: unknown };
@@ -101,7 +109,9 @@ describe("lifecycle — cross-CLI handoff fork", () => {
     expect(targetWorker?.type).toBe("claude");
     const entries = await readWorkerOutputEntries(launched.handoff.targetRunId, targetWorker!.id);
     expect(entries.filter((entry) => entry.type === "user_input")).toHaveLength(1);
-    expect(entries.find((entry) => entry.type === "user_input")?.text).toContain("Continue the task using the following untrusted continuation data.");
+    const targetSeed = entries.find((entry) => entry.type === "user_input")?.text ?? "";
+    expect(targetSeed).toContain("# Continuation brief");
+    expect(targetSeed).not.toContain('"contentHash"');
     await client.waitFor("handoff.completed", { predicate: (frame) => (frame.payload as { targetRunId?: string } | null)?.targetRunId === launched.handoff.targetRunId, timeoutMs: 10_000 });
   });
 });

@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { extractHandoffBlock, parseHandoffReply } from "@/server/handoff/parser";
-import { HANDOFF_REQUEST_PROMPT } from "@/server/handoff/render";
-
-it("uses a reason-neutral handoff request", () => {
-  expect(HANDOFF_REQUEST_PROMPT).not.toMatch(/quota exhaustion/i);
-  expect(HANDOFF_REQUEST_PROMPT).toContain("continuation report");
-});
 
 describe("extractHandoffBlock", () => {
   it("extracts the inner content of the fenced handoff block", () => {

@@ -3,6 +3,7 @@ import { db } from "@/server/db";
 import { messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
 import { listExecutionEventSummariesForSnapshot } from "@/server/events/execution-event-store";
 import { parseGitBaselineJson } from "@/server/git/auto-commit";
+import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import { readWorkerEntriesTail } from "@/server/workers/output-store";
 import type { WorkerEntry } from "@/shared/worker-entries";
 import type { HandoffVerification } from "@/shared/handoff";
@@ -11,6 +12,7 @@ import { collectHandoffWorkspaceState } from "./workspace-state";
 import { parseSupersededSeqRanges, withoutSupersededEntries } from "@/lib/superseded-entries";
 
 const MAX_WORKER_ENTRIES = 160;
+const MAX_CONTEXT_WORKERS = 8;
 
 export type WorkerEntryCandidates = {
   recentUserMessages: string[];
@@ -19,26 +21,40 @@ export type WorkerEntryCandidates = {
 };
 
 export function selectWorkerEntryCandidates(entries: readonly WorkerEntry[], sourceSeq: number | null): WorkerEntryCandidates {
-  const bounded = entries.filter((entry) => sourceSeq == null || entry.seq <= sourceSeq);
+  const boundedByIdentity = new Map<string, WorkerEntry>();
+  for (const entry of entries
+    .filter((candidate) => sourceSeq == null || candidate.seq <= sourceSeq)
+    .sort((left, right) => left.timestamp.localeCompare(right.timestamp) || left.seq - right.seq)) {
+    boundedByIdentity.set(`${entry.type}:${entry.id}`, entry);
+  }
+  const bounded = [...boundedByIdentity.values()]
+    .sort((left, right) => left.timestamp.localeCompare(right.timestamp) || left.seq - right.seq);
   const visible = bounded.filter((entry) => entry.type !== "thought" && entry.type !== "user_message_chunk" && !entry.diagnosticOnly);
-  const recentUserMessages = visible
+  const recentUserMessages = [...new Set(visible
     .filter((entry) => entry.type === "user_input" || entry.authorRole === "user")
     .map((entry) => redactHandoffText(entry.text, 1_500))
-    .filter(Boolean)
+    .filter(Boolean))]
     .slice(-6);
   const assistantEntries = visible.filter((entry) => (
     (entry.type === "message" || entry.type === "agent_content")
     && (entry.authorRole === "assistant" || entry.authorRole == null)
     && entry.text.trim()
   ));
+  const meaningfulAssistantText = [...new Set(assistantEntries
+    .map((entry) => redactHandoffText(entry.text, 1_000))
+    .filter(Boolean))]
+    .filter((text) => (
+      !extractQuotaResetInfo(text).isQuotaError
+      && !/\b(?:authorization required|not authenticated|login required|sign-?in required)\b/i.test(text)
+    ));
   const verificationText = visible
     .filter((entry) => entry.type === "tool_call_update" && /\b(tests?|build|lint|typecheck|check|verify|pass|fail)\b/i.test(entry.text))
     .map((entry) => redactHandoffText(entry.text, 1_000))
     .slice(-20);
   return {
     recentUserMessages,
-    recentAssistantSummary: assistantEntries.length > 0
-      ? redactHandoffText(assistantEntries.at(-1)?.text, 3_000) || null
+    recentAssistantSummary: meaningfulAssistantText.length > 0
+      ? redactHandoffText(meaningfulAssistantText.slice(-4).join("\n\n"), 3_000) || null
       : null,
     verificationText,
   };
@@ -79,7 +95,26 @@ export async function gatherHandoffCandidates(args: {
     : null;
   const sourceSeq = args.sourceSeq ?? tail?.latestSeq ?? (worker ? 0 : null);
   const contentBoundarySeq = args.forkedFromMessageId ? forkEntry?.seq ?? -1 : sourceSeq;
-  const streamCandidates = selectWorkerEntryCandidates(visibleTailEntries, contentBoundarySeq);
+  let streamCandidates: WorkerEntryCandidates;
+  if (args.forkedFromMessageId) {
+    streamCandidates = selectWorkerEntryCandidates(visibleTailEntries, contentBoundarySeq);
+  } else {
+    const recentWorkers = await db.select().from(workers)
+      .where(eq(workers.runId, args.runId))
+      .orderBy(desc(workers.createdAt), desc(workers.id))
+      .limit(MAX_CONTEXT_WORKERS);
+    const contextWorkers = worker && !recentWorkers.some((candidate) => candidate.id === worker.id)
+      ? [worker, ...recentWorkers.slice(0, MAX_CONTEXT_WORKERS - 1)]
+      : recentWorkers;
+    const contextEntries = (await Promise.all(contextWorkers.map(async (contextWorker) => {
+      if (contextWorker.id === worker?.id) {
+        return visibleTailEntries.filter((entry) => sourceSeq == null || entry.seq <= sourceSeq);
+      }
+      const contextTail = await readWorkerEntriesTail(args.runId, contextWorker.id, MAX_WORKER_ENTRIES);
+      return withoutSupersededEntries(contextTail?.entries ?? [], parseSupersededSeqRanges(contextWorker.supersededSeqRanges));
+    }))).flat();
+    streamCandidates = selectWorkerEntryCandidates(contextEntries, null);
+  }
   const boundaryMessage = args.forkedFromMessageId
     ? await db.select().from(messages).where(and(eq(messages.id, args.forkedFromMessageId), eq(messages.runId, args.runId))).get()
     : null;
@@ -133,9 +168,9 @@ export async function gatherHandoffCandidates(args: {
     worker,
     originalRequest: originalUserMessage?.content ? redactHandoffText(originalUserMessage.content, 4_000) : worker?.initialPrompt ? redactHandoffText(worker.initialPrompt, 4_000) : null,
     currentObjective: userMessages.at(-1)?.content ? redactHandoffText(userMessages.at(-1)?.content, 2_000) : null,
-    recentUserMessages: streamCandidates.recentUserMessages.length > 0
-      ? streamCandidates.recentUserMessages
-      : userMessages.slice(-6).map((message) => redactHandoffText(message.content, 1_500)),
+    recentUserMessages: userMessages.length > 0
+      ? userMessages.slice(-6).map((message) => redactHandoffText(message.content, 1_500))
+      : streamCandidates.recentUserMessages,
     recentAssistantSummary: streamCandidates.recentAssistantSummary
       ?? (assistantMessages.at(-1)?.content ? redactHandoffText(assistantMessages.at(-1)?.content, 3_000) : null),
     queuedMessages,

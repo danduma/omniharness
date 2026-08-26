@@ -14,6 +14,7 @@ export class HandoffCoordinatorError extends Error {
       | "handoff_not_found"
       | "handoff_source_changed"
       | "handoff_source_not_stopped"
+      | "handoff_summary_failed"
       | "handoff_target_unavailable"
       | "handoff_invalid_state"
       | "handoff_launch_failed",
@@ -62,9 +63,9 @@ export type HandoffCoordinatorDependencies = {
   getSource(input: PrepareHandoffInput): Promise<HandoffSource>;
   validateTarget(source: HandoffSource, target: HandoffTargetSelection, context: { reason: HandoffReason; phase: "prepare" | "launch" }): Promise<void>;
   createDraft(input: PrepareHandoffInput, source: HandoffSource): Promise<HandoffRecordDto>;
-  requestAdvisory(source: HandoffSource, input: PrepareHandoffInput): Promise<CompileHybridHandoffInput["advisory"] | null>;
   terminateSource(source: HandoffSource, handoff: HandoffRecordDto): Promise<{ confirmed: boolean }>;
   gatherCandidates(source: HandoffSource, input: PrepareHandoffInput): Promise<GatheredHandoffCandidates>;
+  summarizePacket(source: HandoffSource, input: PrepareHandoffInput, handoff: HandoffRecordDto, packet: HybridHandoffPacketV1): Promise<CompileHybridHandoffInput["advisory"]>;
   compilePacket(input: CompileHybridHandoffInput): HybridHandoffPacketV1;
   savePacket(handoff: HandoffRecordDto, packet: HybridHandoffPacketV1, candidates: GatheredHandoffCandidates): Promise<HandoffRecordDto>;
   markSourcePrepared(source: HandoffSource, handoff: HandoffRecordDto): Promise<void>;
@@ -82,7 +83,7 @@ function fallbackAdvisory(candidates: GatheredHandoffCandidates): CompileHybridH
   return {
     currentObjective: candidates.currentObjective,
     completed: [],
-    remaining: candidates.currentObjective ? [candidates.currentObjective] : [],
+    remaining: [],
     blockers: [],
     openQuestions: [],
     decisions: [],
@@ -94,6 +95,7 @@ function fallbackAdvisory(candidates: GatheredHandoffCandidates): CompileHybridH
 function surfacedCode(error: HandoffCoordinatorError) {
   if (error.code === "handoff_target_unavailable") return "handoff.target_unavailable" as const;
   if (error.code === "handoff_source_changed") return "handoff.source_changed" as const;
+  if (error.code === "handoff_summary_failed") return "handoff.summary_failed" as const;
   if (error.code === "handoff_launch_failed") return "handoff.launch_failed" as const;
   return "handoff.capture_failed" as const;
 }
@@ -120,16 +122,13 @@ export function createHandoffCoordinator(dependencies: HandoffCoordinatorDepende
         targetWorkerType: input.target.workerType,
       });
       try {
-      const advisory = await dependencies.requestAdvisory(source, input);
       const termination = await dependencies.terminateSource(source, draft);
       if (!termination.confirmed) {
         const error = new HandoffCoordinatorError("handoff_source_not_stopped", "The source CLI could not be confirmed stopped.");
         throw error;
       }
       const candidates = await dependencies.gatherCandidates(source, input);
-      const selectedAdvisory = advisory ?? fallbackAdvisory(candidates);
-      selectedAdvisory.blockers = [...selectedAdvisory.blockers, ...(candidates.workspace.warnings ?? [])];
-      const packet = dependencies.compilePacket({
+      const compileInput = (advisory: CompileHybridHandoffInput["advisory"]): CompileHybridHandoffInput => ({
         source: {
           runId: source.run.id,
           workerId: source.worker?.id ?? null,
@@ -159,8 +158,21 @@ export function createHandoffCoordinator(dependencies: HandoffCoordinatorDepende
           specs: candidates.specs,
           generatedOutputs: candidates.generatedOutputs,
         },
-        advisory: selectedAdvisory,
+        advisory,
       });
+      const evidencePacket = dependencies.compilePacket(compileInput(fallbackAdvisory(candidates)));
+      dependencies.emit({ kind: "handoff.summary_started", runId: source.run.id, handoffId: draft.id, targetWorkerType: input.target.workerType });
+      let selectedAdvisory: CompileHybridHandoffInput["advisory"];
+      try {
+        selectedAdvisory = await dependencies.summarizePacket(source, input, draft, evidencePacket);
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        dependencies.emit({ kind: "handoff.summary_failed", runId: source.run.id, handoffId: draft.id, targetWorkerType: input.target.workerType, reason: message });
+        throw new HandoffCoordinatorError("handoff_summary_failed", `The target CLI could not prepare the continuation brief: ${message}`);
+      }
+      dependencies.emit({ kind: "handoff.summary_completed", runId: source.run.id, handoffId: draft.id, targetWorkerType: input.target.workerType });
+      selectedAdvisory.blockers = [...selectedAdvisory.blockers, ...(candidates.workspace.warnings ?? [])];
+      const packet = dependencies.compilePacket(compileInput(selectedAdvisory));
       const ready = await dependencies.savePacket(draft, packet, candidates);
       await dependencies.markSourcePrepared(source, ready);
       dependencies.emit({ kind: "handoff.packet_ready", runId: source.run.id, handoffId: ready.id, revision: ready.revision, sourceSeq: candidates.sourceSeq });

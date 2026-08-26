@@ -12,7 +12,7 @@
 
 **North Star Product:** A user can move work between CLI ecosystems without pretending their provider sessions, recovery semantics, or transcripts are interchangeable. The new agent starts with the smallest trustworthy continuation context, the source remains auditable, and failures never strand or silently mutate either conversation.
 
-**Current Milestone:** Ship cross-CLI handoff forks for direct/commit conversations from the session menu, an individual message, the existing Resume CLI Session dialog, and quota recovery. The packet is editable where it is advisory, inspectable after launch, bounded, redacted, restart-safe, and synthesized without contacting an exhausted provider when necessary.
+**Current Milestone:** Ship cross-CLI handoff forks for direct/commit conversations from the session menu, an individual message, the existing Resume CLI Session dialog, and quota recovery. The packet is editable where it is advisory, inspectable after launch, bounded, redacted, and restart-safe. Durable evidence is summarized by a disposable instance of the selected target CLI; the source provider is never contacted, and the real target session never receives raw packet JSON.
 
 **Future Product Direction:** Reuse the packet format for export/import and cross-device handoff only after this milestone proves the provenance, recovery, and deletion model. Do not add same-run CLI switching, background multi-agent continuation, or automatic worktree creation in this milestone.
 
@@ -24,7 +24,7 @@
 
 1. **A CLI handoff is a fork, never a resume.** “Resume external session” keeps its existing meaning. “Fork current conversation to another CLI” creates a new OmniHarness run with `parentRunId` and an optional `forkedFromMessageId`.
 2. **The source is historical after a successful launch.** Before target creation, terminate any live source CLI process and confirm it exited; if no live runtime owns the source, verify that fact and skip interruption/termination. On success set the source run to `cancelled`, retain its transcript and artifacts, and select the target run in the UI. If target launch fails after source termination, restore `quota_waiting` when a durable future quota wake exists; otherwise set `needs_recovery`. Never keep two CLIs editing the same checkout concurrently.
-3. **The packet is hybrid.** Deterministic state is authoritative; generated summaries and outgoing-agent reports are advisory. Current disk state wins over prose.
+3. **The packet is hybrid.** Deterministic state is authoritative; a disposable target-CLI summarizer converts that evidence into advisory progress and next steps. Current disk state wins over prose. The source CLI is assumed unavailable and is never asked to prepare the handoff.
 4. **Manual and quota paths share one coordinator.** Manual entry points offer a preview. A quota-triggered cross-provider handoff may launch without waiting for an exhausted CLI, then exposes the persisted packet for inspection.
 5. **Only advisory content is user-editable.** The user may amend objective, status, next steps, blockers, notes, and relevant-file explanations. Source IDs, stream sequence, git evidence, verification records, target selection, provenance, and hash are server-owned.
 6. **No full transcript or full diff by default.** The packet contains a short exact tail plus summaries, file-level evidence, and compact error/test output. The source run remains the place to inspect full history.
@@ -146,12 +146,12 @@ Compilation rules:
 - Set an explicit 36,000-character rendered-packet ceiling (roughly 6,000–10,000 tokens depending on content), plus per-field item and character limits. Keep the constants in code, not environment variables.
 - Prioritize source identity and sequence, user constraints, current objective, blockers/errors, file evidence, verification, decisions, queued input, then recent conversational tail. Drop completed prose first.
 - Stable-sort every deterministic collection so the same redacted nonvolatile evidence yields the same semantic content hash; `generatedAt` may differ without changing that hash.
-- Reuse a recent assistant recap only as advisory text. It is “fresh” only if its worker sequence is at or after the last included tool/result lifecycle boundary; otherwise include it with a stale-summary warning.
-- Ask an outgoing worker for a structured report only when it is idle/responsive and not quota-blocked. Bound the request timeout. Never delay quota recovery on this call.
+- Reuse recent persisted assistant context only as advisory text. Gather it across the conversation's replacement-worker streams, discard quota/authentication failures, and mark stale evidence where applicable.
+- Never ask the source worker to prepare a report. Treat it as unavailable in every manual and automatic cross-CLI handoff, because quota exhaustion is the normal operating condition for this feature. Instead, run a disposable read-only instance of the selected target CLI to summarize the durable packet before the real target session is created.
 - For a hard interruption, synthesize entirely from the worker stream, execution events, messages/queued messages, run metadata, git evidence, and known artifacts.
 - For a message fork, cap conversation candidates at that message/stream boundary while computing workspace state at capture time; call out the mismatch rather than claiming the checkout was rewound.
 - Render advisory narrative inside an explicit untrusted-data boundary telling the target to verify disk state. Do not let tool/assistant text masquerade as system instructions.
-- Run redaction before budgeting, canonicalization, hashing, preview extraction, rendering, logging, or event emission. Apply it to every structured text field and to the final rendered seed, including verification output, blockers, decision evidence, queued text, and outgoing-worker reports.
+- Run redaction before budgeting, canonicalization, hashing, preview extraction, rendering, logging, or event emission. Apply it to every structured text field and to the final rendered seed, including verification output, blockers, decision evidence, queued text, and persisted conversation summaries.
 - Keep the absolute `projectPath` only in server-side run/handoff metadata for access and launch checks. The packet/API uses a non-sensitive `projectRootLabel` such as the repository directory name; all file evidence is project-relative.
 - Hash the NFC-normalized, fixed-key-order canonical packet while excluding only volatile `generatedAt`. Target selection remains hash input, so changing it creates a new hash/revision.
 - Render untrusted content inside a randomly generated, high-entropy nonce fence created after sanitization. Reject/regenerate a nonce that occurs in content, encode the interior as canonical JSON, and test delimiter/system/tool-frame imitation. The renderer's nonce is not part of the semantic packet hash.
@@ -233,8 +233,9 @@ Server invariants:
 - `src/server/db/index.ts` — additive schema initialization/migration and database version bump.
 - `src/server/artifacts/stream-types.ts` — add the `handoff_packets` run-level stream kind.
 - `src/server/artifacts/append-only-store.ts` — map the new stream to `handoff-packets.jsonl`.
-- `src/server/handoff/request.ts` — make the outgoing summary request reason-neutral, structured, bounded, and optional.
-- `src/server/handoff/parser.ts` — parse advisory report fields into the versioned candidate contract without treating them as facts.
+- `src/server/handoff/request.ts` — reconstruct the failover report exclusively from persisted conversation, worker-stream, verification, and workspace evidence.
+- `src/server/handoff/target-summarizer.ts` — run and clean up the disposable target CLI, validate its structured report, and refuse preparation on failure.
+- `src/server/handoff/parser.ts` — retain parsing support only for legacy report artifacts; new handoffs do not request source-worker reports.
 - `src/server/handoff/render.ts` — render the versioned packet and remove quota-only wording.
 - `src/server/git/auto-commit.ts` — extract/reuse baseline parsing needed by read-only workspace evidence without synchronous shell work on the hot path.
 - `src/server/runs/recovery.ts` — delegate legacy retry/edit/fork run creation to focused services; do not grow this 1,300+ line module.
@@ -295,7 +296,7 @@ Keep the full packet out of SQLite. Append every ready/revised packet as an `Art
 
 Every flat `/api/handoffs/:handoffId` handler must resolve the source run and apply the same project/run authorization check as run-scoped endpoints before reading or mutating anything. Include an IDOR test using an authenticated caller without access to the source project. Cancellation covers every nonlaunching manual or quota draft.
 
-There are no persisted V0 packet artifacts to migrate: the existing parser/request/render path produces ephemeral reports only. Treat those reports as advisory candidates when creating V1. If a future/unknown artifact version is encountered, retain it on disk, refuse to render it, surface `handoff.packet_version_unsupported`, and require a fresh V1 capture.
+There are no persisted V0 packet artifacts to migrate. Existing legacy worker-produced reports remain readable as advisory history, but V1 capture reconstructs new packets without contacting the source. If a future/unknown artifact version is encountered, retain it on disk, refuse to render it, surface `handoff.packet_version_unsupported`, and require a fresh V1 capture.
 
 Return typed stage-specific errors. HTTP conflicts include `handoff_in_progress`, `handoff_revision_conflict`, and `handoff_required`. User-relevant failures also emit `error.surfaced` with stable codes `handoff.capture_failed`, `handoff.revision_conflict`, `handoff.target_unavailable`, `handoff.source_changed`, `handoff.launch_failed`, `handoff.fork_required`, and `handoff.packet_version_unsupported`; register every code in the named-event typed union.
 
@@ -393,7 +394,7 @@ Events carry IDs, revisions, stage, source/target IDs, target worker type, reaso
 
 - [ ] Implement deterministic merging where collected facts override advisory summaries and every conflict becomes a confidence warning.
 - [ ] Detect fresh recent assistant recaps using worker/event sequence evidence.
-- [ ] Update the outgoing request to return only structured task/state/decision/file explanations; use a short timeout and skip it for quota-blocked or busy workers.
+- [ ] Remove every outgoing-worker report request. Reconstruct task/state/decision/file evidence from the durable conversation, all relevant replacement-worker streams, verification records, and current workspace; then use a disposable read-only target CLI to produce the advisory summary.
 - [ ] Preserve the existing synthetic fallback, but feed it through the same candidates/compiler/redaction pipeline.
 - [ ] Enforce the packet budget by priority, populate `omittedSections`/`truncatedFields`, and hash the redacted canonical representation excluding only `generatedAt`.
 - [ ] Render a concise target prompt with objective, state, decisions, workspace, verification, pending input, uncertainty, and an explicit instruction to inspect current files before acting. Place canonical JSON inside a post-sanitization random nonce fence and ensure embedded text cannot close or imitate the boundary.
@@ -564,7 +565,7 @@ Events carry IDs, revisions, stage, source/target IDs, target worker type, reaso
 - [ ] Reconcile capture/revision/launch/completion/failure events into existing run snapshots without creating optimistic fake runs.
 - [ ] Fetch snapshot/active handoff after `stream.resync_required`; treat SSE as an invalidation signal and HTTP/SQLite as authority.
 - [ ] Add a manual lifecycle scenario covering source activity, stable capture, packet artifact, target run/worker/seed, source stop, and no mixed CLI types.
-- [ ] Add a quota scenario where the outgoing worker cannot answer, synthetic capture succeeds, and the target new run continues.
+- [ ] Add quota and manual scenarios proving the source worker is never prompted, persisted capture succeeds, and the target new run continues.
 - [ ] Add restart checkpoints after `capturing`, `ready`, and `launching`; prove recovery either finishes once or surfaces a retryable failure without duplicate targets.
 - [ ] Add FK/delete coverage: deleting the source removes its packet metadata/artifact while the target's seed remains readable.
 - [ ] Validate every decision through `/api/events/log?since=<id>&runId=<id>` and assert named refusal/failure events exist.

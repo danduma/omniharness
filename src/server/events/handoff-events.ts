@@ -2,6 +2,9 @@ import type { HandoffReason, HandoffStatus } from "@/shared/handoff";
 
 export type HandoffEvent =
   | { kind: "handoff.capture_started"; runId: string; handoffId: string; workerId: string | null; reason: HandoffReason; targetWorkerType: string }
+  | { kind: "handoff.summary_started"; runId: string; handoffId: string; targetWorkerType: string }
+  | { kind: "handoff.summary_completed"; runId: string; handoffId: string; targetWorkerType: string }
+  | { kind: "handoff.summary_failed"; runId: string; handoffId: string; targetWorkerType: string; reason: string }
   | { kind: "handoff.packet_ready"; runId: string; handoffId: string; revision: number; sourceSeq: number | null }
   | { kind: "handoff.packet_revised"; runId: string; handoffId: string; revision: number }
   | { kind: "handoff.launch_started"; runId: string; handoffId: string; revision: number; targetWorkerType: string }

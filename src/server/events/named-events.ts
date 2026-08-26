@@ -95,6 +95,7 @@ export type SurfacedErrorCode =
   | "worker.spawn.resource_exhausted"
   | "worker.failover.failed"
   | "handoff.capture_failed"
+  | "handoff.summary_failed"
   | "handoff.revision_conflict"
   | "handoff.target_unavailable"
   | "handoff.source_changed"

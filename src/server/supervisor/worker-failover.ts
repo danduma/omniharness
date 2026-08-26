@@ -6,7 +6,7 @@ import { db } from "@/server/db";
 import { recoveryIncidents, workers } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
-import { buildSyntheticHandoff, requestWorkerHandoff } from "@/server/handoff/request";
+import { buildPersistedHandoff } from "@/server/handoff/request";
 import { renderHandoffSeed } from "@/server/handoff/render";
 import type { HandoffReport } from "@/server/handoff/parser";
 import { markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
@@ -18,7 +18,6 @@ import {
   type WorkerQuotaBlockResult,
 } from "@/server/quota/recovery";
 import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
-import { getRecoveryPolicy } from "@/server/runs/recovery-policy";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { appendSupervisorInputOnDelivery } from "@/server/workers/stream-writer";
@@ -63,8 +62,6 @@ export type AttemptWorkerFailoverArgs = {
   existingBlock?: WorkerQuotaBlockResult;
   /** Optional override for the per-run retry cap. Defaults to allowedTypes.length. */
   maxAttempts?: number;
-  /** Optional override for the handoff request timeout. Defaults to policy.maxHandoffWaitMs. */
-  handoffTimeoutMs?: number;
   now?: Date;
 };
 
@@ -442,25 +439,12 @@ export async function attemptWorkerFailover(
     },
   });
 
-  const policy = await getRecoveryPolicy();
-  const handoffRequest = await requestWorkerHandoff({
+  const handoff = await buildPersistedHandoff({
     runId: args.runId,
     workerId: args.outgoingWorkerId,
     reason: "quota_exhausted",
-    timeoutMs: args.handoffTimeoutMs ?? policy.maxHandoffWaitMs,
+    originalPrompt: args.originalPrompt,
   });
-
-  let handoff: HandoffReport;
-  if (handoffRequest.ok) {
-    handoff = handoffRequest.report;
-  } else {
-    handoff = await buildSyntheticHandoff({
-      runId: args.runId,
-      workerId: args.outgoingWorkerId,
-      reason: "quota_exhausted",
-      originalPrompt: args.originalPrompt,
-    });
-  }
   const postHandoffRefusal = await refuseFailoverIfTerminal({
     runId: args.runId,
     outgoingWorkerId: args.outgoingWorkerId,
@@ -483,7 +467,7 @@ export async function attemptWorkerFailover(
     details: {
       summary: `Captured ${handoff.source} handoff from ${args.outgoingWorkerId}.`,
       source: handoff.source,
-      reason: handoffRequest.ok ? null : handoffRequest.reason,
+      reason: "source_unavailable",
     },
   });
 
