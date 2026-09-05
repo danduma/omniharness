@@ -8,6 +8,7 @@ import {
   buildManagedPath,
   createToolDiagnostics,
   resolveCommand,
+  stripAmbientCodexSessionEnv,
   stripRunnerControlEnv,
   withCodexStandardTooling,
 } from "@/server/agent-runtime/tool-env";
@@ -39,6 +40,37 @@ describe("agent runtime tool environment diagnostics", () => {
       OMNIHARNESS_INSTANCE: "production",
       OMNIHARNESS_BRIDGE_URL: "http://127.0.0.1:7800",
     })).toEqual({ PATH: "/usr/bin" });
+  });
+
+  it("does not leak the parent Codex session into nested agent CLIs", () => {
+    expect(stripAmbientCodexSessionEnv({
+      PATH: "/usr/bin",
+      CODEX_HOME: "/runner/.omniharness/cli-home/codex/home",
+      CODEX_SQLITE_HOME: "/runner/.omniharness/cli-home/codex/sqlite",
+      CODEX_THREAD_ID: "outer-thread",
+      CODEX_CI: "1",
+      CODEX_MANAGED_CONFIG_PATH: "/tmp/runner-managed-config.toml",
+      CODEX_MANAGED_PACKAGE_ROOT: "/runner/node_modules/@openai/codex",
+      CODEX_PATH: "/runner/node_modules/.bin/codex",
+      CODEX_MANAGED_BY_NPM: "1",
+      CODEX_LOG_STDERR: "0",
+      CUSTOM_WORKER_SETTING: "keep",
+    })).toEqual({
+      PATH: "/usr/bin",
+      CUSTOM_WORKER_SETTING: "keep",
+    });
+  });
+
+  it("preserves an explicitly configured Codex home without an ambient session marker", () => {
+    expect(stripAmbientCodexSessionEnv({
+      CODEX_HOME: "/configured/codex-home",
+      CODEX_SQLITE_HOME: "/configured/codex-sqlite",
+      CUSTOM_WORKER_SETTING: "keep",
+    })).toEqual({
+      CODEX_HOME: "/configured/codex-home",
+      CODEX_SQLITE_HOME: "/configured/codex-sqlite",
+      CUSTOM_WORKER_SETTING: "keep",
+    });
   });
 
   it("finds the native Codex binary bundled with the ChatGPT app", () => {

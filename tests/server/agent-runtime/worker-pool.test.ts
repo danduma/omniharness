@@ -217,6 +217,16 @@ describe("WorkerPool periodic sweep", () => {
 });
 
 describe("WorkerPool account fencing", () => {
+  it("reports when a fenced account refuses ownership of a warmed member", () => {
+    const pool = new WorkerPool();
+    const child = fakeChild();
+    pool.quiesceAccount("account-a");
+
+    expect(pool.add(makeMember("a", { accountId: "account-a", child }))).toBe(false);
+    expect(pool.countAll()).toBe(0);
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
   it("atomically fences new warm reservations and evicts only that account's prewarms", () => {
     const pool = new WorkerPool();
     pool.setMaxPerKey(5);

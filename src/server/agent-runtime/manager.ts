@@ -28,7 +28,7 @@ import { sanitizeAcpStream } from "./acp-stream-sanitizer";
 import { applyCodexBridgeEnv, buildCodexConfigArgs, resolveCodexSessionMode, shouldSetRequestedMode } from "./codex";
 import { buildGeminiArgs, isFullAccessAgentMode, resolveFullGeminiUuid } from "./gemini";
 import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
-import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, stripRunnerControlEnv, withCodexStandardTooling, withManagedPath } from "./tool-env";
+import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, stripAmbientCodexSessionEnv, stripRunnerControlEnv, withCodexStandardTooling, withManagedPath } from "./tool-env";
 import {
   appendOutputEntry,
   openAgentOutputArchive,
@@ -93,6 +93,12 @@ const CLAUDE_THINKING_DISPLAY_ARGS = {
 } as const;
 
 type EnvLike = Record<string, string | undefined>;
+
+type StartingAgentResources = {
+  child?: ChildProcessWithoutNullStreams;
+  client: ExtractedRuntimeClient;
+  managedSkillLinks: string[];
+};
 
 type EndpointCheckResult = {
   reachable: boolean;
@@ -716,6 +722,54 @@ function cleanupSkillLinks(linkPaths: string[]) {
   }
 }
 
+async function terminateUnregisteredAgentChild(child: ChildProcessWithoutNullStreams) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    let forceTimer: NodeJS.Timeout | null = null;
+    let settleTimer: NodeJS.Timeout | null = null;
+    const cleanup = () => {
+      child.off("exit", onExit);
+      child.off("error", onError);
+      if (forceTimer) clearTimeout(forceTimer);
+      if (settleTimer) clearTimeout(settleTimer);
+    };
+    const finish = (error?: Error) => {
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
+    const onExit = () => finish();
+    const onError = (error: Error) => finish(error);
+
+    child.once("exit", onExit);
+    child.once("error", onError);
+    try {
+      child.kill("SIGTERM");
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    forceTimer = setTimeout(() => {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        finish();
+        return;
+      }
+      try {
+        child.kill("SIGKILL");
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+      settleTimer = setTimeout(() => {
+        finish(new Error(`Agent process ${child.pid ?? "unknown"} did not exit after SIGKILL.`));
+      }, 500);
+    }, 500);
+  });
+}
+
 function describeUnknownError(error: unknown) {
   if (error instanceof Error) {
     return error.message;
@@ -948,6 +1002,7 @@ export class AgentRuntimeManager {
   private readonly chunkSubscribers = new Map<string, Set<(chunk: string) => void>>();
   private readonly workerPool = new WorkerPool();
   private readonly startingAgentAccounts = new Map<string, string | null>();
+  private readonly startingAgentResources = new Map<string, StartingAgentResources>();
   private readonly memoryTracer: MemoryTracer;
   private readonly pendingAgentReaps = new Map<string, NodeJS.Timeout>();
   private reapSweepTimer: NodeJS.Timeout | null = null;
@@ -1277,6 +1332,18 @@ export class AgentRuntimeManager {
       throw new RuntimeHttpError(409, `Account ${accountId} is quiesced for a lifecycle operation.`);
     }
     const name = input.name?.trim() || "pending-agent";
+    if (this.startingAgentAccounts.has(name)) {
+      const message = `Agent is already starting: ${name}`;
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "worker.spawn.failed",
+        message,
+        surface: "log",
+        workerId: name,
+        cause: null,
+      });
+      throw new RuntimeHttpError(409, message);
+    }
     this.startingAgentAccounts.set(name, accountId);
     try {
       const result = await this.startAgentUnfenced(input);
@@ -1285,8 +1352,49 @@ export class AgentRuntimeManager {
         throw new RuntimeHttpError(409, `Account ${accountId} was quiesced while the agent was starting.`);
       }
       return result;
+    } catch (error) {
+      await this.cleanupStartingAgentResources(name, error);
+      throw error;
     } finally {
       this.startingAgentAccounts.delete(name);
+    }
+  }
+
+  private async cleanupStartingAgentResources(name: string, primaryError: unknown) {
+    const resources = this.startingAgentResources.get(name);
+    if (!resources) {
+      return;
+    }
+    this.startingAgentResources.delete(name);
+
+    const cleanupErrors: string[] = [];
+    try {
+      resources.client.dispose();
+    } catch (error) {
+      cleanupErrors.push(`client: ${describeUnknownError(error)}`);
+    }
+    if (resources.child) {
+      try {
+        await terminateUnregisteredAgentChild(resources.child);
+      } catch (error) {
+        cleanupErrors.push(`process: ${describeUnknownError(error)}`);
+      }
+    }
+    cleanupSkillLinks(resources.managedSkillLinks);
+
+    if (cleanupErrors.length > 0) {
+      const message = `Failed to fully clean up rejected worker launch ${name}: ${cleanupErrors.join("; ")}`;
+      process.stderr.write(`[${name}] ${message}; original failure: ${describeUnknownError(primaryError)}\n`);
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "worker.spawn.failed",
+        message,
+        surface: "log",
+        workerId: name,
+        cause: primaryError instanceof Error
+          ? { name: primaryError.name, message: primaryError.message }
+          : null,
+      });
     }
   }
 
@@ -1348,7 +1456,7 @@ export class AgentRuntimeManager {
     const configuredArgs = configuredAgent?.args && configuredAgent.args.length > 0 ? configuredAgent.args : undefined;
     const requestedArgs = input.args && input.args.length > 0 ? input.args : undefined;
     const finalEnv = withManagedPath({
-      ...baseEnv,
+      ...stripAmbientCodexSessionEnv(baseEnv),
       ...(configuredAgent?.env || {}),
       ...(input.env || {}),
     }, cwd);
@@ -1415,9 +1523,11 @@ export class AgentRuntimeManager {
           accountId: accountCredentials.account?.id ?? input.accountId?.trim() ?? null,
         })
       : null;
-    const pooledMember = poolKey ? this.workerPool.checkout(poolKey) : null;
-
     const planStartupContext = await createWorkerPlanStartupContext(name, resumeSessionId);
+    // Do not remove a child from the pool until every failure-prone setup step
+    // that precedes startup ownership has completed. Once checked out, the
+    // member is registered below synchronously before the next await.
+    const pooledMember = poolKey ? this.workerPool.checkout(poolKey) : null;
     try {
 
     let recordRef: { current?: AgentRecord };
@@ -1427,7 +1537,7 @@ export class AgentRuntimeManager {
     let connection: acp.ClientSideConnection | undefined;
     let init: unknown;
     let session: unknown;
-    let managedSkillLinks: string[];
+    let managedSkillLinks: string[] = [];
 
     if (pooledMember) {
       recordRef = pooledMember.recordRef;
@@ -1439,6 +1549,11 @@ export class AgentRuntimeManager {
       init = pooledMember.init;
       session = pooledMember.session;
       managedSkillLinks = [];
+      this.startingAgentResources.set(name, {
+        child,
+        client,
+        managedSkillLinks,
+      });
     } else {
       recordRef = { current: undefined };
       stderrBuffer = [];
@@ -1450,6 +1565,10 @@ export class AgentRuntimeManager {
         undefined,
         planStartupContext,
       );
+      this.startingAgentResources.set(name, {
+        client,
+        managedSkillLinks,
+      });
       const candidates = (useCodexFallback
         ? [{ command: "codex-acp", args: [] as string[] }]
         : useClaudeDefault
@@ -1470,6 +1589,7 @@ export class AgentRuntimeManager {
       }
 
       managedSkillLinks = materializeSkillRoots(cwd, name, skillRoots, finalEnv);
+      this.startingAgentResources.get(name)!.managedSkillLinks = managedSkillLinks;
       let lastError: unknown;
 
       for (const candidate of candidates) {
@@ -1488,6 +1608,12 @@ export class AgentRuntimeManager {
             skillRoots,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             getClient: () => client,
+            onSpawned: (spawnedChild) => {
+              const resources = this.startingAgentResources.get(name);
+              if (resources) {
+                resources.child = spawnedChild;
+              }
+            },
             onStderrLine: (line) => {
               pushStderrLine(stderrBuffer, line);
               if (recordRef.current) {
@@ -1541,8 +1667,10 @@ export class AgentRuntimeManager {
       : [];
 
     // Explicit selections were already passed to the process through
-    // ANTHROPIC_MODEL. Verify that exact value before applying effort. Only
-    // sessions with no explicit selection may use the adapter's model menu.
+    // ANTHROPIC_MODEL. Verify the provider's reported value against the model
+    // menu before applying effort. A provider alias is acceptable only when
+    // its family and version are unambiguous; explicit requests never trigger
+    // a post-start menu translation.
     let pinnedModel: string | null = null;
     const modelConfig = findSessionConfigOption(sessionConfigOptions, "model");
     const modelConfigId = asNonEmptyString(modelConfig?.id);
@@ -1565,7 +1693,12 @@ export class AgentRuntimeManager {
       const reportedModel = sessionConfigValue(sessionConfigOptions, "model");
       let modelResolution: ClaudeSessionModelOutcome;
       if (requestedModel) {
-        if (reportedModel !== requestedModel) {
+        modelResolution = resolveClaudeSessionModel({
+          options: sessionConfigChoices(modelConfig),
+          requested: requestedModel,
+          current: reportedModel,
+        });
+        if (modelResolution.status === "pin") {
           const message = t("runtime.model.mismatch", {
             requested: requestedModel,
             reported: reportedModel ?? t("runtime.model.noneReported"),
@@ -1580,7 +1713,6 @@ export class AgentRuntimeManager {
           });
           throw new RuntimeHttpError(409, message);
         }
-        modelResolution = { status: "keep", value: reportedModel, reason: "requested" };
       } else {
         modelResolution = resolveClaudeSessionModel({
           options: sessionConfigChoices(modelConfig),
@@ -1775,6 +1907,7 @@ export class AgentRuntimeManager {
     }
     recordRef.current = record;
     this.agents.set(name, record);
+    this.startingAgentResources.delete(name);
 
     try {
       if (planStartupContext) {
@@ -2171,7 +2304,7 @@ export class AgentRuntimeManager {
     const skillRoots: string[] = [];
 
     const finalEnv = withManagedPath({
-      ...baseEnv,
+      ...stripAmbientCodexSessionEnv(baseEnv),
       ...(configuredAgent?.env || {}),
       ...(input.env || {}),
     }, cwd);
@@ -2241,6 +2374,9 @@ export class AgentRuntimeManager {
     if (!this.workerPool.tryBeginWarm(poolKey, resolvedAccountId)) {
       return { ok: true, key: poolKey, size: this.workerPool.countMembers(poolKey), warmed: false };
     }
+    let provisionalClient: ExtractedRuntimeClient | null = null;
+    let provisionalChild: ChildProcessWithoutNullStreams | null = null;
+    let transferredToPool = false;
     try {
       const recordRef: { current?: AgentRecord } = {};
       const stderrBuffer: string[] = [];
@@ -2252,6 +2388,7 @@ export class AgentRuntimeManager {
         undefined,
         null,
       );
+      provisionalClient = client;
 
       const result = await this.spawnAgentConnection({
         cwd,
@@ -2271,11 +2408,11 @@ export class AgentRuntimeManager {
         agentType: type,
         spawnPurpose: "prewarm",
       });
+      provisionalChild = result.child;
 
       const sessionRecord = asRecord(result.session);
       const sessionId = asNonEmptyString(sessionRecord?.sessionId);
       if (!sessionId) {
-        result.child.kill("SIGTERM");
         throw new RuntimeHttpError(500, `${type} prewarm session did not include a session id.`);
       }
       const initRecord = asRecord(result.init);
@@ -2283,7 +2420,7 @@ export class AgentRuntimeManager {
         ? initRecord.protocolVersion
         : null;
 
-      this.workerPool.add({
+      transferredToPool = this.workerPool.add({
         key: poolKey,
         type,
         cwd,
@@ -2300,9 +2437,31 @@ export class AgentRuntimeManager {
         warmedAt: Date.now(),
       });
 
-      return { ok: true, key: poolKey, size: this.workerPool.countMembers(poolKey), warmed: true };
+      return {
+        ok: true,
+        key: poolKey,
+        size: this.workerPool.countMembers(poolKey),
+        warmed: transferredToPool,
+      };
     } finally {
-      this.workerPool.endInFlight(poolKey);
+      try {
+        if (!transferredToPool) {
+          try {
+            provisionalClient?.dispose();
+          } catch (error) {
+            process.stderr.write(`[worker-pool] failed to dispose rejected prewarm client: ${describeUnknownError(error)}\n`);
+          }
+          if (provisionalChild) {
+            await terminateUnregisteredAgentChild(provisionalChild).catch((error) => {
+              process.stderr.write(`[worker-pool] failed to terminate rejected prewarm process: ${describeUnknownError(error)}\n`);
+            });
+          }
+        }
+      } finally {
+        // Capacity reservation ownership is independent of client/process
+        // cleanup. A cleanup throw must never permanently consume a pool slot.
+        this.workerPool.endInFlight(poolKey);
+      }
     }
   }
 
@@ -2377,6 +2536,7 @@ export class AgentRuntimeManager {
     skillRoots: string[];
     resumeSessionId?: string;
     getClient: () => acp.Client;
+    onSpawned?: (child: ChildProcessWithoutNullStreams) => void;
     onStderrLine?: (line: string) => void;
     agentType?: string;
     spawnPurpose?: "run" | "prewarm";
@@ -2398,6 +2558,7 @@ export class AgentRuntimeManager {
       } catch (error) {
         throw new RuntimeHttpError(400, `failed to spawn agent process: ${describeUnknownError(error)}`);
       }
+      input.onSpawned?.(child);
       this.memoryTracer.onSpawn(child, input.agentType ?? "unknown", {
         command: input.command,
         cwd: input.cwd,
@@ -2466,7 +2627,13 @@ export class AgentRuntimeManager {
           ]);
         return { child, connection, init, session };
       } catch (error) {
-        child.kill("SIGTERM");
+        try {
+          await terminateUnregisteredAgentChild(child);
+        } catch (cleanupError) {
+          process.stderr.write(
+            `[agent-startup] failed to terminate rejected ACP process ${child.pid ?? "unknown"}: ${describeUnknownError(cleanupError)}\n`,
+          );
+        }
         throw error;
       }
     } finally {
