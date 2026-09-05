@@ -102,6 +102,12 @@ describe("worker model catalog", () => {
     ]);
   });
 
+  it("keeps GPT-6 Astra available when discovery is unavailable", async () => {
+    const catalog = await buildWorkerModelCatalog({ runCommand: async () => "" });
+
+    expect(catalog.codex).toContainEqual({ value: "gpt-6-astra", label: "GPT-6 Astra" });
+  });
+
   it("offers Claude Opus 5 as the default Claude Code model", async () => {
     const catalog = await buildWorkerModelCatalog({
       runCommand: async () => "",

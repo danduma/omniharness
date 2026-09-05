@@ -164,6 +164,7 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
     { value: "gpt-5.4", label: "GPT-5.4" },
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
+    { value: "gpt-6-astra", label: "GPT-6 Astra" },
     { value: "claude-sonnet-5", label: "Sonnet 5" },
     { value: "claude-sonnet-4", label: "Sonnet 4" },
   ],
@@ -248,6 +249,7 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
     { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
     { value: "gpt-5.5", label: "GPT-5.5" },
     { value: "gpt-5.4", label: "GPT-5.4" },
+    { value: "gpt-6-astra", label: "GPT-6 Astra" },
     { value: "o3-mini", label: "o3-mini" },
   ],
   openrouter: [

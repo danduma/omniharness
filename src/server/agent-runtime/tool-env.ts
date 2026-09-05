@@ -418,7 +418,7 @@ export function createCodexManagedToolConfigPath(env: EnvLike = process.env): st
     return null;
   }
 
-  const codexCommand = resolveCommand("codex", { env });
+  const codexCommand = resolveCodexCommand({ env });
   const cacheKey = [
     env.CODEX_MANAGED_CONFIG_PATH || "omniharness-default",
     env.HOME || homedir(),
@@ -618,6 +618,43 @@ export function withCodexStandardTooling<T extends EnvLike>(env: T): T {
     ...env,
     ...(managedConfigPath ? { CODEX_MANAGED_CONFIG_PATH: managedConfigPath } : {}),
   };
+}
+
+function codexManagedExecutableCandidates(env: EnvLike): string[] {
+  const packageRoot = env.CODEX_MANAGED_PACKAGE_ROOT?.trim();
+  const defaultNpmRoot = platform() === "win32"
+    ? join(env.LOCALAPPDATA || join(env.HOME || homedir(), ".omniharness"), "codex-acp")
+    : join(env.HOME || homedir(), ".local", "share", "omniharness", "codex-acp");
+  const codexLauncherName = platform() === "win32" ? "codex.cmd" : "codex";
+  const npmRoots = [
+    env.OMNIHARNESS_CODEX_ACP_NPM_ROOT?.trim(),
+    defaultNpmRoot,
+  ].filter((root): root is string => Boolean(root));
+  const candidates = [
+    env.CODEX_PATH?.trim(),
+    packageRoot ? join(packageRoot, "bin", "codex.js") : undefined,
+    packageRoot ? join(dirname(dirname(packageRoot)), "node_modules", ".bin", codexLauncherName) : undefined,
+    ...npmRoots.flatMap((root) => [
+      join(root, "node_modules", ".bin", codexLauncherName),
+      join(root, "node_modules", "@openai", "codex", "bin", "codex.js"),
+    ]),
+  ];
+
+  return [...new Set(candidates.filter((candidate): candidate is string => Boolean(candidate)))];
+}
+
+export function resolveCodexCommand(input: CommandLookupInput = {}): string | null {
+  const env = input.env || process.env;
+
+  for (const candidate of codexManagedExecutableCandidates(env)) {
+    const resolved = resolveCommand(candidate, input);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  const managedEnv = withManagedPath(env, input.cwd, { loginShellPathMode: "cached" });
+  return resolveCommand("codex", { ...input, env: managedEnv });
 }
 
 export function resolveCommand(command: string, input: CommandLookupInput = {}): string | null {
