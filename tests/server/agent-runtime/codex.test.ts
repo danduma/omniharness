@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentRuntimeManager } from "@/server/agent-runtime/manager";
@@ -42,6 +42,37 @@ process.stdin.on('data', (chunk) => {
 });
 `;
 
+const codexAcpLaunchCaptureScript = `
+const fs = require('node:fs');
+fs.writeFileSync(process.env.LAUNCH_LOG, JSON.stringify({
+  argv: process.argv.slice(2),
+  codexConfig: process.env.CODEX_CONFIG ?? null,
+}) + '\\n');
+process.stdin.setEncoding('utf8');
+let buffer = '';
+function write(message) { process.stdout.write(JSON.stringify(message) + '\\n'); }
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\\r?\\n/g);
+  buffer = lines.pop() ?? '';
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.id === undefined || message.id === null) continue;
+    if (message.method === 'initialize') {
+      write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+    } else if (message.method === 'session/new') {
+      write({ jsonrpc: '2.0', id: message.id, result: {
+        sessionId: 'session-codex-config',
+        configOptions: [{ id: 'reasoning_effort', currentValue: 'high' }],
+      } });
+    } else {
+      write({ jsonrpc: '2.0', id: message.id, result: {} });
+    }
+  }
+});
+`;
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -53,6 +84,51 @@ describe("Codex ACP session modes", () => {
       { id: "agent" },
       { id: "agent-full-access" },
     ])).toBe("agent-full-access");
+  });
+
+  it("passes the selected model and effort through the normal Codex ACP fallback", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omni-codex-config-"));
+    tempDirs.push(dir);
+    const binDir = join(dir, "bin");
+    const command = join(binDir, "codex-acp");
+    const serverScript = join(dir, "codex-acp-server.js");
+    const launchLog = join(dir, "launch.jsonl");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(serverScript, codexAcpLaunchCaptureScript);
+    writeFileSync(command, `#!/bin/sh\nexec ${process.execPath} ${serverScript}\n`, { mode: 0o755 });
+    const manager = new AgentRuntimeManager({
+      env: {
+        ...process.env,
+        PATH: binDir,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        OMNIHARNESS_AGENT_STARTUP_TIMEOUT_MS: "3000",
+        OMNIHARNESS_MEMORY_TRACE: "0",
+      } as Record<string, string>,
+    });
+    try {
+      const status = await manager.startAgent({
+        type: "codex",
+        name: "codex-config",
+        cwd: dir,
+        model: "gpt-5.6-sol",
+        effort: "high",
+        env: { LAUNCH_LOG: launchLog },
+      });
+
+      const launch = JSON.parse(readFileSync(launchLog, "utf8")) as {
+        argv: string[];
+        codexConfig: string | null;
+      };
+      expect(launch.argv).toEqual([]);
+      expect(JSON.parse(launch.codexConfig ?? "{}")).toMatchObject({
+        model: "gpt-5.6-sol",
+        model_reasoning_effort: "high",
+      });
+      expect(status.effectiveEffort).toBe("high");
+    } finally {
+      await manager.stopAgent("codex-config");
+      manager.shutdownPools();
+    }
   });
 
   it("requests Codex's full-access ACP mode when starting a full-access worker", async () => {

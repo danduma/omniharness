@@ -25,7 +25,7 @@ import { invokeAgentRequest, sendAgentNotification } from "./acp/agent-methods";
 import { initializeWorkerGoalSession } from "./acp/goal-state";
 import { redactGoalErrorMessage } from "@/server/runs/goal-errors";
 import { sanitizeAcpStream } from "./acp-stream-sanitizer";
-import { applyCodexBridgeEnv, buildCodexConfigArgs, resolveCodexSessionMode, shouldSetRequestedMode } from "./codex";
+import { applyCodexBridgeEnv, buildCodexAcpConfig, buildCodexConfigArgs, resolveCodexSessionMode, shouldSetRequestedMode } from "./codex";
 import { buildGeminiArgs, isFullAccessAgentMode, resolveFullGeminiUuid } from "./gemini";
 import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
 import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, stripAmbientCodexSessionEnv, stripRunnerControlEnv, withCodexStandardTooling, withManagedPath } from "./tool-env";
@@ -1455,6 +1455,7 @@ export class AgentRuntimeManager {
     }
     const configuredArgs = configuredAgent?.args && configuredAgent.args.length > 0 ? configuredAgent.args : undefined;
     const requestedArgs = input.args && input.args.length > 0 ? input.args : undefined;
+    const useCodexFallback = type === "codex" && !input.command && !configuredAgent?.command && !requestedArgs && !configuredArgs;
     const finalEnv = withManagedPath({
       ...stripAmbientCodexSessionEnv(baseEnv),
       ...(configuredAgent?.env || {}),
@@ -1496,12 +1497,18 @@ export class AgentRuntimeManager {
     if (type === "claude" && requestedModel && !gatewayOverlay) {
       finalEnv.ANTHROPIC_MODEL = requestedModel;
     }
+    if (useCodexFallback && (requestedModel || requestedEffort)) {
+      finalEnv.CODEX_CONFIG = buildCodexAcpConfig({
+        existingConfig: finalEnv.CODEX_CONFIG,
+        model: requestedModel,
+        effort: requestedEffort,
+      });
+    }
     const agentProcessEnv = stripRunnerControlEnv(finalEnv);
 
     const requestedMode = input.mode || configuredAgent?.mode;
     const defaultCommand = input.command || configuredAgent?.command || type;
     const defaultArgsList = requestedArgs || configuredArgs || defaultArgs;
-    const useCodexFallback = type === "codex" && !input.command && !configuredAgent?.command && !requestedArgs && !configuredArgs;
     const useClaudeDefault = type === "claude" && !input.command && !configuredAgent?.command && !requestedArgs && !configuredArgs;
     const useGeminiDefault = type === "gemini" && !input.command && !configuredAgent?.command && !requestedArgs && !configuredArgs;
     const useOpencodeDefault = type === "opencode" && !input.command && !configuredAgent?.command && !requestedArgs && !configuredArgs;
@@ -1812,12 +1819,14 @@ export class AgentRuntimeManager {
       }
     }
 
-    let effectiveEffort = sessionConfigValue(sessionConfigOptions, "effort");
-    const effortConfig = findSessionConfigOption(sessionConfigOptions, "effort");
+    const effortConfig = findSessionConfigOption(sessionConfigOptions, "effort")
+      ?? findSessionConfigOption(sessionConfigOptions, "reasoning_effort");
     const effortConfigId = asNonEmptyString(effortConfig?.id);
+    let effectiveEffort = effortConfigId ? sessionConfigValue(sessionConfigOptions, effortConfigId) : null;
+    const shouldApplyRequestedEffort = type === "codex" || (type === "claude" && !gatewayOverlay);
     if (
       connection
-      && type === "claude"
+      && shouldApplyRequestedEffort
       && requestedEffort
       && effortConfigId
       && effectiveEffort !== requestedEffort
@@ -1832,9 +1841,9 @@ export class AgentRuntimeManager {
         if (Array.isArray(resultRecord?.configOptions)) {
           sessionConfigOptions = resultRecord.configOptions;
         }
-        effectiveEffort = sessionConfigValue(sessionConfigOptions, "effort");
+        effectiveEffort = sessionConfigValue(sessionConfigOptions, effortConfigId);
       } catch (effortError: unknown) {
-        process.stderr.write(`[${name}] could not set Claude effort to "${requestedEffort}": ${describeUnknownError(effortError)}\n`);
+        process.stderr.write(`[${name}] could not set ${type} effort to "${requestedEffort}": ${describeUnknownError(effortError)}\n`);
       }
     }
 
