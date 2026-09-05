@@ -26,6 +26,8 @@ import {
 import {
   abortWorkerTurn,
   advanceWorkerTurnGeneration,
+  beginConversationRecoveryPreemption,
+  finishConversationRecoveryPreemption,
   isWorkerTurnAbortedError,
   isWorkerTurnSupersededError,
   isWorkerTurnGenerationCurrent,
@@ -205,19 +207,22 @@ async function interruptAndDeliver(args: {
   //      refused the steer outright with a 502.
   const cancelStartedAt = Date.now();
   const abortedLiveTurn = abortWorkerTurn(worker.id, "user steer");
-  void Promise.resolve(cancelAgentTurn(worker.id)).catch((error) => {
-    void recordExecutionEvent({
-      runId,
-      workerId: worker.id,
-      eventType: "queued_message_interrupt_cancel_best_effort_failed",
-      details: {
-        summary: `Agent-side cancel for ${worker.id} failed after the turn was already aborted locally.`,
-        queuedMessageId: record.id,
-        error: errorMessage(error),
-        source,
-      },
-    }).catch(() => undefined);
-  });
+  const agentCancelSettled = Promise.resolve()
+    .then(() => cancelAgentTurn(worker.id))
+    .then(() => undefined)
+    .catch(async (error) => {
+      await recordExecutionEvent({
+        runId,
+        workerId: worker.id,
+        eventType: "queued_message_interrupt_cancel_best_effort_failed",
+        details: {
+          summary: `Agent-side cancel for ${worker.id} failed after the turn was already aborted locally.`,
+          queuedMessageId: record.id,
+          error: errorMessage(error),
+          source,
+        },
+      }).catch(() => undefined);
+    });
   const cancelDurationMs = Date.now() - cancelStartedAt;
 
   // Advance the fence and reset persisted worker state into a delivery-safe
@@ -303,6 +308,7 @@ async function interruptAndDeliver(args: {
       workerContent,
       attachments: normalizedAttachments,
       generation,
+      agentCancelSettled,
       source,
       requestedAt,
     }).catch((error) => {
@@ -347,10 +353,11 @@ async function deliverInterruptedQueuedMessage(args: {
   workerContent: string;
   attachments: ChatAttachment[];
   generation: number;
+  agentCancelSettled: Promise<void>;
   source: InterruptSource;
   requestedAt: number;
 }) {
-  const { run, worker, record, userMessage, workerContent, attachments, generation, source, requestedAt } = args;
+  const { run, worker, record, userMessage, workerContent, attachments, generation, agentCancelSettled, source, requestedAt } = args;
   const runId = run.id;
 
   /**
@@ -408,6 +415,10 @@ async function deliverInterruptedQueuedMessage(args: {
   let appendedToTranscript = false;
 
   try {
+    // The API has already returned, so waiting here does not hold up the UI.
+    // Starting the replacement request before the provider confirms the old
+    // cancellation lets the late cancel or late output hit the new turn.
+    await agentCancelSettled;
     await runWorkerTurn(worker.id, async () => {
       if (!(await isStillCurrent())) {
         notifyEventStreamSubscribers();
@@ -694,8 +705,25 @@ async function interruptAndSendQueuedConversationMessageNowUnlocked(params: {
   return interruptAndDeliver({ run, record, source: params.source ?? "drawer" });
 }
 
+/**
+ * A retry/edit holds the conversation mutex for its whole replayed provider
+ * turn (`recoverRun` awaits the turn inline). An interrupt that queued behind
+ * it used to wait out that entire turn and surface as HTTP 524 at the proxy.
+ * Bumping the recovery epoch aborts the holder's turn synchronously via its
+ * ambient AbortSignal, so the mutex frees in milliseconds instead of minutes —
+ * which is what "interrupt" means from the user's side.
+ */
+export async function preemptRecoveryForInterrupt<T>(runId: string, task: () => Promise<T>): Promise<T> {
+  const epoch = beginConversationRecoveryPreemption(runId, "user steer");
+  try {
+    return await runConversationMutation(runId, task);
+  } finally {
+    finishConversationRecoveryPreemption(runId, epoch);
+  }
+}
+
 export function interruptAndSendQueuedConversationMessageNow(args: Parameters<typeof interruptAndSendQueuedConversationMessageNowUnlocked>[0]) {
-  return runConversationMutation(args.runId, () => interruptAndSendQueuedConversationMessageNowUnlocked(args));
+  return preemptRecoveryForInterrupt(args.runId, () => interruptAndSendQueuedConversationMessageNowUnlocked(args));
 }
 
 async function interruptAndSendNextQueuedConversationMessageUnlocked(params: {
@@ -709,7 +737,7 @@ async function interruptAndSendNextQueuedConversationMessageUnlocked(params: {
 }
 
 export function interruptAndSendNextQueuedConversationMessage(args: Parameters<typeof interruptAndSendNextQueuedConversationMessageUnlocked>[0]) {
-  return runConversationMutation(args.runId, () => interruptAndSendNextQueuedConversationMessageUnlocked(args));
+  return preemptRecoveryForInterrupt(args.runId, () => interruptAndSendNextQueuedConversationMessageUnlocked(args));
 }
 
 async function interruptWithDraftMessageUnlocked(params: {
@@ -748,5 +776,5 @@ async function interruptWithDraftMessageUnlocked(params: {
 }
 
 export function interruptWithDraftMessage(args: Parameters<typeof interruptWithDraftMessageUnlocked>[0]) {
-  return runConversationMutation(args.runId, () => interruptWithDraftMessageUnlocked(args));
+  return preemptRecoveryForInterrupt(args.runId, () => interruptWithDraftMessageUnlocked(args));
 }

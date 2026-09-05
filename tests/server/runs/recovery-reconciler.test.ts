@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, messages, plans, queuedConversationMessages, recoveryIncidents, runs, settings, workers } from "@/server/db/schema";
+import { accounts, executionEvents, messages, plans, queuedConversationMessages, recoveryIncidents, runs, settings, workerCredentialAllocations, workers } from "@/server/db/schema";
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 import { readWorkerOutputEntries, writeWorkerOutputEntries } from "@/server/workers/output-store";
 
@@ -128,6 +128,7 @@ describe("reconcileRunRecovery", () => {
     await db.delete(recoveryIncidents);
     await db.delete(executionEvents);
     await db.delete(queuedConversationMessages);
+    await db.delete(workerCredentialAllocations);
     await db.delete(messages);
     await db.delete(workers);
     await db.delete(runs);
@@ -170,6 +171,60 @@ describe("reconcileRunRecovery", () => {
       kind: "worker.reattached",
       runId,
       workerId,
+    }));
+  });
+
+  it("carries an auto-selected account into saved-session recovery", async () => {
+    const { runId, workerId } = await createDirectRun();
+    const accountId = `claude-recovery-${randomUUID()}`;
+    const now = new Date(0);
+    await db.insert(accounts).values({
+      id: accountId,
+      cliType: "claude",
+      provider: "anthropic",
+      type: "subscription",
+      label: "Claude recovery account",
+      authMode: "local_session",
+      authRef: "local-session:claude",
+      enabled: true,
+      priority: 1,
+      status: "available",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workerCredentialAllocations).values({
+      id: randomUUID(),
+      runId,
+      workerId,
+      workerType: "claude",
+      accountId,
+      strategy: "priority",
+      selectionReason: "selected highest-priority subscription account",
+      explicit: false,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.update(workers).set({
+      bridgeSessionId: "session-direct-1",
+    }).where(eq(workers.id, workerId));
+    mockSpawnAgent.mockResolvedValue({
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "session-direct-2",
+      sessionMode: "full-access",
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      accountId,
+      resumeSessionId: "session-direct-1",
     }));
   });
 
@@ -638,6 +693,63 @@ describe("reconcileRunRecovery", () => {
     expect(afterContinuation?.status).toBe("resolved");
     const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     expect(worker?.status).toBe("idle");
+  });
+
+  it("settles the worker's other unsettled incidents when its session comes back", async () => {
+    // Incidents are keyed by (run, kind, worker, queuedMessageId), so the same
+    // worker failing twice with different queued-message context leaves two
+    // rows. Resolving only the row this attempt opened left the earlier
+    // needs_user incident driving a "Needs recovery" banner over a worker that
+    // had just been restored.
+    const { runId, workerId } = await createDirectRun();
+    await db.insert(recoveryIncidents).values({
+      id: "incident-stale",
+      runId,
+      workerId,
+      queuedMessageId: null,
+      kind: "session_missing",
+      status: "needs_user",
+      autoAttemptCount: 1,
+      lastError: `Ask failed: Agent not found: ${workerId}`,
+      details: JSON.stringify({ continuationFailed: true }),
+      detectedAt: new Date(1),
+      updatedAt: new Date(1),
+      resolvedAt: null,
+    });
+    await db.insert(queuedConversationMessages).values({
+      id: "queue-stale-1",
+      runId,
+      targetWorkerId: workerId,
+      action: "steer",
+      content: "Deploy already",
+      status: "failed",
+      lastError: `Ask failed: Agent not found: ${workerId}`,
+      createdAt: new Date(1),
+      updatedAt: new Date(1),
+      deliveredAt: null,
+    });
+    const resumedSnapshot = {
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "session-direct-2",
+      sessionMode: "full-access",
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    };
+    mockSpawnAgent.mockResolvedValue(resumedSnapshot);
+    mockAskAgent.mockResolvedValue({ state: "idle", response: "Deployed." });
+    mockGetAgent.mockResolvedValue({ ...resumedSnapshot, stopReason: "end_turn" });
+
+    await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+    await waitForConversationBackgroundTasksForTests();
+
+    const incidents = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
+    expect(incidents.length).toBeGreaterThan(1);
+    expect(incidents.every((incident) => incident.status === "resolved")).toBe(true);
   });
 
   it("reopens a resolved incident when the continuation turn fails outright", async () => {

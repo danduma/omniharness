@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/server/db";
-import { messages, plans, processSessions, runs, workerCounters, workerCredentialAllocations, workers } from "@/server/db/schema";
+import { messages, plans, processSessions, recoveryIncidents, runs, workerCounters, workerCredentialAllocations, workers } from "@/server/db/schema";
 import { eventsRouteModule as eventsRoute } from "@/../tests/helpers/runtime-routes";
 import { __resetNamedEventsForTests } from "@/server/events/named-events";
 import { startLifecycleHarness, type LifecycleServer } from "../harness/server";
@@ -13,6 +13,7 @@ let client: LifecycleClient;
 async function cleanDb() {
   await db.delete(processSessions);
   await db.delete(messages);
+  await db.delete(recoveryIncidents);
   await db.delete(workerCredentialAllocations);
   await db.delete(workers);
   await db.delete(workerCounters);

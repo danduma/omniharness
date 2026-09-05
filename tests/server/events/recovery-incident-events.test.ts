@@ -92,6 +92,19 @@ describe("recovery-incidents named events", () => {
     });
   });
 
+  it("opens an incident atomically across concurrent callers", async () => {
+    const incidents = await Promise.all(Array.from({ length: 8 }, () => openRecoveryIncident({
+      runId: RUN_ID,
+      workerId: WORKER_ID,
+      kind: "worker_lost",
+      lastError: "bridge stopped",
+    })));
+
+    expect(new Set(incidents.map((incident) => incident.id)).size).toBe(1);
+    expect(await db.select().from(recoveryIncidents)).toHaveLength(1);
+    expect(eventsByKind("recovery.opened")).toHaveLength(1);
+  });
+
   it("emits recovery.attempt with incremented attempt count", async () => {
     const incident = await openRecoveryIncident({
       runId: RUN_ID,

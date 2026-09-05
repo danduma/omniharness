@@ -18,13 +18,17 @@ import {
   writeWorkerOutputEntries,
 } from "@/server/workers/output-store";
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
-import { resolveRecoveryIncidentsDisprovedByActiveWork } from "@/server/runs/recovery-incidents";
+import {
+  isUnsettledRecoveryIncidentStatus,
+  resolveRecoveryIncidentsDisprovedByActiveWork,
+} from "@/server/runs/recovery-incidents";
 import {
   annotateVerifiedDeadCredential,
   annotateVerifiedLiveCredential,
   hasVerifiedDeadCredentialMarker,
   hasVerifiedLiveCredentialMarker,
   isAuthShapedProviderFailure,
+  readVerifiedDeadCredentialAccountId,
 } from "@/lib/provider-account-failures";
 import { markAccountLoginRequired } from "@/server/accounts/login-required";
 import { drainQueuedWorkerMessages } from "./queued-messages";
@@ -56,11 +60,15 @@ async function resolveSyncedFailureMessage(
 ) {
   const incoming = bridgeError?.trim();
   if (!incoming) return persistedError;
-  if (!isAuthShapedProviderFailure(incoming)) return incoming;
-  if (
-    hasVerifiedDeadCredentialMarker(persistedError)
-    || hasVerifiedLiveCredentialMarker(persistedError)
-  ) {
+  const persistedDead = hasVerifiedDeadCredentialMarker(persistedError);
+  const persistedLive = hasVerifiedLiveCredentialMarker(persistedError);
+  if (!isAuthShapedProviderFailure(incoming)) {
+    if (persistedDead) {
+      return annotateVerifiedDeadCredential(incoming, readVerifiedDeadCredentialAccountId(persistedError));
+    }
+    return persistedLive ? annotateVerifiedLiveCredential(incoming) : incoming;
+  }
+  if (persistedDead || persistedLive) {
     return persistedError;
   }
 
@@ -254,6 +262,10 @@ async function resolvePersistedRunState(run: typeof runs.$inferSelect, worker: t
     return "failed";
   }
 
+  if (status === "lost") {
+    return "needs_recovery";
+  }
+
   if (isDirectRunMode(run.mode) && resolveDirectRunStatusFromWorkerOutput({ ...worker, workerStatus: worker.status }) === "awaiting_user") {
     return "awaiting_user";
   }
@@ -431,7 +443,7 @@ export async function drainQueuedWorkerMessagesWithObservation(args: {
 
 function isRecoverableMissingDirectWorkerStatus(status: string) {
   const normalized = normalizedStatus(status);
-  return ["starting", "working", "stuck", "recovering"].includes(normalized);
+  return ["starting", "working", "stuck", "recovering", "lost"].includes(normalized);
 }
 
 function isCancelledWorkerStatus(status: string | null | undefined) {
@@ -576,13 +588,18 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
   const allWorkers = selectedRunId
     ? await db.select().from(workers).where(eq(workers.runId, selectedRunId))
     : await db.select().from(workers);
-  const activeQuotaIncidents = (selectedRunId
+  const allIncidents = selectedRunId
     ? await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, selectedRunId))
-    : await db.select().from(recoveryIncidents)
-  ).filter((incident) => (
+    : await db.select().from(recoveryIncidents);
+  const activeQuotaIncidents = allIncidents.filter((incident) => (
     incident.kind === "quota_exhausted"
     && (incident.status === "open" || incident.status === "recovering")
   ));
+  const runsWithUnsettledIncidents = new Set(
+    allIncidents
+      .filter((incident) => isUnsettledRecoveryIncidentStatus(incident.status))
+      .map((incident) => incident.runId),
+  );
 
   for (const run of allRuns) {
     // A user cancellation is authoritative. The bridge can report the old
@@ -840,18 +857,39 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
         prev: worker.status,
         next: nextWorkerStatus,
       });
-      // The worker just started working again, which disproves any recovery
-      // state recorded before this turn began. Recovery bookkeeping is
-      // otherwise only written when a turn *ends*, so a path that opens an
-      // incident and then awaits a full turn leaves the banner up for the
-      // whole turn — or forever, if the turn never returns.
-      if (normalizedStatus(nextWorkerStatus) === "working") {
-        await resolveRecoveryIncidentsDisprovedByActiveWork({
-          runId: run.id,
-          workerId: worker.id,
-          since: workerUpdatedAt,
-        });
-      }
+    }
+    // A worker that is working disproves any recovery state recorded before its
+    // current working period began. Recovery bookkeeping is otherwise only
+    // written when a turn *ends*, so a path that opens an incident and then
+    // awaits a full turn leaves the banner up for the whole turn — or forever,
+    // if the turn never returns.
+    //
+    // This deliberately does not wait to *observe* the transition into working.
+    // The recovery paths set the worker row to `working` themselves, so by the
+    // time the live sync looks the status already matches and there is no edge
+    // left to catch; a stale incident then outlived the resume that disproved it
+    // by the length of the turn. Fencing on `activeWorkStartedAt` instead of the
+    // transition keeps the sweep from clearing anything opened during this turn,
+    // and makes repeat ticks no-ops once the leftovers are settled.
+    //
+    // A worker that was already working carries its period start in
+    // `activeWorkStartedAt`; one transitioning into working starts its period
+    // now. If it was already working and the column is empty we cannot tell the
+    // two apart, so the sweep sits it out rather than guess a fence that would
+    // clear incidents belonging to the turn in progress.
+    const workingPeriodStartedAt = normalizedStatus(worker.status) === "working"
+      ? worker.activeWorkStartedAt
+      : workerUpdatedAt;
+    if (
+      normalizedStatus(nextWorkerStatus) === "working"
+      && workingPeriodStartedAt
+      && runsWithUnsettledIncidents.has(run.id)
+    ) {
+      await resolveRecoveryIncidentsDisprovedByActiveWork({
+        runId: run.id,
+        workerId: worker.id,
+        since: workingPeriodStartedAt,
+      });
     }
 
     if (run.mode === "planning") {
@@ -931,8 +969,11 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
     }
 
     if (
-      options.selectedRunId === run.id
-      && isRecoverableMissingDirectWorkerStatus(worker.status)
+      isRecoverableMissingDirectWorkerStatus(worker.status)
+      && (
+        options.selectedRunId === run.id
+        || normalizedStatus(worker.status) === "lost"
+      )
     ) {
       const recoveryResult = await reconcileRunRecovery({
         runId: run.id,

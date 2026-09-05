@@ -6,6 +6,7 @@ import { executionEvents, messages, plans, queuedConversationMessages, runs, wor
 import {
   __resetOutputStoreCachesForTests,
   readWorkerOutputEntries,
+  writeWorkerOutputEntries,
 } from "@/server/workers/output-store";
 
 const { mockAskAgent, mockGetAgent, mockCancelAgentTurn } = vi.hoisted(() => ({
@@ -33,6 +34,9 @@ import {
 import {
   __resetWorkerTurnChainsForTests,
   currentWorkerTurnSignal,
+  runConversationMutation,
+  runConversationRecoveryWorkerTurn,
+  beginConversationRecoveryPreemption,
   waitForConversationBackgroundTasksForTests,
 } from "@/server/conversations/worker-turn-gate";
 
@@ -146,6 +150,92 @@ describe("queued conversation message interrupt", () => {
     expect(entries.some((entry) => entry.type === "user_input" && entry.text.includes("failing test"))).toBe(true);
   });
 
+  it("does not send the replacement prompt until the provider-side cancel settles", async () => {
+    const runId = await createRun("direct");
+    const workerId = await createBusyWorker(runId);
+    const queued = await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: workerId,
+      action: "queue",
+      content: "Use the session id I just sent.",
+      attachments: [],
+    });
+    const cancel = deferred<{ ok: boolean; name: string; cancelledPermissions: number }>();
+    mockCancelAgentTurn.mockReturnValueOnce(cancel.promise);
+
+    await interruptAndSendQueuedConversationMessageNow({ runId, messageId: queued.id });
+    await delay(20);
+    const askedBeforeCancelSettled = mockAskAgent.mock.calls.length > 0;
+
+    cancel.resolve({ ok: true, name: workerId, cancelledPermissions: 0 });
+    await waitForConversationBackgroundTasksForTests();
+
+    expect(askedBeforeCancelSettled).toBe(false);
+    expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("Use the session id I just sent."));
+    const stored = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queued.id)).get();
+    expect(stored?.status).toBe("delivered");
+  });
+
+  it("does not count late output from the cancelled turn as the replacement prompt response", async () => {
+    const runId = await createRun("direct");
+    const workerId = await createBusyWorker(runId);
+    const queued = await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: workerId,
+      action: "queue",
+      content: "Use the corrected session id.",
+      attachments: [],
+    });
+    const oldTurnTimestamp = new Date(Date.now() - 60_000).toISOString();
+    await writeWorkerOutputEntries(runId, workerId, [{
+      id: "old-tool-start",
+      type: "tool_call",
+      text: "Terminal",
+      timestamp: oldTurnTimestamp,
+      toolCallId: "old-tool",
+      status: "pending",
+    }]);
+    mockAskAgent.mockResolvedValueOnce({ response: "", state: "idle" });
+    mockGetAgent.mockResolvedValueOnce({
+      name: workerId,
+      type: "codex",
+      cwd: "/workspace/app",
+      state: "idle",
+      outputEntries: [
+        {
+          id: "old-tool-start",
+          type: "tool_call",
+          text: "Terminal",
+          timestamp: oldTurnTimestamp,
+          toolCallId: "old-tool",
+          status: "pending",
+        },
+        {
+          id: "old-tool-cancelled",
+          type: "tool_call_update",
+          text: "failed",
+          timestamp: new Date().toISOString(),
+          toolCallId: "old-tool",
+          status: "failed",
+        },
+      ],
+      renderedOutput: "failed",
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    await interruptAndSendQueuedConversationMessageNow({ runId, messageId: queued.id });
+    await waitForConversationBackgroundTasksForTests();
+
+    const stored = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queued.id)).get();
+    expect(stored?.status).toBe("failed");
+    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
+    expect(events.some((event) => event.eventType === "queued_message_interrupt_delivered")).toBe(false);
+    expect(events.some((event) => event.eventType === "queued_message_interrupt_failed")).toBe(true);
+  });
+
   it("selects the oldest pending queued message by (createdAt, id) for interrupt-next", async () => {
     const runId = await createRun("direct");
     const workerId = await createBusyWorker(runId);
@@ -173,6 +263,36 @@ describe("queued conversation message interrupt", () => {
     expect(rows[0]?.id).toBe(result.queuedMessage.id);
     expect(rows[0]?.status).toBe("delivered");
     expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("Stop and run the linter."));
+  });
+
+  it("lets a steer draft break in on a recovery turn that holds the conversation mutex", async () => {
+    const runId = await createRun("direct");
+    const workerId = await createBusyWorker(runId);
+
+    // Simulate recoverRun: hold the conversation mutex across a provider turn
+    // that only ends when its ambient turn signal aborts.
+    const epoch = beginConversationRecoveryPreemption(runId, "retry");
+    const recoveryTurnStarted = deferred<void>();
+    const recovery = runConversationMutation(runId, () =>
+      runConversationRecoveryWorkerTurn(runId, epoch, workerId, (signal) => {
+        recoveryTurnStarted.resolve();
+        return new Promise<never>((_, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("worker turn aborted")), { once: true });
+        });
+      }),
+    ).catch(() => undefined);
+    await recoveryTurnStarted.promise;
+
+    const result = await interruptWithDraftMessage({
+      runId,
+      content: "Stop — do this instead.",
+      targetWorkerId: workerId,
+      source: "api",
+    });
+    expect(result.interruption.status).toBe("delivering");
+
+    await recovery;
+    await waitForConversationBackgroundTasksForTests();
   });
 
   it("still steers when the agent-side cancel fails", async () => {

@@ -30,6 +30,7 @@ import {
 import { runs } from "@/server/db/schema";
 import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
+import { readWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
 import { prepareClaudeGatewayLaunch } from "@/server/integrations/claude-model-gateway/worker-env";
 import {
   abortWorkerTurn,
@@ -300,7 +301,9 @@ export async function attemptWorkerFailover(
   }
   const outgoingWorker = await db.select().from(workers).where(eq(workers.id, args.outgoingWorkerId)).get();
   const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
-  const launchSelection = resolveWorkerLaunchSelection(outgoingWorker ?? {}, run ?? {});
+  const launchSelection = resolveWorkerLaunchSelection(outgoingWorker ?? {}, run ?? {}, {
+    accountId: outgoingWorker ? await readWorkerAllocatedAccountId(outgoingWorker.id) : null,
+  });
 
   let replacementSelection: Awaited<ReturnType<typeof selectSpawnableWorkerTypeAsync>> | null = null;
   let replacementSelectionError: unknown = null;

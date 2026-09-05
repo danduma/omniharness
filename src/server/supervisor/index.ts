@@ -13,6 +13,7 @@ import { CodexAuthMissingError, CodexAuthRefreshFailedError } from "@/server/sup
 import { SUPERVISOR_SYSTEM_PROMPT } from "@/server/supervisor/prompt";
 import { hydrateRuntimeEnvFromSettings, readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
+import { readWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
 import { prepareClaudeGatewayLaunch } from "@/server/integrations/claude-model-gateway/worker-env";
 import { buildSupervisorTools } from "@/server/supervisor/tools";
 import { buildSupervisorTurnContext } from "@/server/supervisor/context";
@@ -891,7 +892,9 @@ async function resumeWorkerFromSavedSessionForSupervisor(runId: string, workerId
 
   const mode = normalizeBridgeWorkerMode(worker.bridgeSessionMode);
   const { env: envParams } = await readRuntimeEnvFromSettings();
-  const launchSelection = resolveWorkerLaunchSelection(worker, run);
+  const launchSelection = resolveWorkerLaunchSelection(worker, run, {
+    accountId: await readWorkerAllocatedAccountId(worker.id),
+  });
   const spawnParams = {
     type: worker.type,
     cwd: worker.cwd,

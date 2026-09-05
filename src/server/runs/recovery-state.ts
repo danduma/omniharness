@@ -129,13 +129,25 @@ function latestUserCheckpoint(messages: RecoveryMessageLike[]) {
     })[0] ?? null;
 }
 
+/**
+ * A queued message that failed with an agent-missing error is only evidence of a
+ * recovery condition while its target worker is still absent. Once the worker is
+ * back in the bridge's `liveAgents` snapshot the error is a stale record of a
+ * moment that has passed, and treating it as live evidence had two costs: the
+ * run never classified `healthy`, so the sweep that clears leftover incidents
+ * never ran and the recovery banner sat over a working agent; and any reconcile
+ * tick that did fire would re-derive `lost_worker_resumable` and respawn the
+ * session of an agent that was mid-turn.
+ */
 function findQueueBlockedMessage(
   queuedMessages: RecoveryQueuedMessageLike[],
+  liveAgentNames: Set<string>,
   workerId?: string | null,
 ) {
   return queuedMessages.find((message) => (
     message.status === "failed"
     && isRecoverableAgentMissingError(message.lastError)
+    && !(message.targetWorkerId && liveAgentNames.has(message.targetWorkerId))
     && (!workerId || !message.targetWorkerId || message.targetWorkerId === workerId)
   )) ?? null;
 }
@@ -219,14 +231,25 @@ function classifyRunRecoveryEvidence({
 
   const liveAgentNames = new Set(liveAgents.map((agent) => agent.name));
   const runWorkers = workers.filter((worker) => worker.runId === run.id);
-  const blockedMessage = findQueueBlockedMessage(queuedMessages);
+  const blockedMessage = findQueueBlockedMessage(queuedMessages, liveAgentNames);
 
   for (const worker of runWorkers) {
-    if (!isActivePersistedWorker(worker, nowMs) || liveAgentNames.has(worker.id)) {
+    const workerStatus = normalizeStatus(worker.status);
+    const workerBlockedMessage = findQueueBlockedMessage(queuedMessages, liveAgentNames, worker.id);
+    // `lost` is the durable result of a previous missing-runtime decision. It
+    // is not active, but it is also never evidence of health: keeping it out of
+    // this scan allowed the next sync to resolve the incident and call the run
+    // healthy even though no bridge agent or session metadata existed. A
+    // blocked queued delivery is stronger evidence with its own recovery path,
+    // so let the queue classifier below retain ownership of that case.
+    const isUnexplainedLostWorker = workerStatus === "lost" && !workerBlockedMessage;
+    if (
+      (!isUnexplainedLostWorker && !isActivePersistedWorker(worker, nowMs))
+      || liveAgentNames.has(worker.id)
+    ) {
       continue;
     }
 
-    const workerBlockedMessage = findQueueBlockedMessage(queuedMessages, worker.id);
     const sessionId = worker.bridgeSessionId?.trim() || null;
     if (sessionId) {
       return {
@@ -329,6 +352,7 @@ export function classifyRunRecoveryState(args: ClassifyRunRecoveryArgs): Recover
   }
 
   return {
+    ...state,
     kind: "needs_recovery",
     status: "needs_user",
     message: "This run needs manual recovery before it can continue.",

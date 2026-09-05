@@ -165,11 +165,47 @@ function workerStreamHasOutputAfterInput(
     return false;
   }
 
-  return entries.some((entry) => (
-    entry.seq > inputEntry.seq
-    && entry.type !== "user_input"
-    && entry.text.trim().length > 0
-  ));
+  const entryIdsBeforeInput = new Set(
+    entries
+      .filter((entry) => entry.seq < inputEntry.seq)
+      .map((entry) => entry.id),
+  );
+  const toolCallIdsBeforeInput = new Set(
+    entries
+      .filter((entry) => entry.seq < inputEntry.seq && entry.toolCallId)
+      .map((entry) => entry.toolCallId),
+  );
+  const responseEntryTypes = new Set([
+    "message",
+    "thought",
+    "tool_call",
+    "tool_call_update",
+    "permission",
+    "elicitation",
+    "plan",
+    "plan_update",
+    "agent_content",
+  ]);
+
+  return entries.some((entry) => {
+    if (
+      entry.seq <= inputEntry.seq
+      || !responseEntryTypes.has(entry.type)
+      || entry.text.trim().length === 0
+      || entryIdsBeforeInput.has(entry.id)
+    ) {
+      return false;
+    }
+
+    if (entry.type === "tool_call" || entry.type === "tool_call_update") {
+      return Boolean(
+        entry.toolCallId
+        && !toolCallIdsBeforeInput.has(entry.toolCallId),
+      );
+    }
+
+    return true;
+  });
 }
 
 async function assertQueuedDeliveryProducedOutput({
@@ -1538,5 +1574,9 @@ async function drainQueuedWorkerMessagesUnlocked({
 }
 
 export function drainQueuedWorkerMessages(args: Parameters<typeof drainQueuedWorkerMessagesUnlocked>[0]) {
-  return runConversationMutation(args.runId, () => drainQueuedWorkerMessagesUnlocked(args));
+  // Queue delivery already owns rows with an atomic pending -> delivering
+  // claim, then serializes actual provider I/O through the per-worker turn
+  // gate. Holding the conversation mutex across askAgent can block later
+  // sends for minutes and surface as HTTP 524 at the proxy.
+  return drainQueuedWorkerMessagesUnlocked(args);
 }

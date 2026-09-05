@@ -2,7 +2,8 @@ import { randomUUID } from "crypto";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { and, eq, inArray, lte, or, sql } from "drizzle-orm";
 import { db } from "@/server/db";
-import { recoveryIncidents } from "@/server/db/schema";
+import { recoveryIncidents, runs } from "@/server/db/schema";
+import { withSqliteBusyRetry } from "@/server/db/retry";
 import { emitNamedEvent } from "@/server/events/named-events";
 
 export type RecoveryIncidentKind = "worker_lost" | "session_missing" | "queue_blocked" | "stale_running" | "quota_exhausted";
@@ -13,6 +14,10 @@ const OPEN_INCIDENT_STATUSES: RecoveryIncidentStatus[] = ["open", "recovering", 
 // banner treats it as active, so a gave-up incident is just as visible as an open
 // one and needs the same sweep to disappear.
 const UNSETTLED_INCIDENT_STATUSES: RecoveryIncidentStatus[] = ["open", "recovering", "needs_user", "failed"];
+
+export function isUnsettledRecoveryIncidentStatus(status: string | null | undefined) {
+  return UNSETTLED_INCIDENT_STATUSES.includes((status ?? "") as RecoveryIncidentStatus);
+}
 
 function serializeDetails(details: Record<string, unknown> | null | undefined) {
   return details ? JSON.stringify(details) : null;
@@ -47,27 +52,6 @@ async function insertRecoveryEvent(
   });
 }
 
-async function findOpenIncident(args: {
-  runId: string;
-  workerId?: string | null;
-  queuedMessageId?: string | null;
-  kind: RecoveryIncidentKind;
-}) {
-  const records = await db
-    .select()
-    .from(recoveryIncidents)
-    .where(and(
-      eq(recoveryIncidents.runId, args.runId),
-      eq(recoveryIncidents.kind, args.kind),
-      inArray(recoveryIncidents.status, OPEN_INCIDENT_STATUSES),
-    ));
-
-  return records.find((record) => (
-    (record.workerId ?? null) === (args.workerId ?? null)
-    && (record.queuedMessageId ?? null) === (args.queuedMessageId ?? null)
-  )) ?? null;
-}
-
 export async function openRecoveryIncident(args: {
   runId: string;
   workerId?: string | null;
@@ -76,34 +60,69 @@ export async function openRecoveryIncident(args: {
   details?: Record<string, unknown>;
   lastError?: string | null;
 }) {
-  const existing = await findOpenIncident(args);
-  const now = new Date();
-  if (existing) {
-    const details = { ...parseDetails(existing.details), ...(args.details ?? {}) };
-    await db.update(recoveryIncidents).set({
-      details: serializeDetails(details),
-      lastError: args.lastError ?? existing.lastError,
+  // Acquire SQLite's write lock before the read that decides whether to
+  // insert. This makes the identity check atomic across concurrent sync,
+  // queue, manual-recovery, and even separate runner processes without a
+  // schema migration or lossy cleanup of pre-existing incident history.
+  const result = await withSqliteBusyRetry(() => db.transaction(async (tx) => {
+    await tx.update(runs)
+      .set({ updatedAt: sql`${runs.updatedAt}` })
+      .where(eq(runs.id, args.runId));
+
+    const records = await tx
+      .select()
+      .from(recoveryIncidents)
+      .where(and(
+        eq(recoveryIncidents.runId, args.runId),
+        eq(recoveryIncidents.kind, args.kind),
+        inArray(recoveryIncidents.status, OPEN_INCIDENT_STATUSES),
+      ));
+    const existing = records.find((record) => (
+      (record.workerId ?? null) === (args.workerId ?? null)
+      && (record.queuedMessageId ?? null) === (args.queuedMessageId ?? null)
+    )) ?? null;
+    const now = new Date();
+    if (existing) {
+      const details = { ...parseDetails(existing.details), ...(args.details ?? {}) };
+      const serializedDetails = serializeDetails(details);
+      await tx.update(recoveryIncidents).set({
+        details: serializedDetails,
+        lastError: args.lastError ?? existing.lastError,
+        updatedAt: now,
+      }).where(eq(recoveryIncidents.id, existing.id));
+      return {
+        incident: {
+          ...existing,
+          details: serializedDetails,
+          lastError: args.lastError ?? existing.lastError,
+          updatedAt: now,
+        },
+        opened: false,
+      };
+    }
+
+    const incident = {
+      id: randomUUID(),
+      runId: args.runId,
+      workerId: args.workerId ?? null,
+      queuedMessageId: args.queuedMessageId ?? null,
+      kind: args.kind,
+      status: "open" as const,
+      autoAttemptCount: 0,
+      lastError: args.lastError ?? null,
+      details: serializeDetails(args.details),
+      detectedAt: now,
       updatedAt: now,
-    }).where(eq(recoveryIncidents.id, existing.id));
-    return { ...existing, details: serializeDetails(details), updatedAt: now };
+      resolvedAt: null,
+    };
+    await tx.insert(recoveryIncidents).values(incident);
+    return { incident, opened: true };
+  }));
+
+  const record = result.incident;
+  if (!result.opened) {
+    return record;
   }
-
-  const record = {
-    id: randomUUID(),
-    runId: args.runId,
-    workerId: args.workerId ?? null,
-    queuedMessageId: args.queuedMessageId ?? null,
-    kind: args.kind,
-    status: "open" as const,
-    autoAttemptCount: 0,
-    lastError: args.lastError ?? null,
-    details: serializeDetails(args.details),
-    detectedAt: now,
-    updatedAt: now,
-    resolvedAt: null,
-  };
-
-  await db.insert(recoveryIncidents).values(record);
   await insertRecoveryEvent(args.runId, args.workerId, "recovery_incident_opened", {
     summary: `Opened ${args.kind} recovery incident.`,
     incidentId: record.id,

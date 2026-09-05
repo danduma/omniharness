@@ -677,3 +677,70 @@ map must use `useManagerSelector` with a per-id selector.
   runs before the repaint that acknowledges the click.
 - "Nothing reads this field, but it's harmless to include." — 142 KB per frame
   per client of harmless.
+
+## August 27, 2026 — Mobile Network Transfer Incident
+
+The browser-to-runner connection transferred 7,057,338 bytes in a 12-second
+sample while one selected conversation was open. The selected snapshot was
+926 KB, uncompressed, and live SSE updates repeated the complete 407-run / 549-
+worker catalog even though only one conversation's live state was changing.
+At the measured rate this was about 2.1 GB per hour for one client.
+
+### Root causes
+
+1. Selected-run SSE frames reused the complete bootstrap payload. The client
+   already had the full catalog, but every live update resent all runs,
+   workers, sessions, plans, and read markers.
+2. The portable Node HTTP server did not negotiate compression for JSON or
+   SSE, so highly repetitive state crossed the network at its raw JSON size.
+3. Healthy clients still validated snapshots every five seconds, and selected
+   worker/transcript streams polled every two to five seconds despite having
+   resumable SSE wake-ups and content cursors.
+
+### Fix and evidence
+
+- Snapshot bootstrap remains complete and authoritative.
+- Selected-run SSE frames declare `snapshotScope.catalog.complete=false` and
+  carry only the selected run, its workers, session, plan, and read marker.
+  The existing manager merges that slice into the bootstrapped catalog.
+- Partial frames omit the complete-catalog checksum. The client retains the
+  checksum from its last complete snapshot, so a change to any unselected run
+  forces the next validation to download and merge fresh authoritative state.
+- A complete validation remains authoritative even when it was requested with
+  a selected run id; absent catalog rows are removed before its new checksum is
+  accepted.
+- A missing selected run is sent as an empty scoped slice. That slice acts as
+  authority to remove only that run and its related catalog records without
+  falling back to a complete catalog frame.
+- The runtime HTTP server gzip-compresses compressible responses, including
+  SSE with `Z_SYNC_FLUSH` so each live frame remains immediately readable.
+- Healthy snapshot validation moved from 5 seconds to 60 seconds. Worker
+  safety polling is clamped to 30 seconds while active and 60 seconds while
+  idle; SSE wake-ups still fetch new transcript content immediately.
+
+After restarting the real runner, the same 12-second selected-conversation
+sample transferred 4,647 wire bytes. The live update was 18.9 KB before gzip,
+and the 937 KB bootstrap used 160 KB on the wire. That is a 99.93% reduction
+in the measured live window.
+
+### Permanent rules added
+
+#### Rule 15: Bootstrap Completeness Does Not Belong In Every Live Frame
+
+Bootstrap establishes the complete catalog. A run-scoped live channel should
+send a scoped partial catalog with an explicit completeness contract and merge
+it by stable ids. Never reuse a complete bootstrap object as a convenient live
+event payload. A partial frame must not advance the checksum used to validate
+the complete catalog.
+
+#### Rule 16: Remote Text Transports Must Negotiate Compression
+
+JSON, SSE, JavaScript, CSS, HTML, XML, and SVG served by the portable runner
+must honor `Accept-Encoding`. Streaming compression must flush at frame
+boundaries and preserve backpressure, cancellation, and reconnect behavior.
+
+#### Rule 17: Resumable Streams Make Polling A Safety Net
+
+When SSE provides ids, replay/resync, and cursor wake-ups, polling is not the
+primary transport. Poll at a low validation cadence and use fast polling only
+after the stream actually fails.
