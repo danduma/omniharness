@@ -11,6 +11,16 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import type { WorkerEntry } from "@/shared/worker-entries";
 import { coalesceWorkerEntriesById } from "./WorkerEntriesManager";
+import {
+  DEFAULT_ENTRY_RETENTION,
+  pruneEntryWindow,
+  retainedEntryCount,
+  type EntryRetentionPolicy,
+} from "./entry-retention";
+import {
+  decodeConversationTranscriptToken,
+  encodeConversationTranscriptToken,
+} from "@/shared/conversation-transcript-token";
 import type { RuntimeAPIs } from "@/runtime-api/types";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
 
@@ -59,6 +69,8 @@ export const EMPTY_CONVERSATION_TRANSCRIPT_STATE = EMPTY;
 
 export interface ConversationTranscriptManagerOptions {
   transcript?: RuntimeAPIs["conversations"]["transcript"];
+  retention?: EntryRetentionPolicy;
+  now?: () => number;
 }
 
 export class ConversationTranscriptManager {
@@ -66,10 +78,17 @@ export class ConversationTranscriptManager {
   private readonly listenersByRunId = new Map<string, Set<() => void>>();
   private readonly inFlightByRunId = new Map<string, Promise<void>>();
   private readonly olderLoadInFlightByRunId = new Set<string>();
+  // Last scroll-back load per run. Raises the retention ceiling so the
+  // collector does not drop history the user is currently reading.
+  private readonly lastScrollbackAtByRunId = new Map<string, number>();
+  private readonly retention: EntryRetentionPolicy;
+  private readonly now: () => number;
   private transcript: RuntimeAPIs["conversations"]["transcript"] | null;
 
   constructor(options: ConversationTranscriptManagerOptions = {}) {
     this.transcript = options.transcript ?? null;
+    this.retention = options.retention ?? DEFAULT_ENTRY_RETENTION;
+    this.now = options.now ?? Date.now;
   }
 
   configure(transcript: RuntimeAPIs["conversations"]["transcript"]) {
@@ -97,6 +116,7 @@ export class ConversationTranscriptManager {
       current.delete(listener);
       if (current.size === 0) {
         this.listenersByRunId.delete(runId);
+        this.collectUnsubscribedRun(runId);
       }
     };
   }
@@ -135,6 +155,10 @@ export class ConversationTranscriptManager {
     if (!state.hasOlder || !state.oldestToken) {
       return Promise.resolve();
     }
+    // Reaching the top of the viewport is the only access signal that raises
+    // the retention ceiling — live output at the bottom must not keep old
+    // history pinned in memory.
+    this.lastScrollbackAtByRunId.set(runId, this.now());
     this.olderLoadInFlightByRunId.add(runId);
     return this.fetchOlder(runId, state.oldestToken, limit).finally(() => {
       this.olderLoadInFlightByRunId.delete(runId);
@@ -146,6 +170,88 @@ export class ConversationTranscriptManager {
     this.inFlightByRunId.clear();
     this.olderLoadInFlightByRunId.clear();
     this.listenersByRunId.clear();
+    this.lastScrollbackAtByRunId.clear();
+  }
+
+  /**
+   * Collapse a run's window to the hot tail. Called when the last subscriber
+   * goes away: an unrendered transcript has no reason to hold scroll-back in
+   * memory, and re-entering the conversation refetches.
+   */
+  private collectUnsubscribedRun(runId: string): void {
+    const state = this.stateByRunId.get(runId);
+    if (!state || state.entries.length === 0) {
+      return;
+    }
+    const retained = this.applyRetention(runId, state.entries, state.oldestToken, state.hasOlder);
+    if (retained.entries.length === state.entries.length) {
+      return;
+    }
+    this.stateByRunId.set(runId, { ...state, ...retained });
+  }
+
+  /**
+   * Garbage collect the head of a run's merged transcript. See
+   * `entry-retention.ts` for the policy.
+   *
+   * Dropping entries invalidates the server's `oldestToken`, which describes
+   * the window the server last handed us rather than the one we still hold —
+   * paging back from it would skip everything we just dropped. A replacement
+   * token is minted from the retained entries: each worker still in the
+   * window pages back from its lowest retained seq, and a worker whose
+   * entries were dropped entirely pages back from just above its highest
+   * dropped seq so those entries are reachable again.
+   */
+  private applyRetention(
+    runId: string,
+    entries: ConversationTranscriptEntry[],
+    oldestToken: string | null,
+    hasOlder: boolean,
+  ): Pick<ConversationTranscriptState, "entries" | "oldestToken" | "hasOlder"> {
+    const keep = retainedEntryCount({
+      total: entries.length,
+      lastScrollbackAt: this.lastScrollbackAtByRunId.get(runId) ?? null,
+      now: this.now(),
+      isVisible: (this.listenersByRunId.get(runId)?.size ?? 0) > 0,
+      policy: this.retention,
+    });
+    const retained = pruneEntryWindow(entries, keep);
+    if (retained.length === entries.length) {
+      return { entries, oldestToken, hasOlder };
+    }
+
+    const dropped = entries.slice(0, entries.length - retained.length);
+    const cursors = { ...decodeConversationTranscriptToken(oldestToken).cursors };
+    const highestDropped = new Map<string, number>();
+    for (const entry of dropped) {
+      const seq = Math.floor(entry.seq);
+      const existing = highestDropped.get(entry.workerId);
+      if (existing === undefined || seq > existing) {
+        highestDropped.set(entry.workerId, seq);
+      }
+    }
+    const lowestRetained = new Map<string, number>();
+    for (const entry of retained) {
+      const seq = Math.floor(entry.seq);
+      const existing = lowestRetained.get(entry.workerId);
+      if (existing === undefined || seq < existing) {
+        lowestRetained.set(entry.workerId, seq);
+      }
+    }
+    for (const [workerId, seq] of highestDropped) {
+      cursors[workerId] = seq + 1;
+    }
+    // A worker still present in the window overrides the dropped-cursor
+    // above: its lowest retained seq is the real lower bound.
+    for (const [workerId, seq] of lowestRetained) {
+      cursors[workerId] = seq;
+    }
+
+    return {
+      entries: retained,
+      oldestToken: encodeConversationTranscriptToken({ cursors }),
+      hasOlder: true,
+    };
   }
 
   private updateState(runId: string, next: ConversationTranscriptState): void {
@@ -195,12 +301,35 @@ export class ConversationTranscriptManager {
     const promise = this.load({ runId, afterToken: latestToken }).then(
       (response) => {
         const current = this.getState(runId);
+        const merged = coalesceWorkerEntriesById([
+          ...current.entries,
+          ...response.entries,
+        ]) as ConversationTranscriptEntry[];
+        // Reuse the previous array when the poll appended nothing, so an idle
+        // refresh does not hand every subscriber a new `entries` identity.
+        const grew = merged.length > current.entries.length;
+        // Garbage collect the head as the window grows. Without this the
+        // window is unbounded: a session that streams for a day accumulates
+        // every entry it ever received and re-renders all of them on each
+        // append.
+        const retained = grew
+          ? this.applyRetention(
+            runId,
+            merged,
+            current.oldestToken ?? response.oldestToken ?? null,
+            current.hasOlder || Boolean(response.hasOlder),
+          )
+          : {
+            entries: current.entries,
+            oldestToken: current.oldestToken ?? response.oldestToken ?? null,
+            hasOlder: current.hasOlder || Boolean(response.hasOlder),
+          };
         const next: ConversationTranscriptState = {
           ...current,
-          entries: coalesceWorkerEntriesById([...current.entries, ...response.entries]) as ConversationTranscriptEntry[],
+          entries: retained.entries,
           latestToken: response.latestToken,
-          oldestToken: current.oldestToken ?? response.oldestToken ?? null,
-          hasOlder: current.hasOlder || Boolean(response.hasOlder),
+          oldestToken: retained.oldestToken,
+          hasOlder: retained.hasOlder,
           workerIds: response.workerIds,
           status: "loaded",
           lastError: null,

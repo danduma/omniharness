@@ -229,12 +229,38 @@ function outputEntryFingerprint(entry: AgentOutputEntry): string {
   return JSON.stringify(entry);
 }
 
+/** Text that cannot be the start of a standalone assistant message. */
+const MESSAGE_CONTINUATION_START = /^[\s`.,:;!?()[\]{}<>=+\-_/\\]/;
+
+/**
+ * Entry types a background terminal keeps emitting while the model writes.
+ *
+ * They sit between the chunks of one assistant message without ending it, so
+ * the fragment run has to survive them. Mirrors
+ * `MESSAGE_RUN_PASSTHROUGH_TYPES` in `@/server/agent-runtime/output-store`.
+ */
+const FRAGMENT_RUN_PASSTHROUGH_TYPES = new Set([
+  "tool_call_update",
+  "agent_content",
+  "usage",
+  "available_commands",
+  "current_mode",
+  "config_option",
+  "session_info",
+]);
+
 function isFragmentedMessageCandidate(entry: AgentOutputEntry) {
   if (entry.type !== "message" || entry.toolCallId || entry.status) {
     return false;
   }
   const text = entry.text ?? "";
-  return text.length > 0 && text.length <= 24;
+  if (text.length === 0) {
+    return false;
+  }
+  // Length alone misses the long tail of a shredded paragraph. A chunk that
+  // opens mid-sentence — leading space, or a joiner like the "-" of a
+  // hyphenated word split across deltas — is a continuation at any length.
+  return text.length <= 24 || MESSAGE_CONTINUATION_START.test(text);
 }
 
 function hasFragmentedMessageEvidence(entries: AgentOutputEntry[]) {
@@ -268,23 +294,46 @@ function mergeFragmentedMessageRun(entries: AgentOutputEntry[]) {
 
 function coalesceFragmentedMessageEntries(entries: AgentOutputEntry[]) {
   const coalesced: AgentOutputEntry[] = [];
-  let pending: AgentOutputEntry[] = [];
+  // `buffered` holds the whole run in arrival order; `fragments` is the subset
+  // that gets joined into one bubble. They differ whenever a background
+  // terminal interleaves output between two chunks of the same message.
+  let buffered: AgentOutputEntry[] = [];
+  let fragments: AgentOutputEntry[] = [];
+  let fragmentSet = new Set<AgentOutputEntry>();
+  const fragmentIds = new Set<string>();
 
   const flush = () => {
-    if (pending.length === 0) {
+    if (buffered.length === 0) {
       return;
     }
-    if (hasFragmentedMessageEvidence(pending)) {
-      coalesced.push(mergeFragmentedMessageRun(pending));
+    if (hasFragmentedMessageEvidence(fragments)) {
+      coalesced.push(mergeFragmentedMessageRun(fragments));
+      for (const entry of buffered) {
+        if (!fragmentSet.has(entry)) {
+          coalesced.push(entry);
+        }
+      }
     } else {
-      coalesced.push(...pending);
+      coalesced.push(...buffered);
     }
-    pending = [];
+    buffered = [];
+    fragments = [];
+    fragmentSet = new Set();
+    fragmentIds.clear();
   };
 
   for (const entry of entries) {
-    if (isFragmentedMessageCandidate(entry)) {
-      pending.push(entry);
+    // A repeated id is a growing revision of one entry, not a new fragment.
+    // Joining those would print the message once per revision.
+    if (isFragmentedMessageCandidate(entry) && !fragmentIds.has(entry.id)) {
+      buffered.push(entry);
+      fragments.push(entry);
+      fragmentSet.add(entry);
+      fragmentIds.add(entry.id);
+      continue;
+    }
+    if (fragments.length > 0 && FRAGMENT_RUN_PASSTHROUGH_TYPES.has(entry.type)) {
+      buffered.push(entry);
       continue;
     }
     flush();
@@ -1205,6 +1254,77 @@ function lastConversationItemIndex(items: AgentActivityItem[]): number | null {
     }
   }
   return null;
+}
+
+/**
+ * Structural comparison used to decide whether a rebuilt activity item is
+ * indistinguishable from the one already on screen.
+ *
+ * Reference equality short-circuits, which covers the expensive case: a
+ * protocol item's `raw` payload is the entry's own object, and entries are
+ * stable across rebuilds. Anything past `maxDepth` compares by reference,
+ * so an unusually deep payload costs a missed reuse rather than a long walk.
+ */
+function activityValuesEqual(a: unknown, b: unknown, maxDepth = 6): boolean {
+  if (Object.is(a, b)) {
+    return true;
+  }
+  if (maxDepth <= 0 || typeof a !== "object" || typeof b !== "object" || a === null || b === null) {
+    return false;
+  }
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+      return false;
+    }
+    return a.every((value, index) => activityValuesEqual(value, b[index], maxDepth - 1));
+  }
+  const aRecord = a as Record<string, unknown>;
+  const bRecord = b as Record<string, unknown>;
+  const aKeys = Object.keys(aRecord);
+  const bKeys = Object.keys(bRecord);
+  if (aKeys.length !== bKeys.length) {
+    return false;
+  }
+  return aKeys.every((key) => (
+    Object.prototype.hasOwnProperty.call(bRecord, key)
+    && activityValuesEqual(aRecord[key], bRecord[key], maxDepth - 1)
+  ));
+}
+
+/**
+ * Restore object identity for activity items whose content did not change.
+ *
+ * `buildAgentOutputActivity` reconstructs every item from scratch on each
+ * call, so a single appended entry hands the renderer a brand-new object for
+ * every row in the transcript. `ActivityRow` is memoized on those objects, so
+ * its shallow comparison failed for all of them and the whole transcript
+ * re-rendered — including markdown and diff parsing — several times a second
+ * on a streaming session.
+ *
+ * Substituting the previous reference wherever the content is unchanged makes
+ * that memo effective again: only rows that actually changed re-render.
+ */
+export function reconcileActivityIdentity<T extends { id: string; kind: string }>(
+  previous: T[] | null | undefined,
+  next: T[],
+): T[] {
+  if (!previous || previous.length === 0 || next.length === 0) {
+    return next;
+  }
+  const previousById = new Map<string, T>();
+  for (const item of previous) {
+    previousById.set(item.id, item);
+  }
+  let reusedAny = false;
+  const reconciled = next.map((item) => {
+    const candidate = previousById.get(item.id);
+    if (candidate && candidate.kind === item.kind && activityValuesEqual(candidate, item)) {
+      reusedAny = true;
+      return candidate;
+    }
+    return item;
+  });
+  return reusedAny ? reconciled : next;
 }
 
 export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentActivityItem[] {

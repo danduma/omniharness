@@ -324,9 +324,35 @@ function pruneLiveEntries(record: AgentRecord) {
   }
 }
 
+/**
+ * Record types that can land between two chunks of one assistant message
+ * without meaning the message ended.
+ *
+ * A background terminal keeps emitting `tool_call_update` (plus the
+ * `agent_content` and `usage` records that ride along with it) while the model
+ * is still writing prose, and protocol metadata can arrive at any moment. None
+ * of those are a turn boundary. Treating them as one restarts the in-progress
+ * message on every interleave, so a paragraph written next to a running
+ * command reaches the reader as one bubble per delta.
+ *
+ * Everything else — a new `tool_call`, a permission prompt, user input, a plan
+ * — is a real boundary and still ends the run.
+ */
+const MESSAGE_RUN_PASSTHROUGH_TYPES = new Set([
+  "tool_call_update",
+  "agent_content",
+  "usage",
+  "available_commands",
+  "current_mode",
+  "config_option",
+  "session_info",
+]);
+
 export function appendOutputEntry(record: AgentRecord, input: OutputEntryInput) {
   const archiveEntry = record.outputArchive.append(input);
-  record.activeOutputEntryId = null;
+  if (!MESSAGE_RUN_PASSTHROUGH_TYPES.has(input.type)) {
+    record.activeOutputEntryId = null;
+  }
   record.outputEntries.push(toLiveEntry(archiveEntry));
   pruneLiveEntries(record);
 }
@@ -336,8 +362,9 @@ export function appendOutputEntry(record: AgentRecord, input: OutputEntryInput) 
  *
  * The archive keeps every streaming chunk as its own record; the worker stream
  * keeps the assembled message. This is the read-side inverse of
- * `appendMessageChunk` below — same rule: consecutive same-type
- * `message`/`thought` chunks join, any other record type ends the run.
+ * `appendMessageChunk` below — same rule: same-type `message`/`thought` chunks
+ * join across `MESSAGE_RUN_PASSTHROUGH_TYPES` records, any other record type
+ * ends the run.
  *
  * Used when recovering a transcript whose stream file lost its head; replaying
  * the archive without it produces a transcript shredded mid-word.
@@ -357,7 +384,9 @@ export function reassembleArchivedEntries<T extends { type?: string; text?: stri
       continue;
     }
     out.push({ ...entry });
-    active = null;
+    if (!MESSAGE_RUN_PASSTHROUGH_TYPES.has(entry.type ?? "")) {
+      active = null;
+    }
   }
   return out;
 }
