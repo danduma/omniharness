@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildOptimisticCreatedConversationSnapshot, buildOptimisticSentConversationMessage, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseBrowserConversationRoute, parseCollapsedProjectPaths, reorderExplicitProjectPaths, resolveComposerModelValue, resolveOptimisticSentConversationMessage, resolveSavedComposerModel, resolveSelectedWorkerModel, shouldClearMissingSelectedRunFromAuthoritativeSnapshot, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/interface/home/utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildOptimisticCreatedConversationSnapshot, buildOptimisticSentConversationMessage, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseBrowserConversationRoute, parseCollapsedProjectPaths, reorderExplicitProjectPaths, resolveComposerEffortForPair, resolveComposerModelValue, resolveOptimisticSentConversationMessage, resolveSavedComposerModel, resolveSelectedWorkerModel, shouldClearMissingSelectedRunFromAuthoritativeSnapshot, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/interface/home/utils";
 import type { EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord, SupervisorInterventionRecord } from "@/interface/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 
@@ -1615,6 +1615,11 @@ describe("optimistic sent conversation messages", () => {
 });
 
 describe("worker model normalization", () => {
+  it("does not carry a saved effort from one worker/model pair into another", () => {
+    expect(resolveComposerEffortForPair(null)).toBe("High");
+    expect(resolveComposerEffortForPair("Low")).toBe("Low");
+  });
+
   it("maps the GPT-5.6 family between Codex and OpenCode ids", () => {
     expect(resolveSelectedWorkerModel("opencode", "gpt-5.6-sol")).toBe("openai/gpt-5.6-sol");
     expect(resolveSelectedWorkerModel("opencode", "GPT-5.6 Terra")).toBe("openai/gpt-5.6-terra");

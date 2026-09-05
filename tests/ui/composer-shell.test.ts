@@ -117,7 +117,9 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain('window.localStorage.getItem(getEffortStorageKey(savedWorker, savedModel))');
   expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, COMPOSER_WORKER_STORAGE_KEY, selectedCliAgent)');
   expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, COMPOSER_MODEL_STORAGE_KEY, selectedModel)');
-  expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, getEffortStorageKey(selectedCliAgent, selectedModel), selectedEffort)');
+  expect(pageSource).toContain('const key = getEffortStorageKey(selectedCliAgent, selectedModel);');
+  expect(pageSource).toContain('const nextEffort = resolveComposerEffortForPair(saved);');
+  expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, key, selectedEffort)');
   expect(pageSource).toContain("const activeWorkerModelOptions = useMemo(");
   expect(pageSource).toContain("options={activeWorkerModelOptions}");
   expect(composerModelPickerSource).toContain("options.map");

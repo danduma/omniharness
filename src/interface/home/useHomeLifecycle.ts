@@ -22,7 +22,7 @@ import { LiveEventConnectionManager, LiveEventCursorManager } from "./LiveEventC
 import { acpPlanManager } from "./AcpPlanManager";
 import { goalPlanManager } from "./GoalPlanManager";
 import type { ComposerWorkerOption, ConversationModeOption, EventStreamState } from "./types";
-import { buildConversationPath, buildInlineError, parseBrowserConversationRoute, parseCollapsedProjectPaths, resolveSavedComposerModel } from "./utils";
+import { buildConversationPath, buildInlineError, parseBrowserConversationRoute, parseCollapsedProjectPaths, resolveComposerEffortForPair, resolveSavedComposerModel } from "./utils";
 import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
 import type { RunnerConnection } from "@/interface/runners/RunnerConnection";
@@ -69,6 +69,7 @@ interface UseHomeLifecycleProps {
   selectedCliAgent: ComposerWorkerOption;
   selectedModel: string;
   selectedEffort: string;
+  hydratedRunSelectionId: string | null;
   themeMode: "day" | "night";
   setThemeMode: React.Dispatch<React.SetStateAction<"day" | "night">>;
   filterEventStreamState?: (state: EventStreamState) => EventStreamState;
@@ -126,6 +127,7 @@ export function useHomeLifecycle({
   selectedCliAgent,
   selectedModel,
   selectedEffort,
+  hydratedRunSelectionId,
   themeMode,
   setThemeMode,
   filterEventStreamState,
@@ -141,7 +143,9 @@ export function useHomeLifecycle({
   const didSkipConversationSidebarInitialPersistRef = useRef(false);
   const didHydrateWorkersSidebarWidthRef = useRef(false);
   const didSkipWorkersSidebarInitialPersistRef = useRef(false);
-  const didHydrateEffortRef = useRef(false);
+  const effortPairRef = useRef<string | null>(null);
+  const pendingEffortHydrationRef = useRef<{ key: string; value: string } | null>(null);
+  const lastAuthoritativeRunSelectionIdRef = useRef<string | null>(null);
   const liveEventCursorRef = useRef<LiveEventCursorManager | null>(null);
   if (liveEventCursorRef.current === null) {
     liveEventCursorRef.current = new LiveEventCursorManager(initialLastEventId);
@@ -585,24 +589,44 @@ export function useHomeLifecycle({
       return;
     }
 
-    safeSetBrowserStorageItem(window.localStorage, getEffortStorageKey(selectedCliAgent, selectedModel), selectedEffort);
-  }, [selectedCliAgent, selectedModel, selectedEffort]);
+    if (selectedRunId && hydratedRunSelectionId === selectedRunId
+      && lastAuthoritativeRunSelectionIdRef.current !== selectedRunId) {
+      const key = getEffortStorageKey(selectedCliAgent, selectedModel);
+      lastAuthoritativeRunSelectionIdRef.current = selectedRunId;
+      effortPairRef.current = key;
+      pendingEffortHydrationRef.current = null;
+      safeSetBrowserStorageItem(window.localStorage, key, selectedEffort);
+      return;
+    }
+    if (!selectedRunId) {
+      lastAuthoritativeRunSelectionIdRef.current = null;
+    }
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
+    const key = getEffortStorageKey(selectedCliAgent, selectedModel);
+    if (effortPairRef.current !== key) {
+      effortPairRef.current = key;
+      const saved = window.localStorage.getItem(key);
+      const nextEffort = resolveComposerEffortForPair(saved);
+      if (nextEffort !== selectedEffort) {
+        pendingEffortHydrationRef.current = { key, value: nextEffort };
+        setSelectedEffort(nextEffort);
+        return;
+      }
+      pendingEffortHydrationRef.current = null;
+      safeSetBrowserStorageItem(window.localStorage, key, nextEffort);
       return;
     }
 
-    if (!didHydrateEffortRef.current) {
-      didHydrateEffortRef.current = true;
-      return;
+    const pending = pendingEffortHydrationRef.current;
+    if (pending?.key === key) {
+      if (selectedEffort !== pending.value) {
+        return;
+      }
+      pendingEffortHydrationRef.current = null;
     }
 
-    const saved = window.localStorage.getItem(getEffortStorageKey(selectedCliAgent, selectedModel))?.trim() || "";
-    if (EFFORT_OPTIONS.includes(saved)) {
-      setSelectedEffort(saved);
-    }
-  }, [selectedCliAgent, selectedModel, setSelectedEffort]);
+    safeSetBrowserStorageItem(window.localStorage, key, selectedEffort);
+  }, [hydratedRunSelectionId, selectedCliAgent, selectedEffort, selectedModel, selectedRunId, setSelectedEffort]);
 
 }
 
