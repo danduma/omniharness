@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
@@ -36,6 +36,12 @@ function write(message) { process.stdout.write(JSON.stringify(message) + '\\n');
 function append(event) {
   if (logPath) fs.appendFileSync(logPath, JSON.stringify(event) + '\\n');
 }
+append({ event: 'started', pid: process.pid });
+process.on('SIGTERM', () => {
+  append({ event: 'sigterm', pid: process.pid });
+  if (process.env.FAKE_ACP_IGNORE_SIGTERM === '1') return;
+  process.exit(0);
+});
 function configOptions() {
   if (process.env.FAKE_ACP_OMIT_MODEL_CONFIG === '1') return [];
   return [
@@ -44,11 +50,12 @@ function configOptions() {
       name: 'Model',
       category: 'model',
       type: 'select',
-      currentValue: currentModel,
-      options: [
+      currentValue: process.env.FAKE_ACP_NULL_CURRENT === '1' ? null : currentModel,
+      options: process.env.FAKE_ACP_EMPTY_MODEL_CHOICES === '1' ? [] : [
         { value: 'default', name: 'Default (recommended)', description: 'Sonnet 4.6' },
         { value: 'claude-fable-5[1m]', name: 'Fable', description: 'Fable 5 · Uses your limits ~2× faster than Opus' },
         { value: 'opus', name: 'Opus', description: 'Opus 4.8' },
+        { value: 'opus[1m]', name: 'Opus (1M context)', description: 'Opus 5 · Most capable for complex tasks' },
         { value: 'haiku', name: 'Haiku', description: 'Haiku 4.5' },
       ],
     },
@@ -62,10 +69,18 @@ process.stdin.on('data', (chunk) => {
     if (!line.trim()) continue;
     const message = JSON.parse(line);
     if (message.method === 'initialize') {
+      if (process.env.FAKE_ACP_REJECT_INITIALIZE === '1') {
+        write({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'initialize rejected' } });
+        continue;
+      }
       write({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
     }
     if (message.method === 'session/new') {
-      write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-1', configOptions: configOptions() } });
+      if (process.env.FAKE_ACP_HANG_NEW_SESSION === '1') continue;
+      const respond = () => write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-1', configOptions: configOptions() } });
+      const delay = Number(process.env.FAKE_ACP_NEW_SESSION_DELAY_MS || 0);
+      if (delay > 0) setTimeout(respond, delay);
+      else respond();
     }
     if (message.method === 'session/set_config_option') {
       append({ method: message.method, params: message.params });
@@ -96,12 +111,14 @@ async function startClaudeWorker(options: {
   currentModel?: string;
   omitSetConfigResult?: boolean;
   omitModelConfig?: boolean;
+  emptyModelChoices?: boolean;
   ignoreStartupModel?: boolean;
+  nullCurrentModel?: boolean;
 }) {
   const projectDir = createTempDir("omni-runtime-claude-model-project-");
   const binDir = createTempDir("omni-runtime-claude-model-bin-");
   const requestLog = join(projectDir, "requests.jsonl");
-  createExecutable(binDir, "claude-agent-acp", fakeClaudeAcpAgentScript);
+  const command = createExecutable(binDir, "claude-agent-acp", fakeClaudeAcpAgentScript);
   const manager = new AgentRuntimeManager({
     env: {
       ...process.env,
@@ -117,13 +134,16 @@ async function startClaudeWorker(options: {
       type: "claude",
       cwd: projectDir,
       name: "claude-worker",
+      command,
       ...(options.model ? { model: options.model } : {}),
       env: {
         FAKE_ACP_REQUEST_LOG: requestLog,
         ...(options.currentModel ? { FAKE_ACP_CURRENT_MODEL: options.currentModel } : {}),
         ...(options.omitSetConfigResult ? { FAKE_ACP_OMIT_SET_CONFIG_RESULT: "1" } : {}),
         ...(options.omitModelConfig ? { FAKE_ACP_OMIT_MODEL_CONFIG: "1" } : {}),
+        ...(options.emptyModelChoices ? { FAKE_ACP_EMPTY_MODEL_CHOICES: "1" } : {}),
         ...(options.ignoreStartupModel ? { FAKE_ACP_IGNORE_ANTHROPIC_MODEL: "1" } : {}),
+        ...(options.nullCurrentModel ? { FAKE_ACP_NULL_CURRENT: "1" } : {}),
       },
     });
     return { status, requests: readRequests(requestLog) };
@@ -156,9 +176,47 @@ describe("Claude worker model pinning", () => {
     expect(status.effectiveModel).toBe("claude-opus-5");
   }, 15_000);
 
+  it("accepts the provider-verified Opus 5 1M alias reported at startup", async () => {
+    const { status, requests } = await startClaudeWorker({
+      model: "claude-opus-5",
+      currentModel: "opus[1m]",
+      ignoreStartupModel: true,
+    });
+
+    expect(requests.filter((event) => event.method === "session/set_config_option")).toEqual([]);
+    expect(status.requestedModel).toBe("claude-opus-5");
+    expect(status.effectiveModel).toBe("opus[1m]");
+  }, 15_000);
+
   it("refuses to launch when the adapter cannot verify the startup model", async () => {
     await expect(startClaudeWorker({ model: "claude-opus-5", omitModelConfig: true }))
       .rejects.toThrow(/cannot verify.*claude-opus-5/i);
+  }, 15_000);
+
+  it("refuses a mismatched reported model when the config has no choices", async () => {
+    await expect(startClaudeWorker({
+      model: "claude-opus-5",
+      currentModel: "claude-fable-5[1m]",
+      emptyModelChoices: true,
+      ignoreStartupModel: true,
+    })).rejects.toThrow(/requested model.*claude-opus-5/i);
+  }, 15_000);
+
+  it("accepts an exact reported model when the config has no choices", async () => {
+    const { status } = await startClaudeWorker({
+      model: "claude-opus-5",
+      emptyModelChoices: true,
+    });
+
+    expect(status.effectiveModel).toBe("claude-opus-5");
+  }, 15_000);
+
+  it("refuses an absent reported model when the config has no choices", async () => {
+    await expect(startClaudeWorker({
+      model: "claude-opus-5",
+      emptyModelChoices: true,
+      nullCurrentModel: true,
+    })).rejects.toThrow(/claude-opus-5/i);
   }, 15_000);
 
   it("refuses to translate an explicit model through the adapter menu", async () => {
@@ -167,6 +225,149 @@ describe("Claude worker model pinning", () => {
       currentModel: "claude-fable-5[1m]",
       ignoreStartupModel: true,
     })).rejects.toThrow(/requested model.*claude-opus-5.*reported.*claude-fable-5\[1m\]/i);
+  }, 15_000);
+
+  it("terminates the acquired ACP process when model verification rejects before registration", async () => {
+    const projectDir = createTempDir("omni-runtime-claude-cleanup-project-");
+    const binDir = createTempDir("omni-runtime-claude-cleanup-bin-");
+    const requestLog = join(projectDir, "requests.jsonl");
+    const command = createExecutable(binDir, "claude-agent-acp", fakeClaudeAcpAgentScript);
+    const manager = new AgentRuntimeManager({
+      env: {
+        ...process.env,
+        OMNIHARNESS_MEMORY_TRACE: "0",
+        OMNIHARNESS_RESOURCE_GUARD: "0",
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+
+    try {
+      await expect(manager.startAgent({
+        type: "claude",
+        cwd: projectDir,
+        name: "claude-worker-cleanup",
+        command,
+        model: "claude-opus-5",
+        env: {
+          FAKE_ACP_REQUEST_LOG: requestLog,
+          FAKE_ACP_CURRENT_MODEL: "claude-fable-5[1m]",
+          FAKE_ACP_IGNORE_ANTHROPIC_MODEL: "1",
+        },
+      })).rejects.toThrow(/requested model.*claude-opus-5/i);
+
+      await vi.waitFor(() => {
+        expect(readRequests(requestLog)).toContainEqual(expect.objectContaining({ event: "sigterm" }));
+      });
+      expect(await manager.stopAgent("claude-worker-cleanup")).toBe(false);
+    } finally {
+      const started = readRequests(requestLog).find((event) => event.event === "started");
+      if (started && !readRequests(requestLog).some((event) => event.event === "sigterm")) {
+        try {
+          process.kill(started.pid, "SIGTERM");
+        } catch {
+          // The exact test-owned child already exited.
+        }
+      }
+      manager.shutdownPools();
+    }
+  }, 15_000);
+
+  it("escalates startup cleanup when a session handshake hangs and ignores SIGTERM", async () => {
+    const projectDir = createTempDir("omni-runtime-claude-handshake-project-");
+    const binDir = createTempDir("omni-runtime-claude-handshake-bin-");
+    const requestLog = join(projectDir, "requests.jsonl");
+    const command = createExecutable(binDir, "claude-agent-acp", fakeClaudeAcpAgentScript);
+    const manager = new AgentRuntimeManager({
+      env: {
+        ...process.env,
+        OMNIHARNESS_AGENT_STARTUP_TIMEOUT_MS: "500",
+        OMNIHARNESS_MEMORY_TRACE: "0",
+        OMNIHARNESS_RESOURCE_GUARD: "0",
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+
+    try {
+      await expect(manager.startAgent({
+        type: "claude",
+        cwd: projectDir,
+        name: "claude-worker-handshake-timeout",
+        command,
+        model: "claude-opus-5",
+        env: {
+          FAKE_ACP_REQUEST_LOG: requestLog,
+          FAKE_ACP_HANG_NEW_SESSION: "1",
+          FAKE_ACP_IGNORE_SIGTERM: "1",
+        },
+      })).rejects.toThrow(/new session.*timed out/i);
+
+      const started = readRequests(requestLog).find((event) => event.event === "started");
+      expect(started).toBeTruthy();
+      await vi.waitFor(() => {
+        expect(readRequests(requestLog)).toContainEqual(expect.objectContaining({ event: "sigterm" }));
+        expect(() => process.kill(started.pid, 0)).toThrow();
+      });
+      expect(await manager.stopAgent("claude-worker-handshake-timeout")).toBe(false);
+    } finally {
+      const started = readRequests(requestLog).find((event) => event.event === "started");
+      if (started) {
+        try {
+          process.kill(started.pid, "SIGKILL");
+        } catch {
+          // The exact test-owned child already exited.
+        }
+      }
+      manager.shutdownPools();
+    }
+  }, 15_000);
+
+  it("rejects a concurrent launch with the same unregistered worker name", async () => {
+    const projectDir = createTempDir("omni-runtime-claude-concurrent-project-");
+    const binDir = createTempDir("omni-runtime-claude-concurrent-bin-");
+    const requestLog = join(projectDir, "requests.jsonl");
+    const command = createExecutable(binDir, "claude-agent-acp", fakeClaudeAcpAgentScript);
+    const manager = new AgentRuntimeManager({
+      env: {
+        ...process.env,
+        OMNIHARNESS_MEMORY_TRACE: "0",
+        OMNIHARNESS_RESOURCE_GUARD: "0",
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    });
+
+    const input = {
+      type: "claude",
+      cwd: projectDir,
+      name: "claude-worker-concurrent",
+      command,
+      model: "claude-opus-5",
+      env: {
+        FAKE_ACP_REQUEST_LOG: requestLog,
+        FAKE_ACP_NEW_SESSION_DELAY_MS: "150",
+      },
+    };
+    let firstStart: ReturnType<typeof manager.startAgent> | null = null;
+    try {
+      firstStart = manager.startAgent(input);
+      await vi.waitFor(() => expect(readRequests(requestLog).filter((event) => event.event === "started")).toHaveLength(1));
+      await expect(manager.startAgent(input)).rejects.toThrow(/already starting/i);
+      await firstStart;
+      expect(readRequests(requestLog).filter((event) => event.event === "started")).toHaveLength(1);
+    } finally {
+      await firstStart?.catch(() => undefined);
+      await manager.stopAgent(input.name).catch(() => undefined);
+      for (const started of readRequests(requestLog).filter((event) => event.event === "started")) {
+        try {
+          process.kill(started.pid, "SIGKILL");
+        } catch {
+          // The exact test-owned child already exited.
+        }
+      }
+      manager.shutdownPools();
+    }
   }, 15_000);
 
   it("passes the exact Fable model instead of crossing into another family", async () => {

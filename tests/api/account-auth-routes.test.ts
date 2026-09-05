@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const service = vi.hoisted(() => ({
   connect: vi.fn(),
+  signInLocal: vi.fn(),
   getOperation: vi.fn(),
   act: vi.fn(),
   logout: vi.fn(),
@@ -33,6 +34,7 @@ describe("Claude account authentication routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     service.connect.mockResolvedValue({ account: { id: "account-1" }, operation: { id: "operation-1" } });
+    service.signInLocal.mockResolvedValue({ account: { id: "local-session-claude" }, operation: { id: "operation-1" } });
     service.getOperation.mockResolvedValue({ account: { id: "account-1" }, operation: { id: "operation-1" } });
     service.act.mockResolvedValue({ account: { id: "account-1" }, operation: { id: "operation-1" } });
     service.logout.mockResolvedValue({ account: { id: "account-1" } });
@@ -53,6 +55,17 @@ describe("Claude account authentication routes", () => {
       sso: true,
       ownerSessionId: expect.any(String),
     });
+  });
+
+  it("starts the normal local Claude login without an account setup payload", async () => {
+    const response = await handleClaudeAccountConnectRequest(request(
+      "http://localhost/api/accounts/claude/connect",
+      "POST",
+      { localSession: true },
+    ), context);
+
+    expect(response.status).toBe(200);
+    expect(service.signInLocal).toHaveBeenCalledWith(expect.any(String));
   });
 
   it("gets, retries, and cancels the exact account operation", async () => {

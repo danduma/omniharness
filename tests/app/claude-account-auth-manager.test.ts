@@ -25,6 +25,7 @@ function operation(accountId: string, phase = "authenticating") {
 function api(overrides: Record<string, unknown> = {}) {
   return {
     connectClaude: vi.fn().mockResolvedValue(operation("account-a")),
+    signInClaude: vi.fn().mockResolvedValue(operation("local-session-claude")),
     getAuthOperation: vi.fn().mockResolvedValue(operation("account-a")),
     actOnAuthOperation: vi.fn().mockResolvedValue(operation("account-a", "cancelled")),
     logout: vi.fn().mockResolvedValue({ account: { id: "account-a", status: "login_required" } }),
@@ -55,6 +56,26 @@ describe("ClaudeAccountAuthManager", () => {
       phase: "authenticating",
       terminalId: "terminal-account-a",
       pending: false,
+    });
+  });
+
+  it("starts the normal Claude sign-in without asking for an account label first", async () => {
+    const accounts = api();
+    const manager = new ClaudeAccountAuthManager(accounts);
+    manager.configureScope("runner-a");
+
+    await manager.beginLocalSignIn();
+
+    expect(accounts.signInClaude).toHaveBeenCalledWith();
+    expect(accounts.connectClaude).not.toHaveBeenCalled();
+    expect(manager.getSnapshot()).toMatchObject({
+      open: true,
+      accountId: "local-session-claude",
+      phase: "authenticating",
+      terminalId: "terminal-local-session-claude",
+      label: "",
+      email: "",
+      sso: false,
     });
   });
 

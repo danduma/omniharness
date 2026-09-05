@@ -220,6 +220,7 @@ export interface RuntimeAPIs {
       email?: string | null;
       sso?: boolean;
     }, options?: RuntimeCallOptions): Promise<import("@/shared/home-types").ClaudeAccountAuthResponse>;
+    signInClaude(options?: RuntimeCallOptions): Promise<import("@/shared/home-types").ClaudeAccountAuthResponse>;
     getAuthOperation(input: { accountId: string }, options?: RuntimeCallOptions): Promise<import("@/shared/home-types").ClaudeAccountAuthResponse>;
     actOnAuthOperation(input: {
       accountId: string;
