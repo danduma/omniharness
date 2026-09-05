@@ -1,8 +1,28 @@
 {
   "version": 2,
   "projectRoot": "/Users/masterman/NLP/omniharness",
-  "generatedAt": "2026-09-03T22:00:20.448Z",
+  "generatedAt": "2026-09-05T10:03:12.171Z",
   "conversations": [
+    {
+      "provider": "claude",
+      "id": "766d5ff2-5ee5-4ab8-bae9-7019a138bffb",
+      "title": "PWA transcript pane scrolling fix",
+      "startedAt": "2026-09-05T09:43:52.899Z",
+      "updatedAt": "2026-09-05T09:50:08.064Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "a5da3e44f89071a8116c4f00cae3d8a3f6e90082fa2d1de17cf8c8eccbb7f822",
+      "parts": [
+        "conversations/2026/09/2026-09-05-claude-pwa-transcript-pane-scrolling-fix-766d5ff2-5ee5-4ab8-bae9-7019a138bffb-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 183,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
     {
       "provider": "claude",
       "id": "59e14cd8-f539-4e93-8773-1f9c14fbcfa7",
