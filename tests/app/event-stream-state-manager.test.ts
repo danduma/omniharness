@@ -471,7 +471,75 @@ describe("EventStreamStateManager", () => {
     ]);
   });
 
-  it("does not let selected-run complete snapshots remove unrelated sidebar runs", () => {
+  it("keeps the last complete-catalog checksum after a partial selected-run update", () => {
+    const manager = new EventStreamStateManager(
+      multiRunState({
+        runs: ["run-a", "run-b"],
+        messageRunId: "run-a",
+        message: "current first conversation",
+        checksum: "sha256:complete-catalog",
+        catalogComplete: true,
+      }),
+      { deferCacheHydration: true, initialSnapshotSource: "server" },
+    );
+    const partial = multiRunState({
+      runs: ["run-a"],
+      messageRunId: "run-a",
+      message: "selected update",
+      checksum: "sha256:must-not-advance",
+      catalogComplete: false,
+    });
+
+    manager.updateFromServer({ ...partial, snapshotChecksum: undefined });
+
+    expect(manager.getSnapshot().snapshotChecksum).toBe("sha256:complete-catalog");
+  });
+
+  it("removes a missing selected run and its catalog records from a partial server update", () => {
+    const initial = multiRunState({
+      runs: ["run-a", "run-b"],
+      messageRunId: "run-a",
+      message: "current first conversation",
+      checksum: "sha256:complete-catalog",
+      catalogComplete: true,
+    });
+    initial.workers = [
+      { id: "worker-a", runId: "run-a" },
+      { id: "worker-b", runId: "run-b" },
+    ] as EventStreamState["workers"];
+    initial.sessions = [
+      { runId: "run-a" },
+      { runId: "run-b" },
+    ] as EventStreamState["sessions"];
+    initial.readMarkers = { "run-a": new Date(0).toISOString(), "run-b": new Date(0).toISOString() };
+    const manager = new EventStreamStateManager(initial, {
+      deferCacheHydration: true,
+      initialSnapshotSource: "server",
+    });
+
+    manager.updateFromServer({
+      ...multiRunState({
+        runs: [],
+        messageRunId: "run-a",
+        message: "selected update",
+        checksum: "sha256:ignored",
+        catalogComplete: false,
+      }),
+      snapshotChecksum: undefined,
+      workers: [],
+      sessions: [],
+      readMarkers: {},
+    });
+
+    expect(manager.getSnapshot().runs.map((item) => item.id)).toEqual(["run-b"]);
+    expect(manager.getSnapshot().plans.map((item) => item.id)).toEqual(["run-b-plan"]);
+    expect(manager.getSnapshot().workers.map((item) => item.id)).toEqual(["worker-b"]);
+    expect(manager.getSnapshot().sessions?.map((item) => item.runId)).toEqual(["run-b"]);
+    expect(manager.getSnapshot().readMarkers).toEqual({ "run-b": new Date(0).toISOString() });
+    expect(manager.getSnapshot().snapshotChecksum).toBe("sha256:complete-catalog");
+  });
+
+  it("lets a complete selected-run validation remove absent sidebar runs", () => {
     const manager = new EventStreamStateManager(
       multiRunState({
         runs: ["run-a", "run-b"],
@@ -496,8 +564,8 @@ describe("EventStreamStateManager", () => {
       }),
     );
 
-    expect(manager.getSnapshot().runs.map((item) => item.id)).toEqual(["run-b", "run-a"]);
-    expect(manager.getSnapshot().plans.map((item) => item.id)).toEqual(["run-b-plan", "run-a-plan"]);
+    expect(manager.getSnapshot().runs.map((item) => item.id)).toEqual(["run-b"]);
+    expect(manager.getSnapshot().plans.map((item) => item.id)).toEqual(["run-b-plan"]);
   });
 
   it("lets unscoped complete server catalog snapshots remove absent runs", () => {

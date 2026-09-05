@@ -583,6 +583,49 @@ function buildEventPayload(
   });
 }
 
+/**
+ * Live SSE frames only need the selected conversation's changing catalog
+ * records. The client already received the complete catalog during snapshot
+ * bootstrap and merges this explicitly partial slice by stable ids.
+ *
+ * Partial frames deliberately omit the complete-catalog checksum. Otherwise
+ * a change to an unselected run could advance the client's checksum without
+ * delivering that run and make the next complete validation return a false
+ * `notModified` result.
+ */
+function buildEventStreamPayload(
+  payload: EventPayload,
+  options: EventPayloadOptions,
+) {
+  const selectedRunId = options.selectedRunId?.trim();
+  if (!selectedRunId) {
+    return payload;
+  }
+
+  const selectedRun = payload.runs.find((run) => run.id === selectedRunId);
+  const selectedPlanId = selectedRun?.planId;
+  const { snapshotChecksum: _snapshotChecksum, ...streamPayload } = payload;
+  return {
+    ...streamPayload,
+    snapshotRunId: selectedRunId,
+    runs: selectedRun ? [selectedRun] : [],
+    plans: selectedPlanId
+      ? payload.plans.filter((plan) => plan.id === selectedPlanId)
+      : [],
+    workers: payload.workers.filter((worker) => worker.runId === selectedRunId),
+    sessions: payload.sessions?.filter((session) => session.runId === selectedRunId),
+    readMarkers: payload.readMarkers?.[selectedRunId]
+      ? { [selectedRunId]: payload.readMarkers[selectedRunId] }
+      : {},
+    snapshotScope: {
+      ...payload.snapshotScope,
+      catalog: {
+        complete: false,
+      },
+    },
+  };
+}
+
 async function buildPersistedEventPayload(options: EventPayloadOptions = {}, probe?: { mark: (label: string) => void }) {
   const records = await readPersistedEventRecords(options, probe);
   probe?.mark("readRecords.total");
@@ -885,7 +928,6 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
           streamClosed = true;
         }
       };
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sendEvent = (event: string, data: any, id: string) => {
         writeFrame(id, event, JSON.stringify(data));
       };
@@ -936,7 +978,7 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
         }
       };
       const sendUpdateIfChanged = (payload: Awaited<ReturnType<typeof buildPersistedEventPayload>>) => {
-        const serializedPayload = JSON.stringify(payload);
+        const serializedPayload = JSON.stringify(buildEventStreamPayload(payload, eventPayloadOptions));
         if (serializedPayload === lastUpdatePayload) {
           emitStreamHeartbeatIfDue();
           drainBufferedEvents();

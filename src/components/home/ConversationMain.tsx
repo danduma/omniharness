@@ -37,7 +37,7 @@ import { InlineElicitation, type ElicitationResponseInput } from "@/components/a
 import { InlinePermission, type PermissionResponseInput } from "@/components/agent-interactions/InlinePermission";
 import { useConversationTranscript } from "@/interface/home/ConversationTranscriptManager";
 import { isTerminalRunStatus } from "@/lib/run-status";
-import { deriveConversationLoadState, resolveDirectWorkerStreamRefreshInterval, selectDirectConversationEntries, shouldShowDirectConversationLoading } from "@/interface/home/direct-worker-stream-loading";
+import { deriveConversationLoadState, resolveConversationRanOnMultipleWorkers, resolveDirectWorkerStreamRefreshInterval, selectDirectConversationEntries, shouldShowDirectConversationLoading } from "@/interface/home/direct-worker-stream-loading";
 import type { SupersededSeqRange } from "@/lib/superseded-entries";
 import { type PlanningReviewAgentSelection } from "@/shared/planning-review";
 import { WORKER_TYPE_LABELS, type SupportedWorkerType } from "@/shared/worker-types";
@@ -921,14 +921,13 @@ const ConversationMain = memo(function ConversationMain({
       }),
     },
   );
-  // The run's worker list, not the entries loaded so far, decides how the
-  // conversation is ordered — otherwise the rule flips from seq to timestamp
-  // the moment the first transcript page arrives and the list re-sorts under
-  // the reader. Undefined until the transcript answers, which leaves the
-  // Terminal on its own inference for that first paint.
-  const conversationRanOnMultipleWorkers = conversationTranscript.workerIds.length > 0
-    ? conversationTranscript.workerIds.length > 1
-    : undefined;
+  // The worker snapshot sees replacements before the transcript refresh does.
+  // Use both lists so output cannot briefly switch back to per-worker sequence
+  // ordering and jump above the earlier conversation during that gap.
+  const conversationRanOnMultipleWorkers = resolveConversationRanOnMultipleWorkers({
+    transcriptWorkerIds: conversationTranscript.workerIds,
+    snapshotWorkerIds: conversationAgents.map((agent) => agent.name),
+  });
   // The server re-parses `supersededSeqRanges` into a fresh array on every
   // snapshot, so depending on it by identity would invalidate the merge below
   // on every frame even though its contents almost never change. The list is
@@ -967,6 +966,7 @@ const ConversationMain = memo(function ConversationMain({
       transcriptEntries: conversationTranscript.entries,
       directWorkerEntries: directWorkerStream.entries,
       supersededSeqRanges,
+      primaryWorkerId: primaryConversationWorkerId,
       workerOrder: conversationTranscript.workerIds,
     }),
     [
@@ -974,6 +974,7 @@ const ConversationMain = memo(function ConversationMain({
       conversationTranscript.workerIds,
       directWorkerStream.entries,
       supersededSeqRanges,
+      primaryConversationWorkerId,
     ],
   );
   // Only the runtime owns a promise that can consume an answer. Stream rows
@@ -1604,9 +1605,9 @@ const ConversationMain = memo(function ConversationMain({
             ))}
           </div>
         ) : null}
-        {/* The composer's workspace pill floats at -top-5, so the heading needs
-            clearance below it on the breakpoints where that pill is visible. */}
-        <h1 className="mx-auto mb-8 w-full max-w-3xl px-6 text-[1.7rem] font-semibold leading-tight sm:mb-14">What shall we build in {welcomeRepoName}?</h1>
+        {/* Lift the heading on compact layouts so the gap above the composer is
+            visible without changing the composer's position. */}
+        <h1 className="mx-auto mb-8 w-full max-w-3xl -translate-y-8 px-6 text-[1.7rem] font-semibold leading-tight sm:mb-14 sm:translate-y-0">What shall we build in {welcomeRepoName}?</h1>
         {emptyComposer}
       </div>
     )}

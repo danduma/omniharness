@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   deriveConversationLoadState,
   isWorkerStreamCaughtUp,
+  resolveConversationRanOnMultipleWorkers,
   resolveDirectWorkerStreamRefreshInterval,
   selectDirectConversationEntries,
   shouldShowDirectConversationLoading,
@@ -35,6 +36,13 @@ function entry(seq: number): WorkerEntry {
 }
 
 describe("shouldShowDirectWorkerStreamInitialLoading", () => {
+  it("uses the current worker snapshot before a stale transcript refresh learns about the replacement worker", () => {
+    expect(resolveConversationRanOnMultipleWorkers({
+      transcriptWorkerIds: ["worker-1"],
+      snapshotWorkerIds: ["worker-1", "worker-2"],
+    })).toBe(true);
+  });
+
   it("derives a deterministic full-load state from snapshot and worker stream facts", () => {
     expect(deriveConversationLoadState({
       snapshotLoaded: false,
@@ -172,6 +180,37 @@ describe("shouldShowDirectWorkerStreamInitialLoading", () => {
     ]);
   });
 
+  it("drops cached transcript entries a rewind superseded after they were paged in", () => {
+    const supersededTranscriptEntry = {
+      ...entry(3),
+      id: "stale-api-error",
+      text: "API Error: model not supported",
+      workerId: "worker-1",
+    };
+    const otherWorkerEntryAtSameSeq = {
+      ...entry(3),
+      id: "other-worker-output",
+      text: "unrelated worker output",
+      workerId: "worker-2",
+    };
+    const retriedEntry = {
+      ...entry(200),
+      id: "retried-output",
+      text: "retried turn output",
+      workerId: "worker-1",
+    };
+
+    expect(selectDirectConversationEntries({
+      transcriptEntries: [supersededTranscriptEntry, otherWorkerEntryAtSameSeq, retriedEntry],
+      directWorkerEntries: [],
+      supersededSeqRanges: [{ from: 2, through: 161 }],
+      primaryWorkerId: "worker-1",
+    }).map((item) => item.id)).toEqual([
+      "other-worker-output",
+      "retried-output",
+    ]);
+  });
+
   it("does not block rendering when the stream request failed", () => {
     expect(shouldShowDirectWorkerStreamInitialLoading({
       unifiedWorkerStreamEnabled: true,
@@ -199,14 +238,14 @@ describe("shouldShowDirectWorkerStreamInitialLoading", () => {
     }))).toBe(false);
   });
 
-  it("keeps selected direct worker streams on a validation refresh after work looks idle", () => {
+  it("rate-limits selected worker validation polls because SSE supplies live wake-ups", () => {
     expect(resolveDirectWorkerStreamRefreshInterval({
       unifiedWorkerStreamEnabled: true,
       primaryConversationWorkerId: "worker-1",
       activeRefreshIntervalMs: 2_000,
       validationIntervalMs: 5_000,
       showDirectControlWorkingIndicator: true,
-    })).toBe(2_000);
+    })).toBe(30_000);
 
     expect(resolveDirectWorkerStreamRefreshInterval({
       unifiedWorkerStreamEnabled: true,
@@ -214,7 +253,7 @@ describe("shouldShowDirectWorkerStreamInitialLoading", () => {
       activeRefreshIntervalMs: 2_000,
       validationIntervalMs: 5_000,
       showDirectControlWorkingIndicator: false,
-    })).toBe(5_000);
+    })).toBe(60_000);
 
     expect(resolveDirectWorkerStreamRefreshInterval({
       unifiedWorkerStreamEnabled: true,
@@ -231,7 +270,7 @@ describe("shouldShowDirectWorkerStreamInitialLoading", () => {
       validationIntervalMs: 5_000,
       showDirectControlWorkingIndicator: false,
       selectedRunIsTerminal: true,
-    })).toBe(5_000);
+    })).toBe(60_000);
   });
 
 

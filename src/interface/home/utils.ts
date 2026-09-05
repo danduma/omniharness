@@ -47,8 +47,13 @@ export function shouldClearMissingSelectedRunFromAuthoritativeSnapshot(args: {
     args.selectedRunId
     && !args.selectedRunExists
     && args.snapshotSource === "server"
-    && args.catalogComplete === true
-    && args.snapshotRunId !== args.selectedRunId,
+    && (
+      args.catalogComplete === true
+      || (
+        args.catalogComplete === false
+        && args.snapshotRunId === args.selectedRunId
+      )
+    ),
   );
 }
 

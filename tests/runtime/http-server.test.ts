@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import os from "os";
 import path from "path";
 import crypto from "node:crypto";
-import { constants as zlibConstants, createGzip } from "node:zlib";
+import { constants as zlibConstants, createGunzip, createGzip } from "node:zlib";
 import { createBoundedByteStream } from "@/runtime/http/bounded-byte-stream";
 import { createOmniHttpRegistry } from "@/runtime/http/registry";
 import { startOmniHttpServer, type OmniHttpServerHandle } from "@/runtime/http/server";
@@ -48,6 +48,183 @@ describe("startOmniHttpServer", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
     expect(handle.getPort()).toBeGreaterThan(0);
+  });
+
+  it("compresses large JSON responses when the client accepts gzip", async () => {
+    const payload = { rows: Array.from({ length: 2_000 }, (_, index) => ({ index, status: "running" })) };
+    const registry = createOmniHttpRegistry()
+      .route("GET", "/api/large", () => Response.json(payload));
+
+    handle = await startOmniHttpServer({
+      host: "127.0.0.1",
+      port: 0,
+      surface: "test",
+      registry,
+    });
+
+    const response = await new Promise<IncomingMessage>((resolve, reject) => {
+      const request = http.get(`${handle!.origin}/api/large`, {
+        headers: { "accept-encoding": "gzip" },
+      }, resolve);
+      request.once("error", reject);
+    });
+    const chunks: Buffer[] = [];
+    response.on("data", (chunk: Buffer) => chunks.push(chunk));
+    await new Promise<void>((resolve, reject) => {
+      response.once("end", resolve);
+      response.once("error", reject);
+    });
+    const compressed = Buffer.concat(chunks);
+    const gunzip = createGunzip();
+    const decoded: Buffer[] = [];
+    gunzip.on("data", (chunk: Buffer) => decoded.push(chunk));
+    gunzip.end(compressed);
+    await new Promise<void>((resolve, reject) => {
+      gunzip.once("end", resolve);
+      gunzip.once("error", reject);
+    });
+
+    expect(response.headers["content-encoding"]).toBe("gzip");
+    expect(response.headers.vary).toContain("Accept-Encoding");
+    expect(compressed.byteLength).toBeLessThan(Buffer.byteLength(JSON.stringify(payload)) / 4);
+    expect(JSON.parse(Buffer.concat(decoded).toString("utf8"))).toEqual(payload);
+  });
+
+  it("honors explicit gzip exclusions and varies compressible identity responses", async () => {
+    const registry = createOmniHttpRegistry()
+      .route("GET", "/api/large", () => Response.json({ value: "repeated ".repeat(1_000) }));
+
+    handle = await startOmniHttpServer({
+      host: "127.0.0.1",
+      port: 0,
+      surface: "test",
+      registry,
+    });
+
+    for (const acceptEncoding of ["gzip;q=0.0", "gzip;q=0, *;q=1"]) {
+      const response = await new Promise<IncomingMessage>((resolve, reject) => {
+        const request = http.get(`${handle!.origin}/api/large`, {
+          headers: { "accept-encoding": acceptEncoding },
+        }, resolve);
+        request.once("error", reject);
+      });
+      response.resume();
+      await new Promise<void>((resolve, reject) => {
+        response.once("end", resolve);
+        response.once("error", reject);
+      });
+
+      expect(response.headers["content-encoding"]).toBeUndefined();
+      expect(response.headers.vary).toContain("Accept-Encoding");
+    }
+  });
+
+  it("gzip-compresses SSE while keeping the first frame immediately readable", async () => {
+    const encoder = new TextEncoder();
+    const largeFrame = `data: ${"same repeated state ".repeat(20_000)}\n\n`;
+    const registry = createOmniHttpRegistry()
+      .route("GET", "/api/compressed-stream", () => new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(largeFrame));
+          setTimeout(() => {
+            controller.enqueue(encoder.encode("data: second\n\n"));
+            controller.close();
+          }, 250);
+        },
+      }), {
+        headers: { "content-type": "text/event-stream" },
+      }));
+
+    handle = await startOmniHttpServer({
+      host: "127.0.0.1",
+      port: 0,
+      surface: "test",
+      registry,
+    });
+
+    const startedAt = performance.now();
+    const response = await fetch(`${handle.origin}/api/compressed-stream`, {
+      headers: { "accept-encoding": "gzip" },
+    });
+    const headersElapsedMs = performance.now() - startedAt;
+    const reader = response.body!.getReader();
+    let decoded = "";
+    while (!decoded.endsWith("\n\n")) {
+      const chunk = await reader.read();
+      expect(chunk.done).toBe(false);
+      decoded += new TextDecoder().decode(chunk.value);
+    }
+
+    expect(response.headers.get("content-encoding")).toBe("gzip");
+    expect(headersElapsedMs).toBeLessThan(150);
+    expect(decoded).toBe(largeFrame);
+    let secondFrame = "";
+    while (!secondFrame.endsWith("\n\n")) {
+      const chunk = await reader.read();
+      expect(chunk.done).toBe(false);
+      secondFrame += new TextDecoder().decode(chunk.value);
+    }
+    expect(secondFrame).toBe("data: second\n\n");
+    await reader.cancel();
+  });
+
+  it("settles a gzip stream disconnect without an uncaught error and keeps serving", async () => {
+    const encoder = new TextEncoder();
+    const cancelled = vi.fn();
+    const uncaught: unknown[] = [];
+    const unhandled: unknown[] = [];
+    const onUncaught = (error: unknown) => uncaught.push(error);
+    const onUnhandled = (error: unknown) => unhandled.push(error);
+    process.prependListener("uncaughtException", onUncaught);
+    process.prependListener("unhandledRejection", onUnhandled);
+    const registry = createOmniHttpRegistry()
+      .route("GET", "/api/compressed-disconnect", () => new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(`data: ${"streaming ".repeat(20_000)}\n\n`));
+        },
+        cancel() {
+          cancelled();
+        },
+      }), {
+        headers: { "content-type": "text/event-stream" },
+      }))
+      .route("GET", "/api/health-after-disconnect", () => Response.json({ ok: true }));
+
+    try {
+      handle = await startOmniHttpServer({
+        host: "127.0.0.1",
+        port: 0,
+        surface: "test",
+        registry,
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        const request = http.get(`${handle!.origin}/api/compressed-disconnect`, {
+          headers: { "accept-encoding": "gzip" },
+        }, (response) => {
+          // Disconnect as soon as compressed headers arrive, before the gzip
+          // async iterator necessarily owns its error listener. This was the
+          // narrow window that crashed the runner in session 76d5d121fe24.
+          response.destroy();
+          resolve();
+          response.once("error", (error) => {
+            if ((error as NodeJS.ErrnoException).code !== "ECONNRESET") reject(error);
+          });
+        });
+        request.once("error", reject);
+      });
+
+      await vi.waitFor(() => expect(cancelled).toHaveBeenCalledTimes(1));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const health = await fetch(`${handle.origin}/api/health-after-disconnect`);
+
+      await expect(health.json()).resolves.toEqual({ ok: true });
+      expect(uncaught).toEqual([]);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("uncaughtException", onUncaught);
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 
   it("serves staged renderer assets without routing them through the API registry", async () => {

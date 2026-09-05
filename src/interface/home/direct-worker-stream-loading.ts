@@ -1,7 +1,7 @@
 import type { WorkerStreamState } from "./WorkerEntriesManager";
 import { coalesceWorkerEntriesById } from "./WorkerEntriesManager";
 import type { WorkerEntry } from "@/shared/worker-entries";
-import { withoutSupersededEntries, type SupersededSeqRange } from "@/lib/superseded-entries";
+import { isSupersededSeq, withoutSupersededEntries, type SupersededSeqRange } from "@/lib/superseded-entries";
 
 export type ConversationLoadState = {
   snapshotLoaded: boolean;
@@ -67,6 +67,18 @@ export function shouldShowDirectConversationLoading(args: ConversationLoadState)
   );
 }
 
+export function resolveConversationRanOnMultipleWorkers(args: {
+  transcriptWorkerIds: ReadonlyArray<string>;
+  snapshotWorkerIds: ReadonlyArray<string>;
+}): boolean | undefined {
+  const workerIds = new Set([
+    ...args.transcriptWorkerIds,
+    ...args.snapshotWorkerIds,
+  ].filter(Boolean));
+
+  return workerIds.size > 0 ? workerIds.size > 1 : undefined;
+}
+
 export function selectDirectConversationEntries<T extends WorkerEntry>(args: {
   transcriptEntries: T[];
   directWorkerEntries: T[];
@@ -76,21 +88,34 @@ export function selectDirectConversationEntries<T extends WorkerEntry>(args: {
   // here before the two sources are merged — otherwise the rewound turn walks
   // straight back into the conversation.
   supersededSeqRanges?: SupersededSeqRange[];
+  // The worker `supersededSeqRanges` belongs to. Transcript entries for this
+  // worker are re-filtered here even though the server already drops them:
+  // the client's transcript cache only pages forward, so entries fetched
+  // before a rewind stay in memory carrying seqs the rewind later superseded.
+  primaryWorkerId?: string | null;
   // The run's workers in creation order, so a message that exists on more than
   // one of them is placed where the newest worker has it.
   workerOrder?: ReadonlyArray<string>;
 }) {
+  const supersededSeqRanges = args.supersededSeqRanges ?? [];
   const directWorkerEntries = withoutSupersededEntries(
     args.directWorkerEntries,
-    args.supersededSeqRanges ?? [],
+    supersededSeqRanges,
   );
+  const transcriptEntries = args.primaryWorkerId && supersededSeqRanges.length > 0
+    ? args.transcriptEntries.filter((entry) => {
+      const workerId = (entry as T & { workerId?: unknown }).workerId;
+      return workerId !== args.primaryWorkerId
+        || !isSupersededSeq(entry.seq, supersededSeqRanges);
+    })
+    : args.transcriptEntries;
 
-  if (args.transcriptEntries.length === 0) {
+  if (transcriptEntries.length === 0) {
     return directWorkerEntries;
   }
 
   return coalesceWorkerEntriesById([
-    ...args.transcriptEntries,
+    ...transcriptEntries,
     ...directWorkerEntries,
   ], args.workerOrder ?? []) as T[];
 }
@@ -107,7 +132,12 @@ export function resolveDirectWorkerStreamRefreshInterval(args: {
     return null;
   }
 
+  // `worker.entry_appended` SSE frames fetch new content immediately. These
+  // timers are only a safety net for a missed wake-up, so keep them out of the
+  // packet hot path on mobile connections.
+  const minimumActiveRefreshIntervalMs = 30_000;
+  const minimumValidationIntervalMs = 60_000;
   return args.showDirectControlWorkingIndicator
-    ? args.activeRefreshIntervalMs
-    : args.validationIntervalMs;
+    ? Math.max(args.activeRefreshIntervalMs, minimumActiveRefreshIntervalMs)
+    : Math.max(args.validationIntervalMs, minimumValidationIntervalMs);
 }
