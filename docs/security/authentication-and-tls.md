@@ -105,3 +105,24 @@ Forwarded client/protocol headers are accepted only from
 route-aware, never enables credentialed wildcard requests, and never turns the
 password endpoint into an open cross-origin login API. Browser-to-browser login
 must use the approval/PKCE flow.
+
+## Filesystem roots
+
+`/api/fs`, `/api/fs/directories`, and `/api/fs/files` browse, create in, and read
+from an allowlist of directory trees. The default is the parent of the runner's
+working directory. `OMNIHARNESS_FS_ROOTS` replaces that default with a
+`path.delimiter`-separated list, which is how a project on a second drive becomes
+reachable:
+
+```
+OMNIHARNESS_FS_ROOTS=/Users/you/code:/Volumes/External/code
+```
+
+Every root is a full read surface for anyone holding a session — the project file
+walker descends into `.env` on purpose — so list the trees you keep code in
+rather than `/`. Paths outside every root are clamped back to the first readable
+root instead of being served. Directory creation resolves symlinks and rechecks
+containment against the canonical path, so a pre-existing link inside a root
+cannot redirect a `mkdir` outside it. A root that is not mounted stays in the
+allowlist and is reported to the folder picker as unavailable; it does not
+silently drop out and reroute the caller.

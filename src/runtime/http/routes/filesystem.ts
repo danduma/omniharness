@@ -3,12 +3,13 @@ import path from "path";
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { emitNamedEvent } from "@/server/events/named-events";
+import {
+  describeAllowedRoots,
+  findAllowedRootFor,
+  getDefaultAllowedRoot,
+} from "@/server/fs/allowed-roots";
 import { isPathInside, listProjectFiles, readProjectTextFile } from "@/server/fs/files";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-
-function getAllowedRoot() {
-  return path.resolve(process.cwd(), "..");
-}
 
 class InvalidDirectoryCreationRequestError extends Error {
   constructor(message: string) {
@@ -29,9 +30,11 @@ function getDirectoryCreationErrorStatus(error: unknown) {
 }
 
 function resolveInsideAllowedRoot(rawPath: string | null) {
-  const rootPath = getAllowedRoot();
-  const resolvedPath = path.resolve(rawPath || rootPath);
-  return isPathInside(rootPath, resolvedPath) ? resolvedPath : rootPath;
+  if (!rawPath) {
+    return getDefaultAllowedRoot();
+  }
+  const resolvedPath = path.resolve(rawPath);
+  return findAllowedRootFor(resolvedPath) ? resolvedPath : getDefaultAllowedRoot();
 }
 
 function resolveDirectoryCreation(parentPath: unknown, name: unknown) {
@@ -55,9 +58,9 @@ function resolveDirectoryCreation(parentPath: unknown, name: unknown) {
     throw new InvalidDirectoryCreationRequestError("Folder name must be a single folder name without path separators.");
   }
 
-  const rootPath = getAllowedRoot();
   const resolvedParentPath = path.resolve(parentPath);
-  if (!isPathInside(rootPath, resolvedParentPath)) {
+  const rootPath = findAllowedRootFor(resolvedParentPath);
+  if (!rootPath) {
     throw new InvalidDirectoryCreationRequestError("Parent folder is outside the allowed filesystem root.");
   }
 
@@ -95,8 +98,8 @@ export const handleBrowseFilesystemRequest: OmniHttpHandler = async (request) =>
     }
 
     const url = new URL(request.url);
-    const rootPath = getAllowedRoot();
     const dirPath = resolveInsideAllowedRoot(url.searchParams.get("path"));
+    const rootPath = findAllowedRootFor(dirPath);
 
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
     const directories = entries
@@ -105,11 +108,13 @@ export const handleBrowseFilesystemRequest: OmniHttpHandler = async (request) =>
       .sort((a, b) => a.name.localeCompare(b.name));
 
     const parentPath = path.dirname(dirPath);
-    const parent = isPathInside(rootPath, parentPath) ? parentPath : dirPath;
+    const parent = rootPath && isPathInside(rootPath, parentPath) ? parentPath : dirPath;
 
     return Response.json({
       current: dirPath,
       parent,
+      root: rootPath,
+      roots: describeAllowedRoots(),
       directories,
     });
   } catch (error) {
