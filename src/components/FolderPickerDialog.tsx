@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Folder, ArrowUpCircle, FolderPlus, Loader2 } from "lucide-react";
+import { Folder, ArrowUpCircle, FolderPlus, HardDrive, Loader2 } from "lucide-react";
 import { normalizeAppError } from "@/lib/app-errors";
 import { folderPickerManager } from "@/components/component-state-managers";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
@@ -42,6 +42,8 @@ export function FolderPickerDialog({
       runtimeApis.files.browse({ path: currentPath }, { signal }) as Promise<{
         current: string;
         parent: string;
+        root: string | null;
+        roots: Array<{ path: string; available: boolean }>;
         directories: Array<{ name: string; path: string }>;
       }>
     ),
@@ -62,6 +64,8 @@ export function FolderPickerDialog({
       );
     },
   });
+
+  const roots = data?.roots ?? [];
 
   const directories = useMemo(() => {
     const items = data?.directories ?? [];
@@ -189,6 +193,32 @@ export function FolderPickerDialog({
               <div className="mt-1 text-xs text-foreground">{normalizeAppError(error).message}</div>
             </div>
           ) : null}
+          {roots.length > 1 && (
+            <div className="mb-2 space-y-1 border-b pb-2">
+              <div className="px-2 pb-1 text-[11px] font-medium text-muted-foreground">
+                {t("folder.picker.rootsLabel")}
+              </div>
+              {roots.map((root) => (
+                <Button
+                  key={root.path}
+                  data-root-path={root.path}
+                  variant={root.path === data?.root ? "secondary" : "ghost"}
+                  className="h-8 w-full justify-start px-2 text-sm"
+                  disabled={!root.available}
+                  title={root.available ? root.path : t("folder.picker.rootUnavailable")}
+                  onClick={() => handleNavigate(root.path)}
+                >
+                  <HardDrive className="mr-2 h-4 w-4 shrink-0 text-primary/70" aria-hidden="true" />
+                  <span className="truncate">{root.path}</span>
+                  {!root.available && (
+                    <span className="ml-auto shrink-0 pl-2 text-[11px] text-muted-foreground">
+                      {t("folder.picker.rootUnavailable")}
+                    </span>
+                  )}
+                </Button>
+              ))}
+            </div>
+          )}
           {data && (
             <div className="space-y-1">
               {data.parent && data.parent !== data.current && (

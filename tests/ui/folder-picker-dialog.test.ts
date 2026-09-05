@@ -57,3 +57,16 @@ test("folder picker cannot select until the navigated folder is loaded", () => {
   expect(dialogSource).toContain("disabled={!data?.current");
   expect(dialogSource).toContain("if (!data?.current) return;");
 });
+
+test("folder picker switches between allowed roots once more than one is configured", () => {
+  expect(dialogSource).toContain("const roots = data?.roots ?? [];");
+  expect(dialogSource).toContain("{roots.length > 1 && (");
+  expect(dialogSource).toContain('t("folder.picker.rootsLabel")');
+  expect(dialogSource).toContain("onClick={() => handleNavigate(root.path)}");
+  expect(dialogSource).toContain("data-root-path={root.path}");
+});
+
+test("folder picker marks an unreachable root instead of offering it", () => {
+  expect(dialogSource).toContain("disabled={!root.available}");
+  expect(dialogSource).toContain('t("folder.picker.rootUnavailable")');
+});
