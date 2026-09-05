@@ -1,11 +1,13 @@
 import type { HomeBootstrapPayload } from "@/shared/bootstrap";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
+import { DEFAULT_SERVER_SETTINGS } from "./constants";
 import { homeUiStateManager } from "./HomeUiStateManager";
 import { planningReviewPreferencesManager } from "./PlanningReviewPreferencesManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
 import { parseBrowserConversationRoute } from "./utils";
 
 let appliedHomeBootstrapId: string | null = null;
+let appliedRunnerInstanceId: string | null = null;
 
 export function applyHomeBootstrap(
   bootstrap: HomeBootstrapPayload | null | undefined,
@@ -22,7 +24,18 @@ export function applyHomeBootstrap(
   const routeSelectedRunId = browserRoute.selectedRunId;
   const settingsValues = bootstrap.initialQueries.settings?.values ?? {};
 
-  if (bootstrap.initialQueries.settings) {
+  // Settings are per server, and a server only reports the keys it actually
+  // stores. Merging a new server's settings over the previous server's leaves
+  // every key the new one never saved — the project list above all — reading as
+  // if it belonged to the server now on screen. Arriving from a different
+  // server is therefore a replacement, not an update. A reconnect to the same
+  // server stays a merge, so a bootstrap that arrives without settings (an
+  // unauthenticated or degraded reply) cannot blank out live state.
+  const runnerChanged = appliedRunnerInstanceId !== null
+    && appliedRunnerInstanceId !== bootstrap.runner.runnerInstanceId;
+  appliedRunnerInstanceId = bootstrap.runner.runnerInstanceId;
+
+  if (bootstrap.initialQueries.settings || runnerChanged) {
     settingsDraftManager.hydrate(settingsValues, notify);
     planningReviewPreferencesManager.hydrate(settingsValues);
   }
@@ -33,8 +46,12 @@ export function applyHomeBootstrap(
     selectedRunId: routeSelectedRunId,
     draftProjectPath: routeSelectedRunId ? null : browserRoute.draftProjectPath,
     pairTokenFromUrl: browserRoute.pairTokenFromUrl,
-    apiKeys: { ...current.apiKeys, ...settingsValues },
-    settingsDiagnostics: bootstrap.initialQueries.settings?.diagnostics ?? current.settingsDiagnostics,
+    apiKeys: runnerChanged
+      ? { ...DEFAULT_SERVER_SETTINGS, ...settingsValues }
+      : { ...current.apiKeys, ...settingsValues },
+    settingsDiagnostics: runnerChanged
+      ? bootstrap.initialQueries.settings?.diagnostics ?? []
+      : bootstrap.initialQueries.settings?.diagnostics ?? current.settingsDiagnostics,
   }), notify);
 
   const initialSnapshotRunId = bootstrap.initialEventState?.snapshotRunId?.trim();
