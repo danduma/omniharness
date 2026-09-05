@@ -93,14 +93,14 @@ export class WorkerPool {
   private maxPerKey = 1;
   private maxTotal = Number.POSITIVE_INFINITY;
 
-  add(member: WorkerPoolMember): void {
+  add(member: WorkerPoolMember): boolean {
     if (member.accountId && this.fencedAccounts.has(member.accountId)) {
       this.disposeMember(member);
-      return;
+      return false;
     }
     if (!this.isAlive(member)) {
       this.disposeMember(member);
-      return;
+      return false;
     }
     // Defense-in-depth cap enforcement. tryBeginWarm is the primary gate;
     // here we only consider materialized members. Including in-flight in this
@@ -118,6 +118,7 @@ export class WorkerPool {
       this.removeMemberInstance(member);
     };
     member.child.once("exit", exitHandler);
+    return true;
   }
 
   checkout(key: string): WorkerPoolMember | null {

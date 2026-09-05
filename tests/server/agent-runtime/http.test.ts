@@ -103,6 +103,17 @@ process.stdin.on('data', (chunk) => {
           OMNIHARNESS_INSTANCE: process.env.OMNIHARNESS_INSTANCE || null,
           OMNIHARNESS_BRIDGE_URL: process.env.OMNIHARNESS_BRIDGE_URL || null,
         },
+        ambientCodexEnv: {
+          CODEX_HOME: process.env.CODEX_HOME || null,
+          CODEX_SQLITE_HOME: process.env.CODEX_SQLITE_HOME || null,
+          CODEX_THREAD_ID: process.env.CODEX_THREAD_ID || null,
+          CODEX_CI: process.env.CODEX_CI || null,
+          CODEX_MANAGED_CONFIG_PATH: process.env.CODEX_MANAGED_CONFIG_PATH || null,
+          CODEX_MANAGED_PACKAGE_ROOT: process.env.CODEX_MANAGED_PACKAGE_ROOT || null,
+          CODEX_PATH: process.env.CODEX_PATH || null,
+          CODEX_MANAGED_BY_NPM: process.env.CODEX_MANAGED_BY_NPM || null,
+          CODEX_LOG_STDERR: process.env.CODEX_LOG_STDERR || null,
+        },
         selectedEnv: {
           ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || null,
           ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN || null,
@@ -969,6 +980,17 @@ exec /bin/sh "$@"
       OMNIHARNESS_ROOT: null,
       OMNIHARNESS_INSTANCE: null,
       OMNIHARNESS_BRIDGE_URL: null,
+    });
+    expect(initialize.ambientCodexEnv).toEqual({
+      CODEX_HOME: null,
+      CODEX_SQLITE_HOME: null,
+      CODEX_THREAD_ID: null,
+      CODEX_CI: null,
+      CODEX_MANAGED_CONFIG_PATH: null,
+      CODEX_MANAGED_PACKAGE_ROOT: null,
+      CODEX_PATH: null,
+      CODEX_MANAGED_BY_NPM: null,
+      CODEX_LOG_STDERR: null,
     });
     expect(sessionNew.params.mcpServers).toEqual([
       {

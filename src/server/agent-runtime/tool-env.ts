@@ -129,6 +129,13 @@ const RUNNER_CONTROL_ENV_KEYS = [
   "OMNIHARNESS_RUNNER_PORT",
   "OMNIHARNESS_STATIC_DIR",
 ] as const;
+const CODEX_SESSION_ENV_MARKER_KEYS = [
+  "CODEX_THREAD_ID",
+  "CODEX_CI",
+  "CODEX_MANAGED_CONFIG_PATH",
+  "CODEX_MANAGED_PACKAGE_ROOT",
+  "CODEX_MANAGED_BY_NPM",
+] as const;
 
 const CODEX_STANDARD_TOOL_CONFIG = `[features]
 apply_patch_freeform = true
@@ -574,6 +581,33 @@ export function stripRunnerControlEnv<T extends EnvLike>(env: T): T {
   const sanitized = { ...env };
   for (const key of RUNNER_CONTROL_ENV_KEYS) {
     delete sanitized[key];
+  }
+  return sanitized;
+}
+
+/**
+ * A worker may itself be launched from inside Codex (for example, a Claude
+ * worker running `codex exec` for a second opinion). Codex exports session
+ * identity, storage, and launcher variables into its child process. Passing
+ * those through would make the nested CLI attach to or contend with the
+ * parent session instead of starting an independent invocation.
+ *
+ * Only an environment that carries a Codex session marker is treated as
+ * ambient. This preserves deliberately configured CODEX_HOME values in a
+ * normal server environment; worker-specific env overrides are merged after
+ * this boundary is applied.
+ */
+export function stripAmbientCodexSessionEnv<T extends EnvLike>(env: T): T {
+  const hasSessionMarker = CODEX_SESSION_ENV_MARKER_KEYS.some((key) => Boolean(env[key]?.trim()));
+  if (!hasSessionMarker) {
+    return { ...env };
+  }
+
+  const sanitized = { ...env };
+  for (const key of Object.keys(sanitized)) {
+    if (key.startsWith("CODEX_")) {
+      delete sanitized[key];
+    }
   }
   return sanitized;
 }
