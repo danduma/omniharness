@@ -58,7 +58,8 @@ interface ConversationComposerProps {
   activeWorkerModelOptions: WorkerModelOption[];
   selectedEffort: string;
   setSelectedEffort: (value: string) => void;
-  isComposerSubmitting: boolean;
+  isComposerSendBusy: boolean;
+  isComposerSubmitBlocked: boolean;
   isStopConversationPending: boolean;
   isConversationStoppable: boolean;
   composerBehavior: BusyComposerBehavior;
@@ -126,7 +127,8 @@ function ConversationComposerInner({
   activeWorkerModelOptions,
   selectedEffort,
   setSelectedEffort,
-  isComposerSubmitting,
+  isComposerSendBusy,
+  isComposerSubmitBlocked,
   isStopConversationPending,
   isConversationStoppable,
   composerBehavior,
@@ -153,11 +155,16 @@ function ConversationComposerInner({
   const isFileDragActive = fileDragDepth > 0;
   const isStopButtonVisible = composerBehavior.buttonKind === "stop";
   const showSeparateStopButton = isConversationStoppable && !isStopButtonVisible;
-  const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;
+  // A send already in flight is a spinner, never a lock. The transport can stay
+  // pending for a whole worker turn, and blocking the composer on it meant the
+  // next message could not even be typed, let alone sent. Only the conditions
+  // that would make a second submit *wrong* (no run id yet, plan promotion,
+  // stop) block one.
+  const isSendButtonBusy = isComposerSendBusy && !isStopButtonVisible;
   const isStopButtonBusy = isStopButtonVisible && isStopConversationPending;
   const isSubmitButtonDisabled = isStopButtonVisible
     ? isStopConversationPending
-    : isComposerSubmitting || (!trimmedCommand && !hasAttachments);
+    : isComposerSubmitBlocked || (!trimmedCommand && !hasAttachments);
   const alternateSubmitShortcutLabel = getComposerSubmitShortcutLabel(isAppleComposerShortcutPlatform());
   const sendButtonAriaLabel = t(composerBehavior.ariaLabelKey);
   const sendButtonTitle = composerBehavior.submitAction === "send_queue"
@@ -268,7 +275,7 @@ function ConversationComposerInner({
             <div className="pointer-events-auto rounded-full border border-border/70 bg-background/95 shadow-sm backdrop-blur-sm dark:bg-[#2f2f2f]/95">
               <BranchWorkspaceButton
                 projectPath={workspaceProjectPath}
-                disabled={isComposerSubmitting}
+                disabled={isComposerSubmitBlocked}
                 themeMode={themeMode}
               />
             </div>
@@ -288,7 +295,7 @@ function ConversationComposerInner({
               return;
             }
             event.preventDefault();
-            event.dataTransfer.dropEffect = isComposerSubmitting ? "none" : "copy";
+            event.dataTransfer.dropEffect = isComposerSubmitBlocked ? "none" : "copy";
           }}
           onDragLeave={(event) => {
             const relatedTarget = event.relatedTarget;
@@ -299,7 +306,7 @@ function ConversationComposerInner({
           onDrop={(event) => {
             event.preventDefault();
             composerUiManager.clearFileDrag();
-            if (isComposerSubmitting) {
+            if (isComposerSubmitBlocked) {
               return;
             }
             const files = Array.from(event.dataTransfer.files);
@@ -390,7 +397,7 @@ function ConversationComposerInner({
               const canInterrupt = Boolean(selectedRunId)
                 && isConversationStoppable
                 && !showMentionPicker
-                && !isComposerSubmitting
+                && !isComposerSubmitBlocked
                 && !isStopConversationPending
                 && (hasDraft || hasPendingQueued);
               if (canInterrupt) {
@@ -420,7 +427,7 @@ function ConversationComposerInner({
                 return;
               }
 
-              if (!isComposerSubmitting && (trimmedCommand || hasAttachments)) {
+              if (!isComposerSubmitBlocked && (trimmedCommand || hasAttachments)) {
                 if (selectedRunId && !hasAttachments && isManualStopCommand(command)) {
                   setComposerDraft({ command: "", commandCursor: 0 });
                   onStopConversation();
@@ -440,7 +447,6 @@ function ConversationComposerInner({
             }
           }}
           placeholder={composerPlaceholder}
-          disabled={isComposerSubmitting}
           rows={1}
           className={cn(
             "omni-composer-input w-full resize-none bg-transparent outline-none",
@@ -544,7 +550,7 @@ function ConversationComposerInner({
             activeWorkerModelOptions={activeWorkerModelOptions}
             selectedEffort={selectedEffort}
             setSelectedEffort={setSelectedEffort}
-            disabled={isComposerSubmitting}
+            disabled={isComposerSubmitBlocked}
             settingsOpen={mobileSettingsOpen}
             onSettingsOpenChange={composerUiManager.setMobileSettingsOpen}
           />

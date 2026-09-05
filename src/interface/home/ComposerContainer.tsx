@@ -67,7 +67,8 @@ export interface ComposerContainerProps {
   activeWorkerModelOptions: WorkerModelOption[];
   selectedEffort: string;
   setSelectedEffort: (value: string) => void;
-  isComposerSubmitting: boolean;
+  isComposerSendBusy: boolean;
+  isComposerSubmitBlocked: boolean;
   isStopConversationPending: boolean;
   isConversationStoppable: boolean;
   hasBusyConversation: boolean;
@@ -111,7 +112,8 @@ function ComposerContainerInner({
   activeWorkerModelOptions,
   selectedEffort,
   setSelectedEffort,
-  isComposerSubmitting,
+  isComposerSendBusy,
+  isComposerSubmitBlocked,
   isStopConversationPending,
   isConversationStoppable,
   hasBusyConversation,
@@ -290,7 +292,8 @@ function ComposerContainerInner({
       activeWorkerModelOptions={activeWorkerModelOptions}
       selectedEffort={selectedEffort}
       setSelectedEffort={setSelectedEffort}
-      isComposerSubmitting={isComposerSubmitting}
+      isComposerSendBusy={isComposerSendBusy}
+      isComposerSubmitBlocked={isComposerSubmitBlocked}
       isStopConversationPending={isStopConversationPending}
       isConversationStoppable={isConversationStoppable}
       composerBehavior={composerBehavior}
