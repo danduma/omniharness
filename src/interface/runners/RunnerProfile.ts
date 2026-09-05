@@ -49,3 +49,41 @@ export function emptyRunnerScopedState(): RunnerScopedState {
     cursors: {},
   };
 }
+
+/**
+ * Is this page served over HTTPS while the server speaks plain HTTP?
+ *
+ * The browser owns this decision, not the page and not the server: an HTTPS
+ * document may not issue requests to an `http://` origin, and no header, flag
+ * or fetch option opts back in. Only the page origin decides, so the native
+ * surfaces stay exempt by passing their own `http://127.0.0.1` origin.
+ */
+export function isInsecureServerFromSecurePage(
+  pageOrigin: string,
+  baseUrl: string,
+) {
+  try {
+    return new URL(pageOrigin).protocol === "https:"
+      && new URL(baseUrl).protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Loopback addresses are potentially trustworthy origins, so browsers exempt
+ * them from mixed-content blocking and `http://localhost` can still answer an
+ * HTTPS page. Every other `http://` address is refused before the request is
+ * ever sent, which is knowable up front rather than only after it fails.
+ */
+export function isMixedContentBlocked(pageOrigin: string, baseUrl: string) {
+  if (!isInsecureServerFromSecurePage(pageOrigin, baseUrl)) {
+    return false;
+  }
+  const host = new URL(baseUrl).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const loopback = host === "localhost"
+    || host.endsWith(".localhost")
+    || host === "::1"
+    || /^127(?:\.\d{1,3}){3}$/.test(host);
+  return !loopback;
+}

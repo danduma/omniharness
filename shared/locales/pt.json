@@ -821,6 +821,7 @@
   "runner.tls.confirm": "Retry connection",
   "runner.identity.confirm": "Accept new identity",
   "runner.error.generic": "The server operation failed. Try again.",
+  "runner.error.insecureServer": "Browsers block an HTTPS page from reaching an http:// server. Use an https:// address for that server.",
   "runner.error.invalidUrl": "Enter a valid HTTP or HTTPS server address.",
   "runner.error.sessions": "Server sessions could not be loaded or changed.",
   "notifications.push.runnerNeedsInput": "{runner} needs input",

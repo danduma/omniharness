@@ -40,6 +40,10 @@ import { isRuntimeTransportFailure } from "@/runtime-api/request";
 import { createWebRuntimeAPIs } from "@/runtime-api/web";
 import { BrowserAuthorizationManager } from "@/interface/auth/BrowserAuthorizationManager";
 import {
+  isInsecureServerFromSecurePage,
+  isMixedContentBlocked,
+} from "./RunnerProfile";
+import {
   useOptionalRunnerRegistryContext,
   useRunnerConnections,
 } from "./RunnerRegistryProvider";
@@ -120,6 +124,11 @@ function ConnectedRunnerControls({
   const authorizeProfile = useCallback(async (profileId: string, password = "") => {
     const profile = context.profileStore.getProfile(profileId);
     if (!profile) return;
+    const pageOrigin = context.profileStore.getLocationOrigin();
+    if (isMixedContentBlocked(pageOrigin, profile.baseUrl)) {
+      context.uiManager.setError("runner.error.insecureServer");
+      return;
+    }
     context.uiManager.setBusy(true);
     try {
       if (profile.isSameOrigin) {
@@ -177,7 +186,16 @@ function ConnectedRunnerControls({
       context.registry.switchActive(profileId);
       context.uiManager.close();
     } catch (error) {
-      context.uiManager.setError(errorCode(error));
+      // A request that never reached a reply against a plain-HTTP server is the
+      // browser refusing to send it, not the server refusing to answer. Loopback
+      // is exempt from mixed-content blocking in most browsers but not all, so
+      // this stays a diagnosis of the failure rather than a rule applied ahead
+      // of it.
+      const blocked = isRuntimeTransportFailure(error)
+        && isInsecureServerFromSecurePage(pageOrigin, profile.baseUrl);
+      context.uiManager.setError(
+        blocked ? "runner.error.insecureServer" : errorCode(error),
+      );
     }
   }, [context]);
 
@@ -210,8 +228,17 @@ function ConnectedRunnerControls({
           context.uiManager.close();
         }
       }
-    } catch {
-      context.uiManager.setError("runner.error.invalidUrl");
+    } catch (error) {
+      // An unparseable address throws a bare `TypeError`, so a rejection with
+      // no code of its own really is a malformed URL. A refusal the store
+      // stated as a `runner.error.*` key keeps its own reason; anything else
+      // is a transport or storage failure this dialog cannot name.
+      const code = errorCode(error);
+      context.uiManager.setError(
+        code.startsWith("runner.error.") && code !== "runner.error.generic"
+          ? code
+          : "runner.error.invalidUrl",
+      );
     }
   }, [authorizeProfile, context, nativeAuthorization]);
 
