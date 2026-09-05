@@ -55,6 +55,38 @@ describe("summarizeHandoffWithTarget", () => {
     });
   });
 
+  it("instructs the summarizer to explain edits and reserve blockers for actual impediments", async () => {
+    await summarizeHandoffWithTarget({
+      handoffId: "handoff-123456789",
+      sourceRunId: "source-run",
+      projectPath: "/project",
+      target: { workerType: "claude", model: "opus", effort: "high", accountId: null },
+      packet,
+    });
+
+    const prompt = String(mockAskAgent.mock.calls[0]?.[1] ?? "");
+    expect(prompt).toContain("successful edit-tool evidence");
+    expect(prompt).toContain("Do not repeat the current objective as progress");
+    expect(prompt).toContain("not a blocker");
+  });
+
+  it("normalizes the summarizer's none sentinel to an empty relevant-file list", async () => {
+    mockAskAgent.mockResolvedValue({
+      response: "```omniharness-handoff\nTASK: Add Safari coverage\nPROGRESS: Confirmed Safari fallback\nNEXT_STEPS: Add regression test\nBLOCKERS: none\nOPEN_QUESTIONS: none\nRELEVANT_FILES: none\n```",
+      state: "idle",
+    });
+
+    const advisory = await summarizeHandoffWithTarget({
+      handoffId: "handoff-123456789",
+      sourceRunId: "source-run",
+      projectPath: "/project",
+      target: { workerType: "claude", model: "opus", effort: "high", accountId: null },
+      packet,
+    });
+
+    expect(advisory.relevantFiles).toEqual([]);
+  });
+
   it("refuses preparation and still stops the temporary CLI when its report is invalid", async () => {
     mockAskAgent.mockResolvedValue({ response: "not a handoff report", state: "idle" });
 

@@ -29,7 +29,7 @@ function baseInput(overrides: Partial<CompileHybridHandoffInput> = {}): CompileH
       queuedMessages: [],
     },
     advisory: {
-      currentObjective: "Wrong summary objective",
+      currentObjective: "Finish the coordinator with lifecycle coverage",
       completed: ["Packet contract drafted"],
       remaining: ["Coordinator"],
       blockers: [],
@@ -43,12 +43,27 @@ function baseInput(overrides: Partial<CompileHybridHandoffInput> = {}): CompileH
 }
 
 describe("compileHybridHandoffPacket", () => {
-  it("lets authoritative facts override advisory narrative", () => {
+  it("uses the grounded summary as the actionable objective while retaining exact user text", () => {
     const packet = compileHybridHandoffPacket(baseInput());
-    expect(packet.task.currentObjective).toBe("Finish the server coordinator");
-    expect(packet.provenance.confidenceWarnings).toContain(
-      "Advisory objective conflicted with authoritative session state and was ignored.",
-    );
+    expect(packet.task.currentObjective).toBe("Finish the coordinator with lifecycle coverage");
+    expect(packet.continuity.recentUserMessages).toEqual(["Continue"]);
+    expect(packet.provenance.confidenceWarnings).toEqual([]);
+  });
+
+  it("does not repeat modified files as relevant unchanged files", () => {
+    const initial = baseInput();
+    const packet = compileHybridHandoffPacket(baseInput({
+      authoritative: {
+        ...initial.authoritative,
+        modifiedFiles: [{ path: "src/export.ts", changeType: "modified", ownership: "session", summary: null, evidence: [] }],
+      },
+      advisory: {
+        ...initial.advisory,
+        relevantFiles: ["src/export.ts", "src/safari.ts", "none"],
+      },
+    }));
+
+    expect(packet.workspace.relevantUnchangedFiles).toEqual(["src/safari.ts"]);
   });
 
   it("produces a stable content hash when only generatedAt changes", () => {
@@ -101,10 +116,29 @@ describe("renderHybridHandoffSeed", () => {
     expect(seed).toContain("## Original request");
     expect(seed).toContain("Implement the handoff");
     expect(seed).toContain("## Current objective");
-    expect(seed).toContain("Finish the server coordinator");
+    expect(seed).toContain("Finish the coordinator with lifecycle coverage");
     expect(seed).toContain("## Remaining work");
     expect(seed).not.toContain('"contentHash"');
     expect(seed).not.toContain('"provenance"');
     expect(seed).not.toContain("<omniharness-handoff-");
+  });
+
+  it("renders each relevant path once and keeps the title on one complete line", () => {
+    const initial = baseInput();
+    const packet = compileHybridHandoffPacket(baseInput({
+      authoritative: {
+        ...initial.authoritative,
+        modifiedFiles: [{ path: "src/export.ts", changeType: "modified", ownership: "session", summary: null, evidence: [] }],
+      },
+      advisory: {
+        ...initial.advisory,
+        currentObjective: "Fix the interrupt path without waiting for the provider turn to finish",
+        relevantFiles: ["src/export.ts"],
+      },
+    }));
+
+    const seed = renderHybridHandoffSeed(packet);
+    expect(seed.split("\n")[0]).toBe("# Continuation brief: Fix the interrupt path without waiting for the provider turn to finish");
+    expect(seed.match(/src\/export\.ts/g)).toHaveLength(1);
   });
 });

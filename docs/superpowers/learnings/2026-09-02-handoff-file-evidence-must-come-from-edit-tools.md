@@ -1,0 +1,10 @@
+# Handoff File Evidence Must Come From Edit Tools
+
+**Date:** 2026-09-02
+**Context:** Cross-CLI handoff packet generation for session `ffdac7e6cc0a`
+**Symptom:** The handoff preview claimed 120 changed files even though the conversation had edited only a small focused set. The same packet showed 20 duplicate or unknown verification records and warned that a normal objective paraphrase conflicted with authoritative state.
+**Root Cause:** Candidate collection used current Git status as a proxy for session ownership. In a shared dirty checkout with no recorded run baseline, every dirty path was labeled a probable session change. Verification collection independently treated each streamed tool progress update as a verification result instead of grouping one tool call through completion.
+**Fix:** Derive changed files exclusively from successful edit/write/patch tool calls found by scanning every complete persisted worker stream in the run, grouped by tool-call identity and restricted to project-relative targets. Git remains only a launch-drift fingerprint. Derive verification from terminal execution tool calls with their actual command, exit status, and output, and treat target-summary objective paraphrases as expected rather than conflicts.
+**Verification:** The original session now resolves to six edit-tool-targeted files and three concrete passing verification commands instead of 120 and 20. Unit coverage includes duplicates, failed edits, external paths, false-positive searches, and failed verification; an integration test places an edit more than 160 records behind the stream tail and confirms it survives packet preparation.
+**Prevention:** A shared checkout can answer what is on disk, but it cannot answer which conversation performed an action. Session provenance must come from the append-only worker stream. When that evidence is absent or incomplete, omit the claim instead of inferring ownership from repository state.
+**Skill/Doc Updates:** The lifecycle architecture now makes edit-tool provenance and the separation from Git drift protection explicit.

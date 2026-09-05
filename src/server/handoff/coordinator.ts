@@ -143,7 +143,9 @@ export function createHandoffCoordinator(dependencies: HandoffCoordinatorDepende
         authoritative: {
           originalRequest: candidates.originalRequest,
           currentObjective: candidates.currentObjective,
-          inProgress: candidates.currentObjective ? [candidates.currentObjective] : [],
+          // The current objective is not evidence that work is actively in
+          // progress. Only persist explicitly observed progress here.
+          inProgress: [],
           modifiedFiles: candidates.workspace.modifiedFiles,
           verification: candidates.verification,
           recentUserMessages: candidates.recentUserMessages,

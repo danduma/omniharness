@@ -104,16 +104,16 @@ function cleanVerification(values: HandoffVerification[]): HandoffVerification[]
 }
 
 export function compileHybridHandoffPacket(input: CompileHybridHandoffInput): HybridHandoffPacketV1 {
-  const warnings: string[] = [];
   const authoritativeObjective = redactHandoffText(input.authoritative.currentObjective, 2_000) || null;
   const advisoryObjective = redactHandoffText(input.advisory.currentObjective, 2_000) || null;
-  if (authoritativeObjective && advisoryObjective && authoritativeObjective !== advisoryObjective) {
-    warnings.push("Advisory objective conflicted with authoritative session state and was ignored.");
-  }
+  const modifiedPaths = new Set(input.authoritative.modifiedFiles
+    .map((file) => sanitizeProjectRelativePath(file.path))
+    .filter((value): value is string => Boolean(value)));
 
   const relevantUnchangedFiles = input.advisory.relevantFiles
     .map(sanitizeProjectRelativePath)
     .filter((value): value is string => Boolean(value))
+    .filter((value) => !modifiedPaths.has(value))
     .sort((left, right) => left.localeCompare(right))
     .slice(0, 40);
 
@@ -127,7 +127,10 @@ export function compileHybridHandoffPacket(input: CompileHybridHandoffInput): Hy
     target: { ...input.target },
     task: {
       originalRequest: redactHandoffText(input.authoritative.originalRequest, 4_000) || null,
-      currentObjective: authoritativeObjective ?? advisoryObjective,
+      // `currentObjective` is the target summarizer's concise, reviewable
+      // interpretation. The exact user-authored request remains authoritative
+      // and verbatim in continuity.recentUserMessages below.
+      currentObjective: advisoryObjective ?? authoritativeObjective,
       acceptanceCriteria: redactHandoffList(input.authoritative.acceptanceCriteria, 30, 500),
       userConstraints: redactHandoffList(input.authoritative.userConstraints, 40, 500),
     },
@@ -172,7 +175,10 @@ export function compileHybridHandoffPacket(input: CompileHybridHandoffInput): Hy
     provenance: {
       summarySource: input.advisory.summarySource,
       omittedSections: [],
-      confidenceWarnings: warnings,
+      // The target summarizer is expected to paraphrase the exact user
+      // objective. Authoritative text still wins, but textual inequality is
+      // not evidence of a conflict and must not alarm the user.
+      confidenceWarnings: [],
       truncatedFields: [],
     },
   };
@@ -237,13 +243,21 @@ function appendSection(lines: string[], title: string, values: readonly string[]
   if (values.length > compact.length) lines.push(`- …and ${values.length - compact.length} more recorded item${values.length - compact.length === 1 ? "" : "s"}.`);
 }
 
+function compactHeading(value: string, maximumCharacters = 140): string {
+  const oneLine = redactHandoffText(value, maximumCharacters + 1).replace(/\s+/g, " ").trim();
+  if (oneLine.length <= maximumCharacters) return oneLine;
+  const clipped = oneLine.slice(0, maximumCharacters - 1);
+  const lastSpace = clipped.lastIndexOf(" ");
+  return `${clipped.slice(0, lastSpace > maximumCharacters / 2 ? lastSpace : clipped.length).trimEnd()}…`;
+}
+
 export function renderHybridHandoffSeed(packet: HybridHandoffPacketV1, _requestedNonce?: string): string {
   if (JSON.stringify(packet).length > HANDOFF_PACKET_MAX_CHARACTERS) {
     throw new Error("Refusing to render an oversized handoff packet.");
   }
   const objective = packet.task.currentObjective ?? packet.task.originalRequest ?? "Continue the previous task";
   const lines = [
-    `# Continuation brief: ${redactHandoffText(objective, 140)}`,
+    `# Continuation brief: ${compactHeading(objective)}`,
     "",
     "This brief was generated from the previous conversation and workspace. Verify current files and runtime state before making changes.",
   ];
@@ -258,10 +272,12 @@ export function renderHybridHandoffSeed(packet: HybridHandoffPacketV1, _requeste
     lines.push("", "## Previous useful context", "", redactHandoffText(packet.continuity.recentAssistantSummary, 1_400));
   }
   appendSection(lines, "Recent user requests", packet.continuity.recentUserMessages, 4, 500);
-  const files = [
+  const files = [...new Set([
     ...packet.workspace.modifiedFiles.map((file) => `${file.path} (${file.changeType})`),
-    ...packet.workspace.relevantUnchangedFiles,
-  ];
+    ...packet.workspace.relevantUnchangedFiles.filter((relevantPath) => (
+      !packet.workspace.modifiedFiles.some((file) => file.path === relevantPath)
+    )),
+  ])];
   appendSection(lines, "Relevant files", files, 20, 180);
   appendSection(lines, "Verification", packet.verification.map((record) => `${record.command}: ${record.result}${record.importantOutput ? ` — ${record.importantOutput}` : ""}`), 8, 360);
   appendSection(lines, "Decisions", packet.decisions.map((decision) => `${decision.decision}${decision.reason ? ` — ${decision.reason}` : ""}`), 6, 360);

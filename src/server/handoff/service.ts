@@ -271,13 +271,6 @@ const unlockedHandoffCoordinator = createHandoffCoordinator({
       const latestCompletedAt = recent[0]?.completedAt?.getTime();
       if (latestCompletedAt && Date.now() - latestCompletedAt < AUTOMATIC_HANDOFF_COOLDOWN_MS) throw new HandoffCoordinatorError("handoff_target_unavailable", "Automatic cross-CLI handoff is cooling down before another provider change.");
     }
-    const projectPath = path.resolve(source.run.projectPath ?? source.worker?.cwd ?? process.cwd());
-    const liveRuns = await db.select({ id: runs.id, projectPath: runs.projectPath }).from(runs).where(inArray(runs.status, ["running", "working", "starting", "needs_recovery"]));
-    const liveWorkers = await db.select({ runId: workers.runId, cwd: workers.cwd }).from(workers).innerJoin(runs, eq(workers.runId, runs.id)).where(inArray(runs.status, ["running", "working", "starting", "needs_recovery"]));
-    if (liveRuns.some((run) => run.id !== source.run.id && run.projectPath && path.resolve(run.projectPath) === projectPath)
-      || liveWorkers.some((worker) => worker.runId !== source.run.id && path.resolve(worker.cwd) === projectPath)) {
-      throw new HandoffCoordinatorError("handoff_invalid_state", "Another live conversation already owns this checkout.");
-    }
   },
   createDraft: (input, source) => {
     const projectPath = source.run.projectPath ?? source.worker?.cwd ?? process.cwd();

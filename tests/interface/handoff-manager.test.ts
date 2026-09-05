@@ -50,6 +50,28 @@ describe("HandoffManager", () => {
     expect(manager.getSnapshot().request).toBeNull();
   });
 
+  it("shows the server message when handoff preparation rejects with a structured runtime error", async () => {
+    const api = {
+      getActive: vi.fn().mockResolvedValue({ handoff: null }),
+      prepare: vi.fn().mockRejectedValue({
+        code: "handoff_summary_failed",
+        message: "The target CLI could not summarize the handoff.",
+        surface: "web",
+      }),
+      revise: vi.fn(), get: vi.fn(), cancel: vi.fn(), launch: vi.fn(),
+    } as unknown as RuntimeAPIs["handoffs"];
+    const manager = new HandoffManager();
+    manager.configure(api);
+    manager.open({ runId: "source", workerId: "worker", sourceWorkerType: "codex", forkedFromMessageId: null, reason: "manual_session" });
+
+    await manager.prepare();
+
+    expect(manager.getSnapshot()).toMatchObject({
+      preparing: false,
+      error: "The target CLI could not summarize the handoff.",
+    });
+  });
+
   it("ignores an active-draft response owned by a previously opened conversation", async () => {
     let resolveFirst!: (value: unknown) => void;
     const first = new Promise((resolve) => { resolveFirst = resolve; });

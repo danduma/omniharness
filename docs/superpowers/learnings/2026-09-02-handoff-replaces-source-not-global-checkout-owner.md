@@ -1,0 +1,10 @@
+# A Handoff Owns a Transition, Not the Whole Checkout
+
+**Date:** 2026-09-02
+**Context:** OmniHarness cross-CLI handoff coordination
+**Symptom:** Preparing a handoff returned `409 handoff_invalid_state` when any other active or recoverable conversation used the same project path. In the reported case, an unrelated planning conversation blocked a direct conversation from handing off.
+**Root Cause:** Target validation treated coarse persisted run status plus path equality as proof of exclusive checkout ownership. That invented a global ownership rule which normal conversation creation does not enforce and gave an unrelated run veto power over a source-to-target replacement. The handoff already has the narrower facts it needs: it stops the selected source, fences that source's mutations, and verifies source sequence plus tracked-workspace fingerprint before launch.
+**Fix:** Removed the global same-checkout live-run refusal. Handoff preparation now stops only the selected source and leaves unrelated conversations untouched. Real tracked-workspace drift still refuses launch through `handoff.source_changed`.
+**Verification:** Added a service regression covering both planning and direct unrelated runs, plus a headless HTTP/SSE lifecycle scenario for the reported concurrent-planning case. Both regressions were observed failing with the old `Another live conversation already owns this checkout` response and passing after the coordinator change.
+**Prevention:** Model ownership at the smallest correct boundary. Do not infer exclusive runtime or workspace ownership from `runs.status` and `projectPath`; when safety depends on actual drift, validate the source generation/sequence and concrete workspace fingerprint at the mutation boundary.
+**Skill/Doc Updates:** Updated `docs/architecture/lifecycle-observability-and-testing.md` with the source-to-target ownership invariant. No general skill change was needed because the existing client/server ownership and control-plane skills already require explicit ownership tokens and reject status-derived decisions.

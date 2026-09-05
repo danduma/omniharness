@@ -45,14 +45,6 @@ export function parseGitPorcelain(value: string): PorcelainEntry[] {
   });
 }
 
-function changeType(code: string): HandoffModifiedFile["changeType"] {
-  if (code === "??" || code.includes("A")) return "added";
-  if (code.includes("D")) return "deleted";
-  if (code.includes("R")) return "renamed";
-  if (code.includes("U")) return "unmerged";
-  return "modified";
-}
-
 export async function computeWorkspaceFingerprint(projectPath: string): Promise<string | null> {
   try {
     const rootResult = await runGit({ cwd: projectPath, args: ["rev-parse", "--show-toplevel"] });
@@ -81,35 +73,26 @@ export async function collectHandoffWorkspaceState(args: {
     // Keep evidence reads ordered. Git has no cross-command snapshot primitive;
     // launch performs a fresh fingerprint comparison before creating the target.
     const head = await runGit({ cwd: repoRoot, args: ["rev-parse", "HEAD"], allowExitCodes: [0, 128] });
-    const status = await runGit({ cwd: repoRoot, args: ["status", "--porcelain=v1", "--untracked-files=all"] });
     const fingerprint = await computeWorkspaceFingerprint(repoRoot);
-    const entries = parseGitPorcelain(status.stdout);
-    const baselineEntries = new Map(parseGitPorcelain(args.baseline?.status === "ok" ? args.baseline.porcelain : "").map((entry) => [entry.path, entry]));
     const currentHead = head.exitCode === 0 ? head.stdout.trim() || null : null;
     let commitsCreated: string[] = [];
     if (args.baseline?.status === "ok" && args.baseline.headSha && currentHead && args.baseline.headSha !== currentHead) {
       const commits = await runGit({ cwd: repoRoot, args: ["rev-list", "--reverse", `${args.baseline.headSha}..${currentHead}`], allowExitCodes: [0, 128] });
       if (commits.exitCode === 0) commitsCreated = commits.stdout.split(/\s+/).filter(Boolean).slice(0, 100);
     }
-    const modifiedFiles = entries.map((entry): HandoffModifiedFile => ({
-      path: entry.path,
-      changeType: changeType(entry.code),
-      ownership: baselineEntries.has(entry.path) ? "preexisting" : "probable_session",
-      summary: null,
-      evidence: [baselineEntries.has(entry.path) ? "Present in the run git baseline." : "Absent from the run git baseline; attribution is probabilistic."],
-    })).sort((left, right) => left.path.localeCompare(right.path));
     return {
       projectRootLabel: path.basename(repoRoot),
       baselineCommit: args.baseline?.status === "ok" ? args.baseline.headSha : null,
       currentHead,
       dirtyBeforeSession: args.baseline?.status === "ok" ? !args.baseline.clean : null,
-      modifiedFiles,
-      untrackedFiles: entries.filter((entry) => entry.code === "??").map((entry) => entry.path).sort(),
+      // The handoff's session file list is populated from successful edit-tool
+      // targets in candidates.ts. Git describes the shared checkout and cannot
+      // establish which conversation changed a path.
+      modifiedFiles: [],
+      untrackedFiles: [],
       commitsCreated,
       fingerprint,
-      warnings: entries.some((entry) => entry.code === "??")
-        ? ["Untracked files are listed but excluded from the launch drift fingerprint."]
-        : [],
+      warnings: [],
     };
   } catch (error) {
     return {
