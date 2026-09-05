@@ -292,6 +292,7 @@ async function callEveryDomainMethod(apis: RuntimeAPIs) {
   await apis.accounts.remove({ accountId: "account/1" });
   await apis.accounts.refreshStatus({ accountId: "account/1" });
   await apis.accounts.connectClaude({ label: "Personal" });
+  await apis.accounts.signInClaude();
   await apis.accounts.getAuthOperation({ accountId: "account/1" });
   await apis.accounts.actOnAuthOperation({ accountId: "account/1", action: "retry" });
   await apis.accounts.logout({ accountId: "account/1" });
@@ -316,7 +317,7 @@ describe.each([
     const { apis, calls } = createHarness();
     await callEveryDomainMethod(apis);
 
-    expect(calls).toHaveLength(66);
+    expect(calls).toHaveLength(67);
     expect(calls.map(({ method, path }) => `${method} ${path}`)).toEqual(
       expect.arrayContaining([
         "GET /api/auth/session",
@@ -345,5 +346,10 @@ describe.each([
         "POST /api/terminals/terminal%2F1/resize",
       ]),
     );
+    expect(calls).toContainEqual(expect.objectContaining({
+      method: "POST",
+      path: "/api/accounts/claude/connect",
+      body: { localSession: true },
+    }));
   });
 });
