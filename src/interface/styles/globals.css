@@ -346,6 +346,32 @@
 }
 
 @layer utilities {
+  /*
+   * Android 15+ renders installed PWAs edge-to-edge. Paint the app background
+   * through the system-bar regions while keeping every app state inside the
+   * safe insets, including boot, login, and landscape cutout layouts.
+   */
+  #root {
+    display: flex;
+    height: 100dvh;
+    flex-direction: column;
+    background: var(--background);
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+  }
+
+  /*
+   * Shells ask for a full `h-dvh`, which is taller than the inset content box.
+   * Let flex shrink them to fit instead of overriding their height: an `auto`
+   * height here would resolve every nested `h-full` scroller to its content
+   * size and grow the page without end.
+   */
+  #root > * {
+    flex: 1 1 auto;
+  }
+
   .omni-app-text-scale {
     --omni-mobile-ui-font-boost: 0px;
     --omni-mobile-conversation-font-boost: 0px;

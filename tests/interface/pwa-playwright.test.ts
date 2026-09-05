@@ -225,6 +225,82 @@ describe.sequential("PWA browser behavior", () => {
     await expect.poll(async () => page.locator("#root").innerHTML()).not.toBe("");
   }, 60_000);
 
+  test("safe-area padding keeps the app shell at viewport height instead of growing the page", async () => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(appOrigin, { waitUntil: "domcontentloaded" });
+    await expect.poll(() => page.locator('[data-composer-input="true"]').isVisible()).toBe(true);
+
+    const layout = await page.evaluate(() => {
+      const root = document.getElementById("root");
+      const shell = root?.firstElementChild;
+      if (!root || !shell) {
+        throw new Error("App shell did not render inside #root.");
+      }
+      return {
+        rootHeight: Math.round(root.getBoundingClientRect().height),
+        shellHeight: Math.round(shell.getBoundingClientRect().height),
+        documentScrollHeight: document.documentElement.scrollHeight,
+        viewportHeight: window.innerHeight,
+      };
+    });
+
+    expect(layout.rootHeight).toBe(layout.viewportHeight);
+    expect(layout.shellHeight).toBe(layout.viewportHeight);
+    expect(layout.documentScrollHeight).toBe(layout.viewportHeight);
+
+    await page.goto(`${appOrigin}/session/${WIDTH_COMPARISON_RUN_ID}`, { waitUntil: "domcontentloaded" });
+    await expect.poll(() => page.locator('[data-composer-input="true"]').isVisible()).toBe(true);
+
+    // A transcript taller than the window has to scroll inside its own pane. If
+    // the shell loses its viewport height, the pane resolves to content height
+    // instead and the composer slides to the bottom of an endless blank page.
+    const sessionLayout = await page.evaluate(() => {
+      const viewport = document.querySelector('[data-slot="scroll-area-viewport"]');
+      const shell = document.getElementById("root")?.firstElementChild;
+      const composer = document.querySelector('[data-composer-input="true"]');
+      if (!viewport || !shell || !composer) {
+        throw new Error("Session transcript did not render.");
+      }
+      const filler = document.createElement("div");
+      filler.style.height = "4000px";
+      viewport.firstElementChild?.appendChild(filler);
+      return {
+        shellHeight: Math.round(shell.getBoundingClientRect().height),
+        composerBottom: Math.round(composer.getBoundingClientRect().bottom),
+        documentScrollHeight: document.documentElement.scrollHeight,
+        transcriptScrolls: viewport.scrollHeight > viewport.clientHeight,
+        viewportHeight: window.innerHeight,
+      };
+    });
+
+    expect(sessionLayout.transcriptScrolls).toBe(true);
+    expect(sessionLayout.shellHeight).toBe(sessionLayout.viewportHeight);
+    expect(sessionLayout.documentScrollHeight).toBe(sessionLayout.viewportHeight);
+    expect(sessionLayout.composerBottom).toBeLessThanOrEqual(sessionLayout.viewportHeight);
+
+    // Stand in for the Android system-bar insets: the shell asks for a full
+    // `h-dvh`, so it has to shrink into the padded box rather than spill past it.
+    const insetLayout = await page.evaluate(() => {
+      const root = document.getElementById("root");
+      const shell = root?.firstElementChild;
+      if (!root || !shell) {
+        throw new Error("App shell did not render inside #root.");
+      }
+      root.style.paddingTop = "24px";
+      root.style.paddingBottom = "16px";
+      return {
+        shellHeight: Math.round(shell.getBoundingClientRect().height),
+        shellBottom: Math.round(shell.getBoundingClientRect().bottom),
+        documentScrollHeight: document.documentElement.scrollHeight,
+        viewportHeight: window.innerHeight,
+      };
+    });
+
+    expect(insetLayout.shellHeight).toBe(insetLayout.viewportHeight - 40);
+    expect(insetLayout.shellBottom).toBe(insetLayout.viewportHeight - 16);
+    expect(insetLayout.documentScrollHeight).toBe(insetLayout.viewportHeight);
+  }, 60_000);
+
   test("mobile new-session composer preserves controlled scroll and uses the responsive layout", async () => {
     await page.setViewportSize({ width: 390, height: 800 });
     await page.goto(appOrigin, { waitUntil: "domcontentloaded" });

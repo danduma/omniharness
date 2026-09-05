@@ -79,10 +79,12 @@ interface UseHomeLifecycleProps {
 function applyDocumentTheme(themeMode: "day" | "night") {
   document.documentElement.classList.toggle("dark", themeMode === "night");
   document.documentElement.style.colorScheme = themeMode === "night" ? "dark" : "light";
-  document.querySelector('meta[name="theme-color"]')?.setAttribute(
-    "content",
-    themeMode === "night" ? darkThemeColor : lightThemeColor,
-  );
+  document.querySelectorAll('meta[name="theme-color"]').forEach((themeColorMeta) => {
+    themeColorMeta.setAttribute(
+      "content",
+      themeMode === "night" ? darkThemeColor : lightThemeColor,
+    );
+  });
 }
 
 export function useHomeLifecycle({

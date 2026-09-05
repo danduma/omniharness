@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -46,10 +47,32 @@ describe.sequential("PWA shell contract", () => {
       path.join(repositoryRoot, "dist/interface/sw.js"),
       "utf8",
     );
+    const cspManifest = JSON.parse(fs.readFileSync(
+      path.join(repositoryRoot, "dist/interface/csp-manifest.json"),
+      "utf8",
+    )) as { assets: Array<{ path: string; sha256: string }> };
+    const cachedMetadata = [
+      "app-shell.html",
+      "manifest.webmanifest",
+      "icons/favicon-v2.png",
+      "icons/icon-192-v2.png",
+      "icons/icon-512-v2.png",
+      "icons/apple-touch-icon-v2.png",
+    ].map((assetPath) => ({
+      path: assetPath,
+      sha256: crypto.createHash("sha256").update(fs.readFileSync(
+        path.join(repositoryRoot, "dist/interface", assetPath),
+      )).digest("base64"),
+    }));
+    const expectedBuildHash = crypto.createHash("sha256").update(JSON.stringify(
+      [...cspManifest.assets, ...cachedMetadata]
+        .sort((left, right) => left.path.localeCompare(right.path))
+        .map((asset) => [asset.path, asset.sha256]),
+    )).digest("hex").slice(0, 16);
 
     expect(builtWorker).not.toContain("__OMNI_BUILD_HASH__");
     expect(builtWorker).not.toContain("__OMNI_PRECACHE_ASSETS__");
-    expect(builtWorker).toMatch(/const BUILD_HASH = "[a-f0-9]{16}"/);
+    expect(builtWorker).toContain(`const BUILD_HASH = "${expectedBuildHash}"`);
     expect(builtWorker).toContain("`${CACHE_PREFIX}${BUILD_HASH}`");
     expect(builtWorker).toContain("/app-shell.html");
     expect(builtWorker).toMatch(/\/assets\/[^"]+\.js/);
