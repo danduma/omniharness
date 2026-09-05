@@ -802,6 +802,7 @@ export function HomeApp({
     selectedCliAgent,
     selectedModel,
     selectedEffort,
+    hydratedRunSelectionId,
     themeMode,
     setThemeMode,
     filterEventStreamState,

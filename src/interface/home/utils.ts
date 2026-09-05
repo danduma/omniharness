@@ -3,7 +3,7 @@ import type { ChatAttachment } from "@/lib/chat-attachments";
 import { formatHumanDuration, type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { isTerminalRunStatus } from "@/lib/run-status";
 import { getLatestUnresolvedWorkerStuckEvent } from "@/lib/worker-stuck-events";
-import { RUN_PATH_PATTERN, WORKER_OPTIONS, FALLBACK_WORKER_MODEL_OPTIONS } from "./constants";
+import { DEFAULT_COMPOSER_EFFORT, EFFORT_OPTIONS, RUN_PATH_PATTERN, WORKER_OPTIONS, FALLBACK_WORKER_MODEL_OPTIONS } from "./constants";
 import type { AgentSnapshot, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, PlanItemRecord, PlanRecord, QueuedConversationMessageRecord, RunRecord, SupervisorInterventionRecord, WorkerModelCatalog, WorkerType } from "./types";
 import { t } from "@/lib/i18n";
 
@@ -1611,6 +1611,11 @@ export function resolveComposerModelValue(preferredModel: string | null | undefi
 export function resolveSavedComposerModel(savedModel: string | null | undefined) {
   const normalized = savedModel?.trim() || "";
   return normalized === "claude-opus-5" ? "gpt-5.6-sol" : normalized;
+}
+
+export function resolveComposerEffortForPair(savedEffort: string | null | undefined) {
+  const normalized = savedEffort?.trim() || "";
+  return EFFORT_OPTIONS.includes(normalized) ? normalized : DEFAULT_COMPOSER_EFFORT;
 }
 
 export function getWorkerModelOptions(catalog: Partial<WorkerModelCatalog> | undefined, workerType: WorkerType) {

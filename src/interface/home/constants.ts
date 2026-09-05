@@ -196,6 +196,7 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
   ],
 };
 export const EFFORT_OPTIONS = ["Low", "Medium", "High", "Extra High", "Max"];
+export const DEFAULT_COMPOSER_EFFORT = "High";
 export const COMPOSER_WORKER_STORAGE_KEY = "omni-composer-worker";
 export const COMPOSER_MODEL_STORAGE_KEY = "omni-composer-model";
 const COMPOSER_EFFORT_STORAGE_KEY_PREFIX = "omni-composer-effort";
