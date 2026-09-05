@@ -2,8 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#ffffff" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b0d10" />
     <meta name="color-scheme" content="light dark" />
     <meta name="format-detection" content="telephone=no" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -19,10 +20,10 @@
         var lightThemeColor = "#ffffff";
         var darkThemeColor = "#0b0d10";
         function applyThemeColor(themeMode) {
-          var themeColorMeta = document.querySelector('meta[name="theme-color"]');
-          if (themeColorMeta) {
+          var themeColorMetas = document.querySelectorAll('meta[name="theme-color"]');
+          themeColorMetas.forEach(function (themeColorMeta) {
             themeColorMeta.setAttribute("content", themeMode === "night" ? darkThemeColor : lightThemeColor);
-          }
+          });
         }
         try {
           var themeMode = window.localStorage.getItem("omni-theme-mode");

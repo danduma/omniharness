@@ -9,21 +9,41 @@ function readText(relativePath: string) {
 }
 
 describe("PWA installability", () => {
-  test("the Vite interface exposes mobile install metadata", () => {
+  test("the Vite interface exposes adaptive Android system-bar colors", () => {
     const indexSource = readText("apps/interface/index.html");
     const appShellSource = readText("apps/interface/app-shell.html");
+    const lifecycleSource = readText("src/interface/home/useHomeLifecycle.ts");
+    const globalStyles = readText("src/interface/styles/globals.css");
 
     for (const html of [indexSource, appShellSource]) {
+      expect(html).toContain(
+        'name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"',
+      );
       expect(html).toContain('rel="manifest" href="/manifest.webmanifest"');
       expect(html).toContain('name="apple-mobile-web-app-capable" content="yes"');
       expect(html).toContain("/icons/apple-touch-icon-v2.png");
-      expect(html).toContain('name="theme-color" content="#ffffff"');
+      expect(html).toContain(
+        'name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff"',
+      );
+      expect(html).toContain(
+        'name="theme-color" media="(prefers-color-scheme: dark)" content="#0b0d10"',
+      );
       expect(html).toContain('var lightThemeColor = "#ffffff"');
       expect(html).toContain('var darkThemeColor = "#0b0d10"');
-      expect(html).toContain("document.querySelector('meta[name=\"theme-color\"]')");
+      expect(html).toContain("document.querySelectorAll('meta[name=\"theme-color\"]')");
+      expect(html).toContain("themeColorMeta.setAttribute");
       expect(html).not.toContain("#2f6652");
       expect(html).not.toContain("#e86b20");
     }
+
+    expect(lifecycleSource).toContain(
+      "document.querySelectorAll('meta[name=\"theme-color\"]')",
+    );
+    expect(globalStyles).toContain("#root {");
+    expect(globalStyles).toContain("padding-top: env(safe-area-inset-top, 0px)");
+    expect(globalStyles).toContain("padding-right: env(safe-area-inset-right, 0px)");
+    expect(globalStyles).toContain("padding-bottom: env(safe-area-inset-bottom, 0px)");
+    expect(globalStyles).toContain("padding-left: env(safe-area-inset-left, 0px)");
   });
 
   test("manifest includes the members required by mobile install prompts", () => {
@@ -34,8 +54,8 @@ describe("PWA installability", () => {
     expect(manifest.start_url).toBe("/app-shell.html");
     expect(manifest.scope).toBe("/");
     expect(manifest.display).toBe("standalone");
-    expect(manifest.background_color).toBe("#ffffff");
-    expect(manifest.theme_color).toBe("#ffffff");
+    expect(manifest.background_color).toBe("#0b0d10");
+    expect(manifest.theme_color).toBe("#0b0d10");
     expect(manifest).not.toHaveProperty("orientation");
     expect(manifest.prefer_related_applications).toBe(false);
     expect(manifest.icons).toEqual(

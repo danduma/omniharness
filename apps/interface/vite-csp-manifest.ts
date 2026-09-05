@@ -3,6 +3,15 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Plugin } from "vite";
 
+const cachedMetadataPaths = [
+  "app-shell.html",
+  "manifest.webmanifest",
+  "icons/favicon-v2.png",
+  "icons/icon-192-v2.png",
+  "icons/icon-512-v2.png",
+  "icons/apple-touch-icon-v2.png",
+];
+
 function hash(value: string | Uint8Array) {
   return crypto.createHash("sha256").update(value).digest("base64");
 }
@@ -37,10 +46,18 @@ export function interfaceCspManifestPlugin(): Plugin {
           sha256: hash(fs.readFileSync(path.join(options.dir!, output.fileName))),
         }))
         .sort((left, right) => left.path.localeCompare(right.path));
+      const cachedMetadata = cachedMetadataPaths.map((assetPath) => ({
+        path: assetPath,
+        sha256: hash(fs.readFileSync(path.join(options.dir!, assetPath))),
+      }));
       const serviceWorkerPath = path.join(options.dir, "sw.js");
       const serviceWorkerSource = fs.readFileSync(serviceWorkerPath, "utf8");
       const buildHash = hashHex(
-        JSON.stringify(assets.map((asset) => [asset.path, asset.sha256])),
+        JSON.stringify(
+          [...assets, ...cachedMetadata]
+            .sort((left, right) => left.path.localeCompare(right.path))
+            .map((asset) => [asset.path, asset.sha256]),
+        ),
       ).slice(0, 16);
       const precacheAssets = assets
         .map((asset) => `/${asset.path}`)
