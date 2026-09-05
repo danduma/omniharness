@@ -4,6 +4,10 @@ import {
   SAME_ORIGIN_PROFILE_ID,
 } from "@/interface/runners/RunnerProfileStore";
 import type { RunnerCredentialStore } from "@/interface/runners/RunnerCredentialStore";
+import {
+  isInsecureServerFromSecurePage,
+  isMixedContentBlocked,
+} from "@/interface/runners/RunnerProfile";
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>();
@@ -262,5 +266,107 @@ describe("RunnerProfileStore", () => {
     await restored.editProfile(profile.id, { password: "saved-again" });
     await restored.forgetProfile(profile.id);
     expect(created.storage.getItem("omniharness.runnerProfiles")).not.toContain("saved-again");
+  });
+
+  it("refuses a plain-HTTP server the browser will never let an HTTPS page reach", async () => {
+    const { store, storage } = createStore();
+    await store.hydrate();
+
+    await expect(store.addProfile({
+      label: "Lan runner",
+      baseUrl: "http://192.168.1.20:3050",
+    })).rejects.toMatchObject({ code: "runner.error.insecureServer" });
+    expect(store.getSnapshot().profiles).toHaveLength(1);
+    expect(storage.getItem("omniharness.runnerProfiles")).not.toContain("192.168.1.20");
+  });
+
+  it("keeps an existing server unchanged when it is edited to a blocked HTTP address", async () => {
+    const { store } = createStore();
+    await store.hydrate();
+    const profile = await store.addProfile({
+      label: "Remote",
+      baseUrl: "https://runner.example",
+    });
+
+    await expect(store.editProfile(profile.id, {
+      baseUrl: "http://runner.example:3050",
+    })).rejects.toMatchObject({ code: "runner.error.insecureServer" });
+    expect(store.getProfile(profile.id)?.baseUrl).toBe("https://runner.example");
+  });
+
+  it("allows plain HTTP for loopback servers and for surfaces that are not HTTPS pages", async () => {
+    const { store } = createStore();
+    await store.hydrate();
+    await expect(store.addProfile({
+      label: "Local",
+      baseUrl: "http://127.0.0.1:3050",
+    })).resolves.toEqual(expect.objectContaining({ baseUrl: "http://127.0.0.1:3050" }));
+
+    const native = new RunnerProfileStore({
+      storage: new MemoryStorage(),
+      credentialStore: createCredentialStore().store,
+      locationOrigin: "http://127.0.0.1:3050",
+    });
+    await native.hydrate();
+
+    await expect(native.addProfile({
+      label: "Lan runner",
+      baseUrl: "http://192.168.1.20:3050",
+    })).resolves.toEqual(expect.objectContaining({ baseUrl: "http://192.168.1.20:3050" }));
+  });
+
+  it("still loads a blocked HTTP server that was saved before the rule existed", async () => {
+    const storage = new MemoryStorage();
+    storage.setItem("omniharness.runnerProfiles", JSON.stringify({
+      schemaVersion: 1,
+      activeRunnerId: "legacy",
+      profiles: [{
+        id: "legacy",
+        runnerInstanceId: null,
+        label: "Lan runner",
+        baseUrl: "http://192.168.1.20:3050",
+        savedPassword: null,
+        authTransport: "bearer",
+        credentialRef: null,
+        schemaVersion: 1,
+        createdAt: "2026-07-31T00:00:00.000Z",
+        lastConnectedAt: null,
+        isSameOrigin: false,
+      }],
+      scopedState: {},
+    }));
+    const { store } = createStore(storage);
+
+    await store.hydrate();
+
+    expect(store.getProfile("legacy")?.baseUrl).toBe("http://192.168.1.20:3050");
+    expect(store.getSnapshot().recoveryNoticeCode).toBeNull();
+  });
+});
+
+describe("mixed-content detection", () => {
+  it("blocks only plain-HTTP servers requested from an HTTPS page", () => {
+    expect(isMixedContentBlocked("https://app.example.test", "http://192.168.1.20:3050")).toBe(true);
+    expect(isMixedContentBlocked("https://app.example.test", "http://runner.example")).toBe(true);
+    expect(isMixedContentBlocked("https://app.example.test", "https://runner.example")).toBe(false);
+    expect(isMixedContentBlocked("http://127.0.0.1:3050", "http://192.168.1.20:3050")).toBe(false);
+  });
+
+  it("exempts loopback addresses, which browsers treat as trustworthy origins", () => {
+    for (const loopback of [
+      "http://localhost:3050",
+      "http://runner.localhost:3050",
+      "http://127.0.0.1:3050",
+      "http://127.9.9.9:3050",
+      "http://[::1]:3050",
+    ]) {
+      expect(isMixedContentBlocked("https://app.example.test", loopback)).toBe(false);
+      expect(isInsecureServerFromSecurePage("https://app.example.test", loopback)).toBe(true);
+    }
+  });
+
+  it("reports no verdict for an address it cannot parse", () => {
+    expect(isMixedContentBlocked("https://app.example.test", "not a url")).toBe(false);
+    expect(isInsecureServerFromSecurePage("not a url", "http://runner.example")).toBe(false);
   });
 });

@@ -4,6 +4,7 @@ import {
   RUNNER_PROFILE_SCHEMA_VERSION,
   RUNNER_REGISTRY_SCHEMA_VERSION,
   emptyRunnerScopedState,
+  isMixedContentBlocked,
   type RunnerIdentityLearningResult,
   type RunnerProfile,
   type RunnerProfileStoreSnapshot,
@@ -263,6 +264,25 @@ export class RunnerProfileStore extends StateManager<RunnerProfileStoreSnapshot>
     this.update(next);
   }
 
+  getLocationOrigin() {
+    return this.locationOrigin;
+  }
+
+  /**
+   * A saved profile the browser will never let us reach is worse than no
+   * profile at all: it retries forever behind a failure the user cannot read.
+   * Refusing the address at the point it is entered keeps the reason attached
+   * to the action that caused it.
+   */
+  private assertReachable(baseUrl: string) {
+    if (isMixedContentBlocked(this.locationOrigin, baseUrl)) {
+      throw {
+        code: "runner.error.insecureServer",
+        message: "An HTTPS page cannot reach a server over plain HTTP.",
+      };
+    }
+  }
+
   getProfile(profileId: string) {
     return this.getSnapshot().profiles.find((profile) => profile.id === profileId) ?? null;
   }
@@ -297,6 +317,7 @@ export class RunnerProfileStore extends StateManager<RunnerProfileStoreSnapshot>
 
   async addProfile(input: { label: string; baseUrl: string; password?: string }) {
     const current = this.getSnapshot();
+    this.assertReachable(canonicalBaseUrl(input.baseUrl));
     const profile: RunnerProfile = {
       id: this.randomUUID(),
       runnerInstanceId: null,
@@ -348,6 +369,9 @@ export class RunnerProfileStore extends StateManager<RunnerProfileStoreSnapshot>
       ? profile.baseUrl
       : canonicalBaseUrl(patch.baseUrl);
     const urlChanged = nextBaseUrl !== profile.baseUrl;
+    if (urlChanged) {
+      this.assertReachable(nextBaseUrl);
+    }
     const nextProfile: RunnerProfile = {
       ...profile,
       label: patch.label === undefined

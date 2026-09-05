@@ -105,6 +105,23 @@ test("Connect uses the submitted password for native and current-server edits", 
   expect(runnerControlsSource).toContain("await connection.authenticateWithPassword({");
 });
 
+test("a blocked plain-HTTP server names its reason instead of the generic failure", () => {
+  const runnerControlsSource = readSource("src/interface/runners/RunnerControls.tsx");
+
+  expect(runnerControlsSource).toContain(
+    'isMixedContentBlocked(pageOrigin, profile.baseUrl)',
+  );
+  expect(runnerControlsSource).toContain(
+    'isInsecureServerFromSecurePage(pageOrigin, profile.baseUrl)',
+  );
+  expect(runnerControlsSource).toContain('blocked ? "runner.error.insecureServer"');
+  // Every rejection used to be reported as a malformed address, which threw
+  // away the reason the store refused it.
+  expect(runnerControlsSource).not.toContain(
+    '} catch {\n      context.uiManager.setError("runner.error.invalidUrl");',
+  );
+});
+
 test("desktop conversation rail constrains overflowing run content", () => {
   expect(pageSource).toContain('data-project-path={group.path}');
   expect(pageSource).toContain('data-conversation-run-id={run.id}');
