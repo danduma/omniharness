@@ -44,6 +44,108 @@ afterEach(() => {
 });
 
 describe("handoff source stop confirmation", () => {
+  it("does not treat an active planning conversation as a competing checkout owner", async () => {
+    const bridge = await import("@/server/bridge-client");
+    vi.mocked(bridge.cancelAgent).mockResolvedValue({ ok: true } as never);
+    vi.mocked(bridge.getAgent).mockResolvedValue({ state: "stopped" } as never);
+    const database = await import("@/server/db");
+    const schema = await import("@/server/db/schema");
+    const now = new Date();
+    await database.db.insert(schema.plans).values({ id: "plan-planning", path: "/tmp/plan-planning", status: "running", createdAt: now, updatedAt: now });
+    await database.db.insert(schema.runs).values({ id: "run-planning", planId: "plan-planning", mode: "planning", sessionType: "omni", projectPath: tempRoot, status: "working", createdAt: now, updatedAt: now });
+    await database.db.insert(schema.workers).values({ id: "worker-planning", runId: "run-planning", type: "codex", status: "working", cwd: tempRoot, title: "planner", initialPrompt: "plan task", outputLog: "", outputEntriesJson: "", currentText: "", lastText: "", createdAt: now, updatedAt: now });
+
+    const { handoffCoordinator } = await import("@/server/handoff/service");
+    const handoff = await handoffCoordinator.prepare({
+      sourceRunId: "run-stop",
+      sourceWorkerId: "worker-stop",
+      forkedFromMessageId: null,
+      reason: "manual_session",
+      target: { workerType: "claude", model: null, effort: null, accountId: null },
+    });
+
+    expect(handoff.status).toBe("ready");
+    expect(bridge.cancelAgent).not.toHaveBeenCalledWith("worker-planning");
+    expect(await database.db.select().from(schema.runs).where(eq(schema.runs.id, "run-planning")).get()).toMatchObject({ status: "working" });
+  });
+
+  it("does not give an unrelated active conversation veto power over the source handoff", async () => {
+    const bridge = await import("@/server/bridge-client");
+    vi.mocked(bridge.cancelAgent).mockResolvedValue({ ok: true } as never);
+    vi.mocked(bridge.getAgent).mockResolvedValue({ state: "stopped" } as never);
+    const database = await import("@/server/db");
+    const schema = await import("@/server/db/schema");
+    const now = new Date();
+    await database.db.insert(schema.plans).values({ id: "plan-unrelated", path: "/tmp/plan-unrelated", status: "running", createdAt: now, updatedAt: now });
+    await database.db.insert(schema.runs).values({ id: "run-unrelated", planId: "plan-unrelated", mode: "direct", sessionType: "omni", projectPath: tempRoot, status: "running", createdAt: now, updatedAt: now });
+    await database.db.insert(schema.workers).values({ id: "worker-unrelated", runId: "run-unrelated", type: "codex", status: "working", cwd: tempRoot, title: "unrelated", initialPrompt: "another task", outputLog: "", outputEntriesJson: "", currentText: "", lastText: "", createdAt: now, updatedAt: now });
+
+    const { handoffCoordinator } = await import("@/server/handoff/service");
+    const handoff = await handoffCoordinator.prepare({
+      sourceRunId: "run-stop",
+      sourceWorkerId: "worker-stop",
+      forkedFromMessageId: null,
+      reason: "manual_session",
+      target: { workerType: "claude", model: null, effort: null, accountId: null },
+    });
+
+    expect(handoff.status).toBe("ready");
+    expect(bridge.cancelAgent).not.toHaveBeenCalledWith("worker-unrelated");
+    expect(await database.db.select().from(schema.runs).where(eq(schema.runs.id, "run-unrelated")).get()).toMatchObject({ status: "running" });
+  });
+
+  it("builds the changed-file summary from edit tools across the full worker stream", async () => {
+    const bridge = await import("@/server/bridge-client");
+    vi.mocked(bridge.cancelAgent).mockResolvedValue({ ok: true } as never);
+    vi.mocked(bridge.getAgent).mockResolvedValue({ state: "stopped" } as never);
+    const { writeWorkerOutputEntries } = await import("@/server/workers/output-store");
+    const startedAt = Date.now() - 10_000;
+    await writeWorkerOutputEntries("run-stop", "worker-stop", [
+      {
+        id: "edit-old-progress",
+        type: "tool_call_update",
+        text: "Edit src/old-edit.ts",
+        timestamp: new Date(startedAt).toISOString(),
+        toolCallId: "edit-old",
+        toolKind: "edit",
+        raw: {
+          kind: "edit",
+          locations: [{ path: path.join(tempRoot, "src/old-edit.ts") }],
+          rawInput: { file_path: path.join(tempRoot, "src/old-edit.ts") },
+        },
+      },
+      {
+        id: "edit-old-complete",
+        type: "tool_call_update",
+        text: "completed",
+        timestamp: new Date(startedAt + 1).toISOString(),
+        toolCallId: "edit-old",
+        status: "completed",
+        raw: { status: "completed" },
+      },
+      ...Array.from({ length: 170 }, (_, index) => ({
+        id: `later-${index}`,
+        type: "message" as const,
+        text: `Later persisted entry ${index}`,
+        timestamp: new Date(startedAt + index + 2).toISOString(),
+      })),
+    ] as never);
+
+    const { handoffCoordinator } = await import("@/server/handoff/service");
+    const handoff = await handoffCoordinator.prepare({
+      sourceRunId: "run-stop",
+      sourceWorkerId: "worker-stop",
+      forkedFromMessageId: null,
+      reason: "manual_session",
+      target: { workerType: "claude", model: null, effort: null, accountId: null },
+    });
+
+    expect(handoff.packet?.workspace.modifiedFiles).toEqual([expect.objectContaining({
+      path: "src/old-edit.ts",
+      ownership: "session",
+    })]);
+  });
+
   it("does not treat an ambiguous bridge transport failure as proof that the source stopped", async () => {
     const { handoffCoordinator } = await import("@/server/handoff/service");
     await expect(handoffCoordinator.prepare({

@@ -1,5 +1,6 @@
 import { StateManager } from "@/lib/state-manager";
 import { getWorkerModelOptions } from "@/interface/home/utils";
+import { runtimeErrorMessage } from "@/runtime-api/request";
 import type { RuntimeAPIs } from "@/runtime-api/types";
 import type { WorkerModelCatalog } from "@/shared/home-types";
 import type { HandoffReason, HandoffRecordDto } from "@/shared/handoff";
@@ -88,7 +89,7 @@ export class HandoffManager extends StateManager<HandoffManagerState> {
       this.patch({ handoff: response.handoff, preparing: false, editObjective: response.handoff.packet?.task.currentObjective ?? "", editRemaining: response.handoff.packet?.state.remaining.join("\n") ?? "" });
     } catch (error) {
       if (generation !== this.requestGeneration) return;
-      this.patch({ preparing: false, error: error instanceof Error ? error.message : String(error) });
+      this.patch({ preparing: false, error: runtimeErrorMessage(error) });
     }
   }
   setEditObjective(value: string) { this.setKey("editObjective", value); }
@@ -104,7 +105,7 @@ export class HandoffManager extends StateManager<HandoffManagerState> {
       this.patch({ handoff: response.handoff, revising: false });
     } catch (error) {
       if (generation !== this.requestGeneration) return;
-      this.patch({ revising: false, error: error instanceof Error ? error.message : String(error) });
+      this.patch({ revising: false, error: runtimeErrorMessage(error) });
     }
   }
   async launch(): Promise<string | null> {
@@ -121,7 +122,7 @@ export class HandoffManager extends StateManager<HandoffManagerState> {
       return response.handoff.targetRunId;
     } catch (error) {
       if (generation !== this.requestGeneration) return null;
-      this.patch({ launching: false, error: error instanceof Error ? error.message : String(error) });
+      this.patch({ launching: false, error: runtimeErrorMessage(error) });
       return null;
     }
   }

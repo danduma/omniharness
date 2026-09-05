@@ -33,7 +33,7 @@ describe("handoff workspace state", () => {
     expect(await computeWorkspaceFingerprint(root)).not.toBe(initial);
   });
 
-  it("classifies baseline-dirty paths as preexisting and new dirty paths as session changes", async () => {
+  it("never derives the session file list from git status", async () => {
     const root = makeRepo();
     fs.writeFileSync(path.join(root, "tracked.txt"), "already dirty\n");
     const baseline = await collectHandoffWorkspaceState({ projectPath: root, baseline: null });
@@ -45,7 +45,8 @@ describe("handoff workspace state", () => {
       clean: false,
       porcelain: " M tracked.txt",
     } });
-    expect(current.modifiedFiles.find((file) => file.path === "tracked.txt")?.ownership).toBe("preexisting");
-    expect(current.modifiedFiles.find((file) => file.path === "new.txt")?.ownership).toBe("probable_session");
+    expect(current.modifiedFiles).toEqual([]);
+    expect(current.untrackedFiles).toEqual([]);
+    expect(current.dirtyBeforeSession).toBe(true);
   });
 });

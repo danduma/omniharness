@@ -113,6 +113,7 @@ describe("handoff coordinator", () => {
     expect(calls.indexOf("gather")).toBeLessThan(calls.indexOf("summarize-target"));
     expect(calls.indexOf("summarize-target")).toBeLessThan(calls.indexOf("save"));
     expect(finalInput!.advisory.completed).toContain("Confirmed the Safari-only fallback");
+    expect(finalInput!.authoritative.inProgress).toEqual([]);
     expect(emitted).toContain("handoff.summary_started");
     expect(emitted).toContain("handoff.summary_completed");
   });
