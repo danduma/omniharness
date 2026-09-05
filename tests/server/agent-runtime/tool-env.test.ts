@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { execFileSync } from "child_process";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
@@ -8,6 +8,7 @@ import {
   buildManagedPath,
   createToolDiagnostics,
   resolveCommand,
+  resolveCodexCommand,
   stripAmbientCodexSessionEnv,
   stripRunnerControlEnv,
   withCodexStandardTooling,
@@ -178,6 +179,42 @@ describe("agent runtime tool environment diagnostics", () => {
 
     expect(resolveCommand("gemini", { env: managedEnv })).toBe(join(pathBin, "gemini"));
     expect(resolveCommand("nvm-only-tool", { env: managedEnv })).toBe(join(staleNvmBin, "nvm-only-tool"));
+  });
+
+  it("prefers the managed Codex executable exported by the ACP launcher", () => {
+    const staleBin = createTempDir("omni-tool-env-stale-codex-");
+    const managedBin = createTempDir("omni-tool-env-managed-codex-");
+    createExecutable(staleBin, "codex");
+    createExecutable(managedBin, "codex");
+
+    const managedCodex = join(managedBin, "codex");
+    expect(resolveCodexCommand({
+      env: {
+        HOME: createTempDir("omni-tool-env-home-"),
+        PATH: staleBin,
+        CODEX_PATH: managedCodex,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+      },
+    })).toBe(managedCodex);
+  });
+
+  it("finds Codex in the managed ACP npm root before a stale PATH executable", () => {
+    const staleBin = createTempDir("omni-tool-env-stale-codex-");
+    const npmRoot = createTempDir("omni-tool-env-codex-root-");
+    const managedBin = join(npmRoot, "node_modules", ".bin");
+    const managedCodex = join(managedBin, "codex");
+    mkdirSync(managedBin, { recursive: true });
+    createExecutable(staleBin, "codex");
+    createExecutable(managedBin, "codex");
+
+    expect(resolveCodexCommand({
+      env: {
+        HOME: createTempDir("omni-tool-env-home-"),
+        PATH: staleBin,
+        OMNIHARNESS_CODEX_ACP_NPM_ROOT: npmRoot,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+      },
+    })).toBe(managedCodex);
   });
 
   it("adds a Codex managed config that enables standard core tools", () => {

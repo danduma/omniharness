@@ -2,6 +2,12 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import type { SupportedWorkerType } from "@/server/supervisor/worker-types";
 import { mergeClaudeGatewayModels, type ClaudeGatewayModelInput } from "@/lib/claude-model-gateway";
+import {
+  resolveCodexCommand,
+  resolveCommand,
+  withManagedPath,
+  type EnvLike,
+} from "@/server/agent-runtime/tool-env";
 
 const execFileAsync = promisify(execFile);
 
@@ -23,6 +29,7 @@ export type WorkerModelCatalogSnapshot = {
 
 type WorkerModelCatalogManagerOptions = {
   runCommand?: RunCommand;
+  env?: EnvLike;
   loadCachedCatalog?: LoadCachedCatalog;
   saveCachedCatalog?: SaveCachedCatalog;
 };
@@ -36,6 +43,7 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "gpt-5.4", label: "GPT-5.4" },
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
+    { value: "gpt-6-astra", label: "GPT-6 Astra" },
     { value: "claude-sonnet-5", label: "Sonnet 5" },
     { value: "claude-sonnet-4", label: "Sonnet 4" },
   ],
@@ -71,8 +79,17 @@ const DEPRECATED_WORKER_MODELS: Partial<Record<SupportedWorkerType, Set<string>>
   gemini: new Set(["gemini-3.5-flash"]),
 };
 
-async function defaultRunCommand(command: string, args: string[]) {
-  const result = await execFileAsync(command, args, {
+async function defaultRunCommand(command: string, args: string[], env: EnvLike = process.env) {
+  const managedEnv = withManagedPath(env, undefined, { loginShellPathMode: "cached" });
+  const executable = command === "codex"
+    ? resolveCodexCommand({ env: managedEnv })
+    : resolveCommand(command, { env: managedEnv });
+  if (!executable) {
+    throw new Error(`Unable to resolve ${command} from the managed agent environment.`);
+  }
+
+  const result = await execFileAsync(executable, args, {
+    env: managedEnv as NodeJS.ProcessEnv,
     timeout: 5_000,
     maxBuffer: 8 * 1024 * 1024,
   });
@@ -119,13 +136,14 @@ function labelFromModelId(id: string) {
 
 function normalizeLabel(id: string, label?: string) {
   const bareId = id.includes("/") ? id.split("/").at(-1) ?? id : id;
-  const gpt56Labels: Record<string, string> = {
+  const modelLabelOverrides: Record<string, string> = {
     "gpt-5.6-sol": "GPT-5.6 Sol",
     "gpt-5.6-terra": "GPT-5.6 Terra",
     "gpt-5.6-luna": "GPT-5.6 Luna",
+    "gpt-6-astra": "GPT-6 Astra",
   };
-  if (gpt56Labels[bareId]) {
-    return gpt56Labels[bareId];
+  if (modelLabelOverrides[bareId]) {
+    return modelLabelOverrides[bareId];
   }
 
   if (!label?.trim()) {
@@ -284,6 +302,7 @@ function parseOpenCodeModels(output: string) {
 
 export class WorkerModelCatalogManager {
   private readonly runCommand: RunCommand;
+  private readonly env: EnvLike;
   private readonly loadCachedCatalog?: LoadCachedCatalog;
   private readonly saveCachedCatalog?: SaveCachedCatalog;
   private cachedCatalog: Partial<WorkerModelCatalog> | null | undefined;
@@ -291,7 +310,8 @@ export class WorkerModelCatalogManager {
   private hasStartedRefresh = false;
 
   constructor(options: WorkerModelCatalogManagerOptions = {}) {
-    this.runCommand = options.runCommand ?? defaultRunCommand;
+    this.env = options.env ?? process.env;
+    this.runCommand = options.runCommand ?? ((command, args) => defaultRunCommand(command, args, this.env));
     this.loadCachedCatalog = options.loadCachedCatalog;
     this.saveCachedCatalog = options.saveCachedCatalog;
   }
@@ -361,6 +381,6 @@ export class WorkerModelCatalogManager {
   }
 }
 
-export async function buildWorkerModelCatalog(options: { runCommand?: RunCommand } = {}): Promise<WorkerModelCatalog> {
+export async function buildWorkerModelCatalog(options: WorkerModelCatalogManagerOptions = {}): Promise<WorkerModelCatalog> {
   return new WorkerModelCatalogManager(options).refreshCatalog();
 }
