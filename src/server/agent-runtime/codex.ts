@@ -80,6 +80,30 @@ export function buildCodexConfigArgs(input: {
   return args;
 }
 
+export function buildCodexAcpConfig(input: {
+  existingConfig?: string | null;
+  model?: string | null;
+  effort?: string | null;
+}) {
+  const existingConfig = input.existingConfig?.trim();
+  let config: Record<string, unknown> = {};
+  if (existingConfig) {
+    const parsed = JSON.parse(existingConfig) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("CODEX_CONFIG must be a JSON object.");
+    }
+    config = parsed as Record<string, unknown>;
+  }
+
+  const model = input.model?.trim();
+  const effort = input.effort?.trim().toLowerCase();
+  return JSON.stringify({
+    ...config,
+    ...(model ? { model } : {}),
+    ...(effort ? { model_reasoning_effort: effort } : {}),
+  });
+}
+
 export function applyCodexBridgeEnv(
   env: Record<string, string | undefined>,
   modelRewriteProxyPort: number | null = null,
