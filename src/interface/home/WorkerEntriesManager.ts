@@ -23,6 +23,12 @@
  */
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { coalesceWorkerEntriesById, type WorkerEntry } from "@/shared/worker-entries";
+import {
+  DEFAULT_ENTRY_RETENTION,
+  pruneEntryWindow,
+  retainedEntryCount,
+  type EntryRetentionPolicy,
+} from "./entry-retention";
 import type { RuntimeAPIs } from "@/runtime-api/types";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
 
@@ -117,6 +123,7 @@ export interface WorkerEntriesManagerOptions {
   maxSerializedBytes?: number;
   now?: () => number;
   flushIntervalMs?: number;
+  retention?: EntryRetentionPolicy;
 }
 
 function latestSeq(entries: WorkerEntry[]) {
@@ -191,6 +198,9 @@ export class WorkerEntriesManager {
   private readonly olderLoadInFlightByWorker = new Set<string>();
   private readonly wakeVersionByWorker = new Map<string, number>();
   private readonly everLoadedWorkers = new Set<string>();
+  // Last scroll-back load per worker. Raises the retention ceiling so the
+  // collector does not drop history the user is currently reading.
+  private readonly lastScrollbackAtByWorker = new Map<string, number>();
   private listEntries: RuntimeAPIs["workers"]["listEntries"] | null;
   private readonly storage: WorkerEntryStorage | null;
   private readonly storageKey: string;
@@ -198,6 +208,7 @@ export class WorkerEntriesManager {
   private readonly maxSerializedBytes: number;
   private readonly now: () => number;
   private readonly flushIntervalMs: number;
+  private readonly retention: EntryRetentionPolicy;
   private envelope: WorkerEntriesCacheEnvelope | null = null;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -210,6 +221,7 @@ export class WorkerEntriesManager {
     this.maxSerializedBytes = options.maxSerializedBytes ?? DEFAULT_MAX_SERIALIZED_BYTES;
     this.now = options.now ?? Date.now;
     this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
+    this.retention = options.retention ?? DEFAULT_ENTRY_RETENTION;
 
     if (usesDefaultStorage && this.storage && typeof window !== "undefined") {
       const flushNow = () => this.flushCache();
@@ -304,6 +316,7 @@ export class WorkerEntriesManager {
       bucket?.delete(listener);
       if (bucket && bucket.size === 0) {
         this.listenersByWorker.delete(workerId);
+        this.collectUnsubscribedWorker(workerId);
       }
     };
   }
@@ -356,6 +369,10 @@ export class WorkerEntriesManager {
     if (!state.hasOlder || state.lowestSeq <= 1) {
       return Promise.resolve();
     }
+    // Reaching the top of the viewport is the only access signal that raises
+    // the retention ceiling — live output at the bottom must not keep old
+    // history pinned in memory.
+    this.lastScrollbackAtByWorker.set(workerId, this.now());
     this.olderLoadInFlightByWorker.add(workerId);
     return this.fetchBefore(workerId, state.lowestSeq, limit).finally(() => {
       this.olderLoadInFlightByWorker.delete(workerId);
@@ -449,6 +466,44 @@ export class WorkerEntriesManager {
 
   private markWake(workerId: string): void {
     this.wakeVersionByWorker.set(workerId, (this.wakeVersionByWorker.get(workerId) ?? 0) + 1);
+  }
+
+  /**
+   * Garbage collect the head of a worker's window. See `entry-retention.ts`
+   * for the policy. Returns the original array when nothing is dropped so
+   * memoized consumers keep their identity.
+   */
+  private retainedEntriesFor(workerId: string, entries: WorkerEntry[]): WorkerEntry[] {
+    const keep = retainedEntryCount({
+      total: entries.length,
+      lastScrollbackAt: this.lastScrollbackAtByWorker.get(workerId) ?? null,
+      now: this.now(),
+      isVisible: (this.listenersByWorker.get(workerId)?.size ?? 0) > 0,
+      policy: this.retention,
+    });
+    return pruneEntryWindow(entries, keep);
+  }
+
+  /**
+   * Collapse a worker's window to the hot tail. Called when the last
+   * subscriber goes away: an unrendered stream has no reason to hold
+   * scroll-back in memory, and re-entering the conversation refetches.
+   */
+  private collectUnsubscribedWorker(workerId: string): void {
+    const state = this.stateByWorker.get(workerId);
+    if (!state || state.entries.length === 0) {
+      return;
+    }
+    const retained = this.retainedEntriesFor(workerId, state.entries);
+    if (retained.length === state.entries.length) {
+      return;
+    }
+    this.stateByWorker.set(workerId, {
+      ...state,
+      entries: retained,
+      lowestSeq: retained[0]?.seq ?? state.lowestSeq,
+      hasOlder: true,
+    });
   }
 
   private fetchTail(workerId: string, limit: number): Promise<void> {
@@ -622,25 +677,34 @@ export class WorkerEntriesManager {
     }
 
     const nextKnown = Math.max(previous.latestKnownSeq, response.latestSeq, nextContiguous);
-    // If we started with no entries, lowestSeq becomes the first merged
-    // entry's seq; otherwise the window's lower bound is unchanged.
-    const nextLowest = previous.lowestSeq > 0
-      ? previous.lowestSeq
-      : merged[0]?.seq ?? 0;
+    // Reuse the previous array when the poll appended nothing. The spread
+    // above always allocates, so an idle validation poll used to hand every
+    // subscriber a brand-new `entries` identity and invalidate each memo
+    // derived from it — the transcript merge and Terminal's activity
+    // rebuild both re-ran for a byte-identical result.
+    const grew = merged.length > previous.entries.length;
+    // Garbage collect the head as the window grows. Without this the window
+    // is unbounded: the tail limit is only applied at hydration, so a session
+    // that streams for a day accumulates every entry it ever received and
+    // re-renders all of them on each append.
+    const nextEntries = grew ? this.retainedEntriesFor(workerId, merged) : previous.entries;
+    const trimmed = nextEntries.length < merged.length;
+    // If we started with no entries, lowestSeq becomes the first retained
+    // entry's seq; a trim raises it to the new head.
+    const nextLowest = trimmed || previous.lowestSeq === 0
+      ? nextEntries[0]?.seq ?? previous.lowestSeq
+      : previous.lowestSeq;
     const next: WorkerStreamState = {
       ...previous,
-      // Reuse the previous array when the poll appended nothing. The spread
-      // above always allocates, so an idle validation poll used to hand every
-      // subscriber a brand-new `entries` identity and invalidate each memo
-      // derived from it — the transcript merge and Terminal's activity
-      // rebuild both re-ran for a byte-identical result.
-      entries: merged.length > previous.entries.length ? merged : previous.entries,
+      entries: nextEntries,
       lowestSeq: nextLowest,
       latestContiguousSeq: nextContiguous,
       latestKnownSeq: nextKnown,
-      // hasOlder is preserved; only tail-load or loadOlder updates it.
-      // A forward fetch starting from lowestSeq=0 (empty window) can't
-      // assert anything about whether older entries exist.
+      // hasOlder is otherwise preserved; only tail-load or loadOlder updates
+      // it. A forward fetch starting from lowestSeq=0 (empty window) can't
+      // assert anything about whether older entries exist. A trim always
+      // implies older entries exist, since we just dropped some.
+      hasOlder: previous.hasOlder || trimmed,
       status: "loaded",
       lastError: null,
       needsTailValidation: false,

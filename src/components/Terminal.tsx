@@ -14,7 +14,7 @@ import {
   TERMINAL_TEXT_SIZE_LEVELS,
   type TerminalTextSizeLevel,
 } from "@/interface/home/AppearancePreferencesManager";
-import { buildAgentOutputActivity, formatActivityStatus, type AgentActivityItem, type AgentOutputEntry, type AgentToolGroupCounts } from "@/lib/agent-output";
+import { buildAgentOutputActivity, formatActivityStatus, reconcileActivityIdentity, type AgentActivityItem, type AgentOutputEntry, type AgentToolGroupCounts } from "@/lib/agent-output";
 import type { WorkerEntry } from "@/shared/worker-entries";
 import type { PlanSurfaceOwner } from "@/shared/acp-plan";
 import type { ChatAttachment } from "@/lib/chat-attachments";
@@ -2505,6 +2505,10 @@ export function Terminal({
       && planSurfaceOwner.workerId,
   );
 
+  // Identity cache for the activity list. Read and written inside the memo
+  // below so unchanged rows keep the object they were last rendered with.
+  const previousActivityRef = useRef<TerminalActivityItemWithOrder[] | null>(null);
+
   const activity = useMemo(() => {
     // When the unified worker stream provides actual `entries`, the legacy
     // `agent` / `userMessages` props are ignored. Split the entries by
@@ -2767,7 +2771,14 @@ export function Terminal({
       }
       return activityKindOrder(a) - activityKindOrder(b) || a.id.localeCompare(b.id);
     });
-    return summarizeWorkBlocks ? summarizeWorkIntervals(sorted) : sorted;
+    const built = summarizeWorkBlocks ? summarizeWorkIntervals(sorted) : sorted;
+    // Hand back the previous object for every row whose content is unchanged,
+    // so `ActivityRow`'s memo actually holds. Without this a single appended
+    // entry re-renders the entire transcript, because the rebuild above
+    // allocates a fresh object per row.
+    const reconciled = reconcileActivityIdentity(previousActivityRef.current, built);
+    previousActivityRef.current = reconciled;
+    return reconciled;
   }, [agent, allowUserMessageFallback, entries, getUserMessageActions, hasMoreHistory, multiWorkerOrdering, pendingAssistantStatus, sendingUserMessageIds, showPendingAssistantIndicator, summarizeWorkBlocks, suppressAcceptedPlanRows, ungatedUserMessageIds, userMessages]);
   const filteredActivity = useMemo(
     () => activityFilter ? activity.filter(activityFilter) : activity,

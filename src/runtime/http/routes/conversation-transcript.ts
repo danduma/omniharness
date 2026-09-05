@@ -27,14 +27,19 @@ import {
   sortConversationTranscriptEntries as sortTranscriptEntries,
   type ConversationTranscriptEntry,
 } from "@/server/conversations/visible-transcript";
+import {
+  decodeConversationTranscriptToken,
+  encodeConversationTranscriptToken,
+  type ConversationTranscriptToken,
+} from "@/shared/conversation-transcript-token";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { startSlowProbe } from "@/server/slow-probe";
 
-interface AfterToken {
-  // Highest contiguous seq the client has consumed from each worker.
-  // Workers not in the map are treated as afterSeq=0 (return everything).
-  cursors: Record<string, number>;
-}
+// Highest contiguous seq the client has consumed from each worker.
+// Workers not in the map are treated as afterSeq=0 (return everything).
+// The codec is shared with the frontend, which mints its own `beforeToken`
+// after the retention collector trims an in-memory window.
+type AfterToken = ConversationTranscriptToken;
 
 const DEFAULT_TRANSCRIPT_LIMIT = 100;
 const MAX_TRANSCRIPT_LIMIT = 1000;
@@ -47,29 +52,11 @@ function parseLimit(value: string | null): number | null {
 }
 
 function decodeAfterToken(raw: string | null): AfterToken {
-  if (!raw) {
-    return { cursors: {} };
-  }
-  try {
-    const buf = Buffer.from(raw, "base64url");
-    const parsed = JSON.parse(buf.toString("utf8")) as AfterToken;
-    if (parsed && typeof parsed === "object" && parsed.cursors && typeof parsed.cursors === "object") {
-      const cursors: Record<string, number> = {};
-      for (const [workerId, value] of Object.entries(parsed.cursors)) {
-        if (typeof workerId === "string" && typeof value === "number" && Number.isFinite(value) && value >= 0) {
-          cursors[workerId] = value;
-        }
-      }
-      return { cursors };
-    }
-  } catch {
-    // Malformed token → treat as cold start.
-  }
-  return { cursors: {} };
+  return decodeConversationTranscriptToken(raw);
 }
 
 function encodeAfterToken(token: AfterToken): string {
-  return Buffer.from(JSON.stringify(token), "utf8").toString("base64url");
+  return encodeConversationTranscriptToken(token);
 }
 
 function latestReturnedSeq(entries: WorkerEntry[]) {

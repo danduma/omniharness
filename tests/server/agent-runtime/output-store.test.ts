@@ -8,6 +8,7 @@ import {
   appendBoundedThoughts,
   appendMessageChunk,
   openAgentOutputArchive,
+  reassembleArchivedEntries,
   summarizeToolCallUpdate,
 } from "@/server/agent-runtime/output-store";
 import type { AgentRecord } from "@/server/agent-runtime/types";
@@ -178,6 +179,75 @@ describe("agent runtime output store", () => {
       appendMessageChunk(record, "\n\nAdditional thoughts", "thought");
 
       expect(record.outputEntries[0].text).toBe("Old thoughts\n\nKeep block\n\nAdditional thoughts");
+    });
+
+    it("keeps writing one message while a background terminal streams updates", () => {
+      const dataDir = makeTempRoot();
+      const outputArchive = openAgentOutputArchive({ dataDir, name: "interleaved-worker" });
+      const record = {
+        outputArchive,
+        outputEntries: [],
+        activeOutputEntryId: null,
+      } as unknown as AgentRecord;
+      const terminalUpdate = () => appendOutputEntry(record, {
+        type: "tool_call_update",
+        text: "exec-4ad3410f",
+        toolCallId: "exec-4ad3410f",
+        status: "in_progress",
+      });
+
+      terminalUpdate();
+      appendMessageChunk(record, "Caption performance", "message");
+      terminalUpdate();
+      appendMessageChunk(record, " is green", "message");
+      terminalUpdate();
+      terminalUpdate();
+      appendMessageChunk(record, " through its 491-test manifest.", "message");
+
+      const messages = record.outputEntries.filter((entry) => entry.type === "message");
+      expect(messages).toHaveLength(1);
+      expect(messages[0]?.text).toBe("Caption performance is green through its 491-test manifest.");
+    });
+
+    it("starts a new message after a real turn boundary", () => {
+      const dataDir = makeTempRoot();
+      const outputArchive = openAgentOutputArchive({ dataDir, name: "boundary-worker" });
+      const record = {
+        outputArchive,
+        outputEntries: [],
+        activeOutputEntryId: null,
+      } as unknown as AgentRecord;
+
+      appendMessageChunk(record, "Running the verifier now.", "message");
+      appendOutputEntry(record, { type: "tool_call", text: "Terminal", toolCallId: "exec-1" });
+      appendMessageChunk(record, "The verifier is green.", "message");
+
+      const messages = record.outputEntries.filter((entry) => entry.type === "message");
+      expect(messages.map((entry) => entry.text)).toEqual([
+        "Running the verifier now.",
+        "The verifier is green.",
+      ]);
+    });
+  });
+
+  describe("reassembleArchivedEntries", () => {
+    it("rejoins chunks separated by background terminal records", () => {
+      const reassembled = reassembleArchivedEntries([
+        { type: "message", text: "Caption performance" },
+        { type: "tool_call_update", text: "exec-4ad3410f" },
+        { type: "usage", text: "" },
+        { type: "message", text: " is green." },
+        { type: "tool_call", text: "Terminal" },
+        { type: "message", text: "Next step." },
+      ]);
+
+      expect(reassembled).toEqual([
+        { type: "message", text: "Caption performance is green." },
+        { type: "tool_call_update", text: "exec-4ad3410f" },
+        { type: "usage", text: "" },
+        { type: "tool_call", text: "Terminal" },
+        { type: "message", text: "Next step." },
+      ]);
     });
   });
 });

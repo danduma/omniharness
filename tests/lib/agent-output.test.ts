@@ -91,6 +91,72 @@ describe("agent output normalization", () => {
     });
   });
 
+  it("joins one assistant message split by a background terminal's output deltas", () => {
+    // Verbatim from run a8bb831ebe74 seq 26473-26489: the model wrote this
+    // paragraph while `exec-4ad3410f` was still streaming, so every delta
+    // landed as its own entry and the reader saw six separate bubbles.
+    const update = (seq: number): AgentOutputEntry => ({
+      id: `u${seq}`,
+      type: "tool_call_update",
+      text: "exec-4ad3410f",
+      timestamp: "2026-08-27T10:39:31.676Z",
+      toolCallId: "exec-4ad3410f",
+      status: "in_progress",
+    });
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        update(26473),
+        { id: "f1", type: "message", text: "Caption performance", timestamp: "2026-08-27T10:39:31.674Z" },
+        update(26475),
+        { id: "f2", type: "message", text: " is", timestamp: "2026-08-27T10:39:31.674Z" },
+        update(26477),
+        update(26478),
+        { id: "f3", type: "message", text: " green", timestamp: "2026-08-27T10:39:31.677Z" },
+        update(26482),
+        { id: "f4", type: "message", text: " through its", timestamp: "2026-08-27T10:39:31.677Z" },
+        update(26484),
+        {
+          id: "f5",
+          type: "message",
+          text: " 491-test deterministic manifest, authoritative Rust↔WASM parity, content",
+          timestamp: "2026-08-27T10:39:31.679Z",
+        },
+        update(26487),
+        {
+          id: "f6",
+          type: "message",
+          text: "-addressed browser artifact hash, import boundaries, and typecheck.",
+          timestamp: "2026-08-27T10:39:31.705Z",
+        },
+      ],
+    });
+
+    const messages = activity.filter((item) => item.kind === "message");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      text: "Caption performance is green through its 491-test deterministic manifest,"
+        + " authoritative Rust↔WASM parity, content-addressed browser artifact hash,"
+        + " import boundaries, and typecheck.",
+      timestamp: "2026-08-27T10:39:31.674Z",
+    });
+  });
+
+  it("keeps growing revisions of one message id from concatenating with themselves", () => {
+    // Same id, cumulative text, and a leading space that also matches the
+    // continuation heuristic — this must stay a single revised bubble.
+    const activity = buildAgentOutputActivity({
+      outputEntries: [
+        { id: "rev", type: "message", text: " Both", timestamp: "2026-08-27T10:38:31.726Z" },
+        { id: "rev", type: "message", text: " Both adversarial", timestamp: "2026-08-27T10:38:31.726Z" },
+        { id: "rev", type: "message", text: " Both adversarial failures are fixed.", timestamp: "2026-08-27T10:38:31.726Z" },
+      ],
+    });
+
+    const messages = activity.filter((item) => item.kind === "message");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ text: "Both adversarial failures are fixed." });
+  });
+
   it("renders the latest changed revision for repeated bridge message ids", () => {
     const activity = buildAgentOutputActivity({
       outputEntries: [
