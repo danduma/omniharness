@@ -19,7 +19,11 @@ export { buildEventStreamUrl };
 
 const SNAPSHOT_FALLBACK_INTERVAL_MS = 15_000;
 const SNAPSHOT_FALLBACK_COOLDOWN_MS = 1_000;
-const SNAPSHOT_VALIDATION_INTERVAL_MS = 5_000;
+// SSE has replay/resync and the worker stream has its own cursors. This is a
+// low-frequency safety check, not a polling transport. A five-second interval
+// created 720 extra requests per hour on every phone even while the stream was
+// healthy.
+const SNAPSHOT_VALIDATION_INTERVAL_MS = 60_000;
 
 interface LiveEventConnectionManagerOptions {
   selectedRunId?: string | null;

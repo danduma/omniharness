@@ -542,6 +542,33 @@ describe("LiveEventConnectionManager", () => {
     vi.useRealTimers();
   });
 
+  it("uses a one-minute healthy-stream validation interval by default", async () => {
+    vi.useFakeTimers();
+    MockEventSource.instances = [];
+    const requestJson = vi.fn().mockResolvedValue({
+      notModified: true,
+      snapshotChecksum: "sha256:unchanged",
+    });
+    const manager = new LiveEventConnectionManager({
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestJson,
+      applyUpdate: vi.fn(),
+      reportError: vi.fn(),
+    });
+
+    manager.start();
+    await flushAsyncWork();
+    MockEventSource.instances[0]?.onopen?.();
+
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(requestJson).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(requestJson).toHaveBeenCalledTimes(2);
+
+    manager.stop();
+    vi.useRealTimers();
+  });
+
   it("sends the cached snapshot checksum and skips unchanged snapshot payloads", async () => {
     vi.useFakeTimers();
     MockEventSource.instances = [];

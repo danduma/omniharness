@@ -59,16 +59,10 @@ async function readUntilUpdateFrame(
   let buffer = "";
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const readResult = await Promise.race([
-      reader.read(),
-      new Promise<{ value?: Uint8Array; done?: boolean }>((resolve) =>
-        setTimeout(() => resolve({ value: undefined, done: false }), 200),
-      ),
-    ]);
+    const readResult = await readWithTimeout(reader, Math.max(1, deadline - Date.now()));
     if (readResult.done) {
       throw new Error("SSE stream closed without an update frame");
     }
-    if (!readResult.value) continue;
     buffer += decoder.decode(readResult.value, { stream: true });
     const frames = buffer.split("\n\n");
     buffer = frames.pop() ?? "";
@@ -1745,6 +1739,101 @@ describe("GET /api/events", () => {
 
     const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     expect(persistedRun?.status).toBe("done");
+  });
+
+  it("streams only the selected catalog slice after full snapshot bootstrap", async () => {
+    const selectedPlanId = randomUUID();
+    const selectedRunId = randomUUID();
+    const selectedWorkerId = `${selectedRunId}-worker-1`;
+    const otherPlanId = randomUUID();
+    const otherRunId = randomUUID();
+    const otherWorkerId = `${otherRunId}-worker-1`;
+    const now = new Date();
+
+    await db.insert(plans).values([
+      { id: selectedPlanId, path: "vibes/ad-hoc/selected.md", status: "running", createdAt: now, updatedAt: now },
+      { id: otherPlanId, path: "vibes/ad-hoc/other.md", status: "running", createdAt: now, updatedAt: now },
+    ]);
+    await db.insert(runs).values([
+      { id: selectedRunId, planId: selectedPlanId, mode: "direct", status: "running", createdAt: now, updatedAt: now },
+      { id: otherRunId, planId: otherPlanId, mode: "direct", status: "running", createdAt: now, updatedAt: now },
+    ]);
+    await db.insert(workers).values([
+      { id: selectedWorkerId, runId: selectedRunId, type: "codex", status: "working", cwd: "/workspace/app", outputLog: "", outputEntriesJson: "[]", currentText: "", lastText: "", createdAt: now, updatedAt: now },
+      { id: otherWorkerId, runId: otherRunId, type: "claude", status: "working", cwd: "/workspace/app", outputLog: "", outputEntriesJson: "[]", currentText: "", lastText: "", createdAt: now, updatedAt: now },
+    ]);
+    mockAgentRuntimeJson([
+      { name: selectedWorkerId, type: "codex", cwd: "/workspace/app", state: "working", currentText: "selected live work", lastText: "", outputEntries: [], stderrBuffer: [], stopReason: null },
+      { name: otherWorkerId, type: "claude", cwd: "/workspace/app", state: "working", currentText: "other live work", lastText: "", outputEntries: [], stderrBuffer: [], stopReason: null },
+    ], { status: 200 });
+
+    const snapshotResponse = await GET(new Request(
+      `http://localhost/api/events?snapshot=1&persisted=1&runId=${selectedRunId}`,
+    ));
+    const snapshot = await snapshotResponse.json();
+    expect(snapshot.snapshotScope.catalog.complete).toBe(true);
+    expect(snapshot.runs.map((run: { id: string }) => run.id)).toEqual(expect.arrayContaining([selectedRunId, otherRunId]));
+
+    const controller = new AbortController();
+    const streamResponse = await GET(new Request(`http://localhost/api/events?runId=${selectedRunId}`, {
+      signal: controller.signal,
+    }));
+    const reader = streamResponse.body!.getReader();
+    const streamed = await readUntilUpdateFrame(reader);
+    controller.abort();
+    await reader.cancel();
+
+    expect(streamed.snapshotScope.catalog.complete).toBe(false);
+    expect(streamed.snapshotChecksum).toBeUndefined();
+    expect(streamed.runs.map((run: { id: string }) => run.id)).toEqual([selectedRunId]);
+    expect(streamed.workers.map((worker: { id: string }) => worker.id)).toEqual([selectedWorkerId]);
+    expect(streamed.sessions.map((session: { runId: string }) => session.runId)).toEqual([selectedRunId]);
+    expect(streamed.plans.map((plan: { id: string }) => plan.id)).toEqual([selectedPlanId]);
+    expect(streamed.readMarkers).toEqual({});
+    expect(streamed.agents.map((agent: { name: string }) => agent.name)).toEqual([selectedWorkerId]);
+    expect(Buffer.byteLength(JSON.stringify(streamed))).toBeLessThan(Buffer.byteLength(JSON.stringify(snapshot)) * 0.8);
+  });
+
+  it("streams an empty selected catalog slice when the selected run no longer exists", async () => {
+    const otherPlanId = randomUUID();
+    const otherRunId = randomUUID();
+    const missingRunId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values({
+      id: otherPlanId,
+      path: "vibes/ad-hoc/other.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: otherRunId,
+      planId: otherPlanId,
+      mode: "direct",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    mockAgentRuntimeJson([], { status: 200 });
+
+    const controller = new AbortController();
+    const streamResponse = await GET(new Request(`http://localhost/api/events?runId=${missingRunId}`, {
+      signal: controller.signal,
+    }));
+    const reader = streamResponse.body!.getReader();
+    const streamed = await readUntilUpdateFrame(reader);
+    controller.abort();
+    await reader.cancel();
+
+    expect(streamed.snapshotRunId).toBe(missingRunId);
+    expect(streamed.snapshotScope.catalog.complete).toBe(false);
+    expect(streamed.snapshotChecksum).toBeUndefined();
+    expect(streamed.runs).toEqual([]);
+    expect(streamed.plans).toEqual([]);
+    expect(streamed.workers).toEqual([]);
+    expect(streamed.sessions).toEqual([]);
+    expect(streamed.readMarkers).toEqual({});
   });
 
   it("revives a running implementation worker row when the bridge still has an active worker", async () => {

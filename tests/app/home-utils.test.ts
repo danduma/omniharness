@@ -139,6 +139,13 @@ describe("home utils", () => {
       catalogComplete: false,
       snapshotRunId: null,
     })).toBe(false);
+    expect(shouldClearMissingSelectedRunFromAuthoritativeSnapshot({
+      selectedRunId: "run-a",
+      selectedRunExists: false,
+      snapshotSource: "server",
+      catalogComplete: false,
+      snapshotRunId: "run-a",
+    })).toBe(true);
   });
 
   it("uses ids as deterministic tie-breakers for equal timestamps", () => {

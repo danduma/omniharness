@@ -43,6 +43,11 @@ type RunRecord = EventStreamState["runs"][number];
  * and flicker until the server caught up.
  */
 function isNoOpSnapshotUpdate(current: EventStreamState, next: EventStreamState) {
+  // A partial frame intentionally retains the last complete checksum. Its
+  // selected-run records may still have changed and must be merged.
+  if (next.snapshotScope?.catalog?.complete === false) {
+    return false;
+  }
   const checksum = next.snapshotChecksum;
   if (!checksum || checksum !== current.snapshotChecksum) {
     return false;
@@ -147,22 +152,45 @@ function mergeGoalSnapshots(
 }
 
 function mergeScopedCatalog(current: EventStreamState, incoming: EventStreamState) {
-  const isSelectedRunScoped = Boolean(incoming.snapshotRunId?.trim());
+  const scopedRunId = incoming.snapshotRunId?.trim() || null;
+  const isSelectedRunScoped = Boolean(scopedRunId);
+  const catalogIsComplete = incoming.snapshotScope?.catalog?.complete === true;
   const catalogIsPartial = incoming.snapshotScope?.catalog?.complete === false;
-  if (!isSelectedRunScoped && !catalogIsPartial) {
+  if (catalogIsComplete || (!isSelectedRunScoped && !catalogIsPartial)) {
     return {
       ...incoming,
       readMarkers: mergeReadMarkersForVisibleRuns(current, incoming),
     };
   }
 
-  const mergedRuns = mergeByKey(current.runs, incoming.runs, (run) => run.id);
+  const selectedRunIsAbsent = Boolean(
+    catalogIsPartial
+    && scopedRunId
+    && !(incoming.runs ?? []).some((run) => run.id === scopedRunId),
+  );
+  const removedPlanId = selectedRunIsAbsent
+    ? current.runs.find((run) => run.id === scopedRunId)?.planId
+    : null;
+  const currentRuns = selectedRunIsAbsent
+    ? current.runs.filter((run) => run.id !== scopedRunId)
+    : current.runs;
+  const currentPlans = removedPlanId
+    ? current.plans.filter((plan) => plan.id !== removedPlanId)
+    : current.plans;
+  const currentWorkers = selectedRunIsAbsent
+    ? current.workers.filter((worker) => worker.runId !== scopedRunId)
+    : current.workers;
+  const currentSessions = selectedRunIsAbsent
+    ? current.sessions?.filter((session) => session.runId !== scopedRunId)
+    : current.sessions;
+  const mergedRuns = mergeByKey(currentRuns, incoming.runs, (run) => run.id);
   return {
     ...incoming,
+    snapshotChecksum: catalogIsPartial ? current.snapshotChecksum : incoming.snapshotChecksum,
     runs: mergedRuns,
-    plans: mergeByKey(current.plans, incoming.plans, (plan) => plan.id),
-    workers: mergeByKey(current.workers, incoming.workers, (worker) => worker.id),
-    sessions: mergeByKey(current.sessions, incoming.sessions, (session) => session.runId),
+    plans: mergeByKey(currentPlans, incoming.plans, (plan) => plan.id),
+    workers: mergeByKey(currentWorkers, incoming.workers, (worker) => worker.id),
+    sessions: mergeByKey(currentSessions, incoming.sessions, (session) => session.runId),
     readMarkers: mergeReadMarkersForVisibleRuns(current, {
       ...incoming,
       runs: mergedRuns,
