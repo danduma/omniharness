@@ -1,13 +1,14 @@
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { askAgent, cancelAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
 import { db } from "@/server/db";
-import { executionEvents, messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
+import { executionEvents, messages, queuedConversationMessages, recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { normalizeRunStatus } from "@/server/runs/status";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
+import { readWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import {
   resolveDirectRunStatusFromWorkerOutput,
@@ -367,7 +368,9 @@ async function resumeSavedWorkerSession(args: {
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(args.worker.bridgeSessionMode, yoloModeEnabled);
   const { env: envParams } = await readRuntimeEnvFromSettings();
-  const launchSelection = resolveWorkerLaunchSelection(args.worker, args.run);
+  const launchSelection = resolveWorkerLaunchSelection(args.worker, args.run, {
+    accountId: await readWorkerAllocatedAccountId(args.worker.id),
+  });
 
   await markRecoveryIncidentRecovering({
     incidentId: args.incidentId,
@@ -527,6 +530,19 @@ async function resumeSavedWorkerSession(args: {
         ...(continueInterruptedDirectTurn ? { continuationPending: true } : {}),
       },
     });
+    // Settle the worker's *other* unsettled incidents too. `openRecoveryIncident`
+    // keys on (run, kind, worker, queuedMessageId), so the same worker failing
+    // twice with different queued-message context produces two rows — and this
+    // path used to resolve only the one it opened. A restored session is proof
+    // about the worker, not about one row, so an earlier `needs_user` incident
+    // survived the resume that disproved it and kept the recovery banner up over
+    // a healthy agent until some unrelated status transition swept it.
+    await resolveRecoveryIncidentsAfterHealthyTurn({
+      runId: args.run.id,
+      workerId: args.worker.id,
+      summary: `Resumed ${args.worker.id} from saved session.`,
+      reason: "worker_session_resumed",
+    });
     return true;
   });
   if (!recoveryPersisted) {
@@ -585,7 +601,9 @@ async function restartDirectWorker(args: {
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(args.worker.bridgeSessionMode, yoloModeEnabled);
   const { env: envParams } = await readRuntimeEnvFromSettings();
-  const launchSelection = resolveWorkerLaunchSelection(args.worker, args.run);
+  const launchSelection = resolveWorkerLaunchSelection(args.worker, args.run, {
+    accountId: await readWorkerAllocatedAccountId(args.worker.id),
+  });
   const spawnParams = {
     type: args.worker.type,
     cwd: args.worker.cwd,
@@ -703,6 +721,12 @@ async function restartDirectWorker(args: {
       transcriptRestored: resumedMaterializedSession,
     },
   });
+  await resolveRecoveryIncidentsAfterHealthyTurn({
+    runId: args.run.id,
+    workerId: args.worker.id,
+    summary: `Replaced ${args.worker.id} with a working direct worker.`,
+    reason: "direct_worker_restarted",
+  });
   return {
     action: "restart_direct_worker" as const,
     runId: args.run.id,
@@ -788,7 +812,16 @@ export async function reconcileRunRecovery(args: {
   }
 
   if (state.kind === "needs_recovery" && run.status === "needs_recovery" && !args.force) {
-    return { action: "needs_user" as const, runId: run.id, recoveryState: state };
+    const existingIncident = await db.select({ id: recoveryIncidents.id })
+      .from(recoveryIncidents)
+      .where(and(
+        eq(recoveryIncidents.runId, run.id),
+        inArray(recoveryIncidents.status, ["open", "recovering", "needs_user", "failed"]),
+      ))
+      .get();
+    if (existingIncident) {
+      return { action: "needs_user" as const, runId: run.id, recoveryState: state };
+    }
   }
 
   if (run.mode === "implementation" && normalizeRunStatus(run.status) === "awaiting_user") {

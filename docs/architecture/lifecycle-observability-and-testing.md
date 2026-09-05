@@ -63,6 +63,43 @@ delivered if its exact message id reached the transcript, otherwise return it
 to pending. An elicitation answer resumes the turn that already owns the live
 question, so it must never wait behind that same turn's per-worker gate; doing
 so is a self-deadlock because the turn cannot finish until the answer arrives.
+A steer is also allowed to supersede a retry/edit recovery that owns the
+conversation mutex. It must first abort the registered recovery turn, then
+wait for the mutex and acknowledge the replacement without awaiting the new
+provider turn. Otherwise the request inherits provider-turn latency and can
+expire at an HTTP proxy even though the user's intent was to interrupt it.
+
+## Provider identity and startup ownership invariant
+
+A requested provider model id and the provider's reported session value are
+different namespaces. Exact string equality is not an identity check: an ACP
+adapter may report a provider alias such as `opus[1m]` for the canonical
+`claude-opus-5` request. Accept an alias only when one model-menu entry
+unambiguously proves the same family and version; empty, missing, duplicated,
+internally contradictory, cross-family, or cross-version evidence refuses the launch.
+Persist canonical requested intent separately from observed effective identity.
+
+The launch scope owns every child, runtime client, and temporary skill link
+until the fully constructed agent record is inserted into the manager registry.
+That insertion is the ownership transfer. Any earlier rejection, timeout, or
+abort must settle cleanup before returning the original error. Cleanup failures
+are surfaced without replacing that primary failure. A pool transfer succeeds
+only when the pool explicitly accepts ownership, and a checked-out pool member
+must be owned before the next failure-prone await.
+
+Expected transport teardown is cancellation, not a process error. In
+particular, closing a compressed HTTP/SSE response must cancel and settle both
+the upstream reader and gzip consumer without destroying zlib with a synthetic
+client-disconnect error. Unexpected compression failures still propagate to the
+server error boundary.
+
+A persisted `lost` worker is durable non-health evidence even though it is not
+an active worker status. With no matching live agent it must classify as
+recovery-required, remain out of the `running` projection, and retain one
+unsettled incident across selected and background syncs. The incident identity
+check and insertion occur under one SQLite write transaction so concurrent
+recovery sources cannot duplicate it. Only verified active work or a terminal
+run may resolve that incident.
 
 ## Why this document exists
 
@@ -663,6 +700,22 @@ validates the target first, confirms the source process stopped, captures the fi
 sequence and tracked-workspace fingerprint, then claims and creates the target. A launch
 refuses on either sequence or fingerprint drift.
 
+The handoff owns the selected source-to-target transition, not every conversation whose
+project path names the same checkout. An unrelated active or recoverable run must not veto
+preparation and must not be stopped as part of the handoff. The selected source is stopped
+before its target starts, while actual concurrent tracked-workspace changes remain guarded
+by the launch fingerprint and refuse with `handoff.source_changed` rather than a persisted
+run-status guess about global checkout ownership.
+
+The packet's changed-file list answers one question only: which project files this
+conversation actually targeted with successful edit/write/patch tools. Build it by
+scanning the complete persisted worker streams for every replacement worker in the run,
+grouping revisions by tool-call identity, retaining only terminal successful edit calls,
+and normalizing their targets to project-relative paths. Never derive this list from Git
+status, a baseline diff, or checkout dirtiness; those describe shared disk state and cannot
+attribute a file to a conversation. If no reliable edit-tool target exists, report no file.
+Git HEAD/diff hashing remains separate launch-drift protection and is not packet file evidence.
+
 Every decision emits a typed `handoff.*` event. User-visible failures additionally emit
 `error.surfaced` with a stable `handoff.*` code. Ready and launch claims expire; the
 watchdog either adopts a target found by `runs.origin_handoff_id` or restores the source
@@ -689,6 +742,8 @@ first prompt is persisted through the ordinary unified worker conversation strea
 | `plan-improvement-flow` | Review start + worker spawn + restart-resync end-to-end |
 | `real-restart` | **Real subprocess** kill+respawn: sqlite persists, ring resets, client gets `stream.resync_required` |
 | `direct-mode-rerun` | User pressing "re-run" — same content sent twice persists as two rows in order |
+| `direct-retry-steer-preemption` | An HTTP steer aborts a mutex-holding retry, returns promptly, and delivers the replacement without failing the run |
+| `cross-cli-handoff-with-concurrent-planning` | An unrelated planning run in the same checkout neither vetoes the handoff nor gets stopped |
 | `flaky-network` | Seeded HTTP flake: server stays consistent, deterministic across seed |
 | `worker-spawn-failure` | Bridge `spawnAgent` rejection now emits `error.surfaced(worker.spawn.failed)` instead of going silent |
 | `supervisor-stopped` | Every observer stop site emits `supervisor.stopped` with a typed reason (`run_terminated`, `run_failed`, `cwd_mismatch`, `snapshot_invalid`, `quota_exhausted`, `fatal_bridge_error`, `explicit`) |

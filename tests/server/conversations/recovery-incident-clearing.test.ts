@@ -26,9 +26,10 @@ import {
   workers,
 } from "@/server/db/schema";
 
-const { mockAskAgent, mockGetAgent, mockSpawnAgent } = vi.hoisted(() => ({
+const { mockAskAgent, mockGetAgent, mockResolveCredentialAuthFailureMessage, mockSpawnAgent } = vi.hoisted(() => ({
   mockAskAgent: vi.fn(),
   mockGetAgent: vi.fn(),
+  mockResolveCredentialAuthFailureMessage: vi.fn(),
   mockSpawnAgent: vi.fn(),
 }));
 
@@ -43,6 +44,10 @@ vi.mock("@/server/bridge-client", () => ({
   cancelAgentTurn: vi.fn(() => Promise.resolve({ ok: true, name: "worker", cancelledPermissions: 0 })),
   getAgent: mockGetAgent,
   spawnAgent: mockSpawnAgent,
+}));
+
+vi.mock("@/server/conversations/credential-auth-failure", () => ({
+  resolveCredentialAuthFailureMessage: mockResolveCredentialAuthFailureMessage,
 }));
 
 import { createConversation } from "@/server/conversations/create";
@@ -77,6 +82,8 @@ describe("a healthy turn clears a stale recovery incident", () => {
   beforeEach(async () => {
     mockAskAgent.mockReset();
     mockGetAgent.mockReset();
+    mockResolveCredentialAuthFailureMessage.mockReset();
+    mockResolveCredentialAuthFailureMessage.mockImplementation(async (_run, _worker, message) => message);
     mockSpawnAgent.mockReset();
     __resetWorkerTurnChainsForTests();
 
@@ -141,5 +148,35 @@ describe("a healthy turn clears a stale recovery incident", () => {
     expect(stored?.status).toBe("resolved");
     expect(stored?.resolvedAt).not.toBeNull();
     expect(stored?.lastError).toBeNull();
+  });
+
+  it("verifies an initial direct-turn auth failure before persisting it", async () => {
+    mockAskAgent.mockRejectedValue(new Error("Authentication required"));
+    mockSpawnAgent.mockImplementation(async ({ name, cwd }: { name: string; cwd: string }) => ({
+      ...idleSnapshot(name),
+      cwd,
+      state: "working",
+    }));
+    mockGetAgent.mockImplementation(async (workerId: string) => idleSnapshot(workerId));
+    mockResolveCredentialAuthFailureMessage.mockResolvedValue(
+      "Authentication required [credential_verified_dead:local-session-claude]",
+    );
+
+    const created = await createConversation({
+      mode: "direct",
+      command: "Start something.",
+      projectPath: process.cwd(),
+      preferredWorkerType: "claude",
+      allowedWorkerTypes: ["claude"],
+    });
+    await waitForConversationBackgroundTasksForTests();
+
+    expect(mockResolveCredentialAuthFailureMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: created.runId }),
+      expect.objectContaining({ type: "claude" }),
+      expect.stringContaining("Authentication required"),
+    );
+    expect((await db.select().from(runs).where(eq(runs.id, created.runId)).get())?.lastError)
+      .toContain("credential_verified_dead:local-session-claude");
   });
 });

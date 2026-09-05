@@ -150,6 +150,70 @@ describe("syncConversationSessions", () => {
     expect(run?.lastError).toBe(verifiedFailure);
   });
 
+  it("preserves a verified credential verdict when a restarted bridge reports a generic session error", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+    const rawProviderError = "Internal error: Failed to authenticate. API Error: 401 OAuth access token has been revoked.";
+    const verifiedFailure = annotateVerifiedDeadCredential(rawProviderError, "claude-sub-1");
+    const bridgeError = "The Claude bridge session closed unexpectedly.";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/revoked-credential-generic-restart.md",
+      status: "failed",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "failed",
+      title: "Revoked credential generic restart",
+      lastError: verifiedFailure,
+      failedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "error",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: bridgeError,
+      lastText: bridgeError,
+      workerNumber: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await syncConversationSessions([{
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "error",
+      sessionId: "generic-restart-session",
+      sessionMode: "full-access",
+      currentText: bridgeError,
+      lastText: bridgeError,
+      renderedOutput: bridgeError,
+      outputEntries: [],
+      pendingPermissions: [],
+      pendingElicitations: [],
+      stderrBuffer: [],
+      stopReason: null,
+      lastError: bridgeError,
+    }], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(run?.lastError).toBe(annotateVerifiedDeadCredential(bridgeError, "claude-sub-1"));
+  });
+
   it("repairs a legacy raw auth error from the persisted dead-credential verification event", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -448,6 +512,130 @@ describe("syncConversationSessions", () => {
       status: "needs_user",
     });
     expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it("keeps a selected lost direct worker in one unresolved recovery incident across syncs", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const old = new Date(0);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/lost-direct.md",
+      status: "running",
+      createdAt: old,
+      updatedAt: old,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Lost direct worker",
+      createdAt: old,
+      updatedAt: old,
+    });
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "Finish the original request",
+      createdAt: old,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "lost",
+      cwd: process.cwd(),
+      bridgeSessionId: null,
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      workerNumber: 1,
+      createdAt: old,
+      updatedAt: old,
+    });
+
+    await syncConversationSessions([], { selectedRunId: runId });
+    await syncConversationSessions([], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const incidents = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
+
+    expect(run?.status).toBe("needs_recovery");
+    expect(worker?.status).toBe("lost");
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0]).toMatchObject({
+      workerId,
+      kind: "worker_lost",
+      status: "needs_user",
+    });
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it("opens one incident when a background sync sees a lost direct worker before selection", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const old = new Date(0);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/background-lost-direct.md",
+      status: "running",
+      createdAt: old,
+      updatedAt: old,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Background lost direct worker",
+      createdAt: old,
+      updatedAt: old,
+    });
+    await db.insert(messages).values({
+      id: randomUUID(),
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "Finish the original request",
+      createdAt: old,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "lost",
+      cwd: process.cwd(),
+      bridgeSessionId: null,
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      workerNumber: 1,
+      createdAt: old,
+      updatedAt: old,
+    });
+
+    await syncConversationSessions([]);
+    await syncConversationSessions([], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const incidents = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
+    expect(run?.status).toBe("needs_recovery");
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0]).toMatchObject({
+      workerId,
+      kind: "worker_lost",
+      status: "needs_user",
+    });
   });
 
   it("can sync a selected planning worker without refreshing planning artifact fields", async () => {
@@ -1353,6 +1541,97 @@ describe("syncConversationSessions", () => {
     expect(incident?.resolvedAt).not.toBeNull();
   });
 
+  it("clears a stale incident on a worker that was already working when sync looked", async () => {
+    // The transition-gated version of this sweep could not fire here. Recovery
+    // restores a worker by writing `working` to the row itself, so by the time
+    // the live sync runs there is no idle→working edge left to catch, and an
+    // incident the resume had already disproved kept the "Needs recovery"
+    // banner up over a healthy agent for the rest of the turn.
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/already-working-sweep.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Already working sweep",
+      createdAt: now,
+      updatedAt: now,
+    });
+    // Recovery already put the worker back to `working`; its period began at 10.
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "working",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "Deploying.",
+      lastText: "",
+      workerNumber: 1,
+      activeWorkStartedAt: new Date(now.getTime() + 10_000),
+      createdAt: now,
+      updatedAt: new Date(now.getTime() + 10_000),
+    });
+    await db.insert(recoveryIncidents).values({
+      id: "orphaned-incident",
+      runId,
+      workerId,
+      kind: "session_missing",
+      status: "needs_user",
+      autoAttemptCount: 1,
+      lastError: `Ask failed: Agent not found: ${workerId}`,
+      details: JSON.stringify({ continuationFailed: true }),
+      detectedAt: new Date(now.getTime() + 5_000),
+      updatedAt: new Date(now.getTime() + 5_000),
+    });
+
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "claude",
+        cwd: process.cwd(),
+        state: "working",
+        sessionId: "recovered-session",
+        sessionMode: "full-access",
+        currentText: "Deploying.",
+        lastText: "",
+        renderedOutput: "Deploying.",
+        outputEntries: [
+          {
+            id: "deploying",
+            type: "message",
+            text: "Deploying.",
+            status: "pending",
+            timestamp: new Date(now.getTime() + 11_000).toISOString(),
+          },
+        ],
+        pendingElicitations: [],
+        stderrBuffer: [],
+        stopReason: null,
+      },
+    ], { selectedRunId: runId });
+
+    const incident = await db
+      .select()
+      .from(recoveryIncidents)
+      .where(eq(recoveryIncidents.id, "orphaned-incident"))
+      .get();
+    expect(incident?.status).toBe("resolved");
+    expect(incident?.resolvedAt).not.toBeNull();
+  });
+
   it("keeps an incident raised during the current working period", async () => {
     // The fence that stops the sweep from flapping: it only fires on the
     // transition into `working`, so an incident opened while the worker is
@@ -1400,8 +1679,8 @@ describe("syncConversationSessions", () => {
       status: "needs_user",
       autoAttemptCount: 0,
       details: JSON.stringify({ recoveryState: "needs_recovery" }),
-      detectedAt: new Date(now.getTime() + 5),
-      updatedAt: new Date(now.getTime() + 5),
+      detectedAt: new Date(now.getTime() + 5_000),
+      updatedAt: new Date(now.getTime() + 5_000),
     });
 
     await syncConversationSessions([
@@ -1421,7 +1700,7 @@ describe("syncConversationSessions", () => {
             type: "message",
             text: "Still working.",
             status: "pending",
-            timestamp: new Date(now.getTime() + 6).toISOString(),
+            timestamp: new Date(now.getTime() + 6_000).toISOString(),
           },
         ],
         pendingElicitations: [],

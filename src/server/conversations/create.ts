@@ -11,6 +11,7 @@ import { resolveOmniRequest, type ConversationMode } from "./modes";
 import { normalizeWorkerType, parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
 import { buildPlannerSystemPrompt } from "@/server/prompts";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
+import { userFacingProviderSessionErrorMessage } from "@/server/workers/session-recovery";
 import { createRunId, RUN_ID_PATTERN } from "@/server/runs/ids";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
@@ -61,6 +62,8 @@ import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import { decodeClaudeGatewayModel } from "@/lib/claude-model-gateway";
 import { prepareClaudeGatewayLaunch } from "@/server/integrations/claude-model-gateway/worker-env";
 import { assertWorkspaceNotHandoffFenced } from "@/server/handoff/fence";
+import { hasVerifiedDeadCredentialMarker } from "@/lib/provider-account-failures";
+import { resolveCredentialAuthFailureMessage } from "./credential-auth-failure";
 
 
 function buildInitialWorkerPrompt(mode: ConversationMode, command: string, projectRoot: string) {
@@ -208,22 +211,18 @@ async function handleInitialWorkerQuotaError(args: {
   return true;
 }
 
-function toErrorCause(error: unknown) {
-  if (error instanceof Error) {
-    return { name: error.name, message: error.message };
-  }
-
-  return { name: "Error", message: String(error) };
-}
-
 async function persistInitialWorkerSpawnFailure(args: {
   runId: string;
   workerId: string;
   mode: "direct" | "planning" | "commit";
   error: unknown;
 }) {
-  const cause = toErrorCause(args.error);
   const failureMessage = formatErrorMessage(args.error);
+  const surfacedFailureMessage = await resolveInitialWorkerFailureMessage({
+    runId: args.runId,
+    workerId: args.workerId,
+    error: args.error,
+  });
   const now = new Date();
 
   await db.update(workers).set({
@@ -242,7 +241,17 @@ async function persistInitialWorkerSpawnFailure(args: {
     }
   }
 
-  await persistRunFailure(args.runId, args.error);
+  const spawnFailureCode = hasVerifiedDeadCredentialMarker(surfacedFailureMessage)
+    ? "account.login_required"
+    : isResourceAdmissionError(args.error)
+      ? "worker.spawn.resource_exhausted"
+      : "worker.spawn.failed";
+  await persistRunFailure(args.runId, new Error(surfacedFailureMessage), {
+    surface: {
+      code: spawnFailureCode,
+      workerId: args.workerId,
+    },
+  });
   await appendLifecycleEntry({
     runId: args.runId,
     workerId: args.workerId,
@@ -257,18 +266,22 @@ async function persistInitialWorkerSpawnFailure(args: {
     prev: "starting",
     next: "error",
   });
-  emitNamedEvent({
-    kind: "error.surfaced",
-    code: isResourceAdmissionError(args.error)
-      ? "worker.spawn.resource_exhausted"
-      : "worker.spawn.failed",
-    message: `Failed to spawn worker for ${args.mode} conversation: ${cause.message}`,
-    surface: "toast",
-    runId: args.runId,
-    workerId: args.workerId,
-    cause,
-  });
   notifyEventStreamSubscribers();
+}
+
+async function resolveInitialWorkerFailureMessage(args: {
+  runId: string;
+  workerId: string;
+  error: unknown;
+}) {
+  const message = userFacingProviderSessionErrorMessage(formatErrorMessage(args.error));
+  const [run, worker] = await Promise.all([
+    db.select().from(runs).where(eq(runs.id, args.runId)).get(),
+    db.select().from(workers).where(eq(workers.id, args.workerId)).get(),
+  ]);
+  return run && worker
+    ? resolveCredentialAuthFailureMessage(run, worker, message)
+    : message;
 }
 
 function getDefaultConversationTitle(mode: ConversationMode, command: string) {
@@ -553,8 +566,18 @@ async function runInitialWorkerTurn(args: {
       status: "error",
       updatedAt: new Date(),
     }).where(eq(workers.id, args.workerId));
-    await persistRunFailure(args.runId, error, {
-      surface: { code: "worker.initial.turn_failed", workerId: args.workerId },
+    const surfacedFailureMessage = await resolveInitialWorkerFailureMessage({
+      runId: args.runId,
+      workerId: args.workerId,
+      error,
+    });
+    await persistRunFailure(args.runId, new Error(surfacedFailureMessage), {
+      surface: {
+        code: hasVerifiedDeadCredentialMarker(surfacedFailureMessage)
+          ? "account.login_required"
+          : "worker.initial.turn_failed",
+        workerId: args.workerId,
+      },
     });
     notifyEventStreamSubscribers();
     throw error;
@@ -681,13 +704,23 @@ async function startDirectWorkerConversation(args: {
     }
 
     const failureMessage = formatErrorMessage(error);
+    const surfacedFailureMessage = await resolveInitialWorkerFailureMessage({
+      runId: args.runId,
+      workerId: args.workerId,
+      error,
+    });
     await db.update(workers).set({
       status: "error",
       outputLog: failureMessage,
       updatedAt: new Date(),
     }).where(eq(workers.id, args.workerId));
-    await persistRunFailure(args.runId, error, {
-      surface: { code: "worker.initial.turn_failed", workerId: args.workerId },
+    await persistRunFailure(args.runId, new Error(surfacedFailureMessage), {
+      surface: {
+        code: hasVerifiedDeadCredentialMarker(surfacedFailureMessage)
+          ? "account.login_required"
+          : "worker.initial.turn_failed",
+        workerId: args.workerId,
+      },
     });
     notifyEventStreamSubscribers();
     console.error("Initial direct conversation worker failed:", error);

@@ -30,10 +30,11 @@ import { appendAttachmentContext, normalizeChatAttachments, parseChatAttachments
 import { getAppDataPath } from "@/server/app-root";
 import { normalizeWorkerType, SUPPORTED_WORKER_TYPES, type SupportedWorkerType } from "@/server/supervisor/worker-types";
 import { createQueuedConversationMessage, type BusyMessageAction } from "./queued-messages";
-import { interruptWithDraftMessage } from "./queued-message-interrupt";
+import { interruptWithDraftMessage, preemptRecoveryForInterrupt } from "./queued-message-interrupt";
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import {
+  hasLiveWorkerTurn,
   isWorkerTurnAbortedError,
   isWorkerTurnGenerationCurrent,
   isWorkerTurnSupersededError,
@@ -60,11 +61,10 @@ import {
 } from "@/server/workers/session-recovery";
 import { recreateWorkerFromTranscript, type WorkerRecreationSelection } from "@/server/workers/provider-session-recovery";
 import { decodeClaudeGatewayModel } from "@/lib/claude-model-gateway";
-import { annotateVerifiedDeadCredential, annotateVerifiedLiveCredential, hasVerifiedDeadCredentialMarker, isAuthShapedProviderFailure } from "@/lib/provider-account-failures";
-import { supportsCredentialLivenessProbe, verifyAccountCredentialLiveness } from "@/server/accounts/credential-verification";
+import { hasVerifiedDeadCredentialMarker, isAuthShapedProviderFailure } from "@/lib/provider-account-failures";
+import { resolveCredentialAuthFailureMessage } from "./credential-auth-failure";
 import { assertDirectRunWorkerTypeInvariant } from "@/server/workers/direct-run-type-invariant";
 import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
-import { markAccountLoginRequired } from "@/server/accounts/login-required";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
@@ -748,80 +748,6 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-async function resolveWorkerAccountId(run: RunRecord, worker: WorkerRecord) {
-  const allocation = await db
-    .select()
-    .from(workerCredentialAllocations)
-    .where(eq(workerCredentialAllocations.workerId, worker.id))
-    .get();
-  return allocation?.accountId ?? run.preferredWorkerAccountId?.trim() ?? null;
-}
-
-/**
- * Decide whether an auth-shaped failure is really the account's fault.
- *
- * Returns the message to persist: annotated as verified-live when the
- * credential provably still works (so recovery stays armed), as verified-dead
- * when the probe was rejected too (so the UI asks for a re-login instead of
- * another send), or untouched when the probe could not run at all.
- */
-async function resolveAuthFailureMessage(run: RunRecord, worker: WorkerRecord, message: string) {
-  if (!isAuthShapedProviderFailure(message) || !supportsCredentialLivenessProbe(worker.type)) {
-    return message;
-  }
-
-  const accountId = await resolveWorkerAccountId(run, worker);
-  const verification = await verifyAccountCredentialLiveness({
-    workerType: worker.type,
-    accountId,
-    cwd: worker.cwd || run.projectPath || process.cwd(),
-  });
-
-  await recordExecutionEvent({
-    runId: run.id,
-    workerId: worker.id,
-    eventType: "worker_credential_verified",
-    details: {
-      summary: verification.liveness === "live"
-        ? "Provider reported an auth failure but the credential still works; treating it as transient."
-        : `Credential verification returned "${verification.liveness}"; the failure stands.`,
-      accountId,
-      liveness: verification.liveness,
-      detail: verification.detail,
-      providerError: message,
-    },
-  });
-
-  if (verification.liveness === "live") {
-    return annotateVerifiedLiveCredential(message);
-  }
-
-  if (verification.liveness === "dead") {
-    // Two independent requests agreed the credential is rejected. Nothing the
-    // run can do fixes that, so say so instead of leaving the UI to guess.
-    if (accountId) {
-      await markAccountLoginRequired({
-        accountId,
-        workerType: worker.type,
-        reason: verification.detail,
-        source: "credential_verification",
-      });
-    }
-    emitNamedEvent({
-      kind: "account.login_required",
-      accountId: accountId ?? "default",
-      workerType: worker.type,
-      reason: verification.detail,
-    });
-    return annotateVerifiedDeadCredential(message, accountId);
-  }
-
-  // "unknown" — the probe itself could not run. Callers still treat this as
-  // permanent, but we have not proven the credential is dead, so the message
-  // stays unmarked and the UI keeps its generic failure copy.
-  return message;
-}
-
 /**
  * A 403/401 on a prompt aborts the turn before any work happens, so replaying
  * it is safe — and it is the single cheapest way to shake off the provider's
@@ -1151,7 +1077,7 @@ async function continueWorkerConversation({
       return;
     }
 
-    const surfacedErrorMessage = await resolveAuthFailureMessage(
+    const surfacedErrorMessage = await resolveCredentialAuthFailureMessage(
       run,
       worker,
       userFacingProviderSessionErrorMessage(formatErrorMessage(error)),
@@ -1538,6 +1464,12 @@ async function flushQueuedWorkerMessagesAfterEnqueue(runId: string, workerId: st
 }
 
 export async function sendConversationMessage(args: SendConversationMessageArgs) {
+  // A steer is cancel-and-replace; it must not wait out a retry/edit that
+  // holds the conversation mutex for its whole replayed turn. Preempting the
+  // recovery epoch aborts that holder's turn before we queue on the mutex.
+  if (args.busyAction === "steer") {
+    return preemptRecoveryForInterrupt(args.runId, () => sendConversationMessageUnlocked(args));
+  }
   return runConversationMutation(args.runId, () => sendConversationMessageUnlocked(args));
 }
 
@@ -1727,7 +1659,13 @@ async function sendConversationMessageUnlocked({
     }
   }
 
-  if (busyAction === "steer" && ["starting", "working", "stuck"].includes(worker.status.trim().toLowerCase().split(":")[0] ?? "")) {
+  // `worker.status` is a persisted snapshot and lags the turn gate, so a steer
+  // aimed at a worker that is genuinely mid-turn could miss this branch and
+  // instead queue behind the gate below, holding the request open for the whole
+  // turn. Interrupting is what the caller asked for, so ask the gate directly.
+  const isWorkerMidTurn = ["starting", "working", "stuck"].includes(worker.status.trim().toLowerCase().split(":")[0] ?? "")
+    || hasLiveWorkerTurn(worker.id);
+  if (busyAction === "steer" && isWorkerMidTurn) {
     return interruptWithDraftMessage({
       runId,
       content: trimmedContent,
@@ -1793,39 +1731,40 @@ async function sendConversationMessageUnlocked({
     const expectedTurnGeneration = worker.turnGeneration;
 
     if (busyAction === "steer") {
-      try {
-        await runWorkerTurn(worker.id, () => continueWorkerConversation({
-          run,
-          worker,
-          content: workerContent,
-          userInputText: trimmedContent,
-          userInputId: userMessage.id,
-          attachments: normalizedAttachments,
-          // Already appended above.
-          appendUserInputBeforeAsk: false,
-          allowCancelledWorkerResume,
-          promptOverride,
-          expectedTurnGeneration,
-        }));
-      } catch (error) {
-        if (isAgentBusyError(error)) {
-          await db.delete(messages).where(eq(messages.id, userMessage.id));
-          const queuedMessage = await createQueuedConversationMessage({
-            runId,
-            targetWorkerId: worker.id,
-            action: "steer",
-            content: trimmedContent,
-            attachments: normalizedAttachments,
-          });
-          return {
-            ok: true,
-            message: serializeMessageRecord({ ...userMessage, attachmentsJson }),
-            queuedMessage,
-          };
+      // Steer runs in the background for the same reason a plain follow-up
+      // does: awaiting it held the HTTP response open for the whole turn, which
+      // read to the client as a send that never completed. The message is
+      // already persisted and streamed, so the caller has everything it needs.
+      // A worker that reports busy anyway falls back to a queued row, which
+      // reaches the client over the event stream.
+      const steerTurn = trackConversationBackgroundTask(runWorkerTurn(worker.id, () => continueWorkerConversation({
+        run,
+        worker,
+        content: workerContent,
+        userInputText: trimmedContent,
+        userInputId: userMessage.id,
+        attachments: normalizedAttachments,
+        // Already appended above.
+        appendUserInputBeforeAsk: false,
+        allowCancelledWorkerResume,
+        promptOverride,
+        expectedTurnGeneration,
+      })), { runId });
+      steerTurn.catch(async (error) => {
+        if (!isAgentBusyError(error)) {
+          console.error("Direct conversation steer failed:", error);
+          return;
         }
-
-        throw error;
-      }
+        await db.delete(messages).where(eq(messages.id, userMessage.id));
+        await createQueuedConversationMessage({
+          runId,
+          targetWorkerId: worker.id,
+          action: "steer",
+          content: trimmedContent,
+          attachments: normalizedAttachments,
+        });
+        notifyEventStreamSubscribers();
+      });
 
       return {
         ok: true,

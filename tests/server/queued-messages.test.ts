@@ -798,4 +798,52 @@ describe("queued conversation messages", () => {
     });
     expect(events.some((event) => event.eventType === "queued_message_delivered")).toBe(false);
   });
+
+  it("does not block later conversation mutations while a queued worker delivery is still running", async () => {
+    const runId = await createRun("direct");
+    const workerId = randomUUID();
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const first = await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: workerId,
+      action: "queue",
+      content: "This worker call stays open.",
+      attachments: [],
+    });
+    const bridgeReply = deferred<{ response: string; state: string }>();
+    mockAskAgent.mockImplementationOnce(() => bridgeReply.promise);
+
+    const drain = drainQueuedWorkerMessages({ runId, workerId });
+    await waitFor(
+      async () => db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, first.id)).get(),
+      (record) => record?.status === "delivering",
+    );
+
+    const second = await Promise.race([
+      createQueuedConversationMessage({
+        runId,
+        targetWorkerId: workerId,
+        action: "queue",
+        content: "This should not wait for the bridge call.",
+        attachments: [],
+      }),
+      delay(50).then(() => "timed-out" as const),
+    ]);
+
+    expect(second).not.toBe("timed-out");
+    bridgeReply.resolve({ response: "done", state: "idle" });
+    await drain;
+  });
 });

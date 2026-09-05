@@ -221,6 +221,23 @@ describe("classifyRunRecoveryState", () => {
     expect(state.kind).toBe("needs_recovery");
   });
 
+  it("never classifies a persisted lost direct worker without session metadata as healthy", () => {
+    const state = classifyRunRecoveryState({
+      run: { ...run, mode: "direct", status: "running" },
+      workers: [{ id: "worker-1", runId: run.id, status: "lost", updatedAt: new Date(0) }],
+      liveAgents: [],
+      messages: [userMessage],
+      nowMs: 60_000,
+    });
+
+    expect(state).toMatchObject({
+      kind: "needs_recovery",
+      status: "needs_user",
+      workerId: "worker-1",
+      recommendedAction: "manual_resume",
+    });
+  });
+
   it("prefers direct worker session recovery over a blocked queued message", () => {
     const state = classifyRunRecoveryState({
       run: { ...run, mode: "direct" },
@@ -250,5 +267,30 @@ describe("classifyRunRecoveryState", () => {
       sessionId: "session-1",
       recommendedAction: "resume_session",
     });
+  });
+
+  it("ignores a blocked queued message whose target worker is live again", () => {
+    const state = classifyRunRecoveryState({
+      run: { ...run, mode: "direct" },
+      workers: [{
+        id: "worker-1",
+        runId: run.id,
+        status: "working",
+        bridgeSessionId: "session-1",
+        updatedAt: new Date(0),
+      }],
+      liveAgents: [{ name: "worker-1", state: "working" }],
+      messages: [userMessage],
+      queuedMessages: [{
+        id: "queue-1",
+        runId: run.id,
+        targetWorkerId: "worker-1",
+        status: "failed",
+        lastError: "Ask failed: Agent not found: worker-1",
+      }],
+      nowMs: 60_000,
+    });
+
+    expect(state.kind).toBe("healthy");
   });
 });
