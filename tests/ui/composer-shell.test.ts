@@ -334,6 +334,26 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain("<Square className=\"h-[13.6px] w-[13.6px] fill-current\" />");
 });
 
+test("an in-flight send never locks the composer out of typing or sending again", () => {
+  const composerSource = fs.readFileSync(
+    path.resolve(process.cwd(), "src/components/home/ConversationComposer.tsx"),
+    "utf8"
+  );
+  const textarea = composerSource.slice(
+    composerSource.indexOf('<textarea'),
+    composerSource.indexOf('placeholder={composerPlaceholder}'),
+  );
+  expect(textarea).not.toContain("disabled=");
+  expect(composerSource).not.toContain("placeholder={composerPlaceholder}\n          disabled=");
+  // Enter must be gated on genuinely blocking state only, never on a send that
+  // is still waiting for the worker.
+  expect(composerSource).toContain("if (!isComposerSubmitBlocked && (trimmedCommand || hasAttachments)) {");
+  expect(composerSource).not.toContain("isComposerSendBusy && (trimmedCommand");
+  // The busy flag drives the spinner and nothing else.
+  expect(composerSource).toContain("const isSendButtonBusy = isComposerSendBusy && !isStopButtonVisible;");
+  expect(composerSource).not.toContain("isComposerSendBusy ||");
+});
+
 test("queued message drawer force-send arrow interrupts the active turn", () => {
   const drawerSource = fs.readFileSync(
     path.resolve(process.cwd(), "src/components/home/QueuedMessageDrawer.tsx"),
@@ -365,11 +385,11 @@ test("worker cards expose individual stop controls", () => {
   expect(pageSource).toContain('aria-label={`Stop ${displayId}`}');
 });
 
-test("promotePlanningConversation.isPending is scoped to the selected run before use in isComposerSubmitting", () => {
+test("promotePlanningConversation.isPending is scoped to the selected run before use in isComposerSubmitBlocked", () => {
   expect(pageSource).toContain("const isPromotePlanningPendingForSelectedRun = isMutationPendingForSelectedRun({");
   expect(pageSource).toContain("mutationRunId: promotePlanningConversation.variables?.runId,");
   expect(pageSource).toContain("isPromotePlanningPendingForSelectedRun || isStopConversationPending");
-  // Unscoped isPending must not appear in the isComposerSubmitting expression.
+  // Unscoped isPending must not appear in the isComposerSubmitBlocked expression.
   expect(pageSource).not.toContain("promotePlanningConversation.isPending || isStopConversationPending");
 });
 

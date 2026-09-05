@@ -864,8 +864,9 @@ test("command input uses mode-aware helper placeholders instead of echoing the s
 });
 
 test("send button swaps to a spinner while a command submission is pending", () => {
-  expect(pageSource).toContain("const isComposerSubmitting = isStartingCurrentProjectConversation || isSendingSelectedConversationMessage || isSendingSelectedQueuedMessage || isPromotePlanningPendingForSelectedRun || isStopConversationPending;");
-  expect(pageSource).toContain("const isSendButtonBusy = isComposerSubmitting && !isStopButtonVisible;");
+  expect(pageSource).toContain("const isComposerSendBusy = isStartingCurrentProjectConversation || isSendingSelectedConversationMessage || isSendingSelectedQueuedMessage || isPromotePlanningPendingForSelectedRun || isStopConversationPending;");
+  expect(pageSource).toContain("const isComposerSubmitBlocked = isStartingCurrentProjectConversation || isPromotePlanningPendingForSelectedRun || isStopConversationPending;");
+  expect(pageSource).toContain("const isSendButtonBusy = isComposerSendBusy && !isStopButtonVisible;");
   expect(pageSource).toContain("const isStopButtonBusy = isStopButtonVisible && isStopConversationPending;");
   expect(pageSource).toContain('disabled={isSubmitButtonDisabled}');
   expect(pageSource).toContain('{isSendButtonBusy || isStopButtonBusy ? (');
@@ -1030,7 +1031,7 @@ test("empty state centers the composer with the welcome stack instead of docking
   expect(pageSource).toContain('{selectedRunId ? renderComposer("w-full") : null}');
   expect(pageSource).toContain('className="omni-conversation-text-scale flex h-full w-full flex-col items-center justify-center pb-32 text-center"');
   expect(pageSource).toContain('className="mx-auto mb-6 w-full max-w-3xl space-y-3 px-6 text-left"');
-  expect(pageSource).toContain('className="mx-auto mb-8 w-full max-w-3xl px-6 text-[1.7rem] font-semibold leading-tight sm:mb-14"');
+  expect(pageSource).toContain('className="mx-auto mb-8 w-full max-w-3xl -translate-y-8 px-6 text-[1.7rem] font-semibold leading-tight sm:mb-14 sm:translate-y-0"');
   expect(pageSource).not.toContain('className="omni-conversation-text-scale mx-auto flex h-full w-full max-w-3xl flex-col items-center justify-center px-6 text-center"');
   expect(pageSource).not.toContain("Welcome to OmniHarness");
   expect(pageSource).not.toContain("{getConversationModeCopy(selectedConversationMode).description}");
