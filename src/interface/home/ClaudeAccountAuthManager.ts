@@ -26,6 +26,7 @@ type AccountAuthResponse = {
 
 export type ClaudeAccountAuthApi = {
   connectClaude(input: { label: string; email?: string | null; sso?: boolean }): Promise<unknown>;
+  signInClaude(): Promise<unknown>;
   getAuthOperation(input: { accountId: string }): Promise<unknown>;
   actOnAuthOperation(input: { accountId: string; action: "retry" | "cancel" }): Promise<unknown>;
   logout(input: { accountId: string }): Promise<unknown>;
@@ -40,6 +41,7 @@ export type ClaudeAccountAuthState = {
   label: string;
   email: string;
   sso: boolean;
+  loginMode: "isolated" | "local" | null;
   accountId: string | null;
   operationId: string | null;
   phase: ClaudeAccountAuthPhase;
@@ -58,6 +60,7 @@ const INITIAL_STATE: ClaudeAccountAuthState = {
   label: "",
   email: "",
   sso: false,
+  loginMode: null,
   accountId: null,
   operationId: null,
   phase: "idle",
@@ -105,6 +108,7 @@ export class ClaudeAccountAuthManager extends StateManager<ClaudeAccountAuthStat
   openConnect() {
     this.patch({
       open: true,
+      loginMode: "isolated",
       accountId: null,
       operationId: null,
       phase: "idle",
@@ -130,6 +134,13 @@ export class ClaudeAccountAuthManager extends StateManager<ClaudeAccountAuthStat
     );
   }
 
+  async beginLocalSignIn() {
+    return this.runRequest(
+      () => this.accounts.signInClaude(),
+      { open: true, loginMode: "local", phase: "authenticating", label: "", email: "", sso: false },
+    );
+  }
+
   async resume(accountId: string) {
     return this.runRequest(
       async () => {
@@ -145,7 +156,9 @@ export class ClaudeAccountAuthManager extends StateManager<ClaudeAccountAuthStat
 
   async retry() {
     const accountId = this.getSnapshot().accountId;
-    if (!accountId) return false;
+    if (!accountId) {
+      return this.getSnapshot().loginMode === "local" ? this.beginLocalSignIn() : false;
+    }
     return this.runRequest(
       () => this.accounts.actOnAuthOperation({ accountId, action: "retry" }),
       { open: true, accountId },
@@ -154,7 +167,13 @@ export class ClaudeAccountAuthManager extends StateManager<ClaudeAccountAuthStat
 
   async cancel() {
     const accountId = this.getSnapshot().accountId;
-    if (!accountId) return false;
+    if (!accountId) {
+      if (this.getSnapshot().loginMode === "local") {
+        this.setOpen(false);
+        return true;
+      }
+      return false;
+    }
     return this.runRequest(
       () => this.accounts.actOnAuthOperation({ accountId, action: "cancel" }),
       { accountId },
@@ -258,7 +277,11 @@ export class ClaudeAccountAuthManager extends StateManager<ClaudeAccountAuthStat
       return true;
     } catch (error) {
       if (!this.isCurrent(token)) return false;
-      this.patch({ error, pending: false });
+      this.patch({
+        error,
+        pending: false,
+        ...(optimistic.loginMode === "local" && !optimistic.accountId ? { phase: "failed" as const } : {}),
+      });
       return false;
     }
   }

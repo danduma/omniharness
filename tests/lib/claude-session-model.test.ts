@@ -101,6 +101,51 @@ describe("claude session model pinning", () => {
   });
 
   describe("the requested version wins over context size", () => {
+    it("recognizes an ACP family alias through its unambiguous version metadata", () => {
+      expect(resolveClaudeSessionModel({
+        options: [
+          { value: "opus[1m]", name: "Opus (1M context)", description: "Opus 5 · Most capable" },
+        ],
+        requested: "claude-opus-5",
+        current: "opus[1m]",
+      })).toEqual({ status: "keep", value: "opus[1m]", reason: "one_million_only" });
+    });
+
+    it("refuses contradictory metadata for the same provider alias", () => {
+      expect(resolveClaudeSessionModel({
+        options: [
+          { value: "opus[1m]", name: "Opus (1M context)", description: "Opus 5 · Most capable" },
+          { value: "opus[1m]", name: "Opus (1M context)", description: "Opus 4.8 · Legacy" },
+        ],
+        requested: "claude-opus-5",
+        current: "opus[1m]",
+      })).toEqual({
+        status: "unavailable",
+        reason: "version_unavailable",
+        requested: "claude-opus-5",
+        requestedFamily: "opus",
+        requestedVersion: "5",
+        available: ["opus[1m]", "opus[1m]"],
+      });
+    });
+
+    it("refuses contradictory identity fields inside one provider alias", () => {
+      expect(resolveClaudeSessionModel({
+        options: [
+          { value: "opus[1m]", name: "Opus 5", description: "Opus 4.8 · Legacy" },
+        ],
+        requested: "claude-opus-5",
+        current: "opus[1m]",
+      })).toEqual({
+        status: "unavailable",
+        reason: "version_unavailable",
+        requested: "claude-opus-5",
+        requestedFamily: "opus",
+        requestedVersion: "5",
+        available: ["opus[1m]"],
+      });
+    });
+
     it("keeps an exact startup model even when the adapter omits it from the menu", () => {
       expect(resolveClaudeSessionModel({
         options: RUN_594224_OPTIONS,
@@ -261,8 +306,38 @@ describe("claude session model pinning", () => {
     })).toEqual({ status: "keep", value: "opus", reason: "requested" });
   });
 
-  it("does nothing without a model option list", () => {
+  it("fails closed without model choices when the reported model is absent", () => {
     expect(resolveClaudeSessionModel({ options: [], requested: "claude-opus-5", current: null }))
-      .toEqual({ status: "keep", value: null, reason: "requested" });
+      .toEqual({
+        status: "unavailable",
+        reason: "version_unavailable",
+        requested: "claude-opus-5",
+        requestedFamily: "opus",
+        requestedVersion: "5",
+        available: [],
+      });
+  });
+
+  it("fails closed without model choices when the reported model conflicts", () => {
+    expect(resolveClaudeSessionModel({
+      options: [],
+      requested: "claude-opus-5",
+      current: "claude-fable-5[1m]",
+    })).toEqual({
+      status: "unavailable",
+      reason: "version_unavailable",
+      requested: "claude-opus-5",
+      requestedFamily: "opus",
+      requestedVersion: "5",
+      available: ["claude-fable-5[1m]"],
+    });
+  });
+
+  it("accepts an exact reported model without model choices", () => {
+    expect(resolveClaudeSessionModel({
+      options: [],
+      requested: "claude-opus-5",
+      current: "claude-opus-5",
+    })).toEqual({ status: "keep", value: "claude-opus-5", reason: "requested" });
   });
 });

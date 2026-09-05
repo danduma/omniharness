@@ -169,6 +169,7 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
   ],
   claude: [
     { value: "claude-opus-5", label: "Opus 5" },
+    { value: "claude-fable-5-1", label: "Fable 5.1" },
     { value: "claude-fable-5", label: "Fable 5" },
     { value: "claude-opus-4-8", label: "Opus 4.8" },
     { value: "claude-opus-4-7", label: "Opus 4.7" },
@@ -222,6 +223,8 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
     { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
   ],
   anthropic: [
+    { value: "claude-opus-5", label: "Opus 5" },
+    { value: "claude-fable-5-1", label: "Fable 5.1" },
     { value: "claude-fable-5", label: "Fable 5" },
     { value: "claude-opus-4-8", label: "Opus 4.8" },
     { value: "claude-opus-4-7", label: "Opus 4.7" },
@@ -248,6 +251,8 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
     { value: "o3-mini", label: "o3-mini" },
   ],
   openrouter: [
+    { value: "anthropic/claude-opus-5", label: "Opus 5" },
+    { value: "anthropic/claude-fable-5-1", label: "Fable 5.1" },
     { value: "anthropic/claude-fable-5", label: "Fable 5" },
     { value: "anthropic/claude-opus-4-8", label: "Opus 4.8" },
     { value: "anthropic/claude-opus-4-7", label: "Opus 4.7" },

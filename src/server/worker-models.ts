@@ -41,6 +41,7 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
   ],
   claude: [
     { value: "claude-opus-5", label: "Opus 5" },
+    { value: "claude-fable-5-1", label: "Fable 5.1" },
     { value: "claude-fable-5", label: "Fable 5" },
     { value: "claude-opus-4-8", label: "Opus 4.8" },
     { value: "claude-opus-4-7", label: "Opus 4.7" },
@@ -86,18 +87,34 @@ function dropClaudePrefix(label: string) {
   return label.replace(/^claude\s+(?=[A-Za-z])/i, "");
 }
 
+// Model ids spell versions with the same hyphen that separates every other
+// segment, so a plain split renders "claude-opus-4-8" as "Opus 4 8". Adjacent
+// numeric segments are one version number: rejoin them with a dot. Bounded to
+// three digits so a dated snapshot like "claude-haiku-4-5-20251001" reads as
+// "Haiku 4.5 20251001" — the date is a separate fact, not a version component.
+function isVersionSegment(part: string) {
+  return /^\d{1,3}$/.test(part);
+}
+
+function titleCaseModelIdPart(part: string) {
+  const lower = part.toLowerCase();
+  if (lower === "gpt") return "GPT";
+  if (lower === "cli") return "CLI";
+  if (/^\d+(?:\.\d+)*$/.test(part)) return part;
+  return part.charAt(0).toUpperCase() + part.slice(1);
+}
+
 function labelFromModelId(id: string) {
   const bareId = id.includes("/") ? id.split("/").at(-1) ?? id : id;
-  return dropClaudePrefix(bareId
-    .split("-")
-    .map((part) => {
-      const lower = part.toLowerCase();
-      if (lower === "gpt") return "GPT";
-      if (lower === "cli") return "CLI";
-      if (/^\d+(?:\.\d+)*$/.test(part)) return part;
-      return part.charAt(0).toUpperCase() + part.slice(1);
-    })
-    .join(" "));
+  const parts = bareId.split("-");
+  const label = parts.reduce((accumulated, part, index) => {
+    if (index === 0) {
+      return titleCaseModelIdPart(part);
+    }
+    const separator = isVersionSegment(part) && isVersionSegment(parts[index - 1]!) ? "." : " ";
+    return `${accumulated}${separator}${titleCaseModelIdPart(part)}`;
+  }, "");
+  return dropClaudePrefix(label);
 }
 
 function normalizeLabel(id: string, label?: string) {

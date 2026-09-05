@@ -51,10 +51,11 @@ export function ClaudeAccountSettings({
   useI18nSnapshot();
   const state = useManagerSnapshot(manager);
   const managedAccounts = accounts.filter(
-    (account) => account.cliType === "claude" && account.authMode === "isolated_cli_home",
+    (account) => account.cliType === "claude" && ["isolated_cli_home", "local_session"].includes(account.authMode),
   );
-  const purgeAccount = managedAccounts.find((account) => account.id === state.purgeAccountId) ?? null;
-  const removeAccount = managedAccounts.find((account) => account.id === state.removeAccountId) ?? null;
+  const isolatedAccounts = managedAccounts.filter((account) => account.authMode === "isolated_cli_home");
+  const purgeAccount = isolatedAccounts.find((account) => account.id === state.purgeAccountId) ?? null;
+  const removeAccount = isolatedAccounts.find((account) => account.id === state.removeAccountId) ?? null;
   const active = state.phase === "authenticating" || state.phase === "verifying";
 
   const refreshAccounts = useCallback(async () => {
@@ -80,10 +81,15 @@ export function ClaudeAccountSettings({
             {t("settings.agents.claudeAuth.sectionDescription")}
           </p>
         </div>
-        <Button type="button" size="sm" onClick={() => manager.openConnect()}>
-          <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
-          {t("settings.agents.claudeAuth.connect")}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" size="sm" onClick={() => void runAndRefresh(() => manager.beginLocalSignIn())}>
+            <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
+            {t("settings.agents.claudeAuth.signInLocal")}
+          </Button>
+          <Button type="button" size="sm" variant="outline" onClick={() => manager.openConnect()}>
+            {t("settings.agents.claudeAuth.connect")}
+          </Button>
+        </div>
       </div>
 
       {managedAccounts.length === 0 ? (
@@ -93,6 +99,7 @@ export function ClaudeAccountSettings({
       ) : (
         <div className="space-y-2">
           {managedAccounts.map((account) => {
+            const isIsolated = account.authMode === "isolated_cli_home";
             const canResume = account.status !== "available"
               && account.status !== "quota_blocked"
               && account.status !== "quota_exhausted";
@@ -122,19 +129,23 @@ export function ClaudeAccountSettings({
                       <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
                       {t("settings.agents.claudeAuth.signIn")}
                     </Button>
-                  ) : (
+                  ) : isIsolated ? (
                     <Button type="button" size="sm" variant="outline" disabled={state.pending} onClick={() => void runAndRefresh(() => manager.logout(account.id))}>
                       <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
                       {t("settings.agents.claudeAuth.logout")}
                     </Button>
-                  )}
-                  <Button type="button" size="sm" variant="ghost" disabled={state.pending} onClick={() => manager.openRemove(account.id)}>
-                    <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                    {t("settings.agents.claudeAuth.remove")}
-                  </Button>
-                  <Button type="button" size="sm" variant="destructive" disabled={state.pending} onClick={() => manager.openPurge(account.id)}>
-                    {t("settings.agents.claudeAuth.purge")}
-                  </Button>
+                  ) : null}
+                  {isIsolated ? (
+                    <>
+                      <Button type="button" size="sm" variant="ghost" disabled={state.pending} onClick={() => manager.openRemove(account.id)}>
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                        {t("settings.agents.claudeAuth.remove")}
+                      </Button>
+                      <Button type="button" size="sm" variant="destructive" disabled={state.pending} onClick={() => manager.openPurge(account.id)}>
+                        {t("settings.agents.claudeAuth.purge")}
+                      </Button>
+                    </>
+                  ) : null}
                 </div>
               </div>
             );
@@ -156,7 +167,7 @@ export function ClaudeAccountSettings({
             <DialogDescription>{t("settings.agents.claudeAuth.description")}</DialogDescription>
           </DialogHeader>
 
-          {state.phase === "idle" && !state.accountId ? (
+          {state.loginMode === "isolated" && state.phase === "idle" && !state.accountId ? (
             <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void runAndRefresh(() => manager.begin()); }}>
               <div className="space-y-2">
                 <Label htmlFor="claude-account-label">{t("settings.agents.claudeAuth.accountLabel")}</Label>

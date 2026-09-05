@@ -186,27 +186,9 @@ afterEach(async () => {
 
 describe("lifecycle — in-app Claude account authentication", () => {
   it("signs in through the managed PTY, verifies status, logs out, removes, and purges", async () => {
-    const localAccountId = "claude-managed-lifecycle-local-session";
-    const now = new Date();
-    await db.insert(accounts).values({
-      id: localAccountId,
-      cliType: "claude",
-      provider: "anthropic",
-      type: "subscription",
-      label: "Lifecycle local Claude",
-      authMode: "local_session",
-      authRef: "local-session",
-      enabled: false,
-      status: "login_required",
-      createdAt: now,
-      updatedAt: now,
-    });
+    const localLogin = await postJson<AuthResponse>("/api/accounts/claude/connect", { localSession: true });
+    const localAccountId = localLogin.account.id;
     createdAccountIds.push(localAccountId);
-
-    const localLogin = await postJson<AuthResponse>(
-      `/api/accounts/${localAccountId}/auth-operation`,
-      { action: "retry" },
-    );
     await postJson(`/api/terminals/${localLogin.operation.terminal!.id}/input`, {
       data: "continue\r",
     });

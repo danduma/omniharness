@@ -159,9 +159,24 @@ export class ClaudeAccountAuthService {
       });
       return { stdout: result.stdout, stderr: result.stderr };
     });
+    const runStatusCommand = async (configDir: string) => {
+      try {
+        const result = await runCommand(CLAUDE_STATUS_ARGS, configDir);
+        return parseClaudeAuthStatus(result.stdout);
+      } catch (error) {
+        // Claude returns useful JSON with exit code 1 when the profile is not
+        // signed in. execFile rejects on that exit code, so recover the JSON
+        // before classifying the command as a real failure.
+        const stdout = error && typeof error === "object" && "stdout" in error
+          && typeof error.stdout === "string"
+          ? error.stdout
+          : "";
+        if (stdout.trim()) return parseClaudeAuthStatus(stdout);
+        throw error;
+      }
+    };
     const probeStatus = dependencies.probeStatus ?? (async (configDir) => {
-      const result = await runCommand(CLAUDE_STATUS_ARGS, configDir);
-      return parseClaudeAuthStatus(result.stdout);
+      return runStatusCommand(configDir);
     });
     const assertCapability = dependencies.assertCapability ?? (async (configDir, requireIsolation) => {
       const [version, loginHelp, statusHelp] = await Promise.all([
@@ -190,8 +205,8 @@ export class ClaudeAccountAuthService {
         for (const sentinelId of sentinelIds) {
           const sentinel = await ensurePrivateClaudeConfigDir(sentinelId, instanceRoot);
           createdSentinels.push(sentinelId);
-          const sentinelResult = await runCommand(CLAUDE_STATUS_ARGS, sentinel.configDir);
-          if (parseClaudeAuthStatus(sentinelResult.stdout).loggedIn) {
+          const sentinelStatus = await runStatusCommand(sentinel.configDir);
+          if (sentinelStatus.loggedIn) {
             throw new Error("The installed Claude CLI does not isolate authentication by CLAUDE_CONFIG_DIR.");
           }
         }
@@ -230,16 +245,7 @@ export class ClaudeAccountAuthService {
     sso?: boolean;
     ownerSessionId: string;
   }) {
-    if ([...this.operations.values()].some((operation) => operation.phase === "authenticating" || operation.phase === "verifying")) {
-      emitNamedEvent({
-        kind: "account.auth_retry_refused",
-        accountId: "pending",
-        operationId: null,
-        workerType: "claude",
-        reason: "another_login_active",
-      });
-      throw new RuntimeHttpError(409, "Another Claude account sign-in is already running.");
-    }
+    this.assertNoActiveSignIn("pending");
     const validated = assertClaudeLoginInput(input);
     const accountId = `claude-managed-${this.deps.uuid()}`;
     const now = this.deps.now();
@@ -269,6 +275,68 @@ export class ClaudeAccountAuthService {
       sso: input.sso === true,
       ownerSessionId: input.ownerSessionId,
     });
+  }
+
+  /** Start Claude's normal local-session login without an account setup form. */
+  async signInLocal(ownerSessionId: string) {
+    this.assertNoActiveSignIn("local-session-claude");
+    const account = await this.ensureLocalClaudeAccount();
+    return this.startOperation(account.id, {
+      email: null,
+      sso: false,
+      ownerSessionId,
+    });
+  }
+
+  private assertNoActiveSignIn(accountId: string) {
+    const active = [...this.operations.values()].find(
+      (operation) => operation.phase === "authenticating" || operation.phase === "verifying",
+    );
+    if (!active) return;
+    emitNamedEvent({
+      kind: "account.auth_retry_refused",
+      accountId,
+      operationId: active.id,
+      workerType: "claude",
+      reason: "another_login_active",
+    });
+    throw new RuntimeHttpError(409, "Another Claude account sign-in is already running.");
+  }
+
+  private async ensureLocalClaudeAccount() {
+    const claudeAccounts = await db.select().from(accounts).where(eq(accounts.cliType, "claude"));
+    const existing = claudeAccounts.find((account) => account.authMode === "local_session");
+    if (existing) return existing;
+
+    const accountId = "local-session-claude";
+    const conflicting = await db.select().from(accounts).where(eq(accounts.id, accountId)).get();
+    if (conflicting) {
+      throw new RuntimeHttpError(409, "The normal local Claude account id is already in use.");
+    }
+
+    const now = this.deps.now();
+    await db.insert(accounts).values({
+      id: accountId,
+      cliType: "claude",
+      provider: "anthropic",
+      type: "subscription",
+      label: "Claude subscription",
+      authMode: "local_session",
+      authRef: "local-session:claude",
+      enabled: false,
+      priority: 0,
+      status: "login_required",
+      createdAt: now,
+      updatedAt: now,
+    });
+    emitNamedEvent({
+      kind: "account.created",
+      accountId,
+      workerType: "claude",
+      provider: "anthropic",
+      authMode: "local_session",
+    });
+    return this.requireAccount(accountId);
   }
 
   async getOperation(accountId: string, ownerSessionId: string) {

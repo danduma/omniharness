@@ -609,7 +609,9 @@ export function HomeApp({
     if (credentialReauthAccountId) {
       void claudeAccountAuthManager.resume(credentialReauthAccountId);
     } else {
-      claudeAccountAuthManager.openConnect();
+      // Starting the local flow explicitly also handles a stale account row
+      // that still reports `available` after the provider rejected a turn.
+      void claudeAccountAuthManager.beginLocalSignIn();
     }
   }, [claudeAccountAuthManager, credentialReauthAccountId, setActiveSettingsTab, setShowSettings]);
 
@@ -1198,7 +1200,11 @@ export function HomeApp({
     mutationRunId: resumeRunRecovery.variables?.runId,
     selectedRunId,
   });
-  const isComposerSubmitting = isStartingCurrentProjectConversation || isSendingSelectedConversationMessage || isSendingSelectedQueuedMessage || isPromotePlanningPendingForSelectedRun || isStopConversationPending;
+  // Busy is a spinner; blocked is a lock. A send in flight only spins, because
+  // its request stays open for as long as the worker takes to answer and the
+  // user must be able to type and send the next message during that window.
+  const isComposerSendBusy = isStartingCurrentProjectConversation || isSendingSelectedConversationMessage || isSendingSelectedQueuedMessage || isPromotePlanningPendingForSelectedRun || isStopConversationPending;
+  const isComposerSubmitBlocked = isStartingCurrentProjectConversation || isPromotePlanningPendingForSelectedRun || isStopConversationPending;
   const busyMessageAction = parseBusyMessageAction(apiKeys.BUSY_MESSAGE_ACTION);
   const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
   const lockedDirectWorkerLabel = WORKER_OPTIONS.find((o) => o.value === (selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent))?.label
@@ -1310,7 +1316,8 @@ export function HomeApp({
       activeWorkerModelOptions={activeWorkerModelOptions}
       selectedEffort={selectedEffort}
       setSelectedEffort={setSelectedEffort}
-      isComposerSubmitting={isComposerSubmitting}
+      isComposerSendBusy={isComposerSendBusy}
+      isComposerSubmitBlocked={isComposerSubmitBlocked}
       isStopConversationPending={isStopConversationPending}
       isConversationStoppable={isConversationStoppable}
       hasBusyConversation={hasBusyConversation}

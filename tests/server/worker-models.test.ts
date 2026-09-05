@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildWorkerModelCatalog, mergeClaudeGatewayModelsIntoCatalog, WorkerModelCatalogManager } from "@/server/worker-models";
+import type { WorkerModelCatalog } from "@/server/worker-models";
 
 describe("worker model catalog", () => {
   it("adds encoded gateway models after native Claude models without duplicates", async () => {
@@ -106,8 +107,9 @@ describe("worker model catalog", () => {
       runCommand: async () => "",
     });
 
-    expect(catalog.claude.slice(0, 3)).toEqual([
+    expect(catalog.claude.slice(0, 4)).toEqual([
       { value: "claude-opus-5", label: "Opus 5" },
+      { value: "claude-fable-5-1", label: "Fable 5.1" },
       { value: "claude-fable-5", label: "Fable 5" },
       { value: "claude-opus-4-8", label: "Opus 4.8" },
     ]);
@@ -125,6 +127,62 @@ describe("worker model catalog", () => {
 
     expect(snapshot.catalog.claude).toEqual(expect.arrayContaining([
       { value: "claude-opus-4-9", label: "Opus 4.9" },
+    ]));
+  });
+
+  // The cache is arbitrary JSON out of the settings table, so a stored entry may
+  // carry no label at all and the manager has to derive one from the id.
+  const unlabelledCache = (values: string[]) => async () => ({
+    claude: values.map((value) => ({ value })),
+  } as unknown as Partial<WorkerModelCatalog>);
+
+  it("rejoins hyphenated version segments when deriving a label", async () => {
+    const manager = new WorkerModelCatalogManager({
+      loadCachedCatalog: unlabelledCache([
+        "claude-fable-5-2",
+        "claude-opus-4-9",
+        "claude-opus-6",
+        "claude-haiku-4-9-20260101",
+      ]),
+      runCommand: async () => "",
+    });
+
+    const snapshot = await manager.getCatalogSnapshot();
+
+    expect(snapshot.catalog.claude).toEqual(expect.arrayContaining([
+      { value: "claude-fable-5-2", label: "Fable 5.2" },
+      { value: "claude-opus-4-9", label: "Opus 4.9" },
+      { value: "claude-opus-6", label: "Opus 6" },
+      // The snapshot date is not a version component, so it stays a separate word.
+      { value: "claude-haiku-4-9-20260101", label: "Haiku 4.9 20260101" },
+    ]));
+  });
+
+  it("leaves a four-digit year out of the version join", async () => {
+    const manager = new WorkerModelCatalogManager({
+      loadCachedCatalog: async () => ({
+        opencode: [{ value: "google/deep-research-preview-04-2026" }],
+      } as unknown as Partial<WorkerModelCatalog>),
+      runCommand: async () => "",
+    });
+
+    const snapshot = await manager.getCatalogSnapshot();
+
+    expect(snapshot.catalog.opencode).toEqual(expect.arrayContaining([
+      { value: "google/deep-research-preview-04-2026", label: "Deep Research Preview 04 2026" },
+    ]));
+  });
+
+  it("keeps the vendor prefix when no word follows it", async () => {
+    const manager = new WorkerModelCatalogManager({
+      loadCachedCatalog: unlabelledCache(["claude-3"]),
+      runCommand: async () => "",
+    });
+
+    const snapshot = await manager.getCatalogSnapshot();
+
+    expect(snapshot.catalog.claude).toEqual(expect.arrayContaining([
+      { value: "claude-3", label: "Claude 3" },
     ]));
   });
 

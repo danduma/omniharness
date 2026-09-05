@@ -140,6 +140,9 @@ Generally, lower cost models are fine for writing code with clear specs, but pla
 - gpt-5.6-luna (max, extra-high, high, medium, low)
 - gpt-5.5 (max, extra-high, high, medium, low)
 - gpt-5.4 (extra-high, high, medium)
+- claude-fable-5-1 (max, xhigh, high, medium)
+- claude-opus-5 (max, xhigh, high, medium)
+- claude-fable-5 (max, xhigh, high, medium)
 - claude-opus-4-8 (max, xhigh, high, medium)
 - claude-opus-4-7 (max, xhigh, high, medium)
 - claude-opus-4-6 (max, xhigh, high, medium)
@@ -148,10 +151,11 @@ Generally, lower cost models are fine for writing code with clear specs, but pla
 
 ## Lower cost models
 - gpt-5.4-mini (high, medium)
+- claude-sonnet-5 (max, xhigh, high, medium)
 - claude-sonnet-4-6 (max, xhigh, high, medium)
 
 ## Debugging: harnesses, in decreasing order of capability
-- Claude Code (claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-6)
+- Claude Code (claude-fable-5-1, claude-opus-5, claude-fable-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-sonnet-5, claude-sonnet-4-6)
 - Codex (gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4, gpt-5.3-codex)
 - Gemini (gemini-3.5-flash)
 

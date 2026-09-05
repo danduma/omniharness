@@ -18,12 +18,14 @@ class FakeManagedTerminal {
     accountId: string;
     operationId: string;
     ownerSessionId: string;
+    args: string[];
     cwd: string;
     env: Record<string, string>;
     onExit?: (exit: TerminalExit) => void;
   }> = [];
 
   createManagedTerminal(options: {
+    args: string[];
     accountId: string;
     operationId: string;
     ownerSessionId: string;
@@ -36,6 +38,7 @@ class FakeManagedTerminal {
       accountId: options.accountId,
       operationId: options.operationId,
       ownerSessionId: options.ownerSessionId,
+      args: options.args,
       cwd: options.cwd,
       env: options.env,
       onExit: options.onExit,
@@ -97,6 +100,7 @@ function createService(overrides: Partial<ClaudeAccountAuthServiceDependencies> 
 describe("Claude account authentication service", () => {
   beforeEach(async () => {
     await db.delete(accounts).where(like(accounts.id, "claude-managed-%"));
+    await db.delete(accounts).where(eq(accounts.id, "local-session-claude"));
     __resetNamedEventsForTests();
   });
 
@@ -196,6 +200,56 @@ describe("Claude account authentication service", () => {
       authMode: "local_session",
     });
     expect(started.operation).toMatchObject({ phase: "authenticating" });
+  });
+
+  it("starts one-click sign-in by creating and reusing the normal local Claude account", async () => {
+    const { service, terminals, root } = createService();
+
+    const started = await service.signInLocal("session-a");
+
+    expect(started.account).toMatchObject({
+      id: "local-session-claude",
+      label: "Claude subscription",
+      authMode: "local_session",
+      status: "authenticating",
+    });
+    expect(terminals.created[0]).toMatchObject({
+      accountId: "local-session-claude",
+      args: ["auth", "login", "--claudeai"],
+      cwd: root,
+      env: { CLAUDE_CONFIG_DIR: join(root, ".claude") },
+    });
+
+    await service.act("local-session-claude", "cancel", "session-a");
+    const second = await service.signInLocal("session-a");
+
+    expect(second.account.id).toBe("local-session-claude");
+    expect(await db.select().from(accounts).where(eq(accounts.id, "local-session-claude"))).toHaveLength(1);
+  });
+
+  it("parses valid unauthenticated status JSON even when Claude exits nonzero", async () => {
+    const statusError = Object.assign(new Error("Command failed: claude auth status --json"), {
+      stdout: JSON.stringify({ loggedIn: false }),
+      stderr: "Not logged in",
+    });
+    const { service, terminals } = createService({
+      probeStatus: undefined,
+      runCommand: async (args) => {
+        if (args.join(" ") === "auth status --json") throw statusError;
+        return { stdout: "", stderr: "" };
+      },
+    });
+    const started = await service.connect({ label: "Status edge", ownerSessionId: "session-a" });
+
+    terminals.created[0].onExit?.({ exitCode: 0 });
+    await waitFor(async () => (
+      await db.select().from(accounts).where(eq(accounts.id, started.account.id)).get()
+    )?.status === "login_required");
+
+    expect((await service.getOperation(started.account.id, "session-a")).operation).toMatchObject({
+      phase: "failed",
+      error: { code: "account.login_required" },
+    });
   });
 
   it("cancels explicitly and leaves the account disabled and login-required", async () => {

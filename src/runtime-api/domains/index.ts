@@ -374,6 +374,9 @@ export function createRuntimeDomains({
       connectClaude(input, options) {
         return post("/api/accounts/claude/connect", input, options) as ReturnType<RuntimeAPIs["accounts"]["connectClaude"]>;
       },
+      signInClaude(options) {
+        return post("/api/accounts/claude/connect", { localSession: true }, options) as ReturnType<RuntimeAPIs["accounts"]["signInClaude"]>;
+      },
       getAuthOperation(input, options) {
         return get(`/api/accounts/${encode(input.accountId)}/auth-operation`, options) as ReturnType<RuntimeAPIs["accounts"]["getAuthOperation"]>;
       },

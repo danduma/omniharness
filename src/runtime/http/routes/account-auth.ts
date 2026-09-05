@@ -51,6 +51,10 @@ export const handleClaudeAccountConnectRequest: OmniHttpHandler = async (request
   if (auth.response) return auth.response;
   try {
     const input = await body(request);
+    if (input.localSession === true) {
+      const service = await getClaudeAccountAuthService();
+      return Response.json(await service.signInLocal(auth.ownerSessionId));
+    }
     const label = typeof input.label === "string" ? input.label : "";
     const email = typeof input.email === "string" ? input.email : null;
     const sso = input.sso === true;

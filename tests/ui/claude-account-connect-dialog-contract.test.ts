@@ -9,6 +9,9 @@ describe("Claude account connect UI", () => {
     expect(source).toContain("ClaudeAccountAuthManager");
     expect(source).toContain("ManagedTerminalViewport");
     expect(source).toContain("manager.begin()");
+    expect(source).toContain("manager.beginLocalSignIn()");
+    expect(source).toContain('["isolated_cli_home", "local_session"].includes(account.authMode)');
+    expect(source).toContain("settings.agents.claudeAuth.signInLocal");
     expect(source).toContain("manager.cancel()");
     expect(source).toContain("manager.confirmPurge()");
   });
@@ -18,6 +21,7 @@ describe("Claude account connect UI", () => {
     for (const key of [
       "settings.agents.claudeAuth.title",
       "settings.agents.claudeAuth.connect",
+      "settings.agents.claudeAuth.signInLocal",
       "settings.agents.claudeAuth.accountLabel",
       "settings.agents.claudeAuth.cancelSignIn",
       "settings.agents.claudeAuth.purgeTitle",

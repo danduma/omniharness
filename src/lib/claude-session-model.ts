@@ -1,10 +1,12 @@
 /**
  * Claude session model pinning.
  *
- * Explicit model selections no longer depend on this menu resolver. The agent
- * runtime passes the exact model id through `ANTHROPIC_MODEL` before startup
- * and requires Claude's reported current model to equal that id. This resolver
- * remains for unrequested sessions and as a fail-closed model-option contract.
+ * The agent runtime passes explicit model selections through `ANTHROPIC_MODEL`
+ * before startup, then uses this resolver to verify the adapter's reported
+ * identity. Providers may report a documented alias such as `opus[1m]` for the
+ * canonical request `claude-opus-5`; that is acceptable only when one menu
+ * entry unambiguously proves the same family and version. Unknown or
+ * contradictory aliases fail closed.
  *
  * The Claude ACP adapter picks the session model itself when nothing pins it:
  * `ANTHROPIC_MODEL` first, then `settings.model` from the CLI config dir, then
@@ -124,25 +126,40 @@ function versionFromModelText(value: string): string | null {
  * (`opus`) whose version only appears in the human-facing description, so fall
  * through value → name → description.
  */
-function optionVersion(option: ClaudeSessionModelOption): string | null {
-  return versionFromModelText(option.value)
-    ?? versionFromModelText(option.name ?? "")
-    ?? versionFromModelText(optionDescriptionIdentity(option));
-}
-
 function optionDescriptionIdentity(option: ClaudeSessionModelOption) {
   return (option.description ?? "").split(/\s+(?:·|•|—|–|\|)\s+/, 1)[0] ?? "";
 }
 
+function optionIdentityEvidence(option: ClaudeSessionModelOption) {
+  const identityFields = [option.value, option.name ?? "", optionDescriptionIdentity(option)];
+  const families = new Set(identityFields.map(modelFamily).filter((value): value is string => Boolean(value)));
+  const versions = new Set(identityFields.map(versionFromModelText).filter((value): value is string => Boolean(value)));
+  return {
+    family: families.size === 1 ? [...families][0]! : null,
+    version: versions.size === 1 ? [...versions][0]! : null,
+    familyConsistent: families.size <= 1,
+    versionConsistent: versions.size <= 1,
+  };
+}
+
+function optionVersion(option: ClaudeSessionModelOption): string | null {
+  const identity = optionIdentityEvidence(option);
+  return identity.versionConsistent ? identity.version : null;
+}
+
 function optionFamily(option: ClaudeSessionModelOption) {
-  return modelFamily(option.value)
-    ?? modelFamily(option.name ?? "")
-    ?? modelFamily(optionDescriptionIdentity(option));
+  const identity = optionIdentityEvidence(option);
+  return identity.familyConsistent ? identity.family : null;
 }
 
 function findByValue(options: ClaudeSessionModelOption[], value: string) {
   const lower = value.trim().toLowerCase();
   return options.find((option) => option.value.trim().toLowerCase() === lower) ?? null;
+}
+
+function findAllByValue(options: ClaudeSessionModelOption[], value: string) {
+  const lower = value.trim().toLowerCase();
+  return options.filter((option) => option.value.trim().toLowerCase() === lower);
 }
 
 /**
@@ -174,14 +191,31 @@ export function resolveClaudeSessionModel(input: {
   current?: string | null;
 }): ClaudeSessionModelOutcome {
   const options = input.options.filter((option) => typeof option?.value === "string" && option.value.trim() !== "");
-  if (options.length === 0) {
-    // No list to resolve against — the adapter never told us what it offers, so
-    // there is nothing to verify and nothing to pin.
-    return { status: "keep", value: null, reason: "requested" };
-  }
-
   const requested = input.requested?.trim() || null;
   const current = input.current?.trim() || null;
+  if (options.length === 0) {
+    // A canonical provider value can prove itself without a menu, but an alias
+    // cannot: there is no metadata available to connect it to the requested
+    // family/version. Explicit requests therefore fail closed unless the
+    // reported value is exactly the requested value.
+    if (!requested) {
+      return { status: "keep", value: current, reason: "requested" };
+    }
+    if (current?.toLowerCase() === requested.toLowerCase()) {
+      return { status: "keep", value: current, reason: "requested" };
+    }
+    const requestedFamily = modelFamily(requested);
+    const requestedVersion = versionFromModelText(requested);
+    return {
+      status: "unavailable",
+      reason: requestedVersion ? "version_unavailable" : "family_unavailable",
+      requested,
+      requestedFamily,
+      requestedVersion,
+      available: current ? [current] : [],
+    };
+  }
+
   const currentOption = current ? findByValue(options, current) : null;
   const wantsOneMillion = requested !== null && isOneMillionContextModel(requested);
 
@@ -225,11 +259,30 @@ export function resolveClaudeSessionModel(input: {
 
   const family = modelFamily(requested);
   const requestedVersion = versionFromModelText(requested);
+  const currentValueFamily = current ? modelFamily(current) : null;
+  const currentValueVersion = current ? versionFromModelText(current) : null;
+  const currentAliasOptions = current ? findAllByValue(options, current) : [];
+  const currentAliasNeedsMetadata = Boolean(current && !currentValueVersion);
+  const currentAliasEvidence = currentAliasNeedsMetadata && currentAliasOptions.length === 1
+    ? currentAliasOptions[0]!
+    : null;
+  if (currentAliasNeedsMetadata && currentAliasOptions.length > 1) {
+    return {
+      status: "unavailable",
+      reason: requestedVersion ? "version_unavailable" : "family_unavailable",
+      requested,
+      requestedFamily: family,
+      requestedVersion,
+      available: options.map((option) => option.value),
+    };
+  }
+  const currentFamily = currentValueFamily ?? (currentAliasEvidence ? optionFamily(currentAliasEvidence) : null);
+  const currentVersion = currentValueVersion ?? (currentAliasEvidence ? optionVersion(currentAliasEvidence) : null);
   const currentMatchesRequest = Boolean(
     current
     && family
-    && modelFamily(current) === family
-    && (!requestedVersion || versionFromModelText(current) === requestedVersion)
+    && currentFamily === family
+    && (!requestedVersion || currentVersion === requestedVersion)
     && (!wantsOneMillion || isOneMillionContextModel(current)),
   );
   if (currentMatchesRequest && current) {
