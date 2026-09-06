@@ -16,6 +16,7 @@ import { buildRuntimeBootstrap } from "@/runtime/bootstrap";
 import { startOmniServer, type OmniServerHandle } from "@/runtime/http/server";
 import { createOmniRuntimeHttpRegistry } from "@/runtime/http/routes";
 import { createNodeManagedBridgeController } from "./bridge-dependencies";
+import { createBridgeNamedEventForwarder } from "@/server/events/bridge-event-forwarder";
 import type { RunnerConfig } from "./config";
 import { RunnerReadinessManager } from "./readiness-manager";
 import { acquireRunnerLock } from "./runner-lock";
@@ -98,6 +99,10 @@ export async function startRunnerProcess(
   });
   const readiness = new RunnerReadinessManager(bridge);
   configureRunnerReadinessSource(readiness);
+  // The bridge runs the ACP clients in its own process, with its own named-event
+  // ring buffer. Only this process serves SSE, so without the forwarder every
+  // event emitted over there reaches no client.
+  const bridgeEventForwarder = createBridgeNamedEventForwarder({ bridgeUrl: config.bridgeUrl });
 
   try {
     await dbReady;
@@ -126,6 +131,7 @@ export async function startRunnerProcess(
     await ensureSupervisorRuntimeStarted();
     await ensureClaudeModelGatewayStartedAtBoot();
     await bridge.start();
+    bridgeEventForwarder.start();
     const claudeAccountAuthService = await getClaudeAccountAuthService({ instanceRoot: config.instanceRoot });
     await claudeAccountAuthService.reconcileAtStartup();
     await recoverPendingGoalControlsAtStartup();
@@ -138,6 +144,7 @@ export async function startRunnerProcess(
           claudeAccountAuthService.shutdown();
           getTerminalManager().killAll();
           await getClaudeModelGatewayService().shutdown();
+          await bridgeEventForwarder.stop();
           await bridge.stop();
         },
       },
@@ -183,6 +190,7 @@ export async function startRunnerProcess(
         ? { name: error.name, message: error.message }
         : null,
     });
+    await bridgeEventForwarder.stop().catch(() => undefined);
     await bridge.stop().catch(() => undefined);
     stopGoalOutboxDelivery();
     runnerLock.release();
@@ -204,6 +212,7 @@ export async function startRunnerProcess(
         await server?.stop();
       } finally {
         stopGoalOutboxDelivery();
+        await bridgeEventForwarder.stop().catch(() => undefined);
         await bridge.stop().catch(() => undefined);
         runnerLock.release();
         process.off("exit", releaseLockOnExit);

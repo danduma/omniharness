@@ -583,6 +583,46 @@ Every reported bug should land at one of these four answers. If the answer is
 
 ---
 
+## The agent-runtime process boundary
+
+OmniHarness runs in two processes. The runner (`scripts/runner.ts`) serves HTTP
+and owns the only SSE stream. The agent runtime (`scripts/agent-runtime.ts`,
+addressed as the bridge) hosts the ACP clients and holds every provider session.
+
+`emitNamedEvent` writes to a ring buffer that is local to the calling process,
+so an event emitted in the agent runtime is not on the wire. Roughly a third of
+the system's named events originate there: the ACP session-update handlers, the
+plan stream, the goal extension, and about twenty `error.surfaced` sites.
+Before this was closed, all of them landed in a buffer nothing read. A goal the
+agent announced over ACP reached the database and the outbox, was marked
+published, and still never appeared in the UI until a snapshot bootstrap
+re-read `run_goals` — which the user hit by switching conversations.
+
+`src/server/events/bridge-event-forwarder.ts` closes the gap. The runner
+long-polls `GET /runtime-events?since=<streamId>` on the bridge and replays what
+it finds through `ingestForeignNamedEvent`, which records the event in the
+runner's ring exactly as a local emit would. The pull direction is deliberate:
+the bridge may be adopted rather than spawned and need not know the runner's
+address, but the runner always knows the bridge URL.
+
+Consequences for new code:
+
+- An event emitted in `src/server/agent-runtime/**` reaches clients only through
+  the forwarder. It is on by default; nothing extra is needed per call site.
+- A first drain attaches at head. The forwarder never replays the bridge's
+  history, so events emitted while the runner was down are gone — durable state
+  in sqlite remains the recovery path, as everywhere else.
+- The forwarder drops `worker.entry_appended` because the runner emits its own
+  per-batch frame for the same content from `writeWorkerOutputEntries`. Any
+  other kind emitted on both sides must be added to that list, or clients will
+  see it twice.
+- When triaging "X did not happen", remember that `GET /api/events/log` reads
+  the runner's buffer. An event missing there may have been emitted on the
+  bridge and dropped in transit; check the forwarder's stderr diagnostics before
+  concluding the server never did the thing.
+
+---
+
 ## Worker conversation content vs. lifecycle events
 
 These two surfaces are distinct and must stay distinct.
