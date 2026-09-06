@@ -3,6 +3,7 @@ import { db } from "@/server/db";
 import { withSqliteBusyRetry } from "@/server/db/retry";
 import { messages, queuedConversationMessages, recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
+import { refreshDerivedGoalPlan } from "@/server/runs/goal-plan-derivation";
 import { listAgents, normalizeAgentRecord, type AgentRecord } from "@/server/bridge-client";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { listExecutionEventsForWorker, recordExecutionEvent } from "@/server/events/execution-event-store";
@@ -925,6 +926,10 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
         pendingPermissions: agent.pendingPermissions,
         pendingElicitations: agent.pendingElicitations,
       });
+      // The turn has settled, so any plan file the goal names has stopped
+      // moving. Re-derive it here to pick up checklist items the turn ticked
+      // off; the call is a no-op when the goal has no derivable plan.
+      await refreshDerivedGoalPlan(run.id, "turn_settled");
     } else {
       await withWorkerOutputWriteFence(run.id, worker.id, async () => {
         const current = await db.select({ turnGeneration: workers.turnGeneration })

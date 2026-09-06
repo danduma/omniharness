@@ -136,6 +136,7 @@ export type SurfacedErrorCode =
   | "goal.persistence.failed"
   | "goal.outbox.poisoned"
   | "goal.payload.invalid"
+  | "goal.plan.derivation_failed"
   | "goal.not_found"
   | "goal.rate_limited"
   | "filesystem.directory_create_failed"
@@ -544,6 +545,19 @@ export type GoalEvent =
   | { kind: "goal.worker_transferred"; runId: string; goalId: string; previousWorkerId: string | null; workerId: string; leaseGeneration: number }
   | { kind: "goal.stale_lease_ignored"; runId: string; goalId: string; workerId: string; leaseGeneration: number; currentLeaseGeneration: number }
   | { kind: "goal.payload_rejected"; runId: string; goalId: string; workerId: string; reason: string }
+  | {
+      kind: "goal.plan.derived";
+      runId: string;
+      goalId: string;
+      source: string;
+      itemCount: number;
+      completedCount: number;
+      revision: number;
+      trigger: string;
+    }
+  | { kind: "goal.plan.derivation_skipped"; runId: string; goalId: string | null; reason: string }
+  | { kind: "goal.plan.derivation_refused"; runId: string; goalId: string; reason: string }
+  | { kind: "goal.plan.derivation_failed"; runId: string; reason: string }
   | { kind: "goal.outbox.recovery_started"; pendingCount: number }
   | { kind: "goal.outbox.recovery_completed"; publishedCount: number; poisonedCount: number }
   | { kind: "goal.outbox.retry_scheduled"; runId: string; goalId: string; revision: number; attempt: number; nextAttemptAt: string }

@@ -65,6 +65,14 @@ export interface ProviderGoalUpdateRequest {
   lastError?: string | null;
 }
 
+export interface DerivedGoalPlanRequest {
+  runId: string;
+  goalId: string;
+  expectedRevision: number;
+  plan: GoalPlanItem[];
+  planSource: GoalPlanSource;
+}
+
 export type GoalControlMethod = "extension" | "slash";
 
 export class GoalControlService {
@@ -355,6 +363,72 @@ export class GoalControlService {
                 : validationChanged && validationState?.status === "failed" ? "goal.validation.failed"
                   : "goal.updated";
       await enqueueGoalEvent(transaction, snapshot, eventKind, now, this.randomId);
+      await transaction.commit();
+      return { ok: true, snapshot, replayed: false };
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  }
+
+  /**
+   * Write a plan the server derived from a plan file. Unlike a provider update
+   * this carries no worker lease: derivation is a property of the objective and
+   * the file it names, not of whichever agent happens to hold the session, so
+   * it stays valid across worker restarts and reattaches. The revision fence
+   * still applies, so a concurrent provider update wins and the derivation is
+   * simply refused.
+   */
+  async applyDerivedPlan(input: DerivedGoalPlanRequest): Promise<GoalMutationResult> {
+    return retryGoalBusy(() => this.applyDerivedPlanOnce(input));
+  }
+
+  private async applyDerivedPlanOnce(input: DerivedGoalPlanRequest): Promise<GoalMutationResult> {
+    const transaction = await this.client.transaction("write");
+    try {
+      const current = await selectGoal(transaction, input.runId);
+      if (!current) {
+        await transaction.commit();
+        return goalFailure("not_found", "The goal does not exist.", null);
+      }
+      if (current.status === "cleared") {
+        await transaction.commit();
+        return goalFailure("invalid_transition", "A cleared goal cannot be updated.", current);
+      }
+      const conflict = this.validateMutationFence(current, input);
+      if (conflict) {
+        await transaction.commit();
+        return conflict;
+      }
+      if (
+        JSON.stringify(input.plan) === JSON.stringify(current.plan)
+        && JSON.stringify(input.planSource) === JSON.stringify(current.planSource)
+      ) {
+        await transaction.commit();
+        return { ok: true, snapshot: current, replayed: true };
+      }
+      const now = this.now().getTime();
+      const revision = current.revision + 1;
+      await transaction.execute({
+        sql: `UPDATE run_goals SET plan_json = ?, plan_source_json = ?, revision = ?,
+                transition_source = 'reconciliation', updated_at = ?
+              WHERE run_id = ? AND goal_id = ? AND revision = ? AND status != 'cleared'`,
+        args: [
+          JSON.stringify(input.plan),
+          JSON.stringify(input.planSource),
+          revision,
+          now,
+          input.runId,
+          input.goalId,
+          input.expectedRevision,
+        ],
+      });
+      const snapshot = await selectGoal(transaction, input.runId);
+      if (!snapshot || snapshot.revision !== revision) {
+        await transaction.rollback();
+        return goalFailure("revision_conflict", "The goal changed before the derived plan was committed.", snapshot);
+      }
+      await enqueueGoalEvent(transaction, snapshot, "goal.plan.updated", now, this.randomId);
       await transaction.commit();
       return { ok: true, snapshot, replayed: false };
     } catch (error) {

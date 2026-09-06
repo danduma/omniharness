@@ -115,7 +115,12 @@ export async function handleAcpGoalSessionUpdateForWorker(args: {
     });
     if (!attached.ok) return { kind: "rejected", reason: attached.code };
     await goalControl.markControlApplied(attached.snapshot, "extension");
-    current = attached.snapshot;
+    // A provider that announces a goal without a plan (Codex never sends plan
+    // updates) leaves the goal card empty for the whole run. If the objective
+    // names a plan file, that file is the plan.
+    const { refreshDerivedGoalPlan } = await import("@/server/runs/goal-plan-derivation");
+    await refreshDerivedGoalPlan(runId, "goal_created");
+    current = (await goalControl.getGoal(runId)) ?? attached.snapshot;
   }
   if (!current) return { kind: "ignored", reason: "goal_absent" };
   if (
@@ -240,10 +245,15 @@ export async function initializeWorkerGoalSession(
     import("@/server/events/named-events"),
     import("@/server/runs/goal-outbox"),
   ]);
-  const current = await goalControl.getGoal(runId);
-  if (!current || !current.visible || current.status === "cleared") {
+  const existing = await goalControl.getGoal(runId);
+  if (!existing || !existing.visible || existing.status === "cleared") {
     return { kind: "ignored" as const, reason: "goal_absent" as const };
   }
+  // Derive before the lease is attached so the attach and the dispatch below
+  // both fence against the post-derivation revision.
+  const { refreshDerivedGoalPlan } = await import("@/server/runs/goal-plan-derivation");
+  await refreshDerivedGoalPlan(runId, "session_initialized");
+  const current = (await goalControl.getGoal(runId)) ?? existing;
   const attached = await goalControl.attachLease({
     runId,
     goalId: current.goalId,
