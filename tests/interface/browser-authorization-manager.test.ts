@@ -84,6 +84,26 @@ describe("BrowserAuthorizationManager", () => {
     }));
   });
 
+  it("preserves the server message when authorization exchange rejects an API error", async () => {
+    const { value, popup } = adapter();
+    const manager = new BrowserAuthorizationManager(value);
+    const authorization = manager.authorize({
+      runnerUrl: "https://runner.example",
+      exchange: async () => {
+        throw { code: "runtime.http_403", message: "Authorization code expired." };
+      },
+    });
+    const rejected = expect(authorization).rejects.toThrow("Authorization code expired.");
+    await vi.waitFor(() => expect(manager.getSnapshot().status).toBe("waiting"));
+    value.emit({
+      origin: "https://runner.example",
+      source: popup,
+      data: { type: "omni.authorization", code: "code", state: manager.getSnapshot().state },
+    });
+    await rejected;
+    expect(manager.getSnapshot()).toMatchObject({ status: "failed", error: "Authorization code expired." });
+  });
+
   it("surfaces denial, timeout, and opener loss return links", () => {
     const { value } = adapter();
     const manager = new BrowserAuthorizationManager(value);
