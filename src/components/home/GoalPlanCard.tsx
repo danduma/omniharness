@@ -36,7 +36,7 @@ import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
-import { validateGoalObjective, type GoalMutationAction, type GoalSnapshot } from "@/shared/goal-plan";
+import { validateGoalObjective, type GoalMutationAction, type GoalSnapshot, type GoalStatus } from "@/shared/goal-plan";
 
 interface GoalPlanCardProps {
   goal: GoalSnapshot | null;
@@ -54,6 +54,44 @@ function elapsedLabel(startedAt: string, endAt: string | null, nowMs: number) {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return t("goal.elapsed.hours", { count: hours });
   return t("goal.elapsed.days", { count: Math.floor(hours / 24) });
+}
+
+/**
+ * States a goal can sit in while nothing is driving it forward.
+ *
+ * A goal stalls in far more ways than `paused`: the agent can block it, park it
+ * on the user, lose its goal capability, or fail outright, and it can sit in
+ * `pending` because the agent never picked it up. The card previously offered a
+ * resume control only for `paused`, and only when the agent advertised a resume
+ * capability — which left every other stalled goal with no way back to
+ * `pursuing` at all.
+ */
+const STALLED_GOAL_STATUSES = new Set<GoalStatus>([
+  "pending",
+  "paused",
+  "waiting_user",
+  "blocked",
+  "limited",
+  "error",
+]);
+
+/**
+ * The single play/pause control in the card header.
+ *
+ * `retry` rather than `resume` is what a stalled goal without an advertised
+ * resume capability sends: both land on `pursuing`, but only `retry` is exempt
+ * from the capability check, so it still works for an agent that reports no
+ * goal capabilities at all.
+ */
+export function resolveGoalRunControl(goal: GoalSnapshot): { action: GoalMutationAction; labelKey: string } | null {
+  if (goal.status === "pursuing") {
+    return goal.capabilities.pause ? { action: "pause", labelKey: "goal.action.pause" } : null;
+  }
+  if (!STALLED_GOAL_STATUSES.has(goal.status)) return null;
+  return {
+    action: goal.capabilities.resume ? "resume" : "retry",
+    labelKey: "goal.action.resume",
+  };
 }
 
 function GoalIconButton({
@@ -120,10 +158,7 @@ export function GoalPlanCard({ goal, onSnapshot, onOpenPlanArtifact }: GoalPlanC
     goal.status === "paused" ? goal.pausedAt : goal.completedAt ?? goal.clearedAt,
     presentation.displayNowMs,
   );
-  const pauseAction = goal.status === "paused" ? "resume" : "pause";
-  const canPause = goal.status === "paused"
-    ? goal.capabilities.resume
-    : goal.status === "pursuing" && goal.capabilities.pause;
+  const runControl = resolveGoalRunControl(goal);
   const errorLabel = presentation.actionError ? t(`goal.error.${presentation.actionError}`) : null;
 
   const saveEdit = () => {
@@ -170,13 +205,13 @@ export function GoalPlanCard({ goal, onSnapshot, onOpenPlanArtifact }: GoalPlanC
             >
               <Pencil />
             </GoalIconButton>
-            {canPause ? (
+            {runControl ? (
               <GoalIconButton
-                label={t(`goal.action.${pauseAction}`)}
+                label={t(runControl.labelKey)}
                 disabled={Boolean(pending)}
-                onClick={() => beginAction(pauseAction)}
+                onClick={() => beginAction(runControl.action)}
               >
-                {pauseAction === "pause" ? <Pause /> : <Play />}
+                {runControl.action === "pause" ? <Pause /> : <Play />}
               </GoalIconButton>
             ) : null}
             <GoalIconButton
@@ -196,9 +231,9 @@ export function GoalPlanCard({ goal, onSnapshot, onOpenPlanArtifact }: GoalPlanC
               <DropdownMenuItem onClick={() => goalPlanManager.beginEdit(goal.runId, goal.objective)}>
                 <Pencil /> {t("goal.action.edit")}
               </DropdownMenuItem>
-              {canPause ? (
-                <DropdownMenuItem onClick={() => beginAction(pauseAction)}>
-                  {pauseAction === "pause" ? <Pause /> : <Play />} {t(`goal.action.${pauseAction}`)}
+              {runControl ? (
+                <DropdownMenuItem onClick={() => beginAction(runControl.action)}>
+                  {runControl.action === "pause" ? <Pause /> : <Play />} {t(runControl.labelKey)}
                 </DropdownMenuItem>
               ) : null}
               <DropdownMenuItem variant="destructive" onClick={() => goalPlanManager.setClearConfirmation(goal.runId, true)}>

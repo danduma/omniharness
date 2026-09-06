@@ -100,11 +100,7 @@ export class GoalAcpDispatcher {
       return { kind: "deferred", reason: "no_active_lease" };
     }
     const goalMetadata = metadataGoal(agent.agentCapabilities);
-    if (goalMetadata) {
-      const normalized = normalizeAcpGoalMetadata({ _meta: { goal: goalMetadata } });
-      if (!extensionSupports(normalized, action)) {
-        return { kind: "unsupported", reason: normalized.ok ? `extension_does_not_support_${action}` : normalized.reason };
-      }
+    if (goalMetadata && extensionSupports(normalizeAcpGoalMetadata({ _meta: { goal: goalMetadata } }), action)) {
       await this.dependencies.invokeExtension(snapshot.workerId, "_session/goal", {
         sessionId: snapshot.acpSessionId,
         goalId: snapshot.goalId,
@@ -117,6 +113,13 @@ export class GoalAcpDispatcher {
       return { kind: "dispatched", method: "extension" };
     }
 
+    // Reaching here means the agent advertises no goal extension, or advertises
+    // one that declines this action. Codex is the second case: it announces
+    // goals over the extension while reporting every capability false, so an
+    // extension-only dispatch refused every resume and the goal had no way back
+    // to `pursuing`. The slash command is a real fallback for exactly that
+    // agent, so try it before calling the action unsupported.
+    //
     // Trust the capabilities the runtime already recorded from the agent's
     // available_commands frame before re-deriving them. `outputEntries` is a
     // rolling window that drops that frame once the session produces enough

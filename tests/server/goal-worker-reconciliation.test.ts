@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db, dbClient } from "@/server/db";
 import { plans, runGoalOperations, runGoalOutbox, runGoals, runs, workers } from "@/server/db/schema";
 import {
+  __resetAdvertisedCommandsForTests,
   handleAcpGoalSessionUpdateForWorker,
   initializeWorkerGoalSession,
 } from "@/server/agent-runtime/acp/goal-state";
@@ -39,6 +40,7 @@ describe("goal worker reconciliation", () => {
       endpoint: "goal.put",
       objective: "Reconcile the worker",
     });
+    __resetAdvertisedCommandsForTests();
     bridgeMocks.getAgent.mockReset();
     bridgeMocks.invokeAgentAcpMethod.mockReset();
     bridgeMocks.askAgent.mockReset();
@@ -156,6 +158,43 @@ describe("goal worker reconciliation", () => {
       workerId: "goal-worker",
       acpSessionId: "session-provider",
       leaseGeneration: 1,
+    });
+  });
+  it("records the agent's advertised /goal fallback on a goal the agent announces itself", async () => {
+    // `available_commands_update` lands before any goal exists, so the branch
+    // that records fallback capabilities used to discard it. The goal was then
+    // created with every capability false and no fallback method, and nothing
+    // could resume it once it stalled.
+    await db.delete(runGoalOutbox);
+    await db.delete(runGoalOperations);
+    await db.delete(runGoals);
+    __resetAdvertisedCommandsForTests();
+
+    const announced = await handleAcpGoalSessionUpdateForWorker({
+      workerId: "goal-worker",
+      sessionId: "session-fallback",
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [{ name: "goal" }, { name: "mcp" }],
+      },
+    });
+    expect(announced).toMatchObject({ kind: "ignored", reason: "goal_absent" });
+
+    const created = await handleAcpGoalSessionUpdateForWorker({
+      workerId: "goal-worker",
+      sessionId: "session-fallback",
+      update: {
+        sessionUpdate: "session_info",
+        _meta: { goal: { version: 1, objective: "Fix the editor bugs" } },
+      },
+    });
+    expect(created).toMatchObject({ kind: "accepted" });
+
+    expect((await goalControl.getGoal("goal-worker-run"))?.capabilities).toMatchObject({
+      set: true,
+      edit: true,
+      clear: true,
+      fallbackMethod: "/goal",
     });
   });
 });
