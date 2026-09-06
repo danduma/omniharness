@@ -1,4 +1,5 @@
 import { StateManager } from "@/lib/state-manager";
+import { runtimeErrorMessage } from "@/runtime-api/request";
 
 type AuthorizationStatus =
   | "idle"
@@ -140,7 +141,7 @@ export class BrowserAuthorizationManager extends StateManager<BrowserAuthorizati
           resolve(result);
         }, (error: unknown) => {
           this.cleanup();
-          const normalized = error instanceof Error ? error : new Error(String(error));
+          const normalized = error instanceof Error ? error : new Error(runtimeErrorMessage(error));
           this.update(() => ({ status: "failed", state, error: normalized.message }));
           reject(normalized);
         });

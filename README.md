@@ -91,6 +91,30 @@ and does not run this production rebuild gate.
 
 ## Clients and deployment
 
+### Access through ngrok
+
+After completing local setup, run `ngrok http http://127.0.0.1:3050` in a
+second terminal ([ngrok CLI documentation](https://ngrok.com/docs/agent/cli)).
+Copy the HTTPS forwarding URL printed by ngrok and add it to the repository's
+`.env`, alongside the password configuration created by the launcher:
+
+```dotenv
+OMNIHARNESS_PUBLIC_ORIGIN=https://your-assigned-domain.ngrok-free.app
+OMNIHARNESS_TRUSTED_PROXIES=127.0.0.1
+```
+
+Replace the example domain with your actual URL, then restart OmniHarness with
+`./omniharness`. Open the HTTPS URL and log in with the password chosen during
+setup. Update the public origin and restart if your tunnel URL changes.
+
+Without the public origin or trusted proxy configuration, login can fail with
+“Cross-site request rejected.” Forward to port `3050`, which serves both the
+production interface and API. The proxy address above applies to ngrok running
+on the same machine and forwarding to `127.0.0.1`; other deployments should use
+their actual proxy peer address, never a catch-all trusted range.
+
+### Other clients
+
 The browser/PWA is served by any runner with `dist/interface`. The other hosts
 are remote clients and never embed or start a runner:
 
