@@ -74,10 +74,24 @@ describe("GoalPlanCard", () => {
     expect(renderToStaticMarkup(<GoalPlanCard goal={{ ...goal, visible: false, status: "cleared" }} onSnapshot={vi.fn()} />)).toBe("");
   });
 
-  it("does not present pause or resume outside a legal status", () => {
-    const html = renderToStaticMarkup(<GoalPlanCard goal={{ ...goal, status: "blocked" }} onSnapshot={vi.fn()} />);
-    expect(html).not.toContain('aria-label="Pause goal"');
-    expect(html).not.toContain('aria-label="Resume goal"');
+  it("offers resume on a stalled goal even when the agent advertises no capabilities", () => {
+    const stalled = {
+      ...goal,
+      capabilities: { set: false, edit: false, pause: false, resume: false, clear: false, fallbackMethod: null },
+    };
+    for (const status of ["blocked", "waiting_user", "limited", "error", "pending"] as const) {
+      const html = renderToStaticMarkup(<GoalPlanCard goal={{ ...stalled, status }} onSnapshot={vi.fn()} />);
+      expect(html).toContain('aria-label="Resume goal"');
+      expect(html).not.toContain('aria-label="Pause goal"');
+    }
+  });
+
+  it("presents neither pause nor resume once the goal is settled or validating", () => {
+    for (const status of ["validating", "completed"] as const) {
+      const html = renderToStaticMarkup(<GoalPlanCard goal={{ ...goal, status }} onSnapshot={vi.fn()} />);
+      expect(html).not.toContain('aria-label="Pause goal"');
+      expect(html).not.toContain('aria-label="Resume goal"');
+    }
   });
 
   it("renders a surfaced provider error without relying on status color", () => {

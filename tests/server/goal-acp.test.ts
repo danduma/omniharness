@@ -71,7 +71,7 @@ describe("goal ACP control dispatch", () => {
     expect(invokeExtension).not.toHaveBeenCalled();
   });
 
-  it("refuses an unadvertised fallback and unsupported extension action", async () => {
+  it("refuses an action neither channel advertises", async () => {
     const sendSlashCommand = vi.fn();
     const invokeExtension = vi.fn();
     const noCapability = createGoalAcpDispatcher({
@@ -79,19 +79,31 @@ describe("goal ACP control dispatch", () => {
       invokeExtension,
       sendSlashCommand,
     });
-    expect(await noCapability.dispatch(snapshot(), "set")).toMatchObject({ kind: "unsupported" });
 
-    const extensionWithoutPause = createGoalAcpDispatcher({
+    expect(await noCapability.dispatch(snapshot(), "set")).toMatchObject({ kind: "unsupported" });
+    expect(invokeExtension).not.toHaveBeenCalled();
+    expect(sendSlashCommand).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the slash command when the extension declines the action", async () => {
+    // Codex is this agent: it announces goals over the extension while
+    // reporting every capability false, and separately advertises `/goal`.
+    // Refusing on the extension's answer alone left its goals unresumable.
+    const sendSlashCommand = vi.fn(async () => ({ ok: true }));
+    const invokeExtension = vi.fn();
+    const dispatcher = createGoalAcpDispatcher({
       getAgent: vi.fn(async () => ({
-        agentCapabilities: { _meta: { goal: { version: 1, capabilities: { set: true, pause: false } } } },
-        outputEntries: [{ type: "available_commands", raw: { availableCommands: [{ name: "goal pause" }] } }],
+        agentCapabilities: { _meta: { goal: { version: 1, capabilities: {} } } },
+        outputEntries: [{ type: "available_commands", raw: { availableCommands: [{ name: "goal" }] } }],
       })),
       invokeExtension,
       sendSlashCommand,
     });
-    expect(await extensionWithoutPause.dispatch(snapshot(), "pause")).toMatchObject({ kind: "unsupported" });
+
+    expect(await dispatcher.dispatch(snapshot({ status: "blocked" }), "retry"))
+      .toMatchObject({ kind: "dispatched", method: "slash" });
+    expect(sendSlashCommand).toHaveBeenCalledWith("worker-1", "/goal Ship it");
     expect(invokeExtension).not.toHaveBeenCalled();
-    expect(sendSlashCommand).not.toHaveBeenCalled();
   });
 
   it("defers safely when there is no active worker lease", async () => {

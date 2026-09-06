@@ -1,4 +1,5 @@
 import { redactGoalErrorMessage } from "@/server/runs/goal-errors";
+import type { GoalCapabilities } from "@/shared/goal-plan";
 import {
   boundedGoalIdentityToken,
   isGoalRecord,
@@ -51,6 +52,64 @@ export function isAcpGoalNotification(update: unknown) {
     || update.sessionUpdate === "plan_removed";
 }
 
+/**
+ * Slash commands the agent advertised, per worker.
+ *
+ * `available_commands_update` arrives once, early in a session — before any
+ * goal exists — so the capability branch below discarded it as `goal_absent`
+ * and the goal was created with every capability false and no fallback method.
+ * That is what left an agent like Codex, which offers `/goal` but reports no
+ * extension capabilities, with a goal nothing could resume: the durable
+ * fallback was never recorded, and the agent's rolling output window drops the
+ * frame long before anyone presses resume.
+ *
+ * This is session-scoped protocol knowledge, not persisted state, so it lives
+ * beside the session it describes and is dropped when the worker goes away.
+ */
+const advertisedCommandsByWorkerId = new Map<string, readonly string[]>();
+const MAX_REMEMBERED_COMMAND_WORKERS = 256;
+
+export function rememberAdvertisedCommands(workerId: string, commands: readonly string[]) {
+  if (advertisedCommandsByWorkerId.size >= MAX_REMEMBERED_COMMAND_WORKERS) {
+    const oldest = advertisedCommandsByWorkerId.keys().next();
+    if (!oldest.done) advertisedCommandsByWorkerId.delete(oldest.value);
+  }
+  advertisedCommandsByWorkerId.set(workerId, commands);
+}
+
+/** @internal — vitest only */
+export function __resetAdvertisedCommandsForTests() {
+  advertisedCommandsByWorkerId.clear();
+}
+
+/**
+ * Provider-reported capabilities, widened by whatever the agent advertised as a
+ * slash command.
+ *
+ * An agent can report an empty capability block over the extension and still
+ * accept `/goal` — Codex does exactly that. Taking the extension's answer as
+ * the whole truth recorded a goal nothing could drive, so the two sources are
+ * merged: a capability either channel offers is available, and the extension's
+ * silence never erases a command the agent advertised.
+ */
+function widenWithAdvertisedFallback(
+  capabilities: GoalCapabilities,
+  workerId: string,
+): GoalCapabilities {
+  const commands = advertisedCommandsByWorkerId.get(workerId);
+  if (!commands || commands.length === 0) return capabilities;
+  const fallback = normalizeGoalFallbackCapabilities(commands);
+  if (!fallback.fallbackMethod) return capabilities;
+  return {
+    set: capabilities.set || fallback.set,
+    edit: capabilities.edit || fallback.edit,
+    pause: capabilities.pause || fallback.pause,
+    resume: capabilities.resume || fallback.resume,
+    clear: capabilities.clear || fallback.clear,
+    fallbackMethod: capabilities.fallbackMethod ?? fallback.fallbackMethod,
+  };
+}
+
 async function emitGoalPayloadRejection(args: {
   runId: string;
   goalId: string;
@@ -88,6 +147,7 @@ export async function handleAcpGoalSessionUpdateForWorker(args: {
         isGoalRecord(command) && typeof command.name === "string" ? [command.name] : []
       ))
     : null;
+  if (fallbackCommands) rememberAdvertisedCommands(args.workerId, fallbackCommands);
   let normalizedMetadata: AcpGoalMetadataResult | null = null;
   if (!current && metadata && sessionId) {
     normalizedMetadata = normalizeAcpGoalMetadata(metadata);
@@ -165,7 +225,7 @@ export async function handleAcpGoalSessionUpdateForWorker(args: {
       acpSessionId: sessionId,
       leaseGeneration: current.leaseGeneration,
       status: normalized.value.status ?? undefined,
-      capabilities: normalized.value.capabilities,
+      capabilities: widenWithAdvertisedFallback(normalized.value.capabilities, args.workerId),
       validationState: normalized.value.validationState,
     };
   } else if (fallbackCommands) {
