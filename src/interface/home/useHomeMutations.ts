@@ -5,6 +5,7 @@ import { useMutation } from "@tanstack/react-query";
 import type { PendingChatAttachment } from "@/lib/chat-attachments";
 import { mergeAppErrors } from "@/lib/app-errors";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
+import { runtimeErrorMessage } from "@/runtime-api/request";
 import { getManualCommitPrompt, getManualProjectCommitPrompt, type ManualCommitAction } from "@/lib/commit-workflow";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
@@ -28,6 +29,7 @@ import {
   buildInlineError,
   removeRunFromHomeState,
   resolveOptimisticSentConversationMessage,
+  resolveComposerEffortValue,
   resolveSelectedWorkerModel,
   type CreatedConversationSnapshot,
 } from "./utils";
@@ -144,7 +146,7 @@ export function useHomeMutations({
       await sessionQueryRefetch();
     },
     onError: (error) => {
-      setAuthError(error instanceof Error ? error.message : String(error));
+      setAuthError(runtimeErrorMessage(error));
     },
   });
 
@@ -169,7 +171,7 @@ export function useHomeMutations({
       window.location.replace(payload.targetPath || "/");
     },
     onError: (error) => {
-      setPairRedeemError(error instanceof Error ? error.message : String(error));
+      setPairRedeemError(runtimeErrorMessage(error));
     },
   });
 
@@ -444,7 +446,7 @@ export function useHomeMutations({
           gitWorkspaceTarget: selectedWorkspaceTarget,
           preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
           preferredWorkerModel: resolvedSelectedModel,
-          preferredWorkerEffort: selectedEffort.toLowerCase(),
+          preferredWorkerEffort: resolveComposerEffortValue(selectedEffort),
           preferredWorkerAccountId,
           allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
           attachments: uploadedAttachments,
@@ -626,7 +628,7 @@ export function useHomeMutations({
           busyAction: payload.busyAction,
           preferredWorkerType: selectedWorkerType,
           preferredWorkerModel: isAutoWorkerSelection ? null : resolvedSelectedModel,
-          preferredWorkerEffort: selectedEffort.toLowerCase(),
+          preferredWorkerEffort: resolveComposerEffortValue(selectedEffort),
           preferredWorkerAccountId,
           allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedWorkerType],
         },
@@ -753,7 +755,7 @@ export function useHomeMutations({
           projectPath: payload.projectPath,
           preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
           preferredWorkerModel: resolvedSelectedModel,
-          preferredWorkerEffort: selectedEffort.toLowerCase(),
+          preferredWorkerEffort: resolveComposerEffortValue(selectedEffort),
           preferredWorkerAccountId,
           allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
         }) as Promise<{ runId?: string } & CreatedConversationSnapshot>;

@@ -1,3 +1,5 @@
+import { normalizeReasoningEffort } from "@/shared/reasoning-effort";
+
 export function resolveCodexUpstreamBaseUrl(env: Record<string, string | undefined>) {
   const configured = env.OPENAI_BASE_URL?.trim();
   return configured && configured.length > 0 ? configured : "https://api.openai.com/v1";
@@ -68,7 +70,7 @@ export function buildCodexConfigArgs(input: {
 }) {
   const args: string[] = [];
   const model = input.model?.trim();
-  const effort = input.effort?.trim().toLowerCase();
+  const effort = normalizeReasoningEffort(input.effort);
 
   if (model) {
     args.push("-c", `model=${tomlString(model)}`);
@@ -96,7 +98,7 @@ export function buildCodexAcpConfig(input: {
   }
 
   const model = input.model?.trim();
-  const effort = input.effort?.trim().toLowerCase();
+  const effort = normalizeReasoningEffort(input.effort);
   return JSON.stringify({
     ...config,
     ...(model ? { model } : {}),
