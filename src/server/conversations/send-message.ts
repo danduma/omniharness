@@ -34,6 +34,7 @@ import { interruptWithDraftMessage, preemptRecoveryForInterrupt } from "./queued
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import {
+  advanceWorkerTurnGeneration,
   hasLiveWorkerTurn,
   isWorkerTurnAbortedError,
   isWorkerTurnGenerationCurrent,
@@ -65,6 +66,10 @@ import { hasVerifiedDeadCredentialMarker, isAuthShapedProviderFailure } from "@/
 import { resolveCredentialAuthFailureMessage } from "./credential-auth-failure";
 import { assertDirectRunWorkerTypeInvariant } from "@/server/workers/direct-run-type-invariant";
 import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
+import {
+  isConcurrentAgentStartError,
+  waitForConcurrentAgentStart,
+} from "@/server/workers/runtime-agent-adoption";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
@@ -115,11 +120,6 @@ async function handleDirectWorkerQuotaError(args: {
 
 function isAgentNotFoundError(error: unknown) {
   return /\b(agent not found|not_found|session not found|invalid session identifier|failed to load resumed session data from file|404)\b/i.test(formatErrorMessage(error));
-}
-
-function isAgentAlreadyExistsError(error: unknown, workerId: string) {
-  const message = formatErrorMessage(error).toLowerCase();
-  return message.includes("agent already exists") && message.includes(workerId.toLowerCase());
 }
 
 function normalizeWorkerStatus(status: string | null | undefined) {
@@ -567,8 +567,20 @@ export async function resumeMissingDirectWorker(
       resumeSessionId: sessionId,
     });
   } catch (error) {
-    if (isAgentAlreadyExistsError(error, worker.id)) {
-      resumedWorker = await getAgent(worker.id);
+    if (isConcurrentAgentStartError(error, worker.id)) {
+      resumedWorker = await waitForConcurrentAgentStart({
+        workerId: worker.id,
+        getAgent,
+        ...(expectedTurnGeneration === undefined
+          ? {}
+          : {
+              assertCurrent: async () => {
+                if (!await isWorkerTurnGenerationCurrent(worker.id, expectedTurnGeneration)) {
+                  throw workerTurnSupersededError(worker.id);
+                }
+              },
+            }),
+      });
     } else if (
       isRejectedSavedSessionErrorMessage(formatErrorMessage(error))
       && await canRecreateRejectedSavedSession(run.id, worker.id)
@@ -692,7 +704,6 @@ export async function resumeMissingDirectWorker(
     }).where(workerPredicate).returning({ id: workers.id }).get());
   });
   if (!persistedWorker) {
-    await cancelAgent(worker.id).catch(() => undefined);
     throw workerTurnSupersededError(worker.id);
   }
 
@@ -829,7 +840,7 @@ async function askDirectWorkerWithResume(
       throw error;
     }
 
-    const resumedWorker = await resumeMissingDirectWorker(run, currentWorker ?? worker);
+    const resumedWorker = await resumeMissingDirectWorker(run, currentWorker ?? worker, expectedTurnGeneration);
     if (!resumedWorker) {
       throw error;
     }
@@ -841,16 +852,33 @@ async function askDirectWorkerWithResume(
     // Claude turn is many minutes. Without re-arming the DB row here the
     // frontend sees the worker as idle for the entire turn and never
     // shows the "Thinking…" indicator.
-    await db.update(workers).set({
-      status: "working",
-      updatedAt: new Date(),
-    }).where(eq(workers.id, worker.id));
-    await db.update(runs).set({
-      status: "running",
-      failedAt: null,
-      lastError: null,
-      updatedAt: new Date(),
-    }).where(eq(runs.id, run.id));
+    const resumedTurnRearmed = await runQuotaRecoveryMutation(run.id, async () => {
+      const currentRun = await db.select().from(runs).where(eq(runs.id, run.id)).get();
+      if (!currentRun || isRunCancelled(currentRun)) {
+        return false;
+      }
+      const workerPredicate = expectedTurnGeneration === undefined
+        ? eq(workers.id, worker.id)
+        : and(
+            eq(workers.id, worker.id),
+            eq(workers.turnGeneration, expectedTurnGeneration),
+          );
+      const workerRearmed = await db.update(workers).set({
+        status: "working",
+        updatedAt: new Date(),
+      }).where(workerPredicate).returning({ id: workers.id }).get();
+      if (!workerRearmed) return false;
+      await db.update(runs).set({
+        status: "running",
+        failedAt: null,
+        lastError: null,
+        updatedAt: new Date(),
+      }).where(eq(runs.id, run.id));
+      return true;
+    });
+    if (!resumedTurnRearmed) {
+      throw workerTurnSupersededError(worker.id);
+    }
     notifyEventStreamSubscribers();
 
     const replayPrompt = resumedWorker.transcriptReplayRequired
@@ -1386,10 +1414,22 @@ async function stopConversationFromManualStopCommand(run: RunRecord) {
 
   void cancelAgent(worker.id).catch(() => undefined);
   const now = new Date();
-  await db.update(workers).set({
-    status: "cancelled",
-    updatedAt: now,
-  }).where(eq(workers.id, worker.id));
+  const hasActiveWorker = await runQuotaRecoveryMutation(run.id, async () => {
+    await advanceWorkerTurnGeneration(worker.id, {
+      status: "cancelled",
+      clearCurrentText: true,
+      updatedAt: now,
+    });
+    const remainingWorkers = await db.select().from(workers).where(eq(workers.runId, run.id));
+    const anyActiveWorker = remainingWorkers.some((candidate) => isStoppableWorkerStatus(candidate.status));
+    if (!anyActiveWorker) {
+      await db.update(runs).set({
+        status: "cancelled",
+        updatedAt: now,
+      }).where(eq(runs.id, run.id));
+    }
+    return anyActiveWorker;
+  });
   emitNamedEvent({
     kind: "worker.status",
     runId: run.id,
@@ -1403,15 +1443,6 @@ async function stopConversationFromManualStopCommand(run: RunRecord) {
     workerId: worker.id,
     status: "cancelled",
   });
-
-  const remainingWorkers = await db.select().from(workers).where(eq(workers.runId, run.id));
-  const hasActiveWorker = remainingWorkers.some((candidate) => isStoppableWorkerStatus(candidate.status));
-  if (!hasActiveWorker) {
-    await db.update(runs).set({
-      status: "cancelled",
-      updatedAt: now,
-    }).where(eq(runs.id, run.id));
-  }
 
   await recordExecutionEvent({
     runId: run.id,

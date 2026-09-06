@@ -135,7 +135,7 @@ describe("classifyRunRecoveryState", () => {
         runId: run.id,
         targetWorkerId: "worker-1",
         status: "failed",
-        lastError: "Ask failed: Agent not found: worker-1",
+        lastError: "Worker recovery in progress.",
       }],
       nowMs: 60_000,
     });

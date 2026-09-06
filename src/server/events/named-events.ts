@@ -222,6 +222,10 @@ export type RuntimeEvent =
       reason: string;
     }
   | {
+      kind: "runtime.agent_start_coalesced";
+      workerId: string;
+    }
+  | {
       kind: "runtime.idle_cleanup";
       idleMs: number;
       activeAgents: number;

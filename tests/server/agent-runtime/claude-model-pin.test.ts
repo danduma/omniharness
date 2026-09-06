@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { AgentRuntimeManager } from "@/server/agent-runtime/manager";
-import { __resetNamedEventsForTests } from "@/server/events/named-events";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 
 const tempDirs: string[] = [];
 
@@ -354,6 +354,15 @@ describe("Claude worker model pinning", () => {
       firstStart = manager.startAgent(input);
       await vi.waitFor(() => expect(readRequests(requestLog).filter((event) => event.event === "started")).toHaveLength(1));
       await expect(manager.startAgent(input)).rejects.toThrow(/already starting/i);
+      const namedEvents = getNamedEventsSince(0).events.map((entry) => entry.event);
+      expect(namedEvents).toContainEqual(expect.objectContaining({
+        kind: "runtime.agent_start_coalesced",
+        workerId: input.name,
+      }));
+      expect(namedEvents).not.toContainEqual(expect.objectContaining({
+        kind: "error.surfaced",
+        message: expect.stringMatching(/already starting/i),
+      }));
       await firstStart;
       expect(readRequests(requestLog).filter((event) => event.event === "started")).toHaveLength(1);
     } finally {
