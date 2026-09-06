@@ -1407,6 +1407,12 @@ describe("POST /api/conversations", () => {
       effectiveLaunchModel: "custom-commit-model",
       effectiveLaunchEffort: "extra high",
     });
+    await waitFor(() => mockSpawnAgent.mock.calls.length, (count) => count > 0);
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      type: "claude",
+      model: "custom-commit-model",
+      effort: "extra high",
+    }));
     expect(commitAgentEvent?.event).toEqual({
       kind: "conversation.commit_agent_selected",
       runId: payload.runId,
@@ -1798,6 +1804,93 @@ describe("POST /api/conversations", () => {
     expect(createdWorkers[0]?.outputLog).toContain("stopped without producing output");
     expect(storedMessages.some((message) => message.kind === "error" && message.content.includes("stopped without producing output"))).toBe(true);
   });
+
+  it("records a visible failure when a direct worker returns a structured provider error", async () => {
+    const providerMessage = "The 'claude-opus-5' model is not supported when using Codex with a ChatGPT account.";
+    const providerOutput = [
+      "Warning: Model metadata for `claude-opus-5` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.",
+      "",
+      JSON.stringify({
+        type: "error",
+        status: 400,
+        error: { type: "invalid_request_error", message: providerMessage },
+      }),
+    ].join("\n");
+    mockAskAgent.mockResolvedValueOnce({
+      response: providerOutput,
+      state: "idle",
+    });
+    mockGetAgent.mockResolvedValueOnce({
+      name: "worker-provider-error",
+      type: "codex",
+      state: "idle",
+      cwd: "/workspace/app",
+      sessionId: "session-provider-error",
+      sessionMode: "full-access",
+      lastText: providerOutput,
+      currentText: "",
+      renderedOutput: providerOutput,
+      outputEntries: [],
+      stderrBuffer: [],
+      stopReason: "end_turn",
+    });
+
+    const response = await POST(new Request("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "direct",
+        command: "Run the commit workflow",
+        projectPath: "/workspace/app",
+        preferredWorkerType: "codex",
+        preferredWorkerModel: "claude-opus-5",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const failedRun = await waitFor(
+      () => db.select().from(runs).where(eq(runs.id, payload.runId)).get(),
+      (run) => run?.status === "failed",
+    );
+    const createdWorker = await db.select().from(workers).where(eq(workers.runId, payload.runId)).get();
+    const storedMessages = await waitFor(
+      () => db.select().from(messages).where(eq(messages.runId, payload.runId)),
+      (rows) => rows.some((message) => message.kind === "error" && message.content.includes(providerMessage)),
+    );
+    const surfacedFailure = getNamedEventsSince(0).events.find((entry) => (
+      entry.event.kind === "error.surfaced"
+      && entry.event.code === "worker.initial.turn_failed"
+      && entry.event.runId === payload.runId
+    ));
+    const workerFailure = getNamedEventsSince(0).events.find((entry) => (
+      entry.event.kind === "worker.status"
+      && entry.event.runId === payload.runId
+      && entry.event.workerId === createdWorker?.id
+    ));
+
+    expect(failedRun?.lastError).toBe(providerMessage);
+    expect(createdWorker).toMatchObject({
+      status: "error",
+      outputLog: providerOutput,
+    });
+    expect(storedMessages.some((message) => message.kind === "error" && message.content.includes(providerMessage))).toBe(true);
+    expect(surfacedFailure?.event).toMatchObject({
+      kind: "error.surfaced",
+      code: "worker.initial.turn_failed",
+      message: providerMessage,
+      surface: "toast",
+      runId: payload.runId,
+      workerId: createdWorker?.id,
+    });
+    expect(workerFailure?.event).toMatchObject({
+      kind: "worker.status",
+      prev: "working",
+      next: "error",
+      runId: payload.runId,
+      workerId: createdWorker?.id,
+    });
+  });
+
   it("starts an attachment-only direct conversation with persisted attachment metadata", async () => {
     const attachment = {
       id: "attachment-1",

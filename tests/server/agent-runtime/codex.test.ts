@@ -90,7 +90,7 @@ describe("Codex ACP session modes", () => {
     ])).toBe("agent-full-access");
   });
 
-  it("normalizes the Extra High display alias for the normal Codex ACP fallback", async () => {
+  it("normalizes a legacy extra-high alias for the normal Codex ACP fallback", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omni-codex-config-"));
     tempDirs.push(dir);
     const binDir = join(dir, "bin");
@@ -115,7 +115,7 @@ describe("Codex ACP session modes", () => {
         name: "codex-config",
         cwd: dir,
         model: "gpt-5.6-sol",
-        effort: "Extra High",
+        effort: "extra-high",
         env: { LAUNCH_LOG: launchLog },
       });
 

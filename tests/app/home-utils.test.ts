@@ -1622,9 +1622,12 @@ describe("worker model normalization", () => {
 
   it("separates the Extra High display label from the xhigh protocol value", () => {
     expect(resolveComposerEffortValue("Extra High")).toBe("xhigh");
+    expect(resolveComposerEffortValue("extra high")).toBe("xhigh");
+    expect(resolveComposerEffortValue("extra-high")).toBe("xhigh");
     expect(resolveComposerEffortValue("Max")).toBe("max");
     expect(resolveComposerEffortLabel("xhigh")).toBe("Extra High");
     expect(resolveComposerEffortLabel("extra high")).toBe("Extra High");
+    expect(resolveComposerEffortLabel("extra-high")).toBe("Extra High");
     expect(resolveComposerEffortLabel("max")).toBe("Max");
   });
 

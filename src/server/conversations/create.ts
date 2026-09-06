@@ -177,6 +177,39 @@ function hasVisibleWorkerOutput(responseText: string, snapshot: AgentRecord | nu
   );
 }
 
+function extractStructuredProviderError(...texts: Array<string | null | undefined>) {
+  for (const text of texts) {
+    const lines = text?.trim().split(/\r?\n/).reverse() ?? [];
+    for (const line of lines) {
+      const candidate = line.trim();
+      if (!candidate.startsWith("{") || !candidate.endsWith("}")) {
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(candidate) as {
+          type?: unknown;
+          status?: unknown;
+          error?: { message?: unknown };
+        };
+        if (
+          parsed.type === "error"
+          && typeof parsed.status === "number"
+          && parsed.status >= 400
+          && typeof parsed.error?.message === "string"
+          && parsed.error.message.trim()
+        ) {
+          return new Error(parsed.error.message.trim());
+        }
+      } catch {
+        // Non-JSON worker prose is ordinary visible output.
+      }
+    }
+  }
+
+  return null;
+}
+
 function buildEmptyWorkerOutputMessage(snapshot: AgentRecord | null, responseState: string) {
   const stopReason = snapshot?.stopReason?.trim();
   if (stopReason) {
@@ -470,6 +503,42 @@ async function runInitialWorkerTurn(args: {
       responseText: response.response,
       snapshot,
     });
+
+    const structuredProviderError = extractStructuredProviderError(
+      response.response,
+      snapshot?.renderedOutput,
+      snapshot?.currentText,
+      snapshot?.lastText,
+      ...(snapshot?.outputEntries?.map((entry) => entry.text) ?? []),
+    );
+    if (structuredProviderError) {
+      const surfacedFailureMessage = await resolveInitialWorkerFailureMessage({
+        runId: args.runId,
+        workerId: args.workerId,
+        error: structuredProviderError,
+      });
+      await db.update(workers).set({
+        type: snapshot?.type || args.agent.type || args.workerType,
+        status: "error",
+        cwd: snapshot?.cwd || args.agent.cwd || args.cwd,
+        outputLog: response.response.trim() ? response.response : structuredProviderError.message,
+        bridgeSessionId: snapshot?.sessionId ?? args.agent.sessionId ?? null,
+        bridgeSessionMode: snapshot?.sessionMode ?? args.agent.sessionMode ?? null,
+        updatedAt: new Date(),
+      }).where(eq(workers.id, args.workerId));
+      await persistRunFailure(args.runId, new Error(surfacedFailureMessage), {
+        surface: { code: "worker.initial.turn_failed", workerId: args.workerId },
+      });
+      emitNamedEvent({
+        kind: "worker.status",
+        runId: args.runId,
+        workerId: args.workerId,
+        prev: "working",
+        next: "error",
+      });
+      notifyEventStreamSubscribers();
+      return;
+    }
 
     if (!hasVisibleWorkerOutput(response.response, snapshot)) {
       const failureMessage = buildEmptyWorkerOutputMessage(snapshot, response.state);
@@ -1019,8 +1088,8 @@ export async function createConversation(args: {
           workerType,
           cwd,
           mode: workerMode,
-          preferredWorkerModel: args.preferredWorkerModel,
-          preferredWorkerEffort: args.preferredWorkerEffort,
+          preferredWorkerModel: effectivePreferredWorkerModel,
+          preferredWorkerEffort: effectivePreferredWorkerEffort,
           preferredWorkerAccountId: workerAccountId,
           command: workerPrompt,
           imageAttachments: workerImageAttachments,
@@ -1046,8 +1115,8 @@ export async function createConversation(args: {
               ...(workerMode ? { mode: workerMode } : {}),
               env: envParams,
               ...(workerAccountId ? { accountId: workerAccountId } : {}),
-              model: args.preferredWorkerModel?.trim() || undefined,
-              effort: args.preferredWorkerEffort?.trim().toLowerCase() || undefined,
+              model: effectivePreferredWorkerModel?.trim() || undefined,
+              effort: effectivePreferredWorkerEffort?.trim().toLowerCase() || undefined,
             });
             if (await shouldCancelInitialWorkerStartup(runId, workerId)) {
               try {
