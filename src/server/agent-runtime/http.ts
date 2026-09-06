@@ -65,6 +65,62 @@ function writeSse(res: ServerResponse, event: string, data: unknown) {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
+/** Longest a runner drain request parks waiting for the next event. */
+const RUNTIME_EVENT_DRAIN_MAX_WAIT_MS = 25_000;
+
+/**
+ * Hand this process's named-event ring to the runner.
+ *
+ * The runner owns the only SSE stream, so every lifecycle event emitted here —
+ * ACP errors, goal updates the agent announced, plan frames — is invisible to
+ * users until the runner pulls it across. The runner long-polls this endpoint
+ * with the stream id it last consumed; `getNamedEventsSince` reports an epoch
+ * mismatch when this process restarted under it, and an evicted cursor when it
+ * fell too far behind, in both cases telling the runner to resume from head.
+ */
+async function handleRuntimeEventDrain(url: URL, res: ServerResponse) {
+  const { getNamedEventsSince, getEventStreamCursor, getEventStreamEpoch } = await import(
+    "@/server/events/named-events"
+  );
+  const { waitForEventStreamNotification, getEventStreamNotificationVersion } = await import(
+    "@/server/events/live-updates"
+  );
+
+  const since = url.searchParams.get("since");
+  const requestedWait = Number(url.searchParams.get("waitMs") ?? "0");
+  const waitMs = Number.isFinite(requestedWait)
+    ? Math.min(Math.max(Math.floor(requestedWait), 0), RUNTIME_EVENT_DRAIN_MAX_WAIT_MS)
+    : 0;
+
+  // A drain with no cursor is the runner attaching for the first time. Replaying
+  // the whole ring would re-deliver events from before it was listening, so it
+  // starts at head and receives everything from the next event onward.
+  if (!since) {
+    writeJson(res, 200, {
+      epoch: getEventStreamEpoch(),
+      cursor: getEventStreamCursor(),
+      resyncRequired: false,
+      resyncReason: null,
+      events: [],
+    });
+    return;
+  }
+
+  let result = getNamedEventsSince(since);
+  if (!result.resyncRequired && result.events.length === 0 && waitMs > 0) {
+    await waitForEventStreamNotification(waitMs, getEventStreamNotificationVersion());
+    result = getNamedEventsSince(since);
+  }
+
+  writeJson(res, 200, {
+    epoch: getEventStreamEpoch(),
+    cursor: getEventStreamCursor(),
+    resyncRequired: result.resyncRequired,
+    resyncReason: result.resyncReason,
+    events: result.events,
+  });
+}
+
 export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOptions = {}) {
   const manager = new AgentRuntimeManager(options);
 
@@ -75,6 +131,11 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
 
       if (method === "GET" && parts.length === 1 && parts[0] === "health") {
         writeJson(res, 200, { ok: true, agents: manager.agents.size });
+        return;
+      }
+
+      if (method === "GET" && parts.length === 1 && parts[0] === "runtime-events") {
+        await handleRuntimeEventDrain(requestUrl(req), res);
         return;
       }
 

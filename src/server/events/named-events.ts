@@ -1030,6 +1030,28 @@ export function emitNamedEvent(event: NamedEvent): BufferedEntry {
   return entry;
 }
 
+/**
+ * Record an event that was emitted in the agent-runtime process.
+ *
+ * OmniHarness runs the ACP clients in a separate process from the runner, and
+ * each process has its own ring buffer. Only the runner serves SSE, so a
+ * lifecycle event emitted in the agent runtime — a goal the agent announced, a
+ * surfaced ACP error, a plan update — reached no client at all until it was
+ * ingested here. The forwarder in `bridge-event-forwarder.ts` pulls those
+ * events across and hands them to this function, which records them exactly as
+ * if they had been emitted locally: same ring, same ids, same wake-up rules.
+ *
+ * `runId` carries the origin buffer's own scoping, which can be broader than
+ * `pickRunId` would infer from the payload alone.
+ */
+export function ingestForeignNamedEvent(event: NamedEvent, runId?: string | null): BufferedEntry {
+  const entry = append(event, runId ?? undefined);
+  notifyEventStreamSubscribers({
+    snapshotRelevant: !DELTA_ONLY_EVENT_KINDS.has(event.kind),
+  });
+  return entry;
+}
+
 export function emitStreamHeartbeatIfDue(
   now = Date.now(),
   minimumIntervalMs = 10_000,
