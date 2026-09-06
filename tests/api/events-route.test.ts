@@ -310,6 +310,58 @@ describe("GET /api/events", () => {
     expect(payload.supervisorInterventions).toEqual([]);
   });
 
+  it("keeps worker prompts scoped to the selected conversation", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = randomUUID();
+    const now = new Date();
+    const initialPrompt = "Investigate the connection degradation without broadcasting this prompt in the catalog.";
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/scoped-worker-prompt.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Scoped worker prompt",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      initialPrompt,
+      outputLog: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const catalogResponse = await GET(new Request("http://localhost/api/events?snapshot=1&persisted=1"));
+    const catalogPayload = await catalogResponse.json();
+    const selectedResponse = await GET(new Request(
+      `http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`,
+    ));
+    const selectedPayload = await selectedResponse.json();
+
+    expect(catalogPayload.workers.find((worker: { id: string }) => worker.id === workerId)).toMatchObject({
+      id: workerId,
+      initialPrompt: null,
+    });
+    expect(selectedPayload.workers.find((worker: { id: string }) => worker.id === workerId)).toMatchObject({
+      id: workerId,
+      initialPrompt,
+    });
+  });
+
   it("includes persisted read markers in event snapshots", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -1792,6 +1844,57 @@ describe("GET /api/events", () => {
     expect(streamed.readMarkers).toEqual({});
     expect(streamed.agents.map((agent: { name: string }) => agent.name)).toEqual([selectedWorkerId]);
     expect(Buffer.byteLength(JSON.stringify(streamed))).toBeLessThan(Buffer.byteLength(JSON.stringify(snapshot)) * 0.8);
+  });
+
+  it("streams unselected run rows whose activity changed after the opening frame", async () => {
+    const selectedPlanId = randomUUID();
+    const selectedRunId = randomUUID();
+    const otherPlanId = randomUUID();
+    const otherRunId = randomUUID();
+    const now = new Date();
+
+    await db.insert(plans).values([
+      { id: selectedPlanId, path: "vibes/ad-hoc/selected-activity.md", status: "running", createdAt: now, updatedAt: now },
+      { id: otherPlanId, path: "vibes/ad-hoc/other-activity.md", status: "running", createdAt: now, updatedAt: now },
+    ]);
+    await db.insert(runs).values([
+      { id: selectedRunId, planId: selectedPlanId, mode: "direct", status: "running", createdAt: now, updatedAt: now, lastActivityAt: now },
+      { id: otherRunId, planId: otherPlanId, mode: "direct", status: "running", createdAt: now, updatedAt: now, lastActivityAt: now },
+    ]);
+    mockAgentRuntimeJson([], { status: 200 });
+
+    const controller = new AbortController();
+    const streamResponse = await GET(new Request(`http://localhost/api/events?runId=${selectedRunId}`, {
+      signal: controller.signal,
+    }));
+    const reader = streamResponse.body!.getReader();
+    const opening = await readUntilUpdateFrame(reader);
+    expect(opening.runs.map((run: { id: string }) => run.id)).toEqual([selectedRunId]);
+
+    // The sidebar sorts every project by this column, so a change on an
+    // unselected run has to reach the client without waiting for the next
+    // complete validation poll.
+    // Second precision: the column is a unix-seconds integer.
+    const laterActivity = new Date(Math.floor(now.getTime() / 1000) * 1000 + 60_000);
+    await db.update(runs)
+      .set({ lastActivityAt: laterActivity })
+      .where(eq(runs.id, otherRunId));
+    notifyEventStreamSubscribers();
+
+    const followUp = await readUntilUpdateFrame(reader, 8_000, (candidate) =>
+      (candidate.runs as Array<{ id: string }> | undefined)?.some((run) => run.id === otherRunId) ?? false);
+    controller.abort();
+    await reader.cancel();
+
+    expect(followUp.snapshotScope.catalog.complete).toBe(false);
+    expect(followUp.runs.map((run: { id: string }) => run.id)).toEqual(
+      expect.arrayContaining([selectedRunId, otherRunId]),
+    );
+    expect(followUp.runs.find((run: { id: string }) => run.id === otherRunId).lastActivityAt)
+      .toBe(laterActivity.toISOString());
+    expect(followUp.plans.map((plan: { id: string }) => plan.id)).toEqual(
+      expect.arrayContaining([selectedPlanId, otherPlanId]),
+    );
   });
 
   it("streams an empty selected catalog slice when the selected run no longer exists", async () => {

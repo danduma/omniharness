@@ -254,7 +254,10 @@ function truncateText(value: string | null | undefined, limit: number) {
 [Truncated ${value.length - limit} characters in live payload]`;
 }
 
-function compactWorkerRecord(worker: PersistedEventRecords["allWorkers"][number]) {
+function compactWorkerRecord(
+  worker: PersistedEventRecords["allWorkers"][number],
+  selectedRunId: string | null,
+) {
   return {
     id: worker.id,
     runId: worker.runId,
@@ -262,7 +265,14 @@ function compactWorkerRecord(worker: PersistedEventRecords["allWorkers"][number]
     status: worker.status,
     workerNumber: worker.workerNumber,
     title: worker.title,
-    initialPrompt: truncateText(worker.initialPrompt, WORKER_INITIAL_PROMPT_PREVIEW_LIMIT),
+    // The prompt is conversation content, not catalog metadata. Carry it only
+    // for the selected run where the terminal uses it as a fallback for older
+    // conversations whose opening message row is missing. Broadcasting every
+    // historical worker prompt made otherwise legitimate global snapshots
+    // exceed the event stream's 1 MiB subscriber queue.
+    initialPrompt: worker.runId === selectedRunId
+      ? truncateText(worker.initialPrompt, WORKER_INITIAL_PROMPT_PREVIEW_LIMIT)
+      : null,
     createdAt: worker.createdAt,
     updatedAt: worker.updatedAt,
   };
@@ -518,7 +528,7 @@ function buildEventPayload(
     sessions,
     accounts: records.allAccounts.map(toAccountDto),
     agents: agentsData.map(compactAgentSnapshot),
-    workers: records.allWorkers.map(compactWorkerRecord),
+    workers: records.allWorkers.map((worker) => compactWorkerRecord(worker, selectedRunId)),
     planItems: records.allPlanItems,
     clarifications: records.allClarifications,
     executionEvents: records.allExecutionEvents
@@ -585,8 +595,17 @@ function buildEventPayload(
 
 /**
  * Live SSE frames only need the selected conversation's changing catalog
- * records. The client already received the complete catalog during snapshot
+ * records, plus any *other* run row that changed since the last frame on this
+ * connection. The client already received the complete catalog during snapshot
  * bootstrap and merges this explicitly partial slice by stable ids.
+ *
+ * The changed-run delta is not optional politeness: the sidebar sorts every
+ * project by `runs.lastActivityAt`, so a frame that carries only the selected
+ * run freezes every other row's sort key until the next complete validation
+ * poll a minute later. The list then reshuffles in bursts, and whichever
+ * conversation the user opens is the only one with a current key — so it always
+ * appears newest. Sending the rows that actually changed keeps ordering live
+ * without putting the whole catalog on every frame.
  *
  * Partial frames deliberately omit the complete-catalog checksum. Otherwise
  * a change to an unselected run could advance the client's checksum without
@@ -596,22 +615,26 @@ function buildEventPayload(
 function buildEventStreamPayload(
   payload: EventPayload,
   options: EventPayloadOptions,
+  catalogDelta: { changedRunIds?: ReadonlySet<string> } = {},
 ) {
   const selectedRunId = options.selectedRunId?.trim();
   if (!selectedRunId) {
     return payload;
   }
 
-  const selectedRun = payload.runs.find((run) => run.id === selectedRunId);
-  const selectedPlanId = selectedRun?.planId;
+  const changedRunIds = catalogDelta.changedRunIds;
+  const runs = payload.runs.filter((run) => (
+    run.id === selectedRunId || Boolean(changedRunIds?.has(run.id))
+  ));
+  // Grouping resolves a run's project through its plan, so a run row is only
+  // useful to the sidebar alongside the plan it points at.
+  const streamPlanIds = new Set(runs.map((run) => run.planId).filter(Boolean));
   const { snapshotChecksum: _snapshotChecksum, ...streamPayload } = payload;
   return {
     ...streamPayload,
     snapshotRunId: selectedRunId,
-    runs: selectedRun ? [selectedRun] : [],
-    plans: selectedPlanId
-      ? payload.plans.filter((plan) => plan.id === selectedPlanId)
-      : [],
+    runs,
+    plans: payload.plans.filter((plan) => streamPlanIds.has(plan.id)),
     workers: payload.workers.filter((worker) => worker.runId === selectedRunId),
     sessions: payload.sessions?.filter((session) => session.runId === selectedRunId),
     readMarkers: payload.readMarkers?.[selectedRunId]
@@ -916,6 +939,13 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
     async start(controller) {
       const encoder = new TextEncoder();
       let lastUpdatePayload = "";
+      // Per-run serialization of the catalog as this connection last delivered
+      // it. Comparing per run (rather than the whole array) keeps a bump on the
+      // selected run — which happens on nearly every frame of a live turn —
+      // from re-sending all the other rows. Null until the first frame: the
+      // client bootstraps from a complete snapshot, so the opening frame is a
+      // baseline to diff against rather than a catalog to re-deliver.
+      let deliveredRunPayloads: Map<string, string> | null = null;
       let lastDeliveredId = resumeFromId ?? getEventCursor();
       // Cursor tracking the highest id we've already streamed to this
       // client; used to drain only newly-buffered named events on each
@@ -978,7 +1008,20 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
         }
       };
       const sendUpdateIfChanged = (payload: Awaited<ReturnType<typeof buildPersistedEventPayload>>) => {
-        const serializedPayload = JSON.stringify(buildEventStreamPayload(payload, eventPayloadOptions));
+        const runPayloads = new Map<string, string>(
+          payload.runs.map((run) => [run.id, JSON.stringify(run)] as const),
+        );
+        const changedRunIds = new Set<string>();
+        if (deliveredRunPayloads) {
+          for (const [runId, serializedRun] of runPayloads) {
+            if (deliveredRunPayloads.get(runId) !== serializedRun) {
+              changedRunIds.add(runId);
+            }
+          }
+        }
+        const serializedPayload = JSON.stringify(
+          buildEventStreamPayload(payload, eventPayloadOptions, { changedRunIds }),
+        );
         if (serializedPayload === lastUpdatePayload) {
           emitStreamHeartbeatIfDue();
           drainBufferedEvents();
@@ -994,6 +1037,9 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
         drainBufferedEvents();
 
         lastUpdatePayload = serializedPayload;
+        // Only rows the client has actually been handed count as delivered, so
+        // the early return above cannot swallow a catalog change.
+        deliveredRunPayloads = runPayloads;
         const version = getEventStreamNotificationVersion();
         const marker = recordSnapshotMarker(version, runIdScope);
         // A named event can still land in the tiny window between the
