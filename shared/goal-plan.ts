@@ -203,6 +203,32 @@ export function normalizeGoalCapabilities(input: unknown): GoalCapabilities {
   };
 }
 
+function goalPlanItemToken(value: string) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+/**
+ * Id for a plan item the server derived from a plan file rather than from a
+ * provider payload. Unlike the provider id it is deliberately independent of
+ * the goal revision: the same checklist line keeps the same id across every
+ * re-derivation, so rendered rows stay stable while the file is edited and the
+ * goal revision advances.
+ */
+export function createDerivedGoalPlanItemId(input: {
+  goalId: string;
+  source: string;
+  sourceLine: number;
+  title: string;
+}) {
+  const value = `${input.goalId}\u0000${input.source}\u0000${input.sourceLine}\u0000${input.title}`;
+  return `goal-item-${goalPlanItemToken(value)}`;
+}
+
 export function createDeterministicGoalPlanItemId(input: {
   goalId: string;
   revision: number;
@@ -210,12 +236,7 @@ export function createDeterministicGoalPlanItemId(input: {
   phase?: string | null;
 }) {
   const value = `${input.goalId}\u0000${input.revision}\u0000${input.phase ?? ""}\u0000${input.title}`;
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return `goal-item-${(hash >>> 0).toString(36)}`;
+  return `goal-item-${goalPlanItemToken(value)}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

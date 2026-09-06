@@ -16,6 +16,7 @@ describe("assessPlanReadiness", () => {
           phase: "Phase 1",
           title: "Improve onboarding",
           sourceLine: 4,
+          completed: false,
         },
       ],
     });
@@ -40,6 +41,7 @@ describe("assessPlanReadiness", () => {
           phase: "Phase 1",
           title: "Update package.json scripts.",
           sourceLine: 4,
+          completed: false,
           details:
             "- Add `admin:parity:old`, `admin:parity:new`, `admin:parity:capture`, `admin:parity:compare`, `admin:parity:report`.\n- Verify: each script runs or prints a clear missing-prerequisite message.",
         },
@@ -64,6 +66,7 @@ describe("assessPlanReadiness", () => {
           phase: "Phase 1",
           title: "Update package.json scripts.",
           sourceLine: 4,
+          completed: false,
           details: "- Add `admin:parity:old`, `admin:parity:new`, and `admin:parity:compare`.",
         },
       ],
@@ -89,6 +92,7 @@ describe("assessPlanReadiness", () => {
           phase: "Implementation Tasks",
           title: "Update src/components/home/HomeHeader.tsx.",
           sourceLine: 4,
+          completed: false,
           details:
             "- Rename title/aria copy from `Toggle Conversation Workers` to `Toggle side window`.\n- Keep the `PanelRight` icon.\n- Render the mobile sheet with `SideWindow` instead of `WorkersSidebar`.",
         },
