@@ -66,6 +66,10 @@ process.stdin.on('data', (chunk) => {
         sessionId: 'session-codex-config',
         configOptions: [{ id: 'reasoning_effort', currentValue: 'high' }],
       } });
+    } else if (message.method === 'session/set_config_option') {
+      write({ jsonrpc: '2.0', id: message.id, result: {
+        configOptions: [{ id: 'reasoning_effort', currentValue: message.params.value }],
+      } });
     } else {
       write({ jsonrpc: '2.0', id: message.id, result: {} });
     }
@@ -86,7 +90,7 @@ describe("Codex ACP session modes", () => {
     ])).toBe("agent-full-access");
   });
 
-  it("passes the selected model and effort through the normal Codex ACP fallback", async () => {
+  it("normalizes the Extra High display alias for the normal Codex ACP fallback", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omni-codex-config-"));
     tempDirs.push(dir);
     const binDir = join(dir, "bin");
@@ -111,7 +115,7 @@ describe("Codex ACP session modes", () => {
         name: "codex-config",
         cwd: dir,
         model: "gpt-5.6-sol",
-        effort: "high",
+        effort: "Extra High",
         env: { LAUNCH_LOG: launchLog },
       });
 
@@ -122,9 +126,9 @@ describe("Codex ACP session modes", () => {
       expect(launch.argv).toEqual([]);
       expect(JSON.parse(launch.codexConfig ?? "{}")).toMatchObject({
         model: "gpt-5.6-sol",
-        model_reasoning_effort: "high",
+        model_reasoning_effort: "xhigh",
       });
-      expect(status.effectiveEffort).toBe("high");
+      expect(status.effectiveEffort).toBe("xhigh");
     } finally {
       await manager.stopAgent("codex-config");
       manager.shutdownPools();

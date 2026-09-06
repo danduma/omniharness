@@ -26,6 +26,7 @@ import { initializeWorkerGoalSession } from "./acp/goal-state";
 import { redactGoalErrorMessage } from "@/server/runs/goal-errors";
 import { sanitizeAcpStream } from "./acp-stream-sanitizer";
 import { applyCodexBridgeEnv, buildCodexAcpConfig, buildCodexConfigArgs, resolveCodexSessionMode, shouldSetRequestedMode } from "./codex";
+import { normalizeReasoningEffort } from "@/shared/reasoning-effort";
 import { buildGeminiArgs, isFullAccessAgentMode, resolveFullGeminiUuid } from "./gemini";
 import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
 import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, stripAmbientCodexSessionEnv, stripRunnerControlEnv, withCodexStandardTooling, withManagedPath } from "./tool-env";
@@ -1432,7 +1433,7 @@ export class AgentRuntimeManager {
     }
 
     const requestedModel = input.model?.trim() || null;
-    const requestedEffort = input.effort?.trim().toLowerCase() || null;
+    const requestedEffort = normalizeReasoningEffort(input.effort);
     const configuredAgent = this.options.config?.agents?.[type];
     const baseEnv = this.getRuntimeEnv();
     const skillRoots = [

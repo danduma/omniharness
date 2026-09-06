@@ -3,6 +3,7 @@ import type { ChatAttachment } from "@/lib/chat-attachments";
 import { formatHumanDuration, type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { isTerminalRunStatus } from "@/lib/run-status";
 import { getLatestUnresolvedWorkerStuckEvent } from "@/lib/worker-stuck-events";
+import { normalizeReasoningEffort } from "@/shared/reasoning-effort";
 import { DEFAULT_COMPOSER_EFFORT, EFFORT_OPTIONS, RUN_PATH_PATTERN, WORKER_OPTIONS, FALLBACK_WORKER_MODEL_OPTIONS } from "./constants";
 import type { AgentSnapshot, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, PlanItemRecord, PlanRecord, QueuedConversationMessageRecord, RunRecord, SupervisorInterventionRecord, WorkerModelCatalog, WorkerType } from "./types";
 import { t } from "@/lib/i18n";
@@ -1618,6 +1619,10 @@ export function resolveComposerEffortForPair(savedEffort: string | null | undefi
   return EFFORT_OPTIONS.includes(normalized) ? normalized : DEFAULT_COMPOSER_EFFORT;
 }
 
+export function resolveComposerEffortValue(selectedEffort: string) {
+  return normalizeReasoningEffort(selectedEffort) ?? DEFAULT_COMPOSER_EFFORT.toLowerCase();
+}
+
 export function getWorkerModelOptions(catalog: Partial<WorkerModelCatalog> | undefined, workerType: WorkerType) {
   const discoveredModels = catalog?.[workerType];
   return discoveredModels?.length ? discoveredModels : FALLBACK_WORKER_MODEL_OPTIONS[workerType];
@@ -1637,6 +1642,12 @@ export function resolveComposerEffortLabel(preferredEffort: string | null | unde
   }
   if (normalized === "high") {
     return "High";
+  }
+  if (normalized === "xhigh" || normalized === "extra high" || normalized === "extra-high") {
+    return "Extra High";
+  }
+  if (normalized === "max") {
+    return "Max";
   }
 
   return null;

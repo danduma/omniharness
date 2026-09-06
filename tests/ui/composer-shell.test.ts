@@ -106,7 +106,7 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain("preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent");
   expect(pageSource).toContain("const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel)");
   expect(pageSource).toContain("preferredWorkerModel: resolvedSelectedModel");
-  expect(pageSource).toContain("preferredWorkerEffort: selectedEffort.toLowerCase()");
+  expect(pageSource).toContain("preferredWorkerEffort: resolveComposerEffortValue(selectedEffort)");
   expect(pageSource).toContain("allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent]");
   expect(pageSource).toContain("options={composerWorkerOptions}");
   expect(composerSelectSource).toContain("options.map");
