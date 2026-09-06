@@ -1,8 +1,7 @@
-import { randomUUID } from "crypto";
-import { and, asc, eq } from "drizzle-orm";
-import { askAgent, cancelAgentTurn } from "@/server/bridge-client";
+import { and, asc, eq, inArray } from "drizzle-orm";
+import { askAgent, cancelAgentTurn, getAgent } from "@/server/bridge-client";
 import { db } from "@/server/db";
-import { messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
+import { messages, queuedConversationMessages, recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
@@ -15,6 +14,7 @@ import { serializeMessageRecord } from "./message-records";
 import { serializeQueuedConversationMessage } from "./queued-message-records";
 import {
   createQueuedConversationMessage,
+  drainQueuedWorkerMessages,
   errorMessage,
   getLatestRunWorker,
   isAgentBusyError,
@@ -23,6 +23,7 @@ import {
   isEmptyQueuedWorkerOutputError,
   persistDeliveredWorkerResponse,
 } from "./queued-messages";
+import { waitForConcurrentAgentStart } from "@/server/workers/runtime-agent-adoption";
 import {
   abortWorkerTurn,
   advanceWorkerTurnGeneration,
@@ -58,6 +59,39 @@ export interface InterruptResult {
     workerId: string;
     cancelDurationMs: number;
   };
+}
+
+const RECOVERY_IN_PROGRESS_MESSAGE = "Worker recovery in progress.";
+const RECOVERY_SETTLEMENT_TIMEOUT_MS = 30_000;
+
+function workerTurnSupersededError(workerId: string) {
+  return new Error(`Worker turn was superseded by a newer worker turn: ${workerId}`);
+}
+
+async function waitForRecoverySettlement(args: {
+  runId: string;
+  workerId: string;
+  generation: number;
+}) {
+  const deadline = Date.now() + RECOVERY_SETTLEMENT_TIMEOUT_MS;
+  while (true) {
+    if (!await isWorkerTurnGenerationCurrent(args.workerId, args.generation)) {
+      throw workerTurnSupersededError(args.workerId);
+    }
+    const activeIncident = await db.select({ id: recoveryIncidents.id })
+      .from(recoveryIncidents)
+      .where(and(
+        eq(recoveryIncidents.runId, args.runId),
+        eq(recoveryIncidents.workerId, args.workerId),
+        inArray(recoveryIncidents.status, ["open", "recovering"]),
+      ))
+      .get();
+    if (!activeIncident) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`Worker recovery did not finish within ${RECOVERY_SETTLEMENT_TIMEOUT_MS / 1_000} seconds.`);
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  }
 }
 
 function refusal(status: number, message: string) {
@@ -312,6 +346,9 @@ async function interruptAndDeliver(args: {
       source,
       requestedAt,
     }).catch((error) => {
+      if (isWorkerTurnSupersededError(error) || isWorkerTurnAbortedError(error)) {
+        return;
+      }
       console.error("Queued message interrupt delivery failed:", error);
     }),
     { runId },
@@ -597,11 +634,125 @@ async function handleInterruptDeliveryError(args: {
   const rawErrorMessage = errorMessage(error);
   const surfacedErrorMessage = userFacingProviderSessionErrorMessage(rawErrorMessage);
   const busy = isAgentBusyError(error);
+  const missingAgent = isAgentNotFoundError(error);
   await db.update(queuedConversationMessages).set({
     status: busy ? "pending" : "failed",
-    lastError: surfacedErrorMessage,
+    lastError: missingAgent ? RECOVERY_IN_PROGRESS_MESSAGE : surfacedErrorMessage,
     updatedAt: failedAt,
   }).where(eq(queuedConversationMessages.id, record.id));
+
+  // The persisted worker outlived its in-memory runtime agent. That is a
+  // normal recovery trigger after a restart, not a user-facing delivery
+  // failure. Keep the internal breadcrumb, recover/requeue the message, and
+  // let the recovery lifecycle events describe what happened.
+  if (missingAgent) {
+    await recordExecutionEvent({
+      runId,
+      workerId: worker.id,
+      eventType: "queued_message_recovery_blocked",
+      details: {
+        summary: `Queued message ${record.id} is waiting for ${worker.id} to be recovered.`,
+        queuedMessageId: record.id,
+        error: rawErrorMessage,
+        source,
+      },
+    });
+    // The checkpoint row was inserted before the failed ask. The worker stream
+    // can deduplicate its stable id, but the relational row cannot, so remove
+    // it before the recovered queue delivery inserts that same id again.
+    await db.delete(messages).where(eq(messages.id, userMessage.id));
+    try {
+      const recovery = await reconcileRunRecovery({
+        runId,
+        liveAgents: [],
+        source: "queued-message-interrupt",
+      });
+      if (recovery.action === "none") {
+        // Another reconciliation may own the spawn. Its incident settles only
+        // after all queue rewrites are complete, which prevents its final
+        // requeue from racing this delivery back to pending.
+        await waitForRecoverySettlement({ runId, workerId: worker.id, generation });
+      }
+      if (
+        recovery.action === "none"
+        || recovery.action === "resume_session"
+        || recovery.action === "restart_direct_worker"
+      ) {
+        await waitForConcurrentAgentStart({
+          workerId: worker.id,
+          getAgent: (workerId) => getAgent(workerId, { retryIndefinitely: false }),
+          assertCurrent: async () => {
+            if (!await isWorkerTurnGenerationCurrent(worker.id, generation)) {
+              throw workerTurnSupersededError(worker.id);
+            }
+          },
+        });
+        if (!await isWorkerTurnGenerationCurrent(worker.id, generation)) {
+          return;
+        }
+        // Requeue explicitly: session resume does not rewrite blocked queue
+        // rows, while fresh-worker recovery does. The single mutation handles
+        // either result and gives this recovered delivery a concrete target.
+        await db.update(queuedConversationMessages).set({
+          status: "pending",
+          action: "steer",
+          targetWorkerId: worker.id,
+          lastError: null,
+          deliveredAt: null,
+          updatedAt: new Date(),
+        }).where(and(
+          eq(queuedConversationMessages.id, record.id),
+          inArray(queuedConversationMessages.status, ["failed", "pending"]),
+        ));
+        await drainQueuedWorkerMessages({
+          runId,
+          workerId: worker.id,
+          expectedTurnGeneration: generation,
+        });
+      }
+    } catch (recoveryError) {
+      if (isWorkerTurnSupersededError(recoveryError) || isWorkerTurnAbortedError(recoveryError)) {
+        return;
+      }
+      const recoveryFailureMessage = "Worker recovery could not finish automatically.";
+      await db.update(queuedConversationMessages).set({
+        status: "failed",
+        lastError: recoveryFailureMessage,
+        updatedAt: new Date(),
+      }).where(eq(queuedConversationMessages.id, record.id));
+      await recordExecutionEvent({
+        runId,
+        workerId: worker.id,
+        eventType: "queued_message_interrupt_recovery_failed",
+        details: {
+          summary: recoveryFailureMessage,
+          queuedMessageId: record.id,
+          error: errorMessage(recoveryError),
+          source,
+        },
+      });
+      emitNamedEvent({
+        kind: "queue.interrupt_delivery_failed",
+        runId,
+        workerId: worker.id,
+        queuedMessageId: record.id,
+        reason: "recovery_failed",
+        deferred: false,
+        totalInterruptLatencyMs: Date.now() - requestedAt,
+        source,
+      });
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "queue.interrupt.delivery_failed",
+        message: recoveryFailureMessage,
+        surface: "toast",
+        runId,
+        workerId: worker.id,
+      });
+    }
+    notifyEventStreamSubscribers();
+    return;
+  }
 
   if (isEmptyQueuedWorkerOutputError(error)) {
     await db.update(workers).set({
@@ -660,25 +811,6 @@ async function handleInterruptDeliveryError(args: {
     totalInterruptLatencyMs: Date.now() - requestedAt,
     source,
   });
-
-  if (isAgentNotFoundError(error)) {
-    await recordExecutionEvent({
-      runId,
-      workerId: worker.id,
-      eventType: "queued_message_recovery_blocked",
-      details: {
-        summary: `Queued message ${record.id} is blocked because ${worker.id} is missing.`,
-        queuedMessageId: record.id,
-        error: errorMessage(error),
-        source,
-      },
-    });
-    await reconcileRunRecovery({
-      runId,
-      liveAgents: [],
-      source: "queued-message-interrupt",
-    });
-  }
 
   // A busy delivery already removed nothing; non-recoverable failures keep the
   // appended worker-stream input for audit. Drop the duplicate checkpoint

@@ -1336,12 +1336,8 @@ export class AgentRuntimeManager {
     if (this.startingAgentAccounts.has(name)) {
       const message = `Agent is already starting: ${name}`;
       emitNamedEvent({
-        kind: "error.surfaced",
-        code: "worker.spawn.failed",
-        message,
-        surface: "log",
+        kind: "runtime.agent_start_coalesced",
         workerId: name,
-        cause: null,
       });
       throw new RuntimeHttpError(409, message);
     }

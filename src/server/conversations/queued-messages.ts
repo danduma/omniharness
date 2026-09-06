@@ -30,14 +30,13 @@ import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import { resolveRecoveryIncidentsAfterHealthyTurn } from "@/server/runs/recovery-incidents";
 import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
+import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
 import {
   serializeQueuedConversationMessage,
   type BusyMessageAction,
-  type QueuedConversationMessageStatus,
 } from "./queued-message-records";
 export type { BusyMessageAction, QueuedConversationMessageStatus } from "./queued-message-records";
 
-type QueuedConversationMessageRecord = typeof queuedConversationMessages.$inferSelect;
 export type WorkerAskResponse = Awaited<ReturnType<typeof askAgent>>;
 type WorkerSnapshot = Awaited<ReturnType<typeof getAgent>>;
 export type WorkerResponseRun = Pick<typeof runs.$inferSelect, "id" | "mode">;
@@ -1099,6 +1098,39 @@ async function pendingQueueRecords(runId: string, workerId?: string | null) {
   });
 }
 
+async function activateRunForQueuedWorkerDelivery(args: {
+  run: typeof runs.$inferSelect;
+  workerId: string;
+  expectedTurnGeneration: number;
+  startedAt: Date;
+}) {
+  return runQuotaRecoveryMutation(args.run.id, async () => {
+    const [currentRun, currentWorker] = await Promise.all([
+      db.select({ status: runs.status }).from(runs).where(eq(runs.id, args.run.id)).get(),
+      db.select({ turnGeneration: workers.turnGeneration })
+        .from(workers)
+        .where(eq(workers.id, args.workerId))
+        .get(),
+    ]);
+    const runStatus = currentRun?.status.trim().toLowerCase().split(":")[0]?.trim();
+    if (
+      !currentRun
+      || runStatus === "cancelled"
+      || runStatus === "canceled"
+      || currentWorker?.turnGeneration !== args.expectedTurnGeneration
+    ) {
+      return false;
+    }
+    await db.update(runs).set({
+      status: args.run.mode === "planning" ? "working" : "running",
+      failedAt: null,
+      lastError: null,
+      updatedAt: args.startedAt,
+    }).where(eq(runs.id, args.run.id));
+    return true;
+  });
+}
+
 async function drainQueuedImplementationMessagesUnlocked(runId: string) {
   await assertRunNotHandoffFenced(runId);
   const records = await pendingQueueRecords(runId);
@@ -1294,14 +1326,22 @@ async function drainQueuedWorkerMessagesUnlocked({
   runId,
   workerId,
   snapshot,
+  expectedTurnGeneration,
 }: {
   runId: string;
   workerId: string;
   snapshot?: WorkerSnapshot | null;
+  expectedTurnGeneration?: number;
 }) {
   await assertRunNotHandoffFenced(runId);
   const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
   if (!worker || worker.runId !== runId) {
+    return 0;
+  }
+  if (
+    expectedTurnGeneration !== undefined
+    && worker.turnGeneration !== expectedTurnGeneration
+  ) {
     return 0;
   }
 
@@ -1344,18 +1384,24 @@ async function drainQueuedWorkerMessagesUnlocked({
     if (claimed.length === 0) {
       continue;
     }
-    await db.update(runs).set({
-      status: run.mode === "planning" ? "working" : "running",
-      failedAt: null,
-      lastError: null,
-      updatedAt: startedAt,
-    }).where(eq(runs.id, runId));
-
     // A pending elicitation belongs to the turn that is already running. Do
     // not queue its answer behind that same turn: the turn cannot finish until
     // the answer arrives, so acquiring the per-worker turn gate here creates a
     // self-deadlock and leaves the queue row in `delivering` forever.
     if (selectPendingWorkerElicitation(snapshot ?? null)) {
+      const runActivated = await activateRunForQueuedWorkerDelivery({
+        run,
+        workerId,
+        expectedTurnGeneration: worker.turnGeneration,
+        startedAt,
+      });
+      if (!runActivated) {
+        await db.update(queuedConversationMessages).set({
+          status: "pending",
+          updatedAt: new Date(),
+        }).where(eq(queuedConversationMessages.id, record.id));
+        continue;
+      }
       const deliveredAt = new Date();
       const answered = await answerPendingWorkerElicitation({
         run,
@@ -1407,6 +1453,15 @@ async function drainQueuedWorkerMessagesUnlocked({
           eq(workers.turnGeneration, worker.turnGeneration),
         )).returning({ id: workers.id }).get();
         if (!workerClaimed) {
+          return false;
+        }
+        const runActivated = await activateRunForQueuedWorkerDelivery({
+          run,
+          workerId,
+          expectedTurnGeneration: worker.turnGeneration,
+          startedAt,
+        });
+        if (!runActivated) {
           return false;
         }
         const snapshotBeforeAsk = snapshot ?? await Promise.resolve(getAgent(workerId)).catch(() => null);

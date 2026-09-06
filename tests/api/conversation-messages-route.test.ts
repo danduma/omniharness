@@ -1766,7 +1766,7 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect((await readWorkerOutputEntries(runId, workerId)).some((entry) => entry.id === missingMessageId)).toBe(true);
   });
 
-  it("automatically resumes a missing direct worker before sending a follow-up", async () => {
+  it("adopts a concurrently starting replacement without surfacing the missing-agent race", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;
@@ -1813,17 +1813,20 @@ describe("POST /api/conversations/[id]/messages", () => {
         response: "Continuing from the restored session.",
         state: "idle",
       });
-    mockSpawnAgent.mockResolvedValueOnce({
-      name: workerId,
-      type: "claude",
-      cwd: "/workspace/app",
-      state: "idle",
-      sessionId: "resumed-session",
-      sessionMode: "direct",
-      outputEntries: [],
-      currentText: "",
-      lastText: "Restored session.",
-    });
+    mockSpawnAgent.mockRejectedValueOnce(new Error(`Spawn failed: Agent is already starting: ${workerId}`));
+    mockGetAgent
+      .mockRejectedValueOnce(new Error(`Get agent failed: Agent not found: ${workerId}`))
+      .mockResolvedValueOnce({
+        name: workerId,
+        type: "claude",
+        cwd: "/workspace/app",
+        state: "idle",
+        sessionId: "resumed-session",
+        sessionMode: "direct",
+        outputEntries: [],
+        currentText: "",
+        lastText: "Restored session.",
+      });
 
     const request = new Request(`http://localhost/api/conversations/${runId}/messages`, {
       method: "POST",
@@ -1854,6 +1857,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       () => Promise.resolve(mockAskAgent.mock.calls),
       (calls) => calls.length >= 2,
     );
+    expect(mockGetAgent.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(mockAskAgent).toHaveBeenNthCalledWith(1, workerId, expect.stringContaining("Please continue the demo work."), undefined, { expectedTurnGeneration: 0 });
     expect(mockAskAgent).toHaveBeenNthCalledWith(2, workerId, expect.stringContaining("Please continue the demo work."), undefined, { expectedTurnGeneration: 0 });
 
@@ -1874,10 +1878,15 @@ describe("POST /api/conversations/[id]/messages", () => {
     // the user-role row is written to `messages` after delivery.
     expect(storedMessages.map((message) => message.role)).toEqual(["user"]);
     expect(resumeEvents.some((event) => event.eventType === "worker_session_resumed")).toBe(true);
-    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
+    const namedEvents = getNamedEventsSince(0, { runId }).events.map((entry) => entry.event);
+    expect(namedEvents).toContainEqual(expect.objectContaining({
       kind: "worker.reattached",
       runId,
       workerId,
+    }));
+    expect(namedEvents).not.toContainEqual(expect.objectContaining({
+      kind: "error.surfaced",
+      message: expect.stringMatching(/agent (?:not found|is already starting)/i),
     }));
   });
 

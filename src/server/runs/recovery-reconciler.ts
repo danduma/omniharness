@@ -1,6 +1,6 @@
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { and, asc, eq, inArray } from "drizzle-orm";
-import { askAgent, cancelAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
+import { askAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { executionEvents, messages, queuedConversationMessages, recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -30,6 +30,11 @@ import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { withWorkerOutputWriteFence, writeWorkerOutputEntries } from "@/server/workers/output-store";
 import { reconcileRecoveredHumanInputEntries } from "@/server/workers/human-input-entries";
 import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
+import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
+import {
+  isConcurrentAgentStartError,
+  waitForConcurrentAgentStart,
+} from "@/server/workers/runtime-agent-adoption";
 import {
   markRecoveryIncidentFailed,
   markRecoveryIncidentNeedsUser,
@@ -54,6 +59,35 @@ import {
 
 function isCorruptResumeFileError(value: string | null | undefined) {
   return /failed to load resumed session data from file/i.test(value ?? "");
+}
+
+async function spawnOrAdoptRuntimeAgent(args: {
+  workerId: string;
+  spawn: () => Promise<AgentRecord>;
+  expectedTurnGeneration?: number;
+}) {
+  const expectedTurnGeneration = args.expectedTurnGeneration;
+  const assertCurrent = expectedTurnGeneration === undefined
+    ? undefined
+    : async () => {
+        if (!await isWorkerTurnGenerationCurrent(args.workerId, expectedTurnGeneration)) {
+          throw new Error("Worker turn was superseded by a newer worker turn");
+        }
+      };
+  try {
+    const spawned = await args.spawn();
+    await assertCurrent?.();
+    return spawned;
+  } catch (error) {
+    if (!isConcurrentAgentStartError(error, args.workerId)) {
+      throw error;
+    }
+    return waitForConcurrentAgentStart({
+      workerId: args.workerId,
+      getAgent: (workerId) => getAgent(workerId, { retryIndefinitely: false }),
+      ...(assertCurrent ? { assertCurrent } : {}),
+    });
+  }
 }
 
 const INTERRUPTED_DIRECT_TURN_PROMPT = buildDirectWorkerPrompt([
@@ -398,17 +432,21 @@ async function resumeSavedWorkerSession(args: {
   let resumed: AgentRecord;
   let recreatedFromMissingSession = false;
   try {
-    resumed = await spawnAgent({
-      type: args.worker.type,
-      cwd: args.worker.cwd,
-      name: args.worker.id,
-      ...(workerMode ? { mode: workerMode } : {}),
-      env: envParams,
-      ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
-      ...(launchSelection.model ? { model: launchSelection.model } : {}),
-      ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
-      resumeSessionId: sessionId,
-    }) as AgentRecord;
+    resumed = await spawnOrAdoptRuntimeAgent({
+      workerId: args.worker.id,
+      expectedTurnGeneration,
+      spawn: () => spawnAgent({
+        type: args.worker.type,
+        cwd: args.worker.cwd,
+        name: args.worker.id,
+        ...(workerMode ? { mode: workerMode } : {}),
+        env: envParams,
+        ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
+        ...(launchSelection.model ? { model: launchSelection.model } : {}),
+        ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
+        resumeSessionId: sessionId,
+      }) as Promise<AgentRecord>,
+    });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     if (!isCorruptResumeFileError(reason) || args.run.mode !== "implementation") {
@@ -432,16 +470,20 @@ async function resumeSavedWorkerSession(args: {
     if (!recreationClaimed) {
       return { action: "none" as const, runId: args.run.id, workerId: args.worker.id };
     }
-    resumed = await spawnAgent({
-      type: args.worker.type,
-      cwd: args.worker.cwd,
-      name: args.worker.id,
-      ...(workerMode ? { mode: workerMode } : {}),
-      env: envParams,
-      ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
-      ...(launchSelection.model ? { model: launchSelection.model } : {}),
-      ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
-    }) as AgentRecord;
+    resumed = await spawnOrAdoptRuntimeAgent({
+      workerId: args.worker.id,
+      expectedTurnGeneration,
+      spawn: () => spawnAgent({
+        type: args.worker.type,
+        cwd: args.worker.cwd,
+        name: args.worker.id,
+        ...(workerMode ? { mode: workerMode } : {}),
+        env: envParams,
+        ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
+        ...(launchSelection.model ? { model: launchSelection.model } : {}),
+        ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
+      }) as Promise<AgentRecord>,
+    });
     recreatedFromMissingSession = true;
   }
   const continueInterruptedDirectTurn = recoveredDirectTurnNeedsPrompt(args.run, resumed);
@@ -467,7 +509,6 @@ async function resumeSavedWorkerSession(args: {
       { expectedTurnGeneration },
     );
     if (!outputPersisted) {
-      await cancelAgent(args.worker.id).catch(() => undefined);
       return { action: "none" as const, runId: args.run.id, workerId: args.worker.id };
     }
   }
@@ -546,7 +587,6 @@ async function resumeSavedWorkerSession(args: {
     return true;
   });
   if (!recoveryPersisted) {
-    await cancelAgent(args.worker.id).catch(() => undefined);
     return { action: "none" as const, runId: args.run.id, workerId: args.worker.id };
   }
   if (continueInterruptedDirectTurn) {
@@ -636,9 +676,13 @@ async function restartDirectWorker(args: {
         sessionId: rejectedSessionId,
         messageCount: materialized.messageCount,
       });
-      spawned = await spawnAgent({
-        ...spawnParams,
-        resumeSessionId: rejectedSessionId,
+      spawned = await spawnOrAdoptRuntimeAgent({
+        workerId: args.worker.id,
+        expectedTurnGeneration: args.worker.turnGeneration,
+        spawn: () => spawnAgent({
+          ...spawnParams,
+          resumeSessionId: rejectedSessionId,
+        }) as Promise<AgentRecord>,
       }).catch(async (error: unknown) => {
         await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "worker_session_materialized_resume_failed", {
           summary: `Rebuilt session ${rejectedSessionId} still would not resume; falling back to a fresh worker.`,
@@ -650,26 +694,62 @@ async function restartDirectWorker(args: {
     }
   }
 
-  const resumedMaterializedSession = Boolean(spawned);
   if (!spawned) {
-    await db.update(workers).set({
+    const restartClaimed = await db.update(workers).set({
       status: "starting",
       bridgeSessionId: null,
       bridgeSessionMode: null,
       currentText: "",
       updatedAt: new Date(),
-    }).where(eq(workers.id, args.worker.id));
-    spawned = await spawnAgent(spawnParams) as AgentRecord;
+    }).where(and(
+      eq(workers.id, args.worker.id),
+      eq(workers.turnGeneration, args.worker.turnGeneration),
+    )).returning({ id: workers.id }).get();
+    if (!restartClaimed) {
+      throw new Error("Worker turn was superseded by a newer worker turn");
+    }
+    spawned = await spawnOrAdoptRuntimeAgent({
+      workerId: args.worker.id,
+      expectedTurnGeneration: args.worker.turnGeneration,
+      spawn: () => spawnAgent(spawnParams) as Promise<AgentRecord>,
+    });
   }
 
-  await db.update(workers).set({
-    status: spawned.state,
-    currentText: spawned.currentText,
-    lastText: spawned.lastText,
-    bridgeSessionId: spawned.sessionId ?? null,
-    bridgeSessionMode: spawned.sessionMode ?? args.worker.bridgeSessionMode ?? null,
-    updatedAt: new Date(),
-  }).where(eq(workers.id, args.worker.id));
+  const resumedMaterializedSession = Boolean(
+    rejectedSessionId && spawned.sessionId === rejectedSessionId,
+  );
+
+  const workerPersisted = await runQuotaRecoveryMutation(args.run.id, async () => {
+    const currentRun = await db.select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, args.run.id))
+      .get();
+    if (!currentRun || ["cancelled", "canceled"].includes(normalizeRunStatus(currentRun.status))) {
+      return false;
+    }
+    const updatedWorker = await db.update(workers).set({
+      status: spawned.state,
+      currentText: spawned.currentText,
+      lastText: spawned.lastText,
+      bridgeSessionId: spawned.sessionId ?? null,
+      bridgeSessionMode: spawned.sessionMode ?? args.worker.bridgeSessionMode ?? null,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(workers.id, args.worker.id),
+      eq(workers.turnGeneration, args.worker.turnGeneration),
+    )).returning({ id: workers.id }).get();
+    if (!updatedWorker) return false;
+    await db.update(runs).set({
+      status: "running",
+      failedAt: null,
+      lastError: null,
+      updatedAt: new Date(),
+    }).where(eq(runs.id, args.run.id));
+    return true;
+  });
+  if (!workerPersisted) {
+    throw new Error("Worker turn was superseded by a newer worker turn");
+  }
   emitNamedEvent({
     kind: resumedMaterializedSession ? "worker.reattached" : "worker.recreated",
     runId: args.run.id,
@@ -689,44 +769,57 @@ async function restartDirectWorker(args: {
   // The blocked message is still `failed` with an agent-missing error. Put it
   // back in the queue so the ordinary drain delivers it to the new worker;
   // leaving it failed would recreate the worker and still lose the message.
-  const requeuedCount = args.preserveQueuedMessages
-    ? await requeueRecoverableQueuedMessages({ runId: args.run.id, workerId: args.worker.id })
-    : 0;
-  if (requeuedCount > 0) {
-    await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "queued_message_requeued", {
-      summary: `Requeued ${requeuedCount} blocked message(s) for ${args.worker.id}.`,
+  const requeuedCount = await runQuotaRecoveryMutation(args.run.id, async () => {
+    const [currentRun, currentWorker] = await Promise.all([
+      db.select({ status: runs.status }).from(runs).where(eq(runs.id, args.run.id)).get(),
+      db.select({ turnGeneration: workers.turnGeneration })
+        .from(workers)
+        .where(eq(workers.id, args.worker.id))
+        .get(),
+    ]);
+    if (
+      !currentRun
+      || ["cancelled", "canceled"].includes(normalizeRunStatus(currentRun.status))
+      || currentWorker?.turnGeneration !== args.worker.turnGeneration
+    ) {
+      return null;
+    }
+    const count = args.preserveQueuedMessages
+      ? await requeueRecoverableQueuedMessages({ runId: args.run.id, workerId: args.worker.id })
+      : 0;
+    if (count > 0) {
+      await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "queued_message_requeued", {
+        summary: `Requeued ${count} blocked message(s) for ${args.worker.id}.`,
+        incidentId: args.incidentId,
+        requeuedCount: count,
+      });
+    }
+    await markRecoveryIncidentResolved({
       incidentId: args.incidentId,
-      requeuedCount,
+      runId: args.run.id,
+      workerId: args.worker.id,
+      summary: resumedMaterializedSession
+        ? `Restored ${args.worker.id} from its saved transcript.`
+        : `Replaced ${args.worker.id} with a fresh direct worker.`,
+      details: {
+        rejectedSessionId,
+        newSessionId: spawned.sessionId ?? null,
+        requeuedCount: count,
+        workerState: spawned.state,
+        transcriptRestored: resumedMaterializedSession,
+      },
     });
+    await resolveRecoveryIncidentsAfterHealthyTurn({
+      runId: args.run.id,
+      workerId: args.worker.id,
+      summary: `Replaced ${args.worker.id} with a working direct worker.`,
+      reason: "direct_worker_restarted",
+    });
+    return count;
+  });
+  if (requeuedCount === null) {
+    throw new Error("Worker turn was superseded by a newer worker turn");
   }
-
-  await db.update(runs).set({
-    status: "running",
-    failedAt: null,
-    lastError: null,
-    updatedAt: new Date(),
-  }).where(eq(runs.id, args.run.id));
-  await markRecoveryIncidentResolved({
-    incidentId: args.incidentId,
-    runId: args.run.id,
-    workerId: args.worker.id,
-    summary: resumedMaterializedSession
-      ? `Restored ${args.worker.id} from its saved transcript.`
-      : `Replaced ${args.worker.id} with a fresh direct worker.`,
-    details: {
-      rejectedSessionId,
-      newSessionId: spawned.sessionId ?? null,
-      requeuedCount,
-      workerState: spawned.state,
-      transcriptRestored: resumedMaterializedSession,
-    },
-  });
-  await resolveRecoveryIncidentsAfterHealthyTurn({
-    runId: args.run.id,
-    workerId: args.worker.id,
-    summary: `Replaced ${args.worker.id} with a working direct worker.`,
-    reason: "direct_worker_restarted",
-  });
   return {
     action: "restart_direct_worker" as const,
     runId: args.run.id,
@@ -947,6 +1040,10 @@ export async function reconcileRunRecovery(args: {
 
     return { action: "none" as const, runId: run.id, recoveryState: state };
   } catch (error) {
+    if (isWorkerTurnSupersededError(error)) {
+      notifyEventStreamSubscribers();
+      return { action: "none" as const, runId: run.id, recoveryState: state };
+    }
     const reason = error instanceof Error ? error.message : String(error);
     // The bridge rejects a dead session with wording the agent-missing matcher
     // never covered ("Resource not found: <sessionId>"), so a resume that failed

@@ -2,27 +2,33 @@ import { randomUUID } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { executionEvents, messages, plans, queuedConversationMessages, runs, workers } from "@/server/db/schema";
+import { executionEvents, messages, plans, queuedConversationMessages, recoveryIncidents, runs, workers } from "@/server/db/schema";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 import {
   __resetOutputStoreCachesForTests,
   readWorkerOutputEntries,
   writeWorkerOutputEntries,
 } from "@/server/workers/output-store";
 
-const { mockAskAgent, mockGetAgent, mockCancelAgentTurn } = vi.hoisted(() => ({
+const { mockAskAgent, mockGetAgent, mockCancelAgent, mockCancelAgentTurn, mockSpawnAgent } = vi.hoisted(() => ({
   mockAskAgent: vi.fn(),
   mockGetAgent: vi.fn(),
+  mockCancelAgent: vi.fn(),
   mockCancelAgentTurn: vi.fn(),
+  mockSpawnAgent: vi.fn(),
 }));
 
 vi.mock("@/server/bridge-client", () => ({
   askAgent: mockAskAgent,
+  cancelAgent: mockCancelAgent,
   getAgent: mockGetAgent,
   cancelAgentTurn: mockCancelAgentTurn,
+  spawnAgent: mockSpawnAgent,
 }));
 
 import {
   createQueuedConversationMessage,
+  drainQueuedWorkerMessages,
   listPendingQueuedConversationMessages,
   reclaimOrphanedDeliveringMessages,
 } from "@/server/conversations/queued-messages";
@@ -112,9 +118,25 @@ describe("queued conversation message interrupt", () => {
     });
     mockCancelAgentTurn.mockReset();
     mockCancelAgentTurn.mockResolvedValue({ ok: true, name: "worker", cancelledPermissions: 0 });
+    mockCancelAgent.mockReset();
+    mockCancelAgent.mockResolvedValue(undefined);
+    mockSpawnAgent.mockReset();
+    mockSpawnAgent.mockResolvedValue({
+      name: "worker",
+      type: "codex",
+      cwd: "/workspace/app",
+      state: "idle",
+      sessionId: "recreated-session",
+      sessionMode: "full-access",
+      outputEntries: [],
+      currentText: "",
+      lastText: "",
+    });
+    __resetNamedEventsForTests();
     __resetWorkerTurnChainsForTests();
     __resetOutputStoreCachesForTests();
     await db.delete(executionEvents);
+    await db.delete(recoveryIncidents);
     await db.delete(queuedConversationMessages);
     await db.delete(messages);
     await db.delete(workers);
@@ -328,6 +350,143 @@ describe("queued conversation message interrupt", () => {
     expect(stored?.lastError).toMatch(/agent is busy/i);
     const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
     expect(events.some((event) => event.eventType === "queued_message_interrupt_deferred")).toBe(true);
+  });
+
+  it("recovers a missing runtime agent without surfacing the internal 404", async () => {
+    const runId = await createRun("direct");
+    const workerId = await createBusyWorker(runId);
+    const queued = await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: workerId,
+      action: "queue",
+      content: "Continue after the runtime restart.",
+      attachments: [],
+    });
+    mockAskAgent
+      .mockRejectedValueOnce(new Error(`Ask failed: Agent not found: ${workerId}`))
+      .mockResolvedValueOnce({ response: "Continued after recovery.", state: "idle" });
+    mockSpawnAgent.mockRejectedValueOnce(new Error(`Spawn failed: Agent is already starting: ${workerId}`));
+    mockGetAgent
+      .mockRejectedValueOnce(new Error(`Get agent failed: Agent not found: ${workerId}`))
+      .mockResolvedValue({
+        name: workerId,
+        type: "codex",
+        cwd: "/workspace/app",
+        state: "idle",
+        sessionId: "recreated-session",
+        sessionMode: "full-access",
+        outputEntries: [],
+        renderedOutput: null,
+        currentText: "",
+        lastText: "",
+        stderrBuffer: [],
+        stopReason: null,
+      });
+
+    await interruptAndSendQueuedConversationMessageNow({ runId, messageId: queued.id });
+    await waitForConversationBackgroundTasksForTests();
+
+    const stored = await db.select().from(queuedConversationMessages)
+      .where(eq(queuedConversationMessages.id, queued.id))
+      .get();
+    expect(stored?.status).toBe("delivered");
+    expect(stored?.lastError).toBeNull();
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({ name: workerId }));
+    expect(mockAskAgent).toHaveBeenCalledTimes(2);
+    expect(await db.select().from(messages).where(eq(messages.id, queued.id))).toHaveLength(1);
+
+    const namedEvents = getNamedEventsSince(0, { runId }).events.map((entry) => entry.event);
+    expect(namedEvents).toContainEqual(expect.objectContaining({
+      kind: "worker.recreated",
+      runId,
+      workerId,
+    }));
+    expect(namedEvents).not.toContainEqual(expect.objectContaining({
+      kind: "error.surfaced",
+      message: expect.stringMatching(/agent not found/i),
+    }));
+  });
+
+  it("redelivers a blocked interrupt after resuming its saved session", async () => {
+    const runId = await createRun("direct");
+    const workerId = await createBusyWorker(runId);
+    await db.update(workers).set({
+      bridgeSessionId: "saved-session",
+      bridgeSessionMode: "full-access",
+    }).where(eq(workers.id, workerId));
+    const queued = await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: workerId,
+      action: "queue",
+      content: "Resume and deliver this once.",
+      attachments: [],
+    });
+    mockAskAgent
+      .mockRejectedValueOnce(new Error(`Ask failed: Agent not found: ${workerId}`))
+      .mockResolvedValueOnce({ response: "Delivered after resume.", state: "idle" });
+    mockSpawnAgent.mockResolvedValueOnce({
+      name: workerId,
+      type: "codex",
+      cwd: "/workspace/app",
+      state: "idle",
+      sessionId: "saved-session",
+      sessionMode: "full-access",
+      outputEntries: [],
+      currentText: "",
+      lastText: "",
+    });
+    mockGetAgent.mockResolvedValue({
+      name: workerId,
+      type: "codex",
+      cwd: "/workspace/app",
+      state: "idle",
+      sessionId: "saved-session",
+      sessionMode: "full-access",
+      outputEntries: [],
+      renderedOutput: null,
+      currentText: "",
+      lastText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    });
+
+    await interruptAndSendQueuedConversationMessageNow({ runId, messageId: queued.id });
+    await waitForConversationBackgroundTasksForTests();
+
+    const stored = await db.select().from(queuedConversationMessages)
+      .where(eq(queuedConversationMessages.id, queued.id))
+      .get();
+    expect(stored?.status).toBe("delivered");
+    expect(stored?.lastError).toBeNull();
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      name: workerId,
+      resumeSessionId: "saved-session",
+    }));
+    expect(mockAskAgent.mock.calls.filter((call) => call[1].includes("Resume and deliver this once."))).toHaveLength(2);
+    expect(await db.select().from(messages).where(eq(messages.id, queued.id))).toHaveLength(1);
+  });
+
+  it("does not redeliver a recovered queue row into a newer worker turn", async () => {
+    const runId = await createRun("direct");
+    const workerId = await createBusyWorker(runId);
+    const queued = await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: workerId,
+      action: "steer",
+      content: "This belongs to the superseded turn.",
+      attachments: [],
+    });
+
+    const delivered = await drainQueuedWorkerMessages({
+      runId,
+      workerId,
+      expectedTurnGeneration: 1,
+    });
+
+    expect(delivered).toBe(0);
+    expect(mockAskAgent).not.toHaveBeenCalled();
+    expect((await db.select().from(queuedConversationMessages)
+      .where(eq(queuedConversationMessages.id, queued.id)).get())?.status).toBe("pending");
   });
 
   it("does not let a stale interrupted-turn completion overwrite a newer delivery", async () => {
