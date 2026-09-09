@@ -75,6 +75,35 @@ function errorCode(error: unknown) {
   return "runner.error.generic";
 }
 
+// Statuses the restart route itself answers with while the runner is still
+// alive and has stopped nothing. Its own refusals arrive under `runner.restart.*`
+// (see `handleRunnerRestartRequest`); these three come from the auth guard in
+// front of it, which rejects before the control service is ever called.
+const RESTART_REFUSAL_CODES = new Set([
+  "runtime.http_401",
+  "runtime.http_403",
+  "runtime.http_405",
+]);
+
+/**
+ * Did the runner refuse to restart, as opposed to going ahead and dying?
+ *
+ * A restart cannot report its own success. The control service acknowledges
+ * before it stops anything, so the process answering this request is gone
+ * moments later, and every shape that takes on the wire — a dropped connection,
+ * a bare 502/503 from whatever still holds the port, a redirect into the
+ * booting server's shell — is what success looks like from the browser. Only a
+ * reply the restart route stated itself means nothing happened, and that is the
+ * only one worth putting in front of the user.
+ */
+export function isRestartRefusal(error: unknown) {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  if (typeof code !== "string") {
+    return false;
+  }
+  return code.startsWith("runner.restart.") || RESTART_REFUSAL_CODES.has(code);
+}
+
 export function RunnerControls({
   placement = "header",
   controlId = "runner-switcher",
@@ -278,14 +307,12 @@ function ConnectedRunnerControls({
       } else if (draft.dialog === "restart") {
         // The runner cannot restart itself, so this asks the restart-control
         // service to do it. That service kills the process serving this very
-        // request, so losing the connection before the reply arrives is the
-        // ordinary shape of success, not a failure — the registry reconnects on
-        // its own. Only an answer the server actually sent means the restart was
-        // refused, and that is the one worth surfacing.
+        // request, so anything short of a stated refusal means the restart is
+        // under way — the registry reconnects on its own.
         try {
           await runtime?.runner.restart();
         } catch (error) {
-          if (!isRuntimeTransportFailure(error)) {
+          if (isRestartRefusal(error)) {
             throw error;
           }
         }

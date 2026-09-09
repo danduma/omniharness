@@ -16,6 +16,7 @@ import {
   workerTokenUsage,
 } from "@/server/db/schema";
 import { getAppRoot } from "@/server/app-root";
+import { resolveCredentialProfilesDir } from "@/server/agent-runtime/external-credentials";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { repairAccountsFromCredentialVerificationHistory } from "@/server/accounts/login-required";
 
@@ -436,7 +437,10 @@ async function importSettingsAccounts(
     }
   }
 
-  const profilesDir = getSettingValue(rows, "OMNIHARNESS_CREDENTIAL_PROFILES_DIR");
+  const profilesDir = resolveCredentialProfilesDir({
+    ...process.env,
+    OMNIHARNESS_CREDENTIAL_PROFILES_DIR: getSettingValue(rows, "OMNIHARNESS_CREDENTIAL_PROFILES_DIR"),
+  }, process.cwd());
   for (const profileName of profileDirectories(profilesDir)) {
     const workerType = normalizeWorkerType(profileName);
     if (!workerType) continue;

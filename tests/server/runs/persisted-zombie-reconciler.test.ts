@@ -331,4 +331,51 @@ describe("reconcilePersistedReloadZombies — bridge-orphaned working workers", 
     expect(outcome.action).toBe("recovered");
     expect(mockResumeMissingDirectWorker).toHaveBeenCalledTimes(1);
   });
+
+  it("settles an orphaned worker on a run the user is not looking at", async () => {
+    const { runId: watchedRunId } = await setupWorkingWorkerOrphanedByBridge();
+    const { runId: unwatchedRunId, workerId: unwatchedWorkerId } = await setupWorkingWorkerOrphanedByBridge();
+    mockResumeMissingDirectWorker.mockResolvedValue({ name: `${watchedRunId}-worker-1`, state: "working" });
+
+    await reconcilePersistedReloadZombies({
+      selectedRunId: watchedRunId,
+      bridgeAgentNames: new Set<string>(),
+    });
+
+    // The unwatched run used to sit at running/working forever: the sync only
+    // sees agent records for the selected run, and its persisted branch derives
+    // `running` from the stale row, which matches — so nothing ever wrote.
+    const unwatchedRun = await db.select().from(runs).where(eq(runs.id, unwatchedRunId)).get();
+    const unwatchedWorker = await db.select().from(workers).where(eq(workers.id, unwatchedWorkerId)).get();
+    expect(unwatchedRun?.status).toBe("needs_recovery");
+    expect(unwatchedWorker?.status).toBe("lost");
+
+    // Settling is not resuming: only the watched run gets an agent respawned.
+    expect(mockResumeMissingDirectWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves an unwatched run alone while the bridge still holds its worker", async () => {
+    const { runId, workerId } = await setupWorkingWorkerOrphanedByBridge();
+
+    await reconcilePersistedReloadZombies({
+      selectedRunId: null,
+      bridgeAgentNames: new Set([workerId]),
+    });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(run?.status).toBe("running");
+    expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
+  });
+
+  it("leaves an unwatched run alone before its worker is past the grace window", async () => {
+    const { runId } = await setupWorkingWorkerOrphanedByBridge({ updatedAt: new Date() });
+
+    await reconcilePersistedReloadZombies({
+      selectedRunId: null,
+      bridgeAgentNames: new Set<string>(),
+    });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(run?.status).toBe("running");
+  });
 });

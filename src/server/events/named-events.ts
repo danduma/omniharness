@@ -309,6 +309,18 @@ export type WorkerEvent =
   | { kind: "worker.reattached"; runId: string; workerId: string }
   | { kind: "worker.recreated"; runId: string; workerId: string }
   | {
+      /**
+       * An unwatched run was left claiming an active worker the bridge no
+       * longer holds. Settled to `lost`/`needs_recovery` rather than resumed.
+       */
+      kind: "worker.orphan_settled";
+      runId: string;
+      workerId: string;
+      workerStatus: string;
+      runStatus: string;
+      source: string;
+    }
+  | {
       kind: "worker.stale_status_ignored";
       runId: string;
       workerId: string;

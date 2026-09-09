@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull, notInArray } from "drizzle-orm";
 import path from "path";
 import { db } from "@/server/db";
 import { runs, workers } from "@/server/db/schema";
@@ -49,6 +49,25 @@ function isRunEligible(status: string | null | undefined) {
     && normalized !== "recovering"
     && normalized !== "quota_waiting";
 }
+
+/**
+ * SQL-side prefilter for the sweep below, kept in step with `isRunEligible`,
+ * which stays the authority. Listing statuses rather than deriving them keeps
+ * the query index-friendly; `isRunEligible` still re-checks every row, so a
+ * status missing here costs a wasted read, never a wrong decision.
+ */
+const INELIGIBLE_SWEEP_STATUSES = [
+  "done",
+  "failed",
+  "cancelled",
+  "canceled",
+  "promoting",
+  "promoted",
+  "awaiting_user",
+  "needs_recovery",
+  "recovering",
+  "quota_waiting",
+];
 
 function isStaleStartingWorker(worker: typeof workers.$inferSelect, nowMs: number) {
   if (normalizedWorkerStatus(worker) !== "starting") {
@@ -147,6 +166,85 @@ async function markStaleWorkerNeedsUser(args: {
   };
 }
 
+/**
+ * Settle orphaned workers on every run the user is *not* currently watching.
+ *
+ * The per-run pass below only ever looked at `selectedRunId`, so a conversation
+ * whose worker died while the user was reading a different one was never
+ * reconciled at all — and nothing else closes that gap. `syncConversationSessions`
+ * skips a worker the bridge has forgotten outright (`if (!agent) continue`), and
+ * its persisted branch reaches no verdict either: it returns early for planning
+ * runs, derives a status equal to the one already stored for the rest, and defers
+ * the interesting case to `reconcileRunRecovery` — which is itself gated on the
+ * run being selected.
+ *
+ * So `runs.updatedAt` never advances, the complete-catalog checksum never
+ * changes, and the client's 60s validation poll keeps answering `notModified`.
+ * The sidebar spinner keys off `run.status === "running"`, so it spins forever.
+ * Rows have been observed stuck that way for months.
+ *
+ * Deliberately settle-only: no auto-resume. Respawning an agent is what the
+ * user wants for the conversation in front of them, not for every stale row in
+ * the catalog — a sweep that resumed would resurrect months-old conversations
+ * en masse. Here we only record what is already true (the worker is gone) and
+ * hand the user a Resume button.
+ */
+async function settleUnwatchedOrphanedWorkers(args: {
+  bridgeAgentNames: ReadonlySet<string>;
+  selectedRunId: string | null;
+  source?: string;
+  nowMs: number;
+}) {
+  const settledRunIds: string[] = [];
+  // This runs on every snapshot build, so keep it off the full runs table.
+  // Settled and resting states can never hold an orphan worth reporting, and
+  // they are the overwhelming majority of rows.
+  const candidateRuns = await db
+    .select()
+    .from(runs)
+    .where(and(
+      isNull(runs.archivedAt),
+      notInArray(runs.status, INELIGIBLE_SWEEP_STATUSES),
+    ));
+
+  for (const run of candidateRuns) {
+    if (run.id === args.selectedRunId || !isRunEligible(run.status) || run.mode === "implementation") {
+      continue;
+    }
+
+    const runWorkers = await db
+      .select()
+      .from(workers)
+      .where(eq(workers.runId, run.id))
+      .orderBy(asc(workers.createdAt), asc(workers.id));
+    const orphan = runWorkers.find((worker) => isOrphanedActiveWorker(worker, args.bridgeAgentNames, args.nowMs));
+    if (!orphan || !workerMatchesRunProject(run, orphan)) {
+      continue;
+    }
+
+    emitNamedEvent({
+      kind: "worker.orphan_settled",
+      runId: run.id,
+      workerId: orphan.id,
+      workerStatus: orphan.status,
+      runStatus: run.status,
+      source: args.source ?? "unwatched-run-sweep",
+    });
+    await markStaleWorkerNeedsUser({
+      run,
+      worker: orphan,
+      source: args.source ?? "unwatched-run-sweep",
+      reason: LOST_WORKER_REASON,
+    });
+    settledRunIds.push(run.id);
+  }
+
+  if (settledRunIds.length > 0) {
+    notifyEventStreamSubscribers();
+  }
+  return settledRunIds;
+}
+
 export async function reconcilePersistedReloadZombies(args: {
   selectedRunId?: string | null;
   source?: string;
@@ -159,7 +257,26 @@ export async function reconcilePersistedReloadZombies(args: {
   // sees yet).
   bridgeAgentNames?: ReadonlySet<string>;
 }) {
-  const runId = args.selectedRunId?.trim();
+  const runId = args.selectedRunId?.trim() || null;
+  const nowMs = args.nowMs ?? Date.now();
+
+  // Only meaningful once the caller knows what the bridge actually holds;
+  // without that list an absent agent is indistinguishable from one we simply
+  // have not looked up yet.
+  //
+  // The sweep deliberately stays out of the return value: callers read that as
+  // the verdict on the run they asked about, and an unrelated run being settled
+  // must not masquerade as one. It reports through `worker.orphan_settled` and
+  // its recovery incidents instead.
+  if (args.bridgeAgentNames) {
+    await settleUnwatchedOrphanedWorkers({
+      bridgeAgentNames: args.bridgeAgentNames,
+      selectedRunId: runId,
+      source: args.source,
+      nowMs,
+    });
+  }
+
   if (!runId) {
     return { action: "none" as const };
   }
@@ -169,7 +286,6 @@ export async function reconcilePersistedReloadZombies(args: {
     return { action: "none" as const };
   }
 
-  const nowMs = args.nowMs ?? Date.now();
   const runWorkers = await db
     .select()
     .from(workers)

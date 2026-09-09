@@ -53,6 +53,20 @@ const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const PROFILE_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const DEFAULT_PROVIDER_TIMEOUT_MS = 5_000;
 const MAX_PROVIDER_BUFFER_BYTES = 1024 * 1024;
+const MAX_PROVIDER_STDERR_CHARS = 300;
+
+/** Redacted in place, keeping the surrounding text so the failure stays readable. */
+const PROVIDER_SECRET_ASSIGNMENT_PATTERNS: RegExp[] = [
+  /\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS?)"?\s*[=:]\s*"?)[^\s"']+/g,
+  /\b((?:authorization|bearer)\s*:?\s*)[^\s"']+/gi,
+];
+
+/** Replaced whole, for values that are recognisable as secrets on their own. */
+const PROVIDER_SECRET_VALUE_PATTERNS: RegExp[] = [
+  /\bsk-[A-Za-z0-9_-]{8,}/g,
+  /\bgh[opusr]_[A-Za-z0-9]{20,}/g,
+  /\bey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+/g,
+];
 
 function expandHome(input: string, env: EnvLike) {
   if (input === "~") {
@@ -96,7 +110,13 @@ function credentialCommandTimeoutEnvKey(type: string) {
   return `OMNIHARNESS_CREDENTIAL_COMMAND_TIMEOUT_MS_${type.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
 }
 
-function resolveProfilesDir(env: EnvLike, cwd: string) {
+/**
+ * Single source of truth for where credential profile directories live. Callers
+ * that only inspect configuration (the account importer, onboarding) must use
+ * this too, otherwise a profile can be live at runtime while staying invisible
+ * in the UI.
+ */
+export function resolveCredentialProfilesDir(env: EnvLike, cwd: string) {
   const configured = env.OMNIHARNESS_CREDENTIAL_PROFILES_DIR?.trim();
   if (configured) {
     const expanded = expandHome(configured, env);
@@ -248,6 +268,26 @@ function readExpiresAtFile(profileDir: string) {
   return readTextFileIfPresent(join(profileDir, "expires_at"))?.trim() || undefined;
 }
 
+function summarizeProviderStderr(stderr: string) {
+  let text = stderr;
+  for (const pattern of PROVIDER_SECRET_ASSIGNMENT_PATTERNS) {
+    text = text.replace(pattern, (_match, prefix: string) => `${prefix}[REDACTED]`);
+  }
+  for (const pattern of PROVIDER_SECRET_VALUE_PATTERNS) {
+    text = text.replace(pattern, "[REDACTED]");
+  }
+  return text.replace(/\s+/g, " ").trim().slice(0, MAX_PROVIDER_STDERR_CHARS);
+}
+
+function describeProviderFailure(error: Error & { code?: string | number | null; signal?: string | null; killed?: boolean }, command: string, timeoutMs: number) {
+  if (error.code === "ENOENT") return `command not found: ${command}`;
+  if (error.killed) return `timed out after ${timeoutMs}ms`;
+  if (typeof error.code === "number") return `exit ${error.code}`;
+  if (typeof error.code === "string") return error.code;
+  if (error.signal) return `signal ${error.signal}`;
+  return "no exit status";
+}
+
 function runProviderCommand(command: string, args: string[], input: ResolveCredentialProfileInput, profileDir: string, timeoutMs: number, profileName?: string) {
   const expanded = expandHome(command, input.env);
   return new Promise<CredentialProviderResult>((resolveProvider, rejectProvider) => {
@@ -256,11 +296,14 @@ function runProviderCommand(command: string, args: string[], input: ResolveCrede
       env: input.env as NodeJS.ProcessEnv,
       timeout: timeoutMs,
       maxBuffer: MAX_PROVIDER_BUFFER_BYTES,
-    }, (error, stdout) => {
+    }, (error, stdout, stderr) => {
       if (error) {
+        const name = profileName || input.requestedProfile || input.configuredProfile || input.type;
+        const cause = describeProviderFailure(error, expanded, timeoutMs);
+        const detail = summarizeProviderStderr(String(stderr ?? ""));
         rejectProvider(new RuntimeHttpError(
           400,
-          `Credential profile "${profileName || input.requestedProfile || input.configuredProfile || input.type}" provider command failed.`,
+          `Credential profile "${name}" provider command failed (${cause}).${detail ? ` ${detail}` : ""}`,
         ));
         return;
       }
@@ -324,7 +367,7 @@ export async function resolveCredentialProfile(input: ResolveCredentialProfileIn
     return { env: {}, unset: [], status: null };
   }
 
-  const profilesDir = resolveProfilesDir(input.env, input.cwd);
+  const profilesDir = resolveCredentialProfilesDir(input.env, input.cwd);
   const commandBacked = await resolveCommandBackedProfile(input);
   if (commandBacked) {
     return commandBacked;
@@ -421,7 +464,7 @@ export function isCredentialProfileConfigured(input: {
   const name = input.type.trim();
   if (PROFILE_NAME_PATTERN.test(name)) {
     const fileExists = input.fileExists ?? existsSync;
-    const profilesDir = resolveProfilesDir(env, input.cwd ?? process.cwd());
+    const profilesDir = resolveCredentialProfilesDir(env, input.cwd ?? process.cwd());
     if (fileExists(join(profilesDir, name))) {
       return true;
     }

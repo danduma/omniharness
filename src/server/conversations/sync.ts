@@ -123,12 +123,51 @@ async function resolveSyncedFailureMessage(
   return incoming;
 }
 
+/**
+ * Entry types the worker itself authors while doing a turn.
+ *
+ * Everything else in the stream exists before the worker has done anything:
+ * the user's own prompt (`user_input`), the spawn/lifecycle notes the server
+ * writes, and the session handshake the bridge replays as soon as an ACP
+ * session exists (`current_mode`, `config_option`, `available_commands`,
+ * `session_info`). `usage` is accounting, not work.
+ */
+const WORKER_PRODUCED_ENTRY_TYPES = new Set([
+  "message",
+  "thought",
+  "tool_call",
+  "tool_call_update",
+  "permission",
+  "elicitation",
+  "plan",
+  "plan_update",
+  "plan_removed",
+  "agent_content",
+]);
+
+function isWorkerProducedEntry(entry: { type?: string | null; text?: string | null }) {
+  return WORKER_PRODUCED_ENTRY_TYPES.has(entry.type ?? "") && Boolean(entry.text?.trim());
+}
+
+/**
+ * Has this worker produced anything of its own?
+ *
+ * Deliberately not "is the stream non-empty". A direct conversation persists
+ * the user's prompt and the spawn lifecycle notes *before* the turn starts, and
+ * the bridge registers the agent as `idle` in the gap between creating the ACP
+ * session and accepting the prompt. Counting those entries as output made an
+ * idle-because-not-started worker indistinguishable from an idle-because-
+ * finished one, so `resolveSyncedRunState` marked brand-new runs `done` one or
+ * two seconds after creation — and once a direct run is terminal the sync below
+ * skips it, so it never came back to `running` for the four minutes it then
+ * spent actually working.
+ */
 function hasAgentOutput(agent: ReturnType<typeof normalizeAgentRecord>) {
   return Boolean(
     agent.renderedOutput?.trim()
     || agent.currentText.trim()
     || agent.lastText.trim()
-    || agent.outputEntries?.some((entry) => entry.text.trim()),
+    || agent.outputEntries?.some(isWorkerProducedEntry),
   );
 }
 
@@ -213,7 +252,15 @@ function directLiveAgentHasCompletedTurn(agent: ReturnType<typeof normalizeAgent
   return latestMeaningfulEntry?.type === "message";
 }
 
-async function hasPersistedWorkerOutput(worker: typeof workers.$inferSelect) {
+/**
+ * Is there anything at all in this worker's stream?
+ *
+ * Used only to spot a worker that went idle having written literally nothing,
+ * which is a runtime failure worth surfacing. It deliberately counts the user's
+ * prompt and the lifecycle notes: if even those are missing, the stream is
+ * broken rather than merely unstarted.
+ */
+async function hasPersistedWorkerStreamContent(worker: typeof workers.$inferSelect) {
   if (
     worker.outputLog.trim()
     || worker.currentText.trim()
@@ -227,6 +274,20 @@ async function hasPersistedWorkerOutput(worker: typeof workers.$inferSelect) {
     const text = (entry as { text?: unknown }).text;
     return typeof text === "string" && text.trim().length > 0;
   });
+}
+
+/** Persisted twin of `hasAgentOutput`. See the note there for why input and handshake entries do not count. */
+async function hasPersistedWorkerOutput(worker: typeof workers.$inferSelect) {
+  if (
+    worker.outputLog.trim()
+    || worker.currentText.trim()
+    || worker.lastText.trim()
+  ) {
+    return true;
+  }
+
+  const entries = await readWorkerOutputEntries(worker.runId, worker.id);
+  return entries.some((entry) => isWorkerProducedEntry(entry as { type?: string | null; text?: string | null }));
 }
 
 function resolveSyncedRunState(run: typeof runs.$inferSelect, agent: ReturnType<typeof normalizeAgentRecord>) {
@@ -283,11 +344,21 @@ async function resolvePersistedRunState(run: typeof runs.$inferSelect, worker: t
 
 async function isEmptyIdlePersistedWorker(worker: typeof workers.$inferSelect) {
   const status = normalizedStatus(worker.status);
-  return status === "idle" && !(await hasPersistedWorkerOutput(worker));
+  return status === "idle" && !(await hasPersistedWorkerStreamContent(worker));
+}
+
+/** Live twin of `hasPersistedWorkerStreamContent`: anything at all in the stream. */
+function hasAgentStreamContent(agent: ReturnType<typeof normalizeAgentRecord>) {
+  return Boolean(
+    agent.renderedOutput?.trim()
+    || agent.currentText.trim()
+    || agent.lastText.trim()
+    || agent.outputEntries?.some((entry) => entry.text.trim()),
+  );
 }
 
 function isIdleLiveAgentWithoutOutput(agent: ReturnType<typeof normalizeAgentRecord>) {
-  return agent.state === "idle" && !hasAgentOutput(agent);
+  return agent.state === "idle" && !hasAgentStreamContent(agent);
 }
 
 function isAgentBusyRunFailure(run: typeof runs.$inferSelect) {

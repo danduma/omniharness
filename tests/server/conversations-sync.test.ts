@@ -852,6 +852,73 @@ describe("syncConversationSessions", () => {
     expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 
+  it("keeps a direct run running when an idle live worker has only the prompt and session handshake", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct-unstarted.md",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      title: "Direct worker that has not started its turn",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "starting",
+      cwd: process.cwd(),
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // Exactly what the stream holds in the ~1.5s between persisting the user's
+    // prompt and the worker accepting it: the prompt, the spawn notes, and the
+    // ACP handshake the bridge replays as soon as a session exists. The bridge
+    // reports the agent `idle` for that whole window because no turn has begun.
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "claude",
+        cwd: process.cwd(),
+        state: "idle",
+        sessionId: "session-unstarted",
+        sessionMode: "full-access",
+        lastText: "",
+        currentText: "",
+        stderrBuffer: [],
+        stopReason: null,
+        outputEntries: [
+          { id: "e1", type: "user_input", text: "We used to have UI controls for per-word styling.", timestamp: now.toISOString() },
+          { id: "e2", type: "lifecycle", text: "Worker spawned (claude)", timestamp: now.toISOString() },
+          { id: "e3", type: "current_mode", text: "full-access", timestamp: now.toISOString() },
+          { id: "e4", type: "config_option", text: "Mode Model Effort", timestamp: now.toISOString() },
+          { id: "e5", type: "available_commands", text: "brainstorming systematic-debugging", timestamp: now.toISOString() },
+        ],
+      },
+    ], { selectedRunId: runId });
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+
+    expect(run?.status).toBe("running");
+  });
+
   it("completes a running direct run when the live worker is idle with output but no stop reason", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
