@@ -28,21 +28,6 @@ parts: 1
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"user","timestamp":"2026-08-05T20:40:21.382Z","phase":null} -->
-## User · 2026-08-05T20:40:21.382Z
-
-oh no the server crashed
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-05T20:40:26.316Z","phase":"commentary"} -->
-## Codex progress · 2026-08-05T20:40:26.316Z
-
-I’m going to check the crash output and the running processes, find the exact cause, and fix it if the correction is clear. I’m using the debugging instructions for this project so I verify the cause before changing anything.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-05T20:40:29.523Z","phase":null} -->
 ## Tool call: exec · 2026-08-05T20:40:29.523Z
 
@@ -107,13 +92,6 @@ text(JSON.stringify({term, sys, names}, null, 2));
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-05T20:40:48.870Z","phase":"commentary"} -->
-## Codex progress · 2026-08-05T20:40:48.870Z
-
-The API on port 3050 and the Vite interface on port 5173 are both down. The restart controller is still running, so I’m tracing why it did not bring the server back and looking for the last recorded crash rather than starting a second copy blindly.
 
 <!-- /codex-event -->
 
@@ -182,13 +160,6 @@ text(r.output);
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-05T20:41:24.128Z","phase":"commentary"} -->
-## Codex progress · 2026-08-05T20:41:24.128Z
-
-I found the crash. A background quota-resume job noticed that its worker turn had been replaced, raised the expected `WORKER_TURN_SUPERSEDED` cancellation, and nobody caught that cancellation at the background-job boundary. Node treated it as an unhandled failure and exited at 22:39:37. I’m checking the intended cancellation pattern now, then I’ll add a regression test, fix that boundary, and restart the managed server.
 
 <!-- /codex-event -->
 
@@ -294,13 +265,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:41:59.474Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:41:59.474Z
-
-**Assessing server state transition handling**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-05T20:42:04.440Z","phase":null} -->
 ## Tool call: exec · 2026-08-05T20:42:04.440Z
 
@@ -332,28 +296,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"user","timestamp":"2026-08-05T20:42:04.570Z","phase":null} -->
-## User · 2026-08-05T20:42:04.570Z
-
-Obviously make sure that never happens again.
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:42:11.465Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:42:11.465Z
-
-**Planning API status and restart diagnostics**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-05T20:42:17.999Z","phase":"commentary"} -->
-## Codex progress · 2026-08-05T20:42:17.999Z
-
-Yes. I’m fixing both failure layers: the expected “newer turn took over” result must be handled as a normal handoff, and every timer-started background job must have a final safety catch so no rejected promise can kill the process. I’m also bringing the service back through its existing controller now.
 
 <!-- /codex-event -->
 
@@ -425,34 +367,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:42:48.159Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:42:48.159Z
-
-**Designing quota worker resume fix**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:42:48.164Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:42:48.164Z
-
-**Planning safety catch around executeSupervisorWake**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:42:59.289Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:42:59.289Z
-
-**Designing quota worker resume fix**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:42:59.294Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:42:59.294Z
-
-**Planning safety catch around executeSupervisorWake**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-05T20:43:05.231Z","phase":null} -->
 ## Tool call: exec · 2026-08-05T20:43:05.231Z
 
@@ -521,34 +435,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:43:26.524Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:43:26.524Z
-
-**Planning wake.test cancellation handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:43:26.527Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:43:26.527Z
-
-**Designing supervisor resume error handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:43:33.199Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:43:33.199Z
-
-**Planning wake.test cancellation handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:43:33.205Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:43:33.205Z
-
-**Designing supervisor resume error handling**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-05T20:43:38.844Z","phase":null} -->
 ## Tool call: exec · 2026-08-05T20:43:38.844Z
 
@@ -580,20 +466,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:43:49.216Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:43:49.216Z
-
-**Designing async failure persistence handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-05T20:43:50.817Z","phase":"commentary"} -->
-## Codex progress · 2026-08-05T20:43:50.817Z
-
-The service is back up in production mode. I’m now writing two regression tests before changing the code: one reproduces the exact quota-resume race, and the other proves that even an unexpected timer-job rejection is converted into a recorded run failure instead of an unhandled process-level crash.
 
 <!-- /codex-event -->
 
@@ -657,34 +529,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:44:35.633Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:44:35.633Z
-
-**Implementing worker-resume recovery event**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:44:35.640Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:44:35.640Z
-
-**Ensuring async failure handling in wake tasks**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:44:36.979Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:44:36.979Z
-
-**Implementing worker-resume recovery event**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:44:36.980Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:44:36.980Z
-
-**Ensuring async failure handling in wake tasks**
 
 <!-- /codex-event -->
 
@@ -814,13 +658,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-05T20:45:16.996Z","phase":"commentary"} -->
-## Codex progress · 2026-08-05T20:45:16.996Z
-
-The exact crash test now passes, and the general timer safety test passes without warnings. The code now treats “newer turn took over” as a successful recovery handoff, while truly unexpected timer failures are recorded and shown instead of escaping to Node. I’m running the wider checks now, then I’ll restart production once more so the live process loads the fix.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-05T20:45:19.534Z","phase":null} -->
 ## Tool call: exec · 2026-08-05T20:45:19.534Z
 
@@ -852,13 +689,6 @@ text(r.output);
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:45:28.160Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:45:28.160Z
-
-**Documenting skill update approach**
 
 <!-- /codex-event -->
 
@@ -959,13 +789,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:46:00.608Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:46:00.608Z
-
-**Analyzing failure handling in persistRunFailure**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-05T20:46:01.368Z","phase":null} -->
 ## Tool call: exec · 2026-08-05T20:46:01.368Z
 
@@ -1050,13 +873,6 @@ Content was stored in 1 bounded part:
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-05T20:46:50.391Z","phase":"commentary"} -->
-## Codex progress · 2026-08-05T20:46:50.391Z
-
-The wider suite found one failure in an unrelated conversation-sync test; none of the new wake tests failed. I’m rerunning that test by itself to determine whether it’s a pre-existing parallel-suite race or a real interaction before I restart the live service.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-05T20:46:51.442Z","phase":null} -->
 ## Tool call: exec · 2026-08-05T20:46:51.442Z
 
@@ -1088,20 +904,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:47:07.496Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:47:07.496Z
-
-**Planning scoped linting and lifecycle tests**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:47:07.688Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:47:07.688Z
-
-**Planning scoped linting and lifecycle tests**
 
 <!-- /codex-event -->
 
@@ -1333,20 +1135,6 @@ text(r.output); if (r.session_id) text(`SESSION_ID=${r.session_id}`);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:48:10.400Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:48:10.400Z
-
-**Planning controlled restart and verification**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-05T20:48:11.848Z","phase":"commentary"} -->
-## Codex progress · 2026-08-05T20:48:11.848Z
-
-The lifecycle suite passed all 37 scenarios. The full unit suite still has one separate, reproducible failure in `conversations-sync` that existed outside these wake changes; I’m leaving that unrelated work untouched. I’m loading the crash fix into production now and checking the API, bridge, controller status, and logs after the restart.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-05T20:48:15.516Z","phase":null} -->
 ## Tool call: exec · 2026-08-05T20:48:15.516Z
 
@@ -1415,34 +1203,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:48:41.165Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:48:41.165Z
-
-**Planning server readiness and health checks**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:48:41.172Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:48:41.172Z
-
-**Confirming temp file retention and event logging**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:48:43.677Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:48:43.677Z
-
-**Planning server readiness and health checks**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:48:43.677Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:48:43.677Z
-
-**Confirming temp file retention and event logging**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-05T20:48:45.666Z","phase":null} -->
 ## Tool call: exec · 2026-08-05T20:48:45.666Z
 
@@ -1474,13 +1234,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:48:59.467Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:48:59.467Z
-
-**Analyzing supervisor wake lease release issues**
 
 <!-- /codex-event -->
 
@@ -1549,55 +1302,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:49:25.835Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:49:25.835Z
-
-**Planning event log testing and secure env parsing**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:49:25.841Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:49:25.841Z
-
-**Confirming test status and considering restart verification**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:49:34.961Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:49:34.961Z
-
-**Planning event log testing and secure env parsing**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-05T20:49:34.964Z","phase":null} -->
-## Visible reasoning summary · 2026-08-05T20:49:34.964Z
-
-**Confirming test status and considering restart verification**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"final","timestamp":"2026-08-05T20:49:35.445Z","phase":"final_answer"} -->
-## Codex final · 2026-08-05T20:49:35.445Z
-
-The server is back up and this crash path is blocked at two levels:
-
-- Superseded quota-resume turns are now treated as normal handoffs.
-- Every timer-started supervisor job has a final error boundary, including synchronous throws, so failures are recorded instead of crashing Node.
-
-Verified:
-
-- 28 focused wake tests passed.
-- 37 lifecycle scenarios passed.
-- Type checking and lint passed.
-- API health is OK, UI returns HTTP 200, and the agent bridge is healthy.
-
-I also recorded the incident in [the learning note](/Users/masterman/NLP/omniharness/docs/superpowers/learnings/2026-08-05-detached-supervisor-wake-rejection-crash.md).
-
-The full test suite has one separate, reproducible failure in `conversations-sync` involving queued-answer redelivery; it is unrelated to these server-wake changes.
 
 <!-- /codex-event -->
 

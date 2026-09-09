@@ -28,21 +28,6 @@ parts: 1
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"user","timestamp":"2026-06-24T21:03:52.785Z","phase":null} -->
-## User · 2026-06-24T21:03:52.785Z
-
-rendering captions has suddenly got unbelievably slow, like incredibly slow, like it takes like a minute per caption cue.  We've definitely fucked something up. Is it the placement thing? Is that what's breaking it? Something definitely broke it.
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-06-24T21:04:00.127Z","phase":"commentary"} -->
-## Codex progress · 2026-06-24T21:04:00.127Z
-
-I’ll trace this as a regression rather than guess at the “placement thing” too early. I’m going to load the debugging guidance first, then inspect the caption rendering path and recent placement-related code.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-06-24T21:04:00.130Z","phase":null} -->
 ## Tool call: exec_command · 2026-06-24T21:04:00.130Z
 
@@ -465,13 +450,6 @@ If you catch yourself thinking:
 
 
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-06-24T21:04:08.003Z","phase":"commentary"} -->
-## Codex progress · 2026-06-24T21:04:08.003Z
-
-Using `systematic-debugging` here because this smells like a performance regression with a tempting false lead. I’m checking where caption cues are rendered and where “placement” is computed so we can pin it down with evidence.
 
 <!-- /codex-event -->
 
@@ -957,13 +935,6 @@ tests/lifecycle/scenarios/worker-failover/failover-transcript.test.ts
 src/app/api/conversations/[id]/transcript/route.ts
 
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-06-24T21:04:17.038Z","phase":"commentary"} -->
-## Codex progress · 2026-06-24T21:04:17.038Z
-
-The broad search mostly hit unrelated “replacement” language, so I’m narrowing to actual render/transcript code and recent diffs. The worktree is already dirty with user changes, so I’ll keep any edits tightly scoped and won’t disturb those.
 
 <!-- /codex-event -->
 
@@ -1487,13 +1458,6 @@ Output:
 ./src/app/home/ConversationTranscriptManager.ts
 
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-06-24T21:04:27.002Z","phase":"commentary"} -->
-## Codex progress · 2026-06-24T21:04:27.002Z
-
-I don’t see literal subtitle/caption cue code in the app, which makes me suspect “captions” maps to the conversation transcript renderer here. The recent relevant area is the paged transcript/placement work, so I’m opening the merge, placement, and terminal rendering code around that path.
 
 <!-- /codex-event -->
 

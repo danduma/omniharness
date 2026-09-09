@@ -28,33 +28,6 @@ parts: 1
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"user","timestamp":"2026-07-31T22:40:05.728Z","phase":null} -->
-## User · 2026-07-31T22:40:05.728Z
-
-
-# Files mentioned by the user:
-
-## codex-clipboard-a87af6a0-df96-4b59-9420-d2612b683a1f.png: /Users/masterman/.codex/attachments/ef28f7dc-806d-47a6-bdef-89dc89551649/codex-clipboard-a87af6a0-df96-4b59-9420-d2612b683a1f.png
-
-## My request for Codex:
-WHAT THE FUCK JUST HAPPENED!!!!  my projects appear under "other sessions" now!!!! HOW THE FUCK IS THAT EVEN POSSIBLE
-
-AND IT'S NOT ALL OF THEM
-
-AND IT'S BULLSHIT SEESSION NAMES THAT MEAN NOTHING
-
-
-![Attached image](../../../attachments/019fba55-0f83-7242-bb74-11dba8210bc2/Anh8g6-zGocsAAAAAElFTkSuQmCC-159c062118075eda)
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T22:40:12.079Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T22:40:12.079Z
-
-I’m checking exactly why real projects were reclassified as “Other sessions,” why only some moved, and where those junk names came from. I’ll trace the stored records and the sidebar grouping code first; if the cause is clear, I’ll fix it here and verify the running app.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:40:13.817Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:40:13.817Z
 
@@ -81,13 +54,6 @@ text(r.output);
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T22:40:21.171Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T22:40:21.171Z
-
-I’m using the project’s debugging and React state rules because this looks like a data-classification bug, not a cosmetic sidebar glitch. The screenshot already shows an important clue: “Source run,” “Direct resume,” and similar labels look like automated test fixture names, which should never have been mixed into your project list.
 
 <!-- /codex-event -->
 
@@ -174,15 +140,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T22:40:45.752Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T22:40:45.752Z
-
-I found the immediate cause in the live database: the sidebar is reading rows created by automated tests. The exact junk titles in your screenshot exist in `sqlite.db` with fake paths such as `/workspace/app`, while the saved `PROJECTS` setting is completely missing. That combination explains both symptoms: test paths become folders, and real paths are no longer recognized as explicit projects, so only the surviving path-backed runs appear under “Other sessions.”
-
-I’m now tracing which test command wrote into the real database and whether the project-setting deletion was part of the same leak. I have not changed or deleted any data yet.
 
 <!-- /codex-event -->
 
@@ -273,13 +230,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:41:09.563Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:41:09.563Z
-
-**Inspecting environment and project backups**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:41:14.638Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:41:14.638Z
 
@@ -338,13 +288,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:41:35.260Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:41:35.260Z
-
-**Investigating environment inheritance in tests**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:41:35.328Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:41:35.328Z
 
@@ -371,13 +314,6 @@ text(r);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:41:47.194Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:41:47.194Z
-
-**Investigating test environment setup issues**
 
 <!-- /codex-event -->
 
@@ -410,34 +346,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:42:07.673Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:42:07.673Z
-
-**Analyzing Vitest test setup timing**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:42:07.680Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:42:07.680Z
-
-**Investigating test environment mutation source**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:42:23.160Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:42:23.160Z
-
-**Analyzing Vitest test setup timing**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:42:23.168Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:42:23.168Z
-
-**Investigating test environment mutation source**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:42:25.060Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:42:25.060Z
 
@@ -467,41 +375,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:42:43.920Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:42:43.920Z
-
-**Analyzing test time discrepancies**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:42:43.938Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:42:43.938Z
-
-**Planning SQLite WAL-based recovery**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:42:55.917Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:42:55.917Z
-
-**Analyzing test time discrepancies**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:42:55.917Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:42:55.917Z
-
-**Planning SQLite WAL-based recovery**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:42:55.917Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:42:55.917Z
-
-**Assessing safe database backup and forensic steps**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:43:02.876Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:43:02.876Z
 
@@ -528,21 +401,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"user","timestamp":"2026-07-31T22:43:02.966Z","phase":null} -->
-## User · 2026-07-31T22:43:02.966Z
-
-please restore the old data as it was, and make sure this never ever ever can happen again
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T22:43:10.330Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T22:43:10.330Z
-
-I will restore the pre-test database, preserve anything genuinely created afterward where possible, and add a hard safety check so tests cannot ever open the live database again—even if an environment variable is wrong. I’m taking a consistent forensic backup first, then I’ll recover from the newest pre-damage snapshot rather than guessing at rows.
 
 <!-- /codex-event -->
 
@@ -610,13 +468,6 @@ text(p);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:43:26.413Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:43:26.413Z
-
-**Planning forensic SQLite backup strategy**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:43:33.434Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:43:33.434Z
 
@@ -643,20 +494,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:43:41.511Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:43:41.511Z
-
-**Testing SQLite .recover output to file**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T22:43:44.908Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T22:43:44.908Z
-
-The live database had 23,035 of 23,178 pages put on SQLite’s free list at 00:30—so this was a mass test cleanup against production, not a grouping bug. I’ve preserved the current database, WAL, and shared-memory files outside the repository. There is no Time Machine snapshot, so I’m recovering the deleted pages and cross-checking them against the still-present worker stream files.
 
 <!-- /codex-event -->
 
@@ -747,13 +584,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:44:14.607Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:44:14.607Z
-
-**Planning lost_and_found row search**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:44:20.440Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:44:20.440Z
 
@@ -780,125 +610,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:44:34.169Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:44:34.169Z
-
-**Planning database reconstruction from lost rows**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:44:34.171Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:44:34.171Z
-
-**Analyzing schema and row layouts for recovery**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:44:49.662Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:44:49.662Z
-
-**Planning database reconstruction from lost rows**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:44:49.665Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:44:49.665Z
-
-**Analyzing schema and row layouts for recovery**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:44:49.665Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:44:49.665Z
-
-**Evaluating WAL for pre-deletion snapshot reconstruction**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:45:01.483Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:45:01.483Z
-
-**Planning database reconstruction from lost rows**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:45:01.486Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:45:01.486Z
-
-**Analyzing schema and row layouts for recovery**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:45:01.486Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:45:01.486Z
-
-**Evaluating WAL for pre-deletion snapshot reconstruction**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:45:01.486Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:45:01.486Z
-
-**Classifying recovered runs by project path and schema**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:45:11.295Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:45:11.295Z
-
-**Planning database reconstruction from lost rows**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:45:11.300Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:45:11.300Z
-
-**Analyzing schema and row layouts for recovery**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:45:11.300Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:45:11.300Z
-
-**Evaluating WAL for pre-deletion snapshot reconstruction**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:45:11.300Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:45:11.300Z
-
-**Classifying recovered runs by project path and schema**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:45:15.018Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:45:15.018Z
-
-**Planning database reconstruction from lost rows**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:45:15.019Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:45:15.019Z
-
-**Analyzing schema and row layouts for recovery**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:45:15.019Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:45:15.019Z
-
-**Evaluating WAL for pre-deletion snapshot reconstruction**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:45:15.019Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:45:15.019Z
-
-**Classifying recovered runs by project path and schema**
 
 <!-- /codex-event -->
 
@@ -931,209 +642,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:45:47.837Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:45:47.837Z
-
-**Analyzing test suite impact timing**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:45:47.842Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:45:47.842Z
-
-**Planning precise data recovery before cutoff**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:01.232Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:01.232Z
-
-**Analyzing test suite impact timing**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:01.240Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:01.240Z
-
-**Planning precise data recovery before cutoff**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:01.240Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:01.240Z
-
-**Tracing test environment variable inheritance issue**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:16.807Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:16.807Z
-
-**Analyzing test suite impact timing**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:16.825Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:16.825Z
-
-**Planning precise data recovery before cutoff**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:16.825Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:16.825Z
-
-**Tracing test environment variable inheritance issue**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:32.181Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:32.181Z
-
-**Analyzing test suite impact timing**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:32.186Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:32.186Z
-
-**Planning precise data recovery before cutoff**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:32.186Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:32.186Z
-
-**Tracing test environment variable inheritance issue**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:32.186Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:32.186Z
-
-**Designing stricter test environment root enforcement**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:44.082Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:44.082Z
-
-**Analyzing test suite impact timing**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:44.090Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:44.090Z
-
-**Planning precise data recovery before cutoff**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:44.090Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:44.090Z
-
-**Tracing test environment variable inheritance issue**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:44.090Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:44.090Z
-
-**Designing stricter test environment root enforcement**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:44.090Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:44.090Z
-
-**Implementing strict test root validation and environment sanitation**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:59.776Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:59.776Z
-
-**Analyzing test suite impact timing**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:59.784Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:59.784Z
-
-**Planning precise data recovery before cutoff**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:59.784Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:59.784Z
-
-**Tracing test environment variable inheritance issue**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:59.784Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:59.784Z
-
-**Designing stricter test environment root enforcement**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:59.784Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:59.784Z
-
-**Implementing strict test root validation and environment sanitation**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:46:59.784Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:46:59.784Z
-
-**Identifying legitimate preincident data for restoration**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:47:03.915Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:47:03.915Z
-
-**Analyzing test suite impact timing**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:47:03.915Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:47:03.915Z
-
-**Planning precise data recovery before cutoff**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:47:03.915Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:47:03.915Z
-
-**Tracing test environment variable inheritance issue**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:47:03.915Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:47:03.915Z
-
-**Designing stricter test environment root enforcement**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:47:03.915Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:47:03.915Z
-
-**Implementing strict test root validation and environment sanitation**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:47:03.915Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:47:03.915Z
-
-**Identifying legitimate preincident data for restoration**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:47:07.912Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:47:07.912Z
 
@@ -1160,13 +668,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:47:20.603Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:47:20.603Z
-
-**Planning restoration on project clone**
 
 <!-- /codex-event -->
 
@@ -1225,13 +726,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:47:45.728Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:47:45.728Z
-
-**Restoring exact logical settings table**
 
 <!-- /codex-event -->
 
@@ -1322,34 +816,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:48:34.972Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:48:34.972Z
-
-**Filtering execution events by role and uniqueness**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:48:34.974Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:48:34.974Z
-
-**Planning relational salvage with SQL views and filters**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:48:35.518Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:48:35.518Z
-
-**Filtering execution events by role and uniqueness**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:48:35.518Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:48:35.518Z
-
-**Planning relational salvage with SQL views and filters**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:48:39.546Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:48:39.546Z
 
@@ -1379,34 +845,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:48:55.455Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:48:55.455Z
-
-**Planning SQL data restoration and mapping**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:48:55.460Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:48:55.460Z
-
-**Defining worker and message data filtering**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:48:58.761Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:48:58.761Z
-
-**Planning SQL data restoration and mapping**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:48:58.761Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:48:58.761Z
-
-**Defining worker and message data filtering**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:49:00.371Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:49:00.371Z
 
@@ -1433,99 +871,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:49:15.416Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:49:15.416Z
-
-**Planning recovery script strategy**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:49:15.422Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:49:15.422Z
-
-**Designing targeted recovery for critical tables**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:49:30.060Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:49:30.060Z
-
-**Planning recovery script strategy**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:49:30.062Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:49:30.062Z
-
-**Designing targeted recovery for critical tables**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:49:30.062Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:49:30.062Z
-
-**Planning detailed pre-incident data restoration**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:49:43.525Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:49:43.525Z
-
-**Planning recovery script strategy**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:49:43.533Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:49:43.533Z
-
-**Designing targeted recovery for critical tables**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:49:43.533Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:49:43.533Z
-
-**Planning detailed pre-incident data restoration**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:49:47.858Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:49:47.858Z
-
-**Planning recovery script strategy**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:49:47.858Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:49:47.858Z
-
-**Designing targeted recovery for critical tables**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:49:47.858Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:49:47.858Z
-
-**Planning detailed pre-incident data restoration**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:49:47.858Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:49:47.858Z
-
-**Assessing safe runner restart for restoration**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T22:49:50.580Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T22:49:50.580Z
-
-The deleted pages contain the exact pre-incident `PROJECTS` value: 14 real project folders, including `songclipper`, `cloudcaptions`, `dis3`, `segment`, `evergreen`, `directorscut`, `wikinuxt`, and the others. I also recovered 98 genuine conversation records under those real paths, with their matching plans, workers, messages, and stream references.
-
-The trigger is now clear: OmniHarness passes its own live `OMNIHARNESS_ROOT` into agents. When an agent runs Vitest inside OmniHarness, the test setup currently trusts that inherited value, so test cleanup opens and wipes the production database. I’m building and validating the restored database off to the side before swapping anything live.
 
 <!-- /codex-event -->
 
@@ -1584,13 +929,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:51:01.177Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:51:01.177Z
-
-**Assessing missing plans and enforcing foreign keys**
 
 <!-- /codex-event -->
 
@@ -1681,34 +1019,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:51:34.109Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:51:34.109Z
-
-**Mapping run timestamps to filenames**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:51:34.116Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:51:34.116Z
-
-**Designing SQL fixes for missing plans**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:51:40.073Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:51:40.073Z
-
-**Mapping run timestamps to filenames**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:51:40.079Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:51:40.079Z
-
-**Designing SQL fixes for missing plans**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:51:48.836Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:51:48.836Z
 
@@ -1796,13 +1106,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:52:19.545Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:52:19.545Z
-
-**Updating cutoff timestamps for test fixtures**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:52:25.071Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:52:25.071Z
 
@@ -1829,34 +1132,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:52:42.528Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:52:42.528Z
-
-**Planning safety test implementation**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:52:42.532Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:52:42.532Z
-
-**Designing app-root test failure for safety**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:52:43.468Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:52:43.468Z
-
-**Planning safety test implementation**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:52:43.468Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:52:43.468Z
-
-**Designing app-root test failure for safety**
 
 <!-- /codex-event -->
 
@@ -1918,13 +1193,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:52:57.603Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:52:57.603Z
-
-**Defining agent child environment sanitization**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:52:58.969Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:52:58.969Z
 
@@ -1951,20 +1219,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:53:11.512Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:53:11.512Z
-
-**Modifying tests to check root cwd and import errors**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:53:11.522Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:53:11.522Z
-
-**Planning test imports and environment safety checks**
 
 <!-- /codex-event -->
 
@@ -2023,48 +1277,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:53:44.497Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:53:44.497Z
-
-**Implementing isolated test root setup**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:53:44.500Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:53:44.500Z
-
-**Designing robust test root guard**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:53:57.068Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:53:57.068Z
-
-**Implementing isolated test root setup**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:53:57.073Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:53:57.073Z
-
-**Designing robust test root guard**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:53:58.077Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:53:58.077Z
-
-**Implementing isolated test root setup**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:53:58.078Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:53:58.078Z
-
-**Designing robust test root guard**
 
 <!-- /codex-event -->
 
@@ -2184,34 +1396,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:54:53.245Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:54:53.245Z
-
-**Refactoring imports and validating environment sanitization**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:54:53.250Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:54:53.250Z
-
-**Planning atomic live SQLite restore with pre-backup**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:54:54.183Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:54:54.183Z
-
-**Refactoring imports and validating environment sanitization**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:54:54.183Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:54:54.183Z
-
-**Planning atomic live SQLite restore with pre-backup**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:54:57.452Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:54:57.452Z
 
@@ -2328,13 +1512,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T22:55:20.626Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T22:55:20.626Z
-
-The restored candidate now passes both SQLite integrity and all foreign-key checks. It contains the 14 original projects and 98 genuine pre-incident conversations; the fake `/workspace/*` sessions and test accounts are excluded. I’m applying that validated recovery atomically to the live database now, then I’ll restart the existing managed runner so the safety fix is active.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:55:26.189Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:55:26.189Z
 
@@ -2390,34 +1567,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:55:49.083Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:55:49.083Z
-
-**Verifying API health and authentication**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:55:49.087Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:55:49.087Z
-
-**Planning UI verification with focused HTTP tests**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:55:49.466Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:55:49.466Z
-
-**Verifying API health and authentication**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:55:49.467Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:55:49.467Z
-
-**Planning UI verification with focused HTTP tests**
 
 <!-- /codex-event -->
 
@@ -2595,22 +1744,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:56:39.767Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:56:39.767Z
-
-**Documenting apply_patch learning note**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T22:56:41.941Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T22:56:41.941Z
-
-The live database is restored and the managed runner has restarted on the fixed code. The recovered database still passes integrity and foreign-key checks after the restart, and the five junk titles from the screenshot now have zero rows.
-
-I’m finishing the permanent safeguards and verification now: one test proves an inherited live root is replaced, one proves test code refuses any non-temporary database, and one proves spawned agents never receive the runner’s live data-root variables.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:56:44.170Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:56:44.170Z
 
@@ -2733,13 +1866,6 @@ text(p);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T22:57:20.282Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T22:57:20.282Z
-
-**Planning thorough verification steps**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T22:57:27.809Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T22:57:27.809Z
 
@@ -2808,24 +1934,6 @@ Output:
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"state","timestamp":"2026-07-31T22:58:43.397Z","phase":null} -->
-## Task state: context_compacted · 2026-07-31T22:58:43.397Z
-
-```text
-{
-  "type": "context_compacted"
-}
-```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T22:58:47.435Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T22:58:47.435Z
-
-The data is restored and the runner is back up. I’m on the last safety check now: confirming the new isolation rules pass, the live database is still clean, and none of the checks touched your restored conversations.
 
 <!-- /codex-event -->
 
@@ -2950,13 +2058,6 @@ Output:
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T22:59:19.081Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T22:59:19.081Z
-
-The code checks are clean: all 43 targeted tests passed, lint passed, and the full type check passed. One final live check used the wrong health URL and got a 404, so I’m correcting that check and revalidating the database itself.
 
 <!-- /codex-event -->
 
@@ -3165,57 +2266,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T23:00:17.865Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T23:00:17.865Z
-
-**Confirming recovery folder link and verification steps**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T23:00:17.873Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T23:00:17.873Z
-
-**Clarifying test data recovery and restoration details**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"final","timestamp":"2026-07-31T23:00:23.007Z","phase":"final_answer"} -->
-## Codex final · 2026-07-31T23:00:23.007Z
-
-Restored. The fake projects and junk sessions are gone, and the real project list is back.
-
-What happened: tests launched from OmniHarness inherited the live database path. Their cleanup then deleted real records and inserted test fixtures such as “Source run” and `/workspace/app`.
-
-I recovered and restored:
-
-- 14 project folders
-- 98 genuine conversations
-- 324 workers
-- 24,276 execution events
-- 146 artifact streams
-
-This exact failure path is now blocked three ways:
-
-- Tests always receive a fresh temporary database.
-- Tests refuse to start if pointed at a real project directory.
-- Spawned agents no longer inherit OmniHarness’s live database or runner-control variables.
-
-Verification passed:
-
-- Database integrity and foreign keys: clean
-- Fake `/workspace` conversations: 0
-- Junk screenshot titles: 0
-- Regression tests: 43/43 passed
-- Lint: passed
-- Full TypeScript check: passed
-- Runner health: OK
-
-One genuine conversation named “New conversation” remains under “Other sessions” because it was originally created directly in `/Users/masterman/NLP`, not inside a configured project. That is old data, not test pollution.
-
-A complete pre-restoration backup and recovery evidence remain at [omniharness-recovery-2026-08-01-0045](/Users/masterman/NLP/omniharness-recovery-2026-08-01-0045).
 
 <!-- /codex-event -->
 

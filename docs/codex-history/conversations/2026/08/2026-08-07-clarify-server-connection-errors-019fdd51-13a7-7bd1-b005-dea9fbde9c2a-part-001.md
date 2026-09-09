@@ -28,28 +28,6 @@ parts: 1
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"user","timestamp":"2026-08-07T17:42:20.642Z","phase":null} -->
-## User · 2026-08-07T17:42:20.642Z
-
-we should never see "**Load live state snapshot** Runtime request failed with HTTP 502." - this is the cloudflare error of the server being down - we need something clearer like "Cannot connect to server... reconnecting" or something like that
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:42:27.233Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:42:27.233Z
-
-**Planning skills inspection and commentary**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-07T17:42:28.474Z","phase":"commentary"} -->
-## Codex progress · 2026-08-07T17:42:28.474Z
-
-I’m finding where that 502 message is created, then I’ll replace it with a clear reconnecting message and add a regression test so the raw server error cannot leak into the UI. I’m using the debugging, test-first, React, and verification guidance for this change.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-07T17:42:33.191Z","phase":null} -->
 ## Tool call: exec · 2026-08-07T17:42:33.191Z
 
@@ -100,13 +78,6 @@ for (let i = 0; i < results.length; i++) {
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-07T17:42:37.725Z","phase":"commentary"} -->
-## Codex progress · 2026-08-07T17:42:37.725Z
-
-The first lookup used the project’s skill directory, but these skills are installed in the shared Codex directory. I’m correcting the paths now; no project files have been changed.
 
 <!-- /codex-event -->
 
@@ -172,13 +143,6 @@ for (let i = 0; i < results.length; i++) {
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:42:51.200Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:42:51.200Z
-
-**Planning client-server-state-invariants review**
 
 <!-- /codex-event -->
 
@@ -249,13 +213,6 @@ for (let i = 0; i < results.length; i++) text(`--- command ${i + 1} ---\n${resul
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-07T17:43:03.238Z","phase":"commentary"} -->
-## Codex progress · 2026-08-07T17:43:03.238Z
-
-The raw message comes from the runtime request helper, and the live-state manager reports that helper’s error as an activity failure. I’m checking that flow and its existing tests now so the new wording is applied at the correct boundary and only for server-unreachable failures.
 
 <!-- /codex-event -->
 
@@ -422,34 +379,6 @@ for (let i = 0; i < results.length; i++) text(`--- command ${i + 1} ---\n${resul
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:43:29.483Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:43:29.483Z
-
-**Planning clearer 502 error handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:43:29.490Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:43:29.490Z
-
-**Designing localized 502 reconnect message**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:43:31.750Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:43:31.750Z
-
-**Planning clearer 502 error handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:43:31.750Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:43:31.750Z
-
-**Designing localized 502 reconnect message**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-07T17:43:36.329Z","phase":null} -->
 ## Tool call: exec · 2026-08-07T17:43:36.329Z
 
@@ -508,13 +437,6 @@ for (let i = 0; i < results.length; i++) text(`--- command ${i + 1} ---\n${resul
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:43:43.427Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:43:43.427Z
-
-**Assessing i18n locale consistency**
 
 <!-- /codex-event -->
 
@@ -599,55 +521,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:44:01.096Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:44:01.096Z
-
-**Planning normalizeRuntimeHttpError test**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:44:01.100Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:44:01.100Z
-
-**Refining error message clarity for 502 errors**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:44:07.823Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:44:07.823Z
-
-**Planning normalizeRuntimeHttpError test**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:44:07.829Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:44:07.829Z
-
-**Refining error message clarity for 502 errors**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:44:14.400Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:44:14.400Z
-
-**Planning normalizeRuntimeHttpError test**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:44:14.405Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:44:14.405Z
-
-**Refining error message clarity for 502 errors**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-07T17:44:14.407Z","phase":"commentary"} -->
-## Codex progress · 2026-08-07T17:44:14.407Z
-
-The root cause is confirmed: a bare HTTP 502 response is converted into the generic fallback text in `normalizeRuntimeHttpError`, then the live-state manager displays it as an app error. I’ll first add a focused failing test for the 502 case, then make the smallest change at that normalization boundary.
 
 <!-- /codex-event -->
 
@@ -819,13 +692,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:44:52.585Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:44:52.585Z
-
-**Adding multilingual connection message translations**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-07T17:45:15.146Z","phase":null} -->
 ## Tool call: exec · 2026-08-07T17:45:15.146Z
 
@@ -882,13 +748,6 @@ text(JSON.stringify(r));
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-07T17:45:22.996Z","phase":"commentary"} -->
-## Codex progress · 2026-08-07T17:45:22.996Z
-
-The regression test now passes: a bare 502 becomes “Cannot connect to server. Reconnecting…” and no longer includes the status code. I’m checking the surrounding request paths and locale validation next, including the legacy and runner-specific clients that share this normalizer.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-07T17:45:27.162Z","phase":null} -->
 ## Tool call: exec · 2026-08-07T17:45:27.162Z
 
@@ -942,69 +801,6 @@ for (let i = 0; i < results.length; i++) text(`--- command ${i + 1} ---\n${resul
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:45:37.988Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:45:37.988Z
-
-**Preserving user locale and request modifications**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:45:46.250Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:45:46.250Z
-
-**Preserving user locale and request modifications**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:45:46.259Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:45:46.259Z
-
-**Refining bare 502 error detection logic**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:45:55.578Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:45:55.578Z
-
-**Preserving user locale and request modifications**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:45:55.580Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:45:55.580Z
-
-**Refining bare 502 error detection logic**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:45:55.580Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:45:55.580Z
-
-**Adding tests for structured 502 error preservation**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:45:59.448Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:45:59.448Z
-
-**Preserving user locale and request modifications**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:45:59.449Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:45:59.449Z
-
-**Refining bare 502 error detection logic**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:45:59.449Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:45:59.449Z
-
-**Adding tests for structured 502 error preservation**
 
 <!-- /codex-event -->
 
@@ -1114,13 +910,6 @@ for (let i = 0; i < results.length; i++) text(`--- session ${sessions[i]} ---\n$
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-07T17:46:21.704Z","phase":"commentary"} -->
-## Codex progress · 2026-08-07T17:46:21.704Z
-
-The focused tests, locale-parity tests, and lint pass. The 502 handling also preserves real structured server errors, so only the empty/non-JSON proxy response gets the reconnecting wording; I’m waiting on the full TypeScript check and then I’ll inspect the final diff for accidental changes.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-07T17:46:22.474Z","phase":null} -->
 ## Tool call: exec · 2026-08-07T17:46:22.474Z
 
@@ -1146,55 +935,6 @@ text(JSON.stringify(r));
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:46:33.280Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:46:33.280Z
-
-**Planning build and testing steps**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:46:33.281Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:46:33.281Z
-
-**Refining 502 error message handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:46:42.383Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:46:42.383Z
-
-**Planning build and testing steps**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:46:42.386Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:46:42.386Z
-
-**Refining 502 error message handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:46:44.273Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:46:44.273Z
-
-**Planning build and testing steps**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:46:44.273Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:46:44.273Z
-
-**Refining 502 error message handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:46:44.273Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:46:44.273Z
-
-**Planning tests for non-JSON 502 responses**
 
 <!-- /codex-event -->
 
@@ -1264,20 +1004,6 @@ for (let i = 0; i < results.length; i++) text(`--- command ${i + 1} ---\n${resul
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:46:55.285Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:46:55.285Z
-
-**Verifying diff-check scope and exclusions**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-07T17:46:56.508Z","phase":"commentary"} -->
-## Codex progress · 2026-08-07T17:46:56.508Z
-
-The final diff is limited to the shared runtime error normalizer, its regression tests, and the nine locale files. The repository already has unrelated dirty history files with whitespace warnings; I’m not touching those. I’m doing one fresh focused test run and a production interface build now.
 
 <!-- /codex-event -->
 
@@ -1355,20 +1081,6 @@ for (let i = 0; i < results.length; i++) text(`--- session ${sessions[i]} ---\n$
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:47:16.988Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:47:16.988Z
-
-**Verifying clean build and diff status**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:47:16.991Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:47:16.991Z
-
-**Planning targeted regression test addition**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-07T17:47:17.241Z","phase":null} -->
 ## Tool call: exec · 2026-08-07T17:47:17.241Z
 
@@ -1425,62 +1137,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:47:32.978Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:47:32.978Z
-
-**Evaluating nested ternary readability**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:47:32.984Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:47:32.984Z
-
-**Confirming final test and build verification**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:47:42.284Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:47:42.284Z
-
-**Evaluating nested ternary readability**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:47:42.285Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:47:42.285Z
-
-**Confirming final test and build verification**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:47:42.285Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:47:42.285Z
-
-**Designing clearer 502 error UI messaging**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:47:43.269Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:47:43.269Z
-
-**Evaluating nested ternary readability**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:47:43.269Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:47:43.269Z
-
-**Confirming final test and build verification**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:47:43.269Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:47:43.269Z
-
-**Designing clearer 502 error UI messaging**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-07T17:47:44.853Z","phase":null} -->
 ## Tool call: exec · 2026-08-07T17:47:44.853Z
 
@@ -1506,34 +1162,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:47:54.298Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:47:54.298Z
-
-**Deciding to preserve existing error codes**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:47:55.977Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:47:55.977Z
-
-**Deciding to preserve existing error codes**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:47:55.977Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:47:55.977Z
-
-**Preserving existing error code while updating message**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-07T17:47:58.538Z","phase":"commentary"} -->
-## Codex progress · 2026-08-07T17:47:58.538Z
-
-I’m making one small compatibility adjustment before handing this off: the visible wording changes, but the existing `runtime.http_502` error code stays unchanged for callers that may already rely on it. The reconnecting text is the only user-facing behavior change.
 
 <!-- /codex-event -->
 
@@ -1671,13 +1299,6 @@ text(JSON.stringify(r));
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-07T17:48:23.548Z","phase":"commentary"} -->
-## Codex progress · 2026-08-07T17:48:23.548Z
-
-The compatibility-preserving version passes the focused tests, lint, and TypeScript checks. I’m rerunning the interface build against this final version, then I’ll summarize the exact change and verification results.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-07T17:48:24.896Z","phase":null} -->
 ## Tool call: exec · 2026-08-07T17:48:24.896Z
 
@@ -1744,49 +1365,6 @@ text(JSON.stringify(r));
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:48:41.766Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:48:41.766Z
-
-**Finalizing report formatting and content**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:48:41.777Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:48:41.777Z
-
-**Summarizing error message and test updates**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:48:44.004Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:48:44.004Z
-
-**Finalizing report formatting and content**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-07T17:48:44.005Z","phase":null} -->
-## Visible reasoning summary · 2026-08-07T17:48:44.005Z
-
-**Summarizing error message and test updates**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"final","timestamp":"2026-08-07T17:48:45.151Z","phase":"final_answer"} -->
-## Codex final · 2026-08-07T17:48:45.151Z
-
-Changed. Bare/non-JSON HTTP 502 responses now show “Cannot connect to server. Reconnecting…” while preserving structured server errors.
-
-Updated:
-
-- [request.ts](/Users/masterman/NLP/omniharness/src/runtime-api/request.ts:43)
-- [request.test.ts](/Users/masterman/NLP/omniharness/tests/runtime-api/request.test.ts:103)
-- All locale files
-
-Verified: 34 tests pass, TypeScript checks pass, lint passes, and the web build succeeds.
 
 <!-- /codex-event -->
 

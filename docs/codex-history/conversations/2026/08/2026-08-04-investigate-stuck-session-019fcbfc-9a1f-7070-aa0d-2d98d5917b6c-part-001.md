@@ -28,21 +28,6 @@ parts: 1
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"user","timestamp":"2026-08-04T08:55:59.827Z","phase":null} -->
-## User · 2026-08-04T08:55:59.827Z
-
-what happened to session 8d81f64ca066 ? it says asking for your input, I gave it "yes fix", says it's working but it seems stuck
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T08:56:05.011Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T08:56:05.011Z
-
-I’ll trace that session through the database, worker messages, and event log to see exactly where “yes fix” went and whether the worker is still alive. If it’s a clear control-flow bug, I’ll fix it here and verify the recovery. I’m using the debugging and control-plane guides because this looks like a stuck long-running job.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T08:56:07.107Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T08:56:07.107Z
 
@@ -69,13 +54,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T08:56:10.086Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T08:56:10.086Z
-
-The first guide path was the project-local alias, not the actual shared location. I’m correcting that and continuing; nothing in the session has been changed yet.
 
 <!-- /codex-event -->
 
@@ -192,13 +170,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T08:56:29.843Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T08:56:29.843Z
-
-I found the first hard fact: the session is not actually working on the server. The run is marked `failed` because the original worker turn was aborted as a “user steer” when your reply arrived. I’m now checking whether “yes fix” was delivered to a replacement turn or left in an in-between state, which would explain the misleading UI.
 
 <!-- /codex-event -->
 
@@ -347,13 +318,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T08:57:20.226Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T08:57:20.226Z
-
-**Analyzing abort code race condition**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T08:57:22.104Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T08:57:22.104Z
 
@@ -412,13 +376,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T08:57:39.929Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T08:57:39.929Z
-
-**Modifying catch blocks to ignore aborts**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T08:57:42.007Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T08:57:42.007Z
 
@@ -445,13 +402,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T08:57:51.968Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T08:57:51.968Z
-
-**Investigating message append failure**
 
 <!-- /codex-event -->
 
@@ -484,13 +434,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T08:58:05.946Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T08:58:05.946Z
-
-There’s a second live OmniHarness worker in this same checkout investigating this exact stuck session, and it has already touched the same queue/interrupt files. I’m reading its findings before editing so I don’t overwrite parallel work. The failure itself is now clear: a deliberate “stop the old turn so I can send the new reply” signal is being treated as a real worker crash, and both queued messages were left permanently marked as “being delivered.”
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T08:58:08.743Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T08:58:08.743Z
 
@@ -517,20 +460,6 @@ text(r.output);
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T08:58:21.932Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T08:58:21.932Z
-
-**Investigating delayed "yes fix" appearance**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T08:58:22.897Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T08:58:22.897Z
-
-I’ve confirmed the full timeline and the exact race. I’m going to add a regression test first, then fix the two abort handlers so a user-requested steer cannot mark the run failed. I’ll also make failed background delivery return the message to the queue instead of leaving it stuck. Before changing those server states, I’m following this project’s lifecycle rules and test-first guide.
 
 <!-- /codex-event -->
 
@@ -679,13 +608,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T08:58:59.794Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T08:58:59.794Z
-
-**Planning integration tests for create**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T08:59:02.038Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T08:59:02.038Z
 
@@ -744,13 +666,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T08:59:16.145Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T08:59:16.145Z
-
-**Planning workspace interrupt test**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T08:59:17.821Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T08:59:17.821Z
 
@@ -806,34 +721,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T08:59:36.563Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T08:59:36.563Z
-
-**Planning deferred rejection for mock worker abort**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T08:59:36.570Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T08:59:36.570Z
-
-**Sequencing mock abort and interrupt handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T08:59:45.994Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T08:59:45.994Z
-
-**Planning deferred rejection for mock worker abort**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T08:59:46.000Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T08:59:46.000Z
-
-**Sequencing mock abort and interrupt handling**
 
 <!-- /codex-event -->
 
@@ -896,13 +783,6 @@ if (r.session_id) text(`SESSION_ID=${r.session_id}`);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:00:20.206Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:00:20.206Z
-
-The regression test failed for the exact reason we expected: the replacement reply was delivered, but the server still wrote a `run_failed` event for the intentional abort. I’m applying the smallest fix now—classify that abort as an expected handoff in every initial-turn catch.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:00:23.059Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:00:23.059Z
 
@@ -962,34 +842,6 @@ if (r.session_id) text(`SESSION_ID=${r.session_id}`);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:00:50.780Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:00:50.780Z
-
-**Enhancing error handling in delivery flow**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:00:50.785Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:00:50.785Z
-
-**Planning robust release and abort tests**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:00:52.526Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:00:52.526Z
-
-**Enhancing error handling in delivery flow**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:00:52.526Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:00:52.526Z
-
-**Planning robust release and abort tests**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:01:11.046Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:01:11.046Z
 
@@ -1046,13 +898,6 @@ if (r.session_id) text(`SESSION_ID=${r.session_id}`);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:01:44.225Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:01:44.225Z
-
-The second test also failed exactly as the live session did: when one “send now” turn is aborted by a newer steer, its queue row stays `delivering` forever. I’m changing that abort path to close the old row if it already reached the transcript, or put it back in the queue if it had not.
 
 <!-- /codex-event -->
 
@@ -1173,13 +1018,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:02:41.895Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:02:41.895Z
-
-**Identifying self-deadlock in worker turn handling**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:02:47.139Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:02:47.139Z
 
@@ -1235,34 +1073,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:03:11.445Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:03:11.445Z
-
-**Identifying deadlock in sync during snapshot handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:03:11.448Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:03:11.448Z
-
-**Proposing direct elicitation response to avoid deadlock**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:03:13.420Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:03:13.420Z
-
-**Identifying deadlock in sync during snapshot handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:03:13.420Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:03:13.420Z
-
-**Proposing direct elicitation response to avoid deadlock**
 
 <!-- /codex-event -->
 
@@ -1324,13 +1134,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:03:29.276Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:03:29.276Z
-
-**Designing live turn and drain regression test**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:03:30.542Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:03:30.542Z
 
@@ -1357,20 +1160,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:03:37.029Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:03:37.029Z
-
-**Enhancing mock with respondElicitation and error handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:03:42.573Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:03:42.573Z
-
-There was an earlier stall before your “yes fix,” too. The queued side-note was being drained while the worker was waiting on its question, but the drain tried to acquire the same worker-turn lock already held by that waiting question. That is a self-deadlock. I’m adding a focused test for “answer a live question without waiting for the current turn to end.”
 
 <!-- /codex-event -->
 
@@ -1433,20 +1222,6 @@ if (r.session_id) text(`SESSION_ID=${r.session_id}`);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:04:18.890Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:04:18.890Z
-
-**Implementing deliverQueuedElicitationAnswer helper**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:04:21.201Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:04:21.201Z
-
-The live-question test timed out until I manually aborted the original turn, proving the lock cycle. I’m moving question-answer delivery ahead of that lock: answering a question resumes the already-running turn, so it must not wait for a new turn slot. Normal queued prompts will still use the existing turn lock.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:04:30.434Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:04:30.434Z
 
@@ -1506,20 +1281,6 @@ if (r.session_id) text(`SESSION_ID=${r.session_id}`);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:04:47.606Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:04:47.606Z
-
-**Planning session recovery and restart**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:04:47.723Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:04:47.723Z
-
-**Planning session recovery and restart**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:04:48.439Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:04:48.439Z
 
@@ -1546,13 +1307,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:04:56.214Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:04:56.214Z
-
-The running app restarted while I was testing, and its recovery code has already repaired most of this session: the run is back to `running`, the worker is `working`, the earlier queued side-note is now marked delivered, and “yes fix” has been safely returned to `pending` instead of being lost. I’m checking whether the live Claude session has actually resumed and whether the pending reply is now draining.
 
 <!-- /codex-event -->
 
@@ -1585,27 +1339,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:05:08.199Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:05:08.199Z
-
-**Tracing orphaned worker activity**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:05:13.139Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:05:13.139Z
-
-**Tracing orphaned worker activity**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:05:13.139Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:05:13.139Z
-
-**Analyzing recovery and agent reconnection issues**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:05:17.277Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:05:17.277Z
 
@@ -1632,20 +1365,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:05:31.043Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:05:31.043Z
-
-**Diagnosing missing agent and recovery logic**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:05:31.045Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:05:31.045Z
-
-**Planning session recovery with authenticated API**
 
 <!-- /codex-event -->
 
@@ -1736,20 +1455,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:05:48.209Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:05:48.209Z
-
-**Forcing manual session recovery**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:05:50.116Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:05:50.116Z
-
-The restart also exposed a second live-state problem: the database says the worker is working, but the new agent runtime has no such worker. The old Claude process died with the restart at 11:03, after it had already begun editing the flicker fix. I’m invoking the app’s normal forced recovery for this session now so it resumes from the saved Claude session and then drains the pending “yes fix.”
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:05:51.689Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:05:51.689Z
 
@@ -1777,13 +1482,6 @@ if (r.session_id) text(`SESSION_ID=${r.session_id}`);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:05:55.602Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:05:55.602Z
-
-That recovery command only failed to launch because the one-line script format does not allow a top-level `await`; it did not change the session. I’m rerunning the same recovery inside an async function.
 
 <!-- /codex-event -->
 
@@ -2016,20 +1714,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:07:11.780Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:07:11.780Z
-
-**Planning queue event reconciliation**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:07:16.117Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:07:16.117Z
-
-The worker is genuinely live again and continuing the fix from its saved Claude session. I also found proof that “yes fix” was already delivered before the restart—the transcript entry and database message use the exact queue-message ID—so I’m reconciling that queue row to `delivered` and closing the stale “queue blocked” incident. I will not send the reply twice.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:07:22.696Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:07:22.696Z
 
@@ -2087,20 +1771,6 @@ if (r.session_id) text(`SESSION_ID=${r.session_id}`);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:07:36.804Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:07:36.804Z
-
-**Planning lifecycle scenario test**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:07:38.309Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:07:38.309Z
-
-The three focused suites now pass: 24 tests covering initial-turn steering, aborted queue delivery, and live-question draining. I’m adding the project-required headless lifecycle scenario as a final integration check, then I’ll verify the recovered session is still producing output.
 
 <!-- /codex-event -->
 
@@ -2191,13 +1861,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:08:05.045Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:08:05.045Z
-
-**Refining lifecycle test with mockAskAgent and signal handling**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:08:37.077Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:08:37.077Z
 
@@ -2257,13 +1920,6 @@ if (r.session_id) text(`SESSION_ID=${r.session_id}`);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:08:55.185Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:08:55.185Z
-
-The full lifecycle command ran every scenario (the script always includes the whole directory), and the new scenario timed out while 24 other files were concurrently clearing the same test database. The existing 24 scenarios passed, but that shared-database collision makes this new one inconclusive. I’m rerunning just the reported-bug scenario in isolation to separate a real failure from test interference.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:08:55.943Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:08:55.943Z
 
@@ -2291,13 +1947,6 @@ if (r.session_id) text(`SESSION_ID=${r.session_id}`);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:09:07.957Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:09:07.957Z
-
-**Adding diagnostics to inspect mock call and DB state**
 
 <!-- /codex-event -->
 
@@ -2591,13 +2240,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:10:24.389Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:10:24.389Z
-
-The isolated lifecycle scenario now passes end to end. I’m doing the final static check and a fresh session-state check; this will catch TypeScript issues that runtime tests can miss and confirm the recovered worker did not stop again.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:10:25.387Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:10:25.387Z
 
@@ -2653,13 +2295,6 @@ Output:
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:10:43.027Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:10:43.027Z
-
-TypeScript is clean. The debugging guide calls for recording reusable lessons from a control-plane bug like this, so I’m checking the project’s learning format before deciding whether this incident adds anything beyond the existing “runtime owns actionable human input” note.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:10:45.824Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:10:45.824Z
 
@@ -2686,20 +2321,6 @@ text(r.output);
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:10:52.895Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:10:52.895Z
-
-**Documenting interrupt handoff principles**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:10:54.720Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:10:54.720Z
-
-This incident adds one distinct rule not covered by the existing note: an answer to a live question belongs to the turn already waiting for it, while a steer abort is a successful handoff—not a crash. I’m recording that invariant in the lifecycle document and a short incident note so the same lock cycle and false failure do not return.
 
 <!-- /codex-event -->
 
@@ -2819,13 +2440,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:11:51.871Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:11:51.871Z
-
-**Verifying test execution and cleanup**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:11:56.853Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:11:56.853Z
 
@@ -2852,37 +2466,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:12:07.263Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:12:07.263Z
-
-**Tracing job queue and recovery timings**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T09:12:11.797Z","phase":"final_answer"} -->
-## Codex final · 2026-08-04T09:12:11.797Z
-
-Session `8d81f64ca066` was genuinely stuck, but it is recovered now.
-
-What happened:
-
-- A queued answer tried to wait behind the same worker turn that was waiting for that answer, creating a deadlock.
-- Your “yes fix” then aborted the old turn as intended, but the server wrongly recorded that intentional abort as a crash.
-- Two queue rows remained marked `delivering`, which made the UI continue showing “working.”
-
-I fixed all three paths in [create.ts](/Users/masterman/NLP/omniharness/src/server/conversations/create.ts:539), [queued-message-interrupt.ts](/Users/masterman/NLP/omniharness/src/server/conversations/queued-message-interrupt.ts:401), and [queued-messages.ts](/Users/masterman/NLP/omniharness/src/server/conversations/queued-messages.ts:1221).
-
-The session was resumed from Claude session `9951b149-…`. Both queued messages are now `delivered`, both recovery incidents are resolved, and the worker is genuinely live. It has implemented the requested changes and is currently running its tests. You do not need to resend “yes fix.”
-
-Verification:
-
-- 24 focused server tests passed.
-- The new headless lifecycle regression passed.
-- TypeScript passed.
-- `git diff --check` passed.
 
 <!-- /codex-event -->
 

@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -357,6 +357,26 @@ describe("account inventory migration", () => {
       authRef: "setting:OPENAI_API_KEY",
     });
     expect(JSON.stringify([toAccountDto(commandAccount!), toAccountDto(apiAccount!)])).not.toContain("enc:v1:not-the-real-key");
+  });
+
+  it("imports profiles from the default directory the runtime uses when the setting is blank", async () => {
+    // The runtime falls back to <app root>/.omniharness/credential-profiles, so a
+    // profile there must show up as an account rather than silently applying.
+    const defaultDir = join(process.env.OMNIHARNESS_ROOT!, ".omniharness", "credential-profiles");
+    mkdirSync(join(defaultDir, "gemini"), { recursive: true });
+    await setting("OMNIHARNESS_CREDENTIAL_PROFILES_DIR", "");
+
+    try {
+      await runAccountInventoryMigration({ now });
+
+      expect(await db.select().from(accounts).where(eq(accounts.id, "credential-profile-gemini")).get()).toMatchObject({
+        cliType: "gemini",
+        authMode: "credential_profile",
+        authRef: "profile:gemini",
+      });
+    } finally {
+      rmSync(defaultDir, { recursive: true, force: true });
+    }
   });
 
   it("does not recreate accounts that were explicitly deleted", async () => {

@@ -28,21 +28,6 @@ parts: 1
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"user","timestamp":"2026-08-02T20:13:01.356Z","phase":null} -->
-## User · 2026-08-02T20:13:01.356Z
-
-We have this issue where, at least confirmed with Claude Code, the agent works for a little bit, and then it stops for no good reason. And then I have to tell it, are you stuck? And then it says, yes, sorry, and it continues. That never happens with the actual Claude Code CLI, so what is going on?
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-02T20:13:07.164Z","phase":"commentary"} -->
-## Codex progress · 2026-08-02T20:13:07.164Z
-
-I’m going to trace where Claude Code’s process can be mistaken for “finished” or left waiting, then compare that with the CLI’s normal behavior. If the cause is clear, I’ll fix it here and test the exact stop-and-resume case. I’m using the debugging and control-flow guides because this looks like a process lifecycle bug, not a model-quality issue.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-02T20:13:09.122Z","phase":null} -->
 ## Tool call: exec · 2026-08-02T20:13:09.122Z
 
@@ -68,13 +53,6 @@ const r = await tools.exec_command({cmd:"sed -n '1,240p' /Users/masterman/NLP/om
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-02T20:13:11.905Z","phase":"commentary"} -->
-## Codex progress · 2026-08-02T20:13:11.905Z
-
-The project’s skill paths are listed outside the repository, so that first read hit the wrong location. I’m correcting that now; no code has been changed.
 
 <!-- /codex-event -->
 
@@ -134,13 +112,6 @@ const r = await tools.exec_command({cmd:"git status --short; rg -n --hidden -S \
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-02T20:13:29.535Z","phase":"commentary"} -->
-## Codex progress · 2026-08-02T20:13:29.535Z
-
-There’s already evidence of a related class of bug in this codebase: OmniHarness has previously confused partial Claude output with a completed turn. I’m checking whether today’s symptom is the same path or a different one—especially whether Claude actually sends “turn finished,” whether Omni invents that state, or whether the bridge simply stops driving the session.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-02T20:13:31.477Z","phase":null} -->
 ## Tool call: exec · 2026-08-02T20:13:31.477Z
 
@@ -197,13 +168,6 @@ const r = await tools.exec_command({cmd:"sqlite3 -header -column sqlite.db \"SEL
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-02T20:13:48.174Z","phase":"commentary"} -->
-## Codex progress · 2026-08-02T20:13:48.174Z
-
-I found a live example matching your report exactly: run `347d62f21fbf` contains Claude saying “I keep stalling out,” and the history shows OmniHarness twice decided the worker was “awaiting user” even though no real question was asked. That narrows this sharply: the subprocess is alive, but our adapter is ending turns that Claude intended as mid-task narration. I’m now tracing the precise message that triggers that false handoff.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-02T20:13:50.430Z","phase":null} -->
 ## Tool call: exec · 2026-08-02T20:13:50.430Z
 
@@ -229,21 +193,6 @@ const r = await tools.exec_command({cmd:"find app-data .omniharness -type f \\( 
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"user","timestamp":"2026-08-02T20:13:50.628Z","phase":null} -->
-## User · 2026-08-02T20:13:50.628Z
-
-example this session 347d62f21fbf
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-02T20:13:55.669Z","phase":"commentary"} -->
-## Codex progress · 2026-08-02T20:13:55.669Z
-
-Yes—that is the exact session I’m tracing. Its records already show two false “waiting for you” decisions at 22:03 and 22:06, followed by your nudges and Claude resuming. I’m comparing OmniHarness’s adapter output with Claude’s own session file now, so we can identify which layer prematurely ended each turn.
 
 <!-- /codex-event -->
 
@@ -303,28 +252,6 @@ const r = await tools.exec_command({cmd:"jq -cr 'select(.timestamp >= \"2026-08-
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"user","timestamp":"2026-08-02T20:14:13.641Z","phase":null} -->
-## User · 2026-08-02T20:14:13.641Z
-
-aha! found it then
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:14:22.241Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:14:22.241Z
-
-**Planning session turn analysis**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-02T20:14:25.382Z","phase":"commentary"} -->
-## Codex progress · 2026-08-02T20:14:25.382Z
-
-Exactly. The key fact is now proven: OmniHarness did not time out or kill Claude. Claude itself returned an explicit `end_turn` at 22:02:58, then produced its visible answer and returned another `end_turn` at 22:03:11. The suspicious part is that OmniHarness’s injected instructions and turn handling differ from the real CLI, so I’m tracing why Claude believes it should stop and ask permission instead of continuing the requested job.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-02T20:14:28.803Z","phase":null} -->
 ## Tool call: exec · 2026-08-02T20:14:28.803Z
 
@@ -350,13 +277,6 @@ const r = await tools.exec_command({cmd:"jq -cr '\n  if .type==\"user\" and (.me
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-02T20:14:31.915Z","phase":"commentary"} -->
-## Codex progress · 2026-08-02T20:14:31.915Z
-
-Claude moved or rotated its live session file while the task was running, which is normal for its session store. I’m locating the current copy and continuing the same trace.
 
 <!-- /codex-event -->
 
@@ -416,27 +336,6 @@ const r = await tools.exec_command({cmd:"jq -cr '\n  if .type==\"user\" and (.me
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:14:54.202Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:14:54.202Z
-
-**Tracing session disappearance and recovery events**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:14:55.491Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:14:55.491Z
-
-**Tracing session disappearance and recovery events**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-02T20:14:58.977Z","phase":"commentary"} -->
-## Codex progress · 2026-08-02T20:14:58.977Z
-
-The fuller timeline changes the diagnosis: the first real stall happened with no `end_turn` at all. At 21:59 OmniHarness recorded `session_missing`, restarted Claude, and injected “Continue from where you left off.” It did the same again at 22:07. So there are two behaviors in the transcript: one legitimate Claude question at 22:03, but the repeated unexplained freezes are OmniHarness losing the live worker mid-turn and relying on a later sync/recovery to resume it. I’m checking why the runner drops that worker.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-02T20:15:02.591Z","phase":null} -->
 ## Tool call: exec · 2026-08-02T20:15:02.591Z
 
@@ -465,20 +364,6 @@ const r = await tools.exec_command({cmd:"rg -n -C 12 \"21:5[7-9]|22:0[0-9]|347d6
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-02T20:15:13.056Z","phase":"commentary"} -->
-## Codex progress · 2026-08-02T20:15:13.056Z
-
-Found it. Both “stalls” line up exactly with full OmniHarness production restarts:
-
-- 21:59:40 — the runner and agent runtime were restarted.
-- 22:07:11 — they were restarted again.
-- Each restart killed the managed Claude process mid-turn.
-- Recovery recreated it and sent “Continue from where you left off,” but only after the UI later noticed the missing session.
-
-That’s why the real Claude CLI doesn’t do this: its process is not a child of OmniHarness’s restart cycle. I’m tracing who is issuing these repeated “remote request” restarts and whether the fix belongs in restart ownership or immediate worker reattachment.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-02T20:15:14.007Z","phase":null} -->
 ## Tool call: exec · 2026-08-02T20:15:14.007Z
 
@@ -504,34 +389,6 @@ const r = await tools.exec_command({cmd:"rg -n -S \"prod restart requested|dev r
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:15:31.047Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:15:31.047Z
-
-**Investigating app restarts and external triggers**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:15:31.049Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:15:31.049Z
-
-**Diagnosing agent loss during restarts**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:15:32.802Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:15:32.802Z
-
-**Investigating app restarts and external triggers**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:15:32.802Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:15:32.802Z
-
-**Diagnosing agent loss during restarts**
 
 <!-- /codex-event -->
 
@@ -619,43 +476,6 @@ const r = await tools.exec_command({cmd:"sed -n '1,420p' src/server/runner/run.t
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:16:02.353Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:16:02.353Z
-
-**Planning bridge restart without stopping**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:16:02.356Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:16:02.356Z
-
-**Designing signal handling for bridge preservation**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:16:10.547Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:16:10.547Z
-
-**Planning bridge restart without stopping**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:16:10.553Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:16:10.553Z
-
-**Designing signal handling for bridge preservation**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-02T20:16:14.286Z","phase":"commentary"} -->
-## Codex progress · 2026-08-02T20:16:14.286Z
-
-There’s a second, more specific failure after each restart: recovery does create a new Claude process and records the synthetic “Continue from where you left off” prompt, but Claude produces zero tokens and runs zero tools. The next real user message is what finally triggers inference. So the visible behavior is: restart kills the turn → recovery’s first resumed prompt is swallowed → your “are you stuck?” becomes the prompt that wakes it.
-
-I’m fixing that resume handshake rather than merely hiding the restart symptom. I’m using a failing regression test first because this sits on a timing-sensitive worker lifecycle path.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-02T20:16:16.200Z","phase":null} -->
 ## Tool call: exec · 2026-08-02T20:16:16.200Z
 
@@ -712,13 +532,6 @@ const r = await tools.exec_command({cmd:"sed -n '130,310p' src/server/runs/recov
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:16:34.379Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:16:34.379Z
-
-**Analyzing replay-user-messages behavior**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-02T20:16:35.987Z","phase":null} -->
 ## Tool call: exec · 2026-08-02T20:16:35.987Z
 
@@ -744,20 +557,6 @@ const r = await tools.exec_command({cmd:"sed -n '1,520p' src/server/runs/recover
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:16:49.352Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:16:49.352Z
-
-**Modifying prompt to explicit ask for continuation**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:16:49.516Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:16:49.516Z
-
-**Modifying prompt to explicit ask for continuation**
 
 <!-- /codex-event -->
 
@@ -873,13 +672,6 @@ const r = await tools.exec_command({cmd:"sed -n '430,730p' src/server/conversati
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:17:22.759Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:17:22.759Z
-
-**Planning auto resume fix and tests**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-02T20:17:24.607Z","phase":null} -->
 ## Tool call: exec · 2026-08-02T20:17:24.607Z
 
@@ -933,13 +725,6 @@ const r = await tools.exec_command({cmd:"sed -n '260,430p' src/server/workers/st
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:17:34.658Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:17:34.658Z
-
-**Refining recovery prompt strategy**
 
 <!-- /codex-event -->
 
@@ -999,62 +784,6 @@ const r = await tools.exec_command({cmd:"sed -n '1,120p' src/server/conversation
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:17:58.816Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:17:58.816Z
-
-**Clarifying continuation conditions**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:17:58.821Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:17:58.821Z
-
-**Planning test improvements for recovery flow**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:18:10.864Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:18:10.864Z
-
-**Clarifying continuation conditions**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:18:10.868Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:18:10.868Z
-
-**Planning test improvements for recovery flow**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:18:10.868Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:18:10.868Z
-
-**Designing recovered turn execution and error handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:18:12.652Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:18:12.652Z
-
-**Clarifying continuation conditions**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:18:12.652Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:18:12.652Z
-
-**Planning test improvements for recovery flow**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:18:12.652Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:18:12.652Z
-
-**Designing recovered turn execution and error handling**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-02T20:18:23.155Z","phase":null} -->
 ## Tool call: exec · 2026-08-02T20:18:23.155Z
 
@@ -1109,48 +838,6 @@ const r = await tools.exec_command({cmd:"pnpm vitest run tests/server/runs/recov
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:18:46.273Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:18:46.273Z
-
-**Planning minimal asynchronous implementation**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:18:46.279Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:18:46.279Z
-
-**Refining run continuation conditions**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:18:49.251Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:18:49.251Z
-
-**Planning minimal asynchronous implementation**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:18:49.252Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:18:49.252Z
-
-**Refining run continuation conditions**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:18:50.354Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:18:50.354Z
-
-**Planning minimal asynchronous implementation**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:18:50.355Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:18:50.355Z
-
-**Refining run continuation conditions**
 
 <!-- /codex-event -->
 
@@ -1237,13 +924,6 @@ text(await tools.apply_patch(patch));
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:19:57.638Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:19:57.638Z
-
-**Planning session resumption handling**
 
 <!-- /codex-event -->
 
@@ -1418,13 +1098,6 @@ const r = await tools.exec_command({cmd:"pnpm vitest run tests/server/runs/recov
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-02T20:20:43.353Z","phase":"commentary"} -->
-## Codex progress · 2026-08-02T20:20:43.353Z
-
-The new regression now passes: after a missing direct Claude worker is reattached in an idle state, OmniHarness actively sends a recovery continuation and waits for that recovered turn in the background; it no longer marks the conversation “done” and waits for you to wake it. I’m checking the adjacent recovery cases now—especially completed turns and genuine “waiting for user” states—so the fix doesn’t create duplicate work.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-02T20:20:45.049Z","phase":null} -->
 ## Tool call: exec · 2026-08-02T20:20:45.049Z
 
@@ -1478,13 +1151,6 @@ const r = await tools.exec_command({cmd:"sed -n '1,180p' tests/server/conversati
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:21:02.412Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:21:02.412Z
-
-**Fixing test timing with awaits and synchronization**
 
 <!-- /codex-event -->
 
@@ -1573,13 +1239,6 @@ const r = await tools.exec_command({cmd:"pnpm vitest run tests/server/runs/recov
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:21:26.748Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:21:26.748Z
-
-**Adding stopReason test for resume behavior**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-02T20:21:27.822Z","phase":null} -->
 ## Tool call: exec · 2026-08-02T20:21:27.822Z
 
@@ -1599,13 +1258,6 @@ Wall time 11.0 seconds
 Output:
 
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-02T20:21:42.357Z","phase":"commentary"} -->
-## Codex progress · 2026-08-02T20:21:42.357Z
-
-The recovery tests are green, including the two existing conversation-sync cases that previously treated a merely reattached idle worker as finished. Type checking is still running; after that I’ll run the lifecycle suite that covers real restarts and recovery state transitions.
 
 <!-- /codex-event -->
 
@@ -1637,34 +1289,6 @@ The recovery tests are green, including the two existing conversation-sync cases
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:21:58.284Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:21:58.284Z
-
-**Refactoring error handling around recovery event insertion**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:21:58.289Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:21:58.289Z
-
-**Adding recovery incident resolution and run needs recovery flag**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:21:58.883Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:21:58.883Z
-
-**Refactoring error handling around recovery event insertion**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:21:58.884Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:21:58.884Z
-
-**Adding recovery incident resolution and run needs recovery flag**
 
 <!-- /codex-event -->
 
@@ -1807,15 +1431,6 @@ const r = await tools.exec_command({cmd:"pnpm test:lifecycle","workdir":"/Users/
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-02T20:22:48.491Z","phase":"commentary"} -->
-## Codex progress · 2026-08-02T20:22:48.491Z
-
-All lifecycle tests passed, including the real subprocess restart scenario: 24 files, 33 tests. The suite still prints an unrelated existing warning about an incomplete auto-commit mock, but it does not fail any tests and is outside this fix.
-
-This was a real lifecycle design bug, so I’m using the project’s bug-learning guide now to record the exact lesson: reattaching an idle provider session is not the same as resuming an interrupted turn.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-02T20:22:49.286Z","phase":null} -->
 ## Tool call: exec · 2026-08-02T20:22:49.286Z
 
@@ -1841,13 +1456,6 @@ const r = await tools.exec_command({cmd:"sed -n '1,340p' /Users/masterman/.agent
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:22:57.892Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:22:57.892Z
-
-**Updating architecture doc with reattach rule**
 
 <!-- /codex-event -->
 
@@ -1877,13 +1485,6 @@ text(await tools.apply_patch(patch));
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-02T20:23:20.206Z","phase":"commentary"} -->
-## Codex progress · 2026-08-02T20:23:20.206Z
-
-The bug lesson is now recorded in the project architecture: restoring a session and restarting a turn are separate obligations. I’m doing the final evidence check now—only the recovery files, tests, and documentation should be part of this fix; your unrelated local changes remain untouched.
 
 <!-- /codex-event -->
 
@@ -1968,34 +1569,6 @@ Output:
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:24:00.817Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:24:00.817Z
-
-**Verifying changes require future restart**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:24:00.823Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:24:00.823Z
-
-**Evaluating restart risks for fix activation**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:24:08.967Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:24:08.967Z
-
-**Verifying changes require future restart**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:24:08.969Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:24:08.969Z
-
-**Evaluating restart risks for fix activation**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-02T20:24:12.116Z","phase":null} -->
 ## Tool call: exec · 2026-08-02T20:24:12.116Z
 
@@ -2049,27 +1622,6 @@ const r = await tools.exec_command({cmd:"sqlite3 -header -column sqlite.db \"SEL
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:24:33.899Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:24:33.899Z
-
-**Planning safe agent restart**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:24:36.390Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:24:36.390Z
-
-**Planning safe agent restart**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-02T20:24:37.449Z","phase":"commentary"} -->
-## Codex progress · 2026-08-02T20:24:37.449Z
-
-The affected Claude worker is idle now and there are no live agents doing work, so I can safely load the fix without interrupting another turn. I’m restarting OmniHarness once, then I’ll confirm the runner and agent runtime return healthy.
 
 <!-- /codex-event -->
 
@@ -2154,41 +1706,6 @@ const r = await tools.exec_command({cmd:"curl -sS -o /dev/null -w 'runner_http=%
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-02T20:25:15.768Z","phase":null} -->
-## Visible reasoning summary · 2026-08-02T20:25:15.768Z
-
-**Documenting session lifecycle and recovery fix**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"final","timestamp":"2026-08-02T20:25:23.279Z","phase":"final_answer"} -->
-## Codex final · 2026-08-02T20:25:23.279Z
-
-Found it: this was OmniHarness, not Claude.
-
-In session `347d62f21fbf`:
-
-- OmniHarness received production restart requests at 21:59:40 and 22:07:11.
-- Each restart killed the managed Claude process mid-turn.
-- Recovery restored Claude’s session context but did not restart inference.
-- OmniHarness then incorrectly treated the idle reattached worker as finished.
-- Your “are you stuck?” message became the next real prompt and woke Claude up.
-
-The regular Claude CLI doesn’t suffer this because its process isn’t owned by OmniHarness’s restart cycle.
-
-I fixed recovery so interrupted direct turns are explicitly continued, remain marked running, persist their result, and emit lifecycle events. See [recovery-reconciler.ts](/Users/masterman/NLP/omniharness/src/server/runs/recovery-reconciler.ts:46) and the [regression test](/Users/masterman/NLP/omniharness/tests/server/runs/recovery-reconciler.test.ts:275).
-
-Verification:
-
-- 30 focused recovery tests passed.
-- Type checking passed.
-- All 33 lifecycle tests passed, including real process restart recovery.
-- OmniHarness was restarted with the fix; runner HTTP returns 200 and the agent runtime is healthy.
-
-One remaining unknown: the logs only record “remote request,” so they don’t identify what issued those two restart requests. The freeze-and-wait behavior itself is fixed.
 
 <!-- /codex-event -->
 

@@ -28,45 +28,6 @@ parts: 1
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"user","timestamp":"2026-07-30T22:13:45.094Z","phase":null} -->
-## User · 2026-07-30T22:13:45.094Z
-
-## Error Type
-Console Error
-
-## Error Message
-Encountered two children with the same key, `f44c3247-ee38-4777-88ff-c5c01ce47fa9`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version.
-
-
-    at button (<anonymous>:null:null)
-    at <unknown> (src/app/home/ExternalSessionsPicker.tsx:205:19)
-    at Array.map (<anonymous>:null:null)
-    at ExternalSessionsPicker (src/app/home/ExternalSessionsPicker.tsx:201:25)
-    at HomeApp (src/app/home/HomeApp.tsx:1654:7)
-    at OmniApp (src/ui/OmniApp.tsx:29:7)
-    at Page (src/app/page.tsx:10:10)
-
-## Code Frame
-  203 |                 const title = session.title?.trim() || t("externalSessions.untitled");
-  204 |                 return (
-> 205 |                   <button
-      |                   ^
-  206 |                     key={session.sessionId}
-  207 |                     type="button"
-  208 |                     disabled={resumingId !== null}
-
-Next.js version: 15.5.15 (Turbopack)
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-30T22:13:50.732Z","phase":"commentary"} -->
-## Codex progress · 2026-07-30T22:13:50.732Z
-
-I’m tracing where the session list gets duplicate IDs, then I’ll explain the cause and fix it in this checkout. I’m using the project’s debugging and React guidance so the fix addresses the data flow, not just the warning.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-30T22:13:52.149Z","phase":null} -->
 ## Tool call: exec · 2026-07-30T22:13:52.149Z
 
@@ -877,13 +838,6 @@ Tests-first force edge case discovery before implementing. Tests-after verify yo
 | "Keep as reference, write tests first" | You'll adapt it. That's testing after. Delete means delete. |
 
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-30T22:14:00.915Z","phase":"commentary"} -->
-## Codex progress · 2026-07-30T22:14:00.915Z
-
-The warning means the picker receives the same session identity twice; changing the button key alone would only hide that. I’m following the list back to its manager/API source and checking how equivalent lists elsewhere are normalized.
 
 <!-- /codex-event -->
 
@@ -2505,13 +2459,6 @@ df337cf4 (Daniel Duma 2026-06-30 16:33:00 +0200 199)                   : t("exte
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-30T22:14:39.205Z","phase":"commentary"} -->
-## Codex progress · 2026-07-30T22:14:39.205Z
-
-I found the exact duplicate. Claude has the same session UUID saved under two project folders—one for `/Volumes/Lexar/NLP/dis3` and one for `/Users/masterman/NLP/dis3`. The server currently appends both files without checking session identity, so the picker is correctly exposing a bad server list and React warns on the repeated UUID. I’m adding a regression test that requires one entry per session UUID and keeps the newest copy.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-30T22:14:43.891Z","phase":null} -->
 ## Tool call: exec_command · 2026-07-30T22:14:43.891Z
 
@@ -2740,13 +2687,6 @@ export default defineConfig({
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-30T22:14:52.017Z","phase":null} -->
-## Visible reasoning summary · 2026-07-30T22:14:52.017Z
-
-**Planning test cleanup strategy**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-30T22:15:02.893Z","phase":null} -->
 ## Tool call: apply_patch · 2026-07-30T22:15:02.893Z
 
@@ -2901,13 +2841,6 @@ AssertionError: expected [ { …(8) }, { …(8) } ] to have a length of 1 but go
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-30T22:15:16.064Z","phase":"commentary"} -->
-## Codex progress · 2026-07-30T22:15:16.064Z
-
-The regression test fails in exactly the reported way: discovery returns two rows for one UUID. The newest-file rule is now confirmed against the real duplicate, so I’m applying the smallest server-side fix: deterministic newest-first ordering, followed by UUID deduplication.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-30T22:15:17.851Z","phase":null} -->
 ## Tool call: apply_patch · 2026-07-30T22:15:17.851Z
 
@@ -2992,13 +2925,6 @@ Done in 203ms using pnpm v11.2.2
 $ tsc --noEmit
 
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-30T22:15:41.310Z","phase":"commentary"} -->
-## Codex progress · 2026-07-30T22:15:41.310Z
-
-The fix passes its regression test, lint, and the full TypeScript check. I’m doing one final check against your actual Claude session files to confirm that UUID now appears once and resolves to the newer `/Users/masterman/...` copy.
 
 <!-- /codex-event -->
 
@@ -3323,20 +3249,6 @@ index 6b1ba2f..ed26461 100644
  export function globalClaudeConfigDir(): string {
 
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-30T22:16:01.312Z","phase":null} -->
-## Visible reasoning summary · 2026-07-30T22:16:01.312Z
-
-**Planning fresh test and verification**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-30T22:16:02.504Z","phase":"commentary"} -->
-## Codex progress · 2026-07-30T22:16:02.504Z
-
-The live-data check now returns exactly one copy of the reported UUID, choosing the newer `/Users/masterman/NLP/dis3` transcript. I’m checking the already-running app once as the final user-facing verification, without creating or resuming any session.
 
 <!-- /codex-event -->
 
@@ -4092,13 +4004,6 @@ Output:
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-30T22:16:58.449Z","phase":null} -->
-## Visible reasoning summary · 2026-07-30T22:16:58.449Z
-
-**Verifying button title uniqueness**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-30T22:16:59.220Z","phase":null} -->
 ## Tool call: js · 2026-07-30T22:16:59.220Z
 
@@ -4144,34 +4049,6 @@ Wall time: 0.0293 seconds
 Output:
 [{"type":"text","text":""}]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-30T22:17:08.749Z","phase":null} -->
-## Visible reasoning summary · 2026-07-30T22:17:08.749Z
-
-**Verifying final tests and lint status**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"final","timestamp":"2026-07-30T22:17:11.594Z","phase":"final_answer"} -->
-## Codex final · 2026-07-30T22:17:11.594Z
-
-Fixed.
-
-The same Claude session UUID existed in two project folders:
-
-- `/Volumes/Lexar/NLP/dis3`
-- `/Users/masterman/NLP/dis3`
-
-The API returned both, causing React’s duplicate-key warning. Session discovery now keeps only the newest file for each UUID, with deterministic ordering.
-
-Changed:
-
-- [discovery.ts](/Users/masterman/NLP/omniharness/src/server/external-sessions/discovery.ts:213)
-- [discovery.test.ts](/Users/masterman/NLP/omniharness/tests/server/external-sessions/discovery.test.ts:1)
-
-Verified with the regression test, ESLint, TypeScript checking, the real session files, and the running app. The picker now loads without the duplicate-key error.
 
 <!-- /codex-event -->
 

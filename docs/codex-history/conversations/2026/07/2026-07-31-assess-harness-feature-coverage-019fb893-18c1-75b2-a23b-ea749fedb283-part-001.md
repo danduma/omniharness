@@ -28,21 +28,6 @@ parts: 1
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"user","timestamp":"2026-07-31T14:28:00.129Z","phase":null} -->
-## User · 2026-07-31T14:28:00.129Z
-
-What is left for us to have full support for everything that the harnesses can do, especially Codex and Claude Code, such as building mobile apps and running emulators, and also showing the user screenshots of what they're doing, etc.
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T14:28:06.946Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T14:28:06.946Z
-
-I’m going to inspect the current harness integrations and compare what they already expose with what’s still needed for mobile builds, emulators, screenshots, and live user visibility. I’m using the repository-audit guidance so this stays evidence-based and read-only.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T14:28:08.242Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T14:28:08.242Z
 
@@ -74,20 +59,6 @@ text(r.output);
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:28:14.380Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:28:14.380Z
-
-**Planning audit playbook review**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T14:28:15.537Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T14:28:15.537Z
-
-The audit rules call for separate read-only passes on a repository of this size. After I map the architecture, I’ll split the review into independent capability, control-plane, and user-experience checks, then verify every important claim myself.
 
 <!-- /codex-event -->
 
@@ -193,13 +164,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:28:44.043Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:28:44.043Z
-
-**Planning multi-agent capability audit**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T14:28:54.551Z","phase":null} -->
 ## Tool call: spawn_agent · 2026-07-31T14:28:54.551Z
 
@@ -208,22 +172,6 @@ text(r.output);
   "task_name": "harness_capabilities",
   "fork_turns": "all",
   "message": "gAAAAABqbLEmUwkwCmRwxiCY6LrbBBCfe5-yMgEu4e4UCMTzZWMYycsWfkB2JKNP9uFLGJviPm6Su0FD-UNbi0nWKb0TtKHNDyBZXotJR8juHEaNuBAwiIoNi6Yq0q6QrbBZeWOJyjro652YUQTQeQ27xmBZ3iobJJicHOajvk76ZRl-WTlhTlkMAr2ujU8ERi1MFIQoYYX8Pj99Hb41i9lrBEtaZCmTh-CtWd0gKnj2VbCn5UcwydE6I6kGuw1lPhxfTd1GG6K89m6BI9fP2t3RSQpaIArqEhBWNIf6cJlyINhwIti9ZYZD3z-Ns1kfHzcl_SGwc-ELExCW5ucHN6wqH9_3owr0K5t3eJq89JdSnKLku2biyhvdcK58wshtKRCYubnP8ovBIQUqfNghBNoBzVebpRAG0Pm4zu7b2ZCqqrdFwTg_lVZCPAOKPTmSWTRI8XYYkBdQYUD-aCH8rvs6Fo9ElUYLZCsOjlXsxjKAnlSfxEegu3pZPkLDE_JBBcWaXbm5Qml--CAwqkFLTgmDg66xDGoljzOBVCH_XhWd2uNmMQtiGyXE1FXr0Q6wFxiT1iG5J-LRYMXW_K5H3OByserU5lGLjf9QK--ogN2yhaUuDXJCBQBMjhogalbYgTY5I-JruRTiAgcfN0lGmMDdTkR1S2G3QU3kLeZG55oX9CK2vDPAY5twVM9YgNy9wY9DRDSDZ7kZdddYibVXpPQ3-Q2BwPFBfV_h9vW3UW0L3H5bvD4tc-3jldCj5BXLu2gyaakZghf1CzbVRlAS9SjocvfYKdyQ-KB5cKrHnz0b3-kzeGZUtPJL9TZdCJ-EBHyK0VmvsAL4Xwx6EuAe0lhK_no50ndZnpbTlJ8KOzmjtllE6Tc_1P4PHq1Yr1YjhEP7JJPKclTQEEfe52XsnUqDSACbC_kmEspsjG4e_8qAXXH19egBCqp8yoJl4iHcFrmht_vrOZzYDSqrBAyvMoR7pL7w6PixsbWcnl2zto7Eco2LtVsSb-EqmLjB3hxX27Jjg8An0KuVsadi9rwVgCp1AoJpcswe8PRC9pxHT4U5hUYo-7OGbd3avlMrb17_L8EdnUhoFgIqkEF_5EFsrsikThrtpqlmkV_BCj24P-DcVnjmfHaJgEdI6okRTfw1xzTfZSsbTtLVLM_YcTKfFM96PUP-p9c9CLsW7vh7pg88r18NAF26YVg7s8Ruk52X8iFR69uCPBOiJNvCxnNczW4-3VqXLJF5fHGbQMTRz0RAMufE7x5ocBzcTBZviiugtLw6vQ6kXYdgkU-la7j-FtnRNhxod4TLqxbHALmfRFJFY7HIc-c4mrIxgUNICLPnR9vHk8fmVA2yYPdT4keu-om9bQ-J2I6PVzqhePutgatglqAGiP3cHYT0I2qwgsxJj4bP8nbBvYW_wzl027UnMePjpcD7vPDufgATs5iCb3LNHyiYX7fr4_eOZxW7d1TuX4hIOXguQgIz5Bqoh0ReGdPOW2rGwHcVLUBQmyOtKU8ivZtj9XwQVtUWlizIm8yUakTqzNt27DCDTTxAr-p6VpVYQW4PkuHkzX_p6dH7RnNuSxEK-OoI5-FvZqHWy-iF7hhiKJYx7fKo6VST7iAIdcEZTUxEzTOS-NYtN5TLPeZen6AIL0oCl2zlM8dqv-qbAcoNUyYQPoubUAD1KQO0dJ6n8Wbp80rkS2V8RaYVosaC9sA2ImXXKSLza5W9k9TC_pI7rzInzchpZ6uD_vj-BeFfkiYGq4ELO1OJ-eER7A4c28WvTu0M-_znJrERooRo-MhhRKKd1yC0ndgYP8BJ0g5E1DAlWSIq90Og8y2R9W_Jf7qig2221GBVkZHVc7G8l-i_z4xOxEBJXSLEaJLp89hsTxfvSiYoWQV2hSy_kZadI29CsDHoqVnQ_k7N5YXBQSxSAithk6X-8e-VKtGAecTbH6A4vg140krjxpcapMZVtLjLORir_woIFlO6BGEnB_5ZL7NPmAF8ZXVYpnPKiFF4wlGrYLA49cLANO0Eja_9KVPJGuQiIlSKYkTpqWO-snr52hE0KlePaXTnVgdmcJLnLMTjNV_66ohykj9PHlluQs1if8TF7KzFfj6I50JXZWv-QHNbah3ey1HLn61aSQkc8S7_wGCvcAgra3bF8_OmpduHRmRxUh63YnRd-hy__ETOxMzhqgumtzmjQsJ2VJQqGqK5nJUDpA22MSxaQKlgSQDzgRTOpLnI8NZ1mBsEGtSFPVyb6rNLEe3ZrnEC7WOYiZO1UWQgmysdLgt_-TOV68mW77ur7sxGXuqQuj0ZZSw1szxNWBdYz-IaZITIMsAkYxvTX60VcOVjLLvzBuCif2hHAW44bdFzlyM04yl66tML9c-iT9Xb0nJ4I9_PLtwH5l6o4lVQqFhCDjsdUcjBRnWuAS__1P9IFxGHDy1l0A-I3zb7OJcyIRaO3_qP7Gqw2PbOGHG7RD-_WIwjKOmWgVHZASWAujqgbzFWd-ZSaefgA1X5HFX2dDtc59ddKC_SlXqCjUP0C5vvFqaANsjwDgLTADylVuF9V6Ds7ErxXqJIiGPTyMze"
-}
-```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"subagent","timestamp":"2026-07-31T14:28:54.688Z","phase":null} -->
-## Subagent activity · 2026-07-31T14:28:54.688Z
-
-```text
-{
-  "type": "sub_agent_activity",
-  "event_id": "call_YPKDHDbZu32G4cfh9S1kx6QC",
-  "occurred_at_ms": 1785508134688,
-  "agent_thread_id": "019fb893-fea7-7f53-88a4-737afe921f55",
-  "agent_path": "/root/harness_capabilities",
-  "kind": "started"
 }
 ```
 
@@ -253,22 +201,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"subagent","timestamp":"2026-07-31T14:29:04.320Z","phase":null} -->
-## Subagent activity · 2026-07-31T14:29:04.320Z
-
-```text
-{
-  "type": "sub_agent_activity",
-  "event_id": "call_fwQ3vyzyxjWj4qWEuC88N5yY",
-  "occurred_at_ms": 1785508144320,
-  "agent_thread_id": "019fb894-244c-7581-853e-0c115bfe85d5",
-  "agent_path": "/root/mobile_visuals",
-  "kind": "started"
-}
-```
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-result","timestamp":"2026-07-31T14:29:04.324Z","phase":null} -->
 ## Tool result: call_fwQ3vyzyxjWj4qWEuC88N5yY · 2026-07-31T14:29:04.324Z
 
@@ -288,22 +220,6 @@ text(r.output);
   "task_name": "control_plane_tests",
   "fork_turns": "all",
   "message": "gAAAAABqbLE6yRy1Sqpi4LoWrKkrkazygUl-vAi6DrC9-TPnp1uxZXvL8NNrRVguillX__9WIIHxGDJSmWqCjhBogwJp8l24wIpPzvEQqOWTXhFP4Yw--IcQmmppJZG0S3CKgWWBDFEKsAlw1F7gRoWjRILkvuSjcRNzYqS0B3fRFzrllRmrdIsvGBa0rkoUQ5VCTQZjzqL4aqhEvmQObrJJ1wgkqIf97vUyK74G3tsGG-ADyt1EqggsvdIv_WSaxDONtR2NpdMc2SE2D9ouCcJOMbT3KwSvygz6IIZOoHoxs1dqX8FZm_NVo7p_gggyHGQjhRI8dsoVxaRjeiICjhEL2NTpqdQQBhKrtDbJj0juLnW9j7sQMVynAG0rInlNLT1rvRltouAOdMjh31Ke3x4F2B0XlvmY-rlVsaeH6PzENE8u5JQycjQZXYwDFKGVxIkdok8crSDci64FIyg7N1GCIxy9KT6IJ2SbVslTaWD3j7TB4cnOZXIKBsfXhVo_DNoOSGMoql1KHTVdn8CxChv90XPex3cKnrAD_edSkED5i-qIC5_i2JTSjouM6H48byyd1wnQJ2bltIYoYaXXM2p9QVesfYIQkeqKZPTwoHzsM1e20LTRBXSlSIGN24Rct8qs3VxFq13iWv3M2V_C7ZgdaidAJ9tX_W446MQQIH8CqoNyysgDF0kFsE9pNQN7bQWesLTHTUNGoZtJkW5jckMqjnwyZK7JPtZyQZ6S6psQjWfZkRH2oclVjsn25gKqsSzFjDKUQO4n_iCijVZQpeE5RgNuu8wnmg_yLjJhzO2vKMVQk6ZuAXDGrfbegCufkOqNlb5bndfuE-z_RNkrO_XEVLEqX17EuNHa6WDGHWkjY6JFSY8bsKYFxO6coIrUVSV4PSycGJXr-yZb9l--MK3fe9C6kz1cnrlf5aYHFJmnI3fAvflEJf-4vRx3kqzZt30raNT1E1bc7B6fV-mL_0O4ovOuHscVLCfOZzd1vU1biyf68GdnNYJAXV28vyPD9emFsMQwq2PBTDy7jJIFeUWy4hmuGqVGfwVU_QKrtrvEA5sXsEUePw50u9LmxrHVpF-goy2E1Z2pNSwVuJN4JWnWz9DyIzq6wLo0rf2D0RNVBlcsx5I_3wYppcPvszl0nYBtwZ2KluK4kjnC-nflHhwLAJH7tI8gHrAFGm-BB4exC-hkQum0tvVjwZTri2hu09G4VVIK9OE6txB4O1jixY59nw7qZK46373Odnh7UIILUVsAgyS-541-tJMa1dsGW3783r88YK1rhsd5m2_xoQ6BnxGEkMmrcHddIWJDWRR1IWWk_z1lMrPsBC7RVVDgt4JDRGMLb0eaqLMFCHAfwRV9A8GOFEgH2Shy4eJE9ThTPzqehL6mQSWO2-d_ya-wroSO21-Pcxgpn38V1YaUPZ_XX9ncJYxJiStxVff80BoEDFVwLT4kolQ84-zSPscIcAZVHgUEHV_6GJTVu6x50ZNEMLF5dZ91xSAabUq_KZW_Ref-dWtUZA1NvrBNtubAinXQRLSG1TZ7qMwvhViFPf57AldCfQgUUxxYwPO8cwC--dCcNQRvk_98O2o14Tdsc_bzmBvhnbrJTol1sD03hs8crgTOX54xT3c6omvOrdMt23nHpul5IvbZyzK-s_XBhN2gxuKBOOa0xR-VFRsO3qTgVzX5ggkpZQRKideVOxs8bXnCiLYoiKZlBp869t8I9J7LcQ7KxFHwvnjraqfCICtLjHfK0Yp0FMCJ-dWODqRtt50bhHs8KFsIC8LeNZmSrLAcn6SkONUGl02Du2J6F3C5Ydg8BIXx0jHDFniIhlCstzhXM_08jO4UAeGw_8-mjhhgUAih5AsohNLK3zgw_qsU0Hk6CJM1s0qmXnAVaqRg_LG0OVbyIkDyVhiT2YPAmLK9aPiqxmu3lj67Hv08vj9YwMTpk_3t3z0kHzr6jfHq7nyIvwfppdOhXqxGk6csUYhx5OUeiuOMUOg_nWsU84JsWzIOM3IyfmdOSkKC88rZSvYCTL94kVKr-zH8msJkUeVz_DJzZ8RgnekYtldYUP1e5WbzHwX4T3wgl24n5yRKLDeEdyJ5ObeDciY9JZuvvpNFXzN27_W_pa647XW7LdqtV9DWYkb0Ktsc9xEa-u2RuSNGXUboBN12e62zDvSSPHwyU0tZphTCGseDh4vfr8VGJgN1GinwPh1XUa_qzEyP52CTpDVOMQRhvbp1BT9dJ-q-qILOm9SSvt0ueylcUZm1_FC-_6J7BJwOY7GdPRYkrUwfbiH7uej9-hIFmLGprxW2PjZwmgUbo3291EOKtluYMiu4wLceVTHnN_e1ZgRRNdrAMgwu4SIHFEdomRXpD6Zl0Q8UNppqlOkmyMOK9OTt1pSsu8KsAbQbu6j3G-YQ0YMRT1tTPTDdUCQbdm1Y7O0jeqrQk4tKvGJgG5tesGTWmECtAksWmXM5egoLwh6z2n7bDgLvEoILpcEyA3NdFUrxG9Ut4WMgcy3FXuT1-CZJZvfajUBIS52QlxDLhFu_PbIYUMr6LXpp2oMgs5PQMe_Om6cVxhKc"
-}
-```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"subagent","timestamp":"2026-07-31T14:29:14.171Z","phase":null} -->
-## Subagent activity · 2026-07-31T14:29:14.171Z
-
-```text
-{
-  "type": "sub_agent_activity",
-  "event_id": "call_lJfJi3fpoP1ocUiIymzIpBwZ",
-  "occurred_at_ms": 1785508154171,
-  "agent_thread_id": "019fb894-4ac8-7063-b576-4410d57dbbf6",
-  "agent_path": "/root/control_plane_tests",
-  "kind": "started"
 }
 ```
 
@@ -660,13 +576,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T14:30:35.790Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T14:30:35.790Z
-
-The first clear distinction is important: OmniHarness already has native iOS/Android apps for supervising workers, but that is separate from giving a Codex or Claude worker a reliable “develop, launch, inspect, and prove a mobile app” workflow. I’m checking both layers independently.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T14:30:39.202Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T14:30:39.202Z
 
@@ -698,13 +607,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:30:50.494Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:30:50.494Z
-
-**Planning official docs browsing**
 
 <!-- /codex-event -->
 
@@ -964,13 +866,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:32:06.351Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:32:06.351Z
-
-**Identifying terminal output capability absence**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T14:32:10.811Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T14:32:10.811Z
 
@@ -999,13 +894,6 @@ const res = await tools.web__run({search_query:[
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:32:23.798Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:32:23.798Z
-
-**Assessing Codex app-server for full feature support**
 
 <!-- /codex-event -->
 
@@ -1337,13 +1225,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:34:04.475Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:34:04.475Z
-
-**Assessing app server capabilities and architecture**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T14:34:07.127Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T14:34:07.127Z
 
@@ -1375,20 +1256,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:34:21.855Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:34:21.855Z
-
-**Assessing XcodeBuildMCP configuration limitations**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:34:21.870Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:34:21.870Z
-
-**Analyzing agent terminal and API capabilities**
 
 <!-- /codex-event -->
 
@@ -1426,13 +1293,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:34:32.507Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:34:32.507Z
-
-**Inspecting authentication gaps in terminal routing**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T14:34:35.484Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T14:34:35.484Z
 
@@ -1464,24 +1324,6 @@ text(r.output);
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"state","timestamp":"2026-07-31T14:36:10.863Z","phase":null} -->
-## Task state: context_compacted · 2026-07-31T14:36:10.863Z
-
-```text
-{
-  "type": "context_compacted"
-}
-```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T14:36:16.268Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T14:36:16.268Z
-
-I’ve finished the main audit. I’m now checking the three focused reviews against the code so the final answer separates what already works, what only works when manually configured, and what is genuinely missing.
 
 <!-- /codex-event -->
 
@@ -1819,187 +1661,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:37:51.343Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:37:51.343Z
-
-**Planning detailed local and web citations**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:37:51.348Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:37:51.348Z
-
-**Summarizing harness support scope and blockers**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:38:01.467Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:38:01.467Z
-
-**Planning detailed local and web citations**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:38:01.474Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:38:01.474Z
-
-**Summarizing harness support scope and blockers**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:38:01.475Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:38:01.475Z
-
-**Detailing roadmap phases and screenshot limitations**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:38:13.610Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:38:13.610Z
-
-**Planning detailed local and web citations**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:38:13.616Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:38:13.616Z
-
-**Summarizing harness support scope and blockers**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:38:13.616Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:38:13.616Z
-
-**Detailing roadmap phases and screenshot limitations**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T14:38:13.616Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T14:38:13.616Z
-
-**Defining full support scope and capabilities**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"final","timestamp":"2026-07-31T14:38:49.517Z","phase":"final_answer"} -->
-## Codex final · 2026-07-31T14:38:49.517Z
-
-Short version: OmniHarness has a solid coding-agent foundation, but it does not yet provide the complete “build a mobile app, run it, inspect it, interact with it, and show me proof” loop. The largest immediate bug is that real screenshots are currently corrupted before they reach the user.
-
-### What works now
-
-| Capability | Status |
-|---|---|
-| Codex and Claude editing, building, and testing through shell commands | Works when the runner has the required tools |
-| Filesystem access, permissions, questions, plans, diffs, and terminals | Mostly works |
-| Sending images from the user to the agent | Works |
-| Displaying small protocol image samples | Appears to work |
-| Building iOS/Android through raw commands | Possible on a properly configured runner |
-| OmniHarness iOS and Android apps | Work as remote supervision clients, not as mobile-development environments |
-| Booting, selecting, and managing emulators | Not a product feature |
-| Interacting with an emulator and collecting visual proof | Not reliably supported |
-| Full native Codex/Claude feature parity | Not yet |
-
-The mobile clients are intentionally remote interfaces to a runner; they do not run Codex, Claude, Xcode, or Android tooling themselves. That distinction is documented in [apps/mobile/README.md](/Users/masterman/NLP/omniharness/apps/mobile/README.md:1).
-
-### The most important gaps
-
-1. Screenshots need durable storage.
-
-Real images are saved as base64 inside the worker output, but raw strings are cut to 4,000 characters in both the live output and durable worker history:
-
-- [agent output truncation](/Users/masterman/NLP/omniharness/src/server/agent-runtime/output-store.ts:7)
-- [worker history truncation](/Users/masterman/NLP/omniharness/src/server/workers/output-store.ts:187)
-- [UI assumes complete image data](/Users/masterman/NLP/omniharness/src/components/Terminal.tsx:1707)
-
-A normal emulator screenshot is far larger than that, so the resulting image is invalid. The tests use tiny sample payloads and therefore miss the problem.
-
-Agent-created PNG files also cannot be previewed through the normal project-file path because binary files are rejected and Markdown images are not rendered.
-
-The fix should be a proper artifact system: save the binary once, put a small reference in the conversation history, serve it through an authenticated URL, and provide thumbnails, full-screen viewing, download, retention, and cleanup.
-
-2. We need a mobile-device control layer.
-
-Today, an agent can improvise with `xcodebuild`, `xcrun`, `adb`, and Gradle when those tools happen to be installed. OmniHarness itself cannot:
-
-- Tell whether a runner can build iOS or Android.
-- List and select simulators or emulators.
-- Boot and reserve a device for one worker.
-- Install and launch an application.
-- Stream application and device logs.
-- Tap, type, swipe, or inspect the accessibility tree.
-- Capture screenshots or recordings.
-- Reliably shut down and clean up everything afterward.
-
-The existing diagnostics only check general coding tools in [tool-env.ts](/Users/masterman/NLP/omniharness/src/server/agent-runtime/tool-env.ts:68). They do not check Xcode, simulator runtimes, Java, Android SDKs, AVDs, connected devices, signing, or GUI permissions.
-
-This should become an optional runner capability with iOS and Android implementations, clear device ownership, timeouts, recovery, and visible lifecycle events.
-
-3. The current machine is not ready for native mobile work.
-
-The agent binaries are installed:
-
-- Codex CLI 0.144.0
-- Claude Code 2.1.220
-- Both ACP adapters are present
-
-But the host currently has:
-
-- No complete Xcode installation or `simctl`
-- `adb`, but no connected Android device
-- No Java runtime
-- No usable Android emulator installation detected
-
-So even before product work, this runner needs full Xcode and Android/JDK provisioning.
-
-4. “All ACP methods registered” does not mean full support.
-
-The compatibility check passes and reports 42 registered ACP methods. However, it mostly checks names and labels, not complete user journeys. It does not prove that screenshots, commands, terminals, sessions, MCP connections, or provider-specific behavior survive execution and reload. See [check-acp-compatibility.ts](/Users/masterman/NLP/omniharness/scripts/check-acp-compatibility.ts:15).
-
-We need executable capability tests against pinned Codex and Claude adapter versions.
-
-5. Native Codex and Claude features need provider-specific support.
-
-ACP gives us a useful common foundation, but it cannot automatically expose every changing feature of both harnesses.
-
-Features that are missing, hidden, or not first-class include:
-
-- Codex/Claude slash commands: updates are received, but the existing command menu is not connected to the composer.
-- Native session creation, listing, forking, closing, and deletion as separate OmniHarness conversations.
-- Child agents and native multi-agent activity as visible worker trees.
-- Claude hooks, plugins, commands, and global configuration inheritance.
-- Codex plugins, browser/computer control, image generation, goals, and other native features.
-- Live terminal output and cancellation in the main conversation.
-- A truthful “supported/degraded/unsupported” feature report for each adapter version.
-
-Full support therefore needs two layers:
-
-- A dependable common ACP baseline.
-- Codex- and Claude-specific extensions for features that ACP cannot represent.
-
-6. Terminal execution needs tightening before adding emulator control.
-
-The ACP terminal currently accepts an adapter-provided working directory and merges its environment into the server process environment in [terminal-service.ts](/Users/masterman/NLP/omniharness/src/server/agent-runtime/acp/terminal-service.ts:53). It does not enforce the worker’s workspace or access mode in the same way as normal worker commands.
-
-Before exposing powerful device and GUI controls, terminals need workspace validation, the worker’s managed environment, permission checks, and process-tree ownership.
-
-### Recommended order
-
-1. Fix screenshots and create the durable artifact system.
-2. Lock down ACP terminal execution.
-3. Pin adapter versions and add a truthful capability matrix.
-4. Add mobile toolchain checks to runner diagnostics.
-5. Build the simulator/emulator control layer.
-6. Connect command, session, child-agent, plugin, browser, and computer-use surfaces.
-7. Add full release tests: build → boot → install → launch → interact → screenshot → display → reload → clean up.
-
-The acceptance test for “mobile support” should be simple: both Codex and Claude can take a fixture app, build it, launch it in an owned emulator, interact with it, capture what they saw, show that image to a remote web/mobile user, survive reconnect and reload, and leave no emulator or process behind.
-
-No files were changed during this audit.
 
 <!-- /codex-event -->
 

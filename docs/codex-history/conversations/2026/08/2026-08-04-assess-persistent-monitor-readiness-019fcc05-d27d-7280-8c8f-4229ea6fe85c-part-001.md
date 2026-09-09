@@ -28,23 +28,6 @@ parts: 1
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"user","timestamp":"2026-08-04T09:06:35.027Z","phase":null} -->
-## User · 2026-08-04T09:06:35.027Z
-
-one claude code agent tells me this: "**Monitor re-armed** (the old one died with the runner), now persistent, firing on either the DONE file or a silent process death."
-
-is omniharness ready for this? the monitor will actually run? the session says "working" so I guess that's good?
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:06:46.559Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:06:46.559Z
-
-I’m checking what “monitor re-armed” means in OmniHarness and whether the current “working” state proves it’s still running. I’ll verify the runner and session state instead of treating that label as enough evidence. I’m using the debugging and long-running-job guidance because this is a process-lifecycle question.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:06:46.930Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:06:46.930Z
 
@@ -70,13 +53,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:06:50.974Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:06:50.974Z
-
-The project’s skill shortcut points outside the repository, so I’m reopening the required guidance from its actual location, then I’ll inspect the live runner and persisted session records.
 
 <!-- /codex-event -->
 
@@ -136,13 +112,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:07:04.983Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:07:04.983Z
-
-I found the exact monitor process: it is alive, detached from the runner’s terminal input, and checking every 20 seconds for both the completion file and the Codex process. I’m now tying it to the correct OmniHarness run and checking whether OmniHarness can receive its eventual result; the “working” badge alone can be stale.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:07:09.999Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:07:09.999Z
 
@@ -168,13 +137,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:07:19.778Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:07:19.778Z
-
-**Assessing monitor process persistence**
 
 <!-- /codex-event -->
 
@@ -206,27 +168,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:07:37.286Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:07:37.286Z
-
-**Analyzing Claude Code Monitor persistence**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:07:37.292Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:07:37.292Z
-
-**Identifying flawed process death detection logic**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:07:39.165Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:07:39.165Z
-
-There’s one important flaw in the agent’s claim: the monitor is alive, but its “silent process death” check may match the monitor’s own command line because that command itself contains the words `codex exec`. I’m verifying that now, along with whether the completion-file path can still wake the Claude turn.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:07:43.023Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:07:43.023Z
 
@@ -255,20 +196,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:07:58.902Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:07:58.902Z
-
-**Verifying monitor persistence limits**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:07:58.906Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:07:58.906Z
-
-**Analyzing monitor activity and timestamps**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:08:01.509Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:08:01.509Z
 
@@ -294,41 +221,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:08:16.593Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:08:16.593Z
-
-**Analyzing persistent monitor behavior**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:08:16.599Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:08:16.599Z
-
-**Tracing monitor lifecycle within sessions**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:08:17.960Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:08:17.960Z
-
-**Analyzing persistent monitor behavior**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:08:17.960Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:08:17.960Z
-
-**Tracing monitor lifecycle within sessions**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:08:19.890Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:08:19.890Z
-
-The evidence now separates three things: OmniHarness recovered the Claude session correctly, the completion watcher is genuinely running, and the detached Codex job is still producing output. However, “persistent” here does not make the watcher independent of OmniHarness, and its process-death test is faulty. I’m doing one last check of the monitor’s own semantics so I can tell you exactly what is safe to rely on.
 
 <!-- /codex-event -->
 
@@ -388,13 +280,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:08:45.640Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:08:45.640Z
-
-**Investigating session persistence and unsolicited updates**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:08:48.035Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:08:48.035Z
 
@@ -423,27 +308,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:09:03.883Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:09:03.883Z
-
-**Clarifying persistent monitor behavior**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:09:03.886Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:09:03.886Z
-
-**Analyzing monitor persistence and recovery limits**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-04T09:09:06.192Z","phase":"commentary"} -->
-## Codex progress · 2026-08-04T09:09:06.192Z
-
-I’ve got the answer: the happy path is live, but the setup is not fully reliable. The DONE-file notification should work; the “Codex died silently” notification will not work as written. I’m recording the reusable lifecycle lesson from this diagnosis before I summarize it.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-04T09:09:07.023Z","phase":null} -->
 ## Tool call: exec · 2026-08-04T09:09:07.023Z
 
@@ -469,53 +333,6 @@ text(r.output);
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:09:22.970Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:09:22.970Z
-
-**Resolving skill write authorization conflict**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:09:22.972Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:09:22.972Z
-
-**Analyzing monitor process matching flaw**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:09:28.216Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:09:28.216Z
-
-**Resolving skill write authorization conflict**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-04T09:09:28.221Z","phase":null} -->
-## Visible reasoning summary · 2026-08-04T09:09:28.221Z
-
-**Analyzing monitor process matching flaw**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"final","timestamp":"2026-08-04T09:09:34.605Z","phase":"final_answer"} -->
-## Codex final · 2026-08-04T09:09:34.605Z
-
-Partly ready. The current job is healthy, but the monitor is not fully reliable.
-
-- Codex is genuinely running and still writing to its log.
-- The DONE-file watcher is genuinely running and should notify Claude within about 20 seconds after the file appears.
-- OmniHarness successfully recovered and reattached the Claude session after the runner restart.
-- “Working” is consistent with the active monitor, but it is not proof by itself.
-
-Two caveats:
-
-1. The silent-death check is broken: `pgrep -f "codex exec"` matches the monitor’s own command line, so it may never notice Codex dying.
-2. “Persistent” means until the Claude session ends. The monitor remains a child of Claude/OmniHarness and will die on another runner restart.
-
-So: the likely successful completion path should work right now. For production-grade reliability, the monitor should track the exact Codex PID with `kill -0`, and OmniHarness should treat these monitors as recoverable background tasks rather than relying on the generic “working” state.
 
 <!-- /codex-event -->
 

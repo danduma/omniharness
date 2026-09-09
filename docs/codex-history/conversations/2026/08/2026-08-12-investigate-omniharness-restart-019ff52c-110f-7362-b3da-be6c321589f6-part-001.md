@@ -28,21 +28,6 @@ parts: 1
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"user","timestamp":"2026-08-12T08:52:16.134Z","phase":null} -->
-## User · 2026-08-12T08:52:16.134Z
-
-This computer just restarted and the OmniHarness server did not come back online. It is meant to restart with the system. What actually happened?
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-12T08:52:20.095Z","phase":"commentary"} -->
-## Codex progress · 2026-08-12T08:52:20.095Z
-
-I’m going to check how OmniHarness is supposed to start at login, whether that startup job ran after the reboot, and what the service logs say. I’ll explain the cause first, then fix it if the evidence points to a safe, clear repair. I’m using the project’s debugging workflow so the diagnosis is based on the actual startup state and logs.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-12T08:52:21.693Z","phase":null} -->
 ## Tool call: exec · 2026-08-12T08:52:21.693Z
 
@@ -111,20 +96,6 @@ text(out.join("\n"));
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:52:38.024Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:52:38.024Z
-
-**Investigating launchdaemon and restart process**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-12T08:52:39.458Z","phase":"commentary"} -->
-## Codex progress · 2026-08-12T08:52:39.458Z
-
-The computer’s startup job did run, but OmniHarness itself is still not listening on port 3050. The restart controller is alive, so the failure is later in the chain: launchd started the controller, but the controller did not successfully bring up the runner. I’m narrowing that down from the job configuration, process tree, and its own logs now.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-12T08:52:47.889Z","phase":null} -->
 ## Tool call: exec · 2026-08-12T08:52:47.889Z
 
@@ -164,13 +135,6 @@ text(out.join("\n"));
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:52:55.692Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:52:55.692Z
-
-**Investigating remote restart and startup logs**
 
 <!-- /codex-event -->
 
@@ -256,20 +220,6 @@ text(out.join("\n"));
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:53:25.595Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:53:25.595Z
-
-**Investigating LaunchDaemon restart behavior**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-12T08:53:28.942Z","phase":"commentary"} -->
-## Codex progress · 2026-08-12T08:53:28.942Z
-
-The root cause is becoming clear: the installed launchd job is configured to start only the small restart-control service on port 3099. Its code never restores or starts the OmniHarness runner on boot, even though it still has a stale record saying production was the last mode. After the reboot, the old runner process disappeared, launchd correctly brought back only the controller, and nothing issued the separate “start production” action. I’m checking the history and tests to confirm whether this was an installation/configuration regression or an unimplemented promise before changing it.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-12T08:53:35.917Z","phase":null} -->
 ## Tool call: exec · 2026-08-12T08:53:35.917Z
 
@@ -311,43 +261,6 @@ text(out.join("\n"));
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:53:49.018Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:53:49.018Z
-
-**Planning auto-restart mode restoration**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:53:49.025Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:53:49.025Z
-
-**Designing robust controller startup restoration**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:53:52.682Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:53:52.682Z
-
-**Planning auto-restart mode restoration**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:53:52.682Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:53:52.682Z
-
-**Designing robust controller startup restoration**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-12T08:53:55.417Z","phase":"commentary"} -->
-## Codex progress · 2026-08-12T08:53:55.417Z
-
-This was not a one-off launch failure; it is a real reliability gap already documented in the repository: the controller is intentionally only a remote button panel, not a supervisor, and the “future reliability change” was never implemented. The previous production-mode record survived the reboot, but no startup code consumes it.
-
-I’m fixing that exact gap now: the launchd-installed controller will restore the last running mode after a reboot, while an intentional stop will remain stopped. Because this changes a server startup decision, I’m following the project’s test-first and lifecycle-observability rules before editing.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-12T08:53:56.939Z","phase":null} -->
 ## Tool call: exec · 2026-08-12T08:53:56.939Z
 
@@ -373,34 +286,6 @@ const r = await tools.exec_command({cmd:"sed -n '1,320p' /Users/masterman/.agent
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:54:12.869Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:54:12.869Z
-
-**Verifying full document completeness**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:54:12.875Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:54:12.875Z
-
-**Planning named event integration**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:54:15.592Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:54:15.592Z
-
-**Verifying full document completeness**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:54:15.593Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:54:15.593Z
-
-**Planning named event integration**
 
 <!-- /codex-event -->
 
@@ -481,69 +366,6 @@ text(out.join("\n"));
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:54:48.581Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:54:48.581Z
-
-**Designing remote restart event handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:54:48.587Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:54:48.587Z
-
-**Planning restorePrevious method tests and error handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:54:56.493Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:54:56.493Z
-
-**Designing remote restart event handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:54:56.498Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:54:56.498Z
-
-**Planning restorePrevious method tests and error handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:54:56.498Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:54:56.498Z
-
-**Designing conditional restoreOnStartup behavior and logging**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:55:00.861Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:55:00.861Z
-
-**Designing remote restart event handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:55:00.862Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:55:00.862Z
-
-**Planning restorePrevious method tests and error handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:55:00.862Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:55:00.862Z
-
-**Designing conditional restoreOnStartup behavior and logging**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-12T08:55:02.048Z","phase":"commentary"} -->
-## Codex progress · 2026-08-12T08:55:02.048Z
-
-The test-first step is now active. I’m adding regression coverage for three behaviors before touching production code: a dead recorded production runner is restored at controller startup, an already-running runner is not duplicated, and the launchd installer explicitly enables startup restoration.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-12T08:55:19.371Z","phase":null} -->
 ## Tool call: exec · 2026-08-12T08:55:19.371Z
 
@@ -598,13 +420,6 @@ const r = await tools.exec_command({cmd:"pnpm exec vitest run tests/server/resta
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:55:40.888Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:55:40.888Z
-
-**Planning minimal implementation with failure tests**
 
 <!-- /codex-event -->
 
@@ -665,22 +480,6 @@ const r = await tools.exec_command({cmd:"pnpm exec vitest run tests/server/resta
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:56:14.478Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:56:14.478Z
-
-**Updating docs and adding learning note**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-12T08:56:16.734Z","phase":"commentary"} -->
-## Codex progress · 2026-08-12T08:56:16.734Z
-
-The regression tests now pass. The fix preserves the important distinction between “the machine rebooted” and “the user intentionally stopped OmniHarness”: launchd startup restores the recorded dev/production mode only when a prior running-mode record exists; the existing Stop action removes that record, so a deliberate stop stays stopped.
-
-I’m documenting that contract, then I’ll reinstall the existing launchd job on this machine and verify the real runner, bridge, and health endpoint—not just the unit tests.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-12T08:56:28.436Z","phase":null} -->
 ## Tool call: exec · 2026-08-12T08:56:28.436Z
 
@@ -707,13 +506,6 @@ text(await tools.apply_patch(patch));
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:56:38.414Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:56:38.414Z
-
-**Verifying installer script permissions**
 
 <!-- /codex-event -->
 
@@ -770,20 +562,6 @@ const r = await tools.exec_command({cmd:"for attempt in $(seq 1 30); do if curl 
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:57:07.065Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:57:07.065Z
-
-**Verifying server health and logs**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-12T08:57:09.142Z","phase":"commentary"} -->
-## Codex progress · 2026-08-12T08:57:09.142Z
-
-The installed job has been reloaded, and it immediately restored production successfully: `/api/healthz` on port 3050 is already returning `{"ok":true}`. I’m doing the final verification now—checking the controller’s recorded decision, all three listeners, the installed plist flag, and TypeScript/tests—before I call it fixed. I’m using the project’s completion-check workflow so the handoff is backed by fresh results from the live machine.
 
 <!-- /codex-event -->
 
@@ -856,62 +634,6 @@ text(out.join("\n"));
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:57:36.423Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:57:36.423Z
-
-**Planning log inspection and typecheck**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:57:36.426Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:57:36.426Z
-
-**Planning targeted typecheck and test runs**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:57:48.726Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:57:48.726Z
-
-**Planning log inspection and typecheck**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:57:48.728Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:57:48.728Z
-
-**Planning targeted typecheck and test runs**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:57:48.728Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:57:48.728Z
-
-**Designing durable startup restore events**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:57:49.852Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:57:49.852Z
-
-**Planning log inspection and typecheck**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:57:49.852Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:57:49.852Z
-
-**Planning targeted typecheck and test runs**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:57:49.852Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:57:49.852Z
-
-**Designing durable startup restore events**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-12T08:57:52.825Z","phase":null} -->
 ## Tool call: exec · 2026-08-12T08:57:52.825Z
 
@@ -949,20 +671,6 @@ text(out.join("\n"));
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:58:11.124Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:58:11.124Z
-
-**Planning PID file boot identifier integration**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:58:11.131Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:58:11.131Z
-
-**Designing stale PID detection using boot time**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-12T08:58:13.461Z","phase":null} -->
 ## Tool call: exec · 2026-08-12T08:58:13.461Z
 
@@ -992,20 +700,6 @@ text(results.map((r,i)=>`## ${i===0?"typecheck":"focused tests"}\n${r.output}\n(
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:58:35.399Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:58:35.399Z
-
-**Planning final verification and health checks**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-12T08:58:35.405Z","phase":null} -->
-## Visible reasoning summary · 2026-08-12T08:58:35.405Z
-
-**Analyzing reboot timing and startup logs**
 
 <!-- /codex-event -->
 
@@ -1043,30 +737,6 @@ text(out.join("\n"));
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"final","timestamp":"2026-08-12T08:58:51.770Z","phase":"final_answer"} -->
-## Codex final · 2026-08-12T08:58:51.770Z
-
-The Mac restarted at 10:43:29. Launchd successfully started OmniHarness’s restart controller, but that job only launched the control panel on port 3099. It never restarted the actual runner recorded as production mode, leaving stale PID records and nothing listening on port 3050.
-
-I fixed the missing startup behavior:
-
-- The launchd controller now restores the previously running `dev` or `prod` mode.
-- An intentional Stop still remains stopped after restart.
-- The existing LaunchDaemon was reinstalled with restoration enabled.
-- The restoration decision is recorded in the controller log.
-
-OmniHarness is online now:
-
-- Runner `3050`: healthy
-- Restart controller `3099`: healthy
-- ACP bridge `7800`: healthy
-- TypeScript checks passed.
-- Regression tests: 21 passed.
-
-The main changes are in [restart-control.ts](/Users/masterman/NLP/omniharness/src/server/restart-control.ts), [remote-restart.ts](/Users/masterman/NLP/omniharness/scripts/remote-restart.ts), and [install-restarter.sh](/Users/masterman/NLP/omniharness/scripts/install-restarter.sh). The incident is documented in [the learning note](/Users/masterman/NLP/omniharness/docs/superpowers/learnings/2026-08-12-launchd-controller-must-restore-runner-intent.md).
 
 <!-- /codex-event -->
 

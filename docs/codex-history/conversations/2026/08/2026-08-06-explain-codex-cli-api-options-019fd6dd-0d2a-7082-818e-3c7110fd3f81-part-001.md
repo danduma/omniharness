@@ -28,23 +28,6 @@ parts: 1
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"user","timestamp":"2026-08-06T11:37:21.630Z","phase":null} -->
-## User · 2026-08-06T11:37:21.630Z
-
-I see both codex-api and "codex API key" in the agents settings for codex CLI 
-
-what is each? 
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-06T11:37:26.593Z","phase":"commentary"} -->
-## Codex progress · 2026-08-06T11:37:26.593Z
-
-I’m checking the settings code and documentation so I can distinguish the two options accurately.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-06T11:37:28.941Z","phase":null} -->
 ## Tool call: exec · 2026-08-06T11:37:28.941Z
 
@@ -129,13 +112,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-06T11:37:43.052Z","phase":"commentary"} -->
-## Codex progress · 2026-08-06T11:37:43.052Z
-
-I found the distinction: one is the older named account from the project’s account inventory, while the other is the automatically imported account representing the `OPENAI_API_KEY` setting. I’m checking the current database and selection logic to confirm which one your UI is showing and how each authenticates.
 
 <!-- /codex-event -->
 
@@ -255,36 +231,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:38:17.583Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:38:17.583Z
-
-**Clarifying Codex API key and subscription differences**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:38:17.589Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:38:17.589Z
-
-**Detailing codex-api versus codex API key differences**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"final","timestamp":"2026-08-06T11:38:20.422Z","phase":"final_answer"} -->
-## Codex final · 2026-08-06T11:38:20.422Z
-
-They are two account records that can point to the same `OPENAI_API_KEY`, but were created through different mechanisms:
-
-| Entry | Meaning |
-|---|---|
-| `codex-api` | Legacy account imported from `config/accounts.yml`. It references `OPENAI_API_KEY` and still permits the normal global Codex credential bridge. |
-| `codex API key` | Newer automatically generated account for the `OPENAI_API_KEY` setting. It explicitly requires that setting and uses the key directly. |
-
-So, if you want API-key billing, use **codex API key**. The older `codex-api` is mainly retained for compatibility and may look like a duplicate.
-
-Neither is the ChatGPT subscription login from `codex login`; that appears separately as the Codex subscription account.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"state","timestamp":"2026-08-06T11:38:20.567Z","phase":null} -->
 ## Task state: task_complete · 2026-08-06T11:38:20.567Z
 
@@ -314,28 +260,6 @@ Neither is the ChatGPT subscription login from `codex login`; that appears separ
   "collaboration_mode_kind": "default"
 }
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"user","timestamp":"2026-08-06T11:43:21.560Z","phase":null} -->
-## User · 2026-08-06T11:43:21.560Z
-
-I DO NOT want API billing, I want to use the codex auth subscription!!! And I want it to say explicitly it's the subscription
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:43:32.668Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:43:32.668Z
-
-**Investigating UI subscription labeling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-06T11:43:33.385Z","phase":"commentary"} -->
-## Codex progress · 2026-08-06T11:43:33.385Z
-
-You’re right: those two entries are API-key accounts, not the subscription login. I’m tracing why the subscription account is not being labeled clearly in the Codex agent settings, then I’ll update the UI wording/selection if the current checkout supports it.
 
 <!-- /codex-event -->
 
@@ -455,55 +379,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:44:18.753Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:44:18.753Z
-
-**Planning account labeling update**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:44:18.755Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:44:18.755Z
-
-**Designing worker-specific subscription labels**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:44:22.493Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:44:22.493Z
-
-**Planning account labeling update**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:44:22.493Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:44:22.493Z
-
-**Designing worker-specific subscription labels**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:44:22.561Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:44:22.561Z
-
-**Planning account labeling update**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:44:22.562Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:44:22.562Z
-
-**Designing worker-specific subscription labels**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-06T11:44:22.765Z","phase":"commentary"} -->
-## Codex progress · 2026-08-06T11:44:22.765Z
-
-The underlying problem is bigger than the label: the “Add local session” path currently creates a Codex account, but its runtime can isolate the Codex home without copying the logged-in `~/.codex/auth.json`. That can prevent the subscription login from being used. I’m going to fix both parts: make the Codex account explicitly say “Codex subscription” and ensure it uses Codex OAuth auth while clearing API-key variables.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-06T11:44:22.983Z","phase":null} -->
 ## Tool call: exec · 2026-08-06T11:44:22.983Z
 
@@ -546,37 +421,6 @@ rs.forEach((r,i)=>{ text(`--- ${paths[i]} ---\n${r.output}`); });
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"user","timestamp":"2026-08-06T11:44:23.074Z","phase":null} -->
-## User · 2026-08-06T11:44:23.074Z
-
-is that the "Codex local session"?
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:44:32.556Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:44:32.556Z
-
-**Clarifying Codex local session behavior**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:44:32.561Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:44:32.561Z
-
-**Confirming Codex local session label**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"final","timestamp":"2026-08-06T11:44:33.403Z","phase":"final_answer"} -->
-## Codex final · 2026-08-06T11:44:33.403Z
-
-Yes. **“Codex local session”** is the account intended to use your existing `codex login` subscription—not API billing.
-
-The name is misleading; it should explicitly say **“Codex subscription.”**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"state","timestamp":"2026-08-06T11:44:33.529Z","phase":null} -->
 ## Task state: task_complete · 2026-08-06T11:44:33.529Z
 
@@ -606,28 +450,6 @@ The name is misleading; it should explicitly say **“Codex subscription.”**
   "collaboration_mode_kind": "default"
 }
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"user","timestamp":"2026-08-06T11:45:26.920Z","phase":null} -->
-## User · 2026-08-06T11:45:26.920Z
-
-yes rename it
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:45:33.994Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:45:33.994Z
-
-**Planning rename implementation for locales**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-06T11:45:34.979Z","phase":"commentary"} -->
-## Codex progress · 2026-08-06T11:45:34.979Z
-
-Yes—I’m renaming only the Codex local-session label to **“Codex subscription”** and leaving other workers’ local-session wording unchanged. I’ll update every locale file so the label remains translatable.
 
 <!-- /codex-event -->
 
@@ -718,13 +540,6 @@ text(JSON.stringify(r));
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-06T11:46:00.925Z","phase":"commentary"} -->
-## Codex progress · 2026-08-06T11:46:00.925Z
-
-The label change is in place. My first verification command used a Jest-only flag that Vitest does not support, so I’m rerunning the targeted check with the project’s test runner syntax.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-06T11:46:01.827Z","phase":null} -->
 ## Tool call: exec · 2026-08-06T11:46:01.827Z
 
@@ -812,13 +627,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-06T11:46:13.268Z","phase":"commentary"} -->
-## Codex progress · 2026-08-06T11:46:13.268Z
-
-The targeted UI tests pass (228 tests). The repository-wide whitespace check reports pre-existing issues in archived conversation files, unrelated to this change; I’m checking only the modified files and the final diff now.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-06T11:46:15.244Z","phase":null} -->
 ## Tool call: exec · 2026-08-06T11:46:15.244Z
 
@@ -845,13 +653,6 @@ text(r.output);
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:46:25.880Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:46:25.880Z
-
-**Renaming subscription button for clarity**
 
 <!-- /codex-event -->
 
@@ -884,13 +685,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:46:32.395Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:46:32.395Z
-
-**Planning database rename update**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-06T11:46:34.003Z","phase":null} -->
 ## Tool call: exec · 2026-08-06T11:46:34.003Z
 
@@ -917,13 +711,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:46:43.519Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:46:43.519Z
-
-**Planning account label normalization**
 
 <!-- /codex-event -->
 
@@ -982,13 +769,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:46:55.916Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:46:55.916Z
-
-**Planning migration patch for Codex label update**
 
 <!-- /codex-event -->
 
@@ -1108,13 +888,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-06T11:47:18.778Z","phase":"commentary"} -->
-## Codex progress · 2026-08-06T11:47:18.778Z
-
-The regression test correctly failed for the existing account label, confirming the database row needs a migration-style rename—not just a future-creation change. I’m adding that narrow normalization now. The same test file also has an unrelated pre-existing Claude Keychain/auth-status failure in this environment.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-06T11:47:23.105Z","phase":null} -->
 ## Tool call: exec · 2026-08-06T11:47:23.105Z
 
@@ -1141,13 +914,6 @@ text(await tools.apply_patch(patch));
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:47:29.688Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:47:29.688Z
-
-**Planning targeted test rerun with DB update**
 
 <!-- /codex-event -->
 
@@ -1238,13 +1004,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-06T11:47:50.048Z","phase":"commentary"} -->
-## Codex progress · 2026-08-06T11:47:50.048Z
-
-The existing account row has been renamed in the current database as well, so it will show **Codex subscription** immediately after the settings data refresh. I’m doing one final targeted verification of the persisted label, migration behavior, locale keys, and modified-file diff.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-06T11:47:54.149Z","phase":null} -->
 ## Tool call: exec · 2026-08-06T11:47:54.149Z
 
@@ -1271,48 +1030,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:48:05.281Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:48:05.281Z
-
-**Clarifying migration test and subscription label**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:48:05.283Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:48:05.283Z
-
-**Explaining subscription label versus auth behavior**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:48:08.272Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:48:08.272Z
-
-**Clarifying migration test and subscription label**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:48:08.272Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:48:08.272Z
-
-**Explaining subscription label versus auth behavior**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:48:08.458Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:48:08.458Z
-
-**Clarifying migration test and subscription label**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:48:08.458Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:48:08.458Z
-
-**Explaining subscription label versus auth behavior**
 
 <!-- /codex-event -->
 
@@ -1371,20 +1088,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:48:21.288Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:48:21.288Z
-
-**Adding local session handling for Codex**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-06T11:48:21.654Z","phase":"commentary"} -->
-## Codex progress · 2026-08-06T11:48:21.654Z
-
-I also verified the runtime path: an explicit Codex subscription account must clear `OPENAI_API_KEY` and allow the logged-in `~/.codex/auth.json` to be bridged into the scoped worker home. I’m adding that small regression test so the renamed account cannot accidentally use API billing.
 
 <!-- /codex-event -->
 
@@ -1562,13 +1265,6 @@ text(r.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-06T11:49:03.391Z","phase":"commentary"} -->
-## Codex progress · 2026-08-06T11:49:03.391Z
-
-The subscription path now has the right safety behavior: selecting **Codex subscription** removes `OPENAI_API_KEY`/`OPENAI_BASE_URL` and bridges the existing Codex login files, so it cannot fall back to API-key billing. The focused tests pass; I’m running the full account-resolver and UI suites once more.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-06T11:49:05.784Z","phase":null} -->
 ## Tool call: exec · 2026-08-06T11:49:05.784Z
 
@@ -1653,29 +1349,6 @@ text(r.output);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-06T11:49:25.213Z","phase":null} -->
-## Visible reasoning summary · 2026-08-06T11:49:25.213Z
-
-**Documenting DB changes and test results**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"final","timestamp":"2026-08-06T11:49:27.513Z","phase":"final_answer"} -->
-## Codex final · 2026-08-06T11:49:27.513Z
-
-Done. **Codex local session** is now **Codex subscription**.
-
-It also now:
-
-- Uses your existing `codex login` authentication.
-- Clears `OPENAI_API_KEY` and `OPENAI_BASE_URL`, preventing API billing.
-- Renames the existing account in the current database.
-- Updates all locale files.
-
-Verification passed: account resolver 6/6 and UI tests 228/228. Refresh the Settings page to see the new label.
 
 <!-- /codex-event -->
 

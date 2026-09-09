@@ -46,13 +46,6 @@ Payload:
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T10:32:31.959Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T10:32:31.959Z
-
-I’m reviewing the requested diff only, with extra attention to hidden mobile/desktop copies, dialog ownership, focus return, warnings, hydration, and the login screen. I’m using the React review guidance so the findings match this codebase’s state and rendering rules.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T10:32:32.848Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T10:32:32.848Z
 
@@ -193,27 +186,6 @@ const r = await tools.exec_command({cmd:"nl -ba src/interface/runners/RunnerCont
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T10:33:01.584Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T10:33:01.584Z
-
-**Tracing sidebar dialog mounting behavior**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T10:33:01.589Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T10:33:01.589Z
-
-**Identifying duplicate DOM IDs in mobile and desktop**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T10:33:02.544Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T10:33:02.544Z
-
-The layout move is clear. I’m now tracing the shared runner UI manager and the dialog primitive, because the main risk is that the mobile control opens state while the only dialog host belongs to the desktop sidebar.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T10:33:07.674Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T10:33:07.674Z
 
@@ -239,13 +211,6 @@ const r = await tools.exec_command({cmd:"rg -n \"class RunnerUiManager|focusId|r
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T10:33:16.269Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T10:33:16.269Z
-
-**Analyzing sidebar inert behavior across viewports**
 
 <!-- /codex-event -->
 
@@ -305,34 +270,6 @@ const r = await tools.exec_command({cmd:"nl -ba src/interface/home/HomeApp.tsx |
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T10:33:36.831Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T10:33:36.831Z
-
-**Tracing mobile focus restoration issues**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T10:33:36.836Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T10:33:36.836Z
-
-**Analyzing nested modal focus and layering conflicts**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T10:33:37.460Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T10:33:37.460Z
-
-**Tracing mobile focus restoration issues**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T10:33:37.460Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T10:33:37.460Z
-
-**Analyzing nested modal focus and layering conflicts**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T10:33:38.296Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T10:33:38.296Z
 
@@ -386,41 +323,6 @@ const r = await tools.write_stdin({session_id:8704,chars:"",yield_time_ms:1000,m
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T10:33:59.593Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T10:33:59.593Z
-
-**Inspecting DOM and hydration behavior**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T10:33:59.608Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T10:33:59.608Z
-
-**Analyzing sidebar layout and menu ID conflicts**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T10:34:06.646Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T10:34:06.646Z
-
-**Inspecting DOM and hydration behavior**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T10:34:06.660Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T10:34:06.660Z
-
-**Analyzing sidebar layout and menu ID conflicts**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-07-31T10:34:07.501Z","phase":"commentary"} -->
-## Codex progress · 2026-07-31T10:34:07.501Z
-
-The static checks pass, but they don’t exercise the risky path: opening a runner dialog from inside the mobile navigation sheet. I’m checking the running app state next to see whether the two modal layers cooperate and where focus lands after closing.
 
 <!-- /codex-event -->
 
@@ -564,13 +466,6 @@ const r = await tools.exec_command({cmd:"node - <<'NODE'\nconst { chromium } = r
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T10:34:57.027Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T10:34:57.027Z
-
-**Evaluating authentication testing options**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-07-31T10:34:57.596Z","phase":null} -->
 ## Tool call: exec · 2026-07-31T10:34:57.596Z
 
@@ -652,13 +547,6 @@ const r = await tools.exec_command({cmd:"nl -ba tests/e2e/helpers.ts | sed -n '1
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T10:35:15.958Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T10:35:15.958Z
-
-**Verifying session cleanup after headless login**
 
 <!-- /codex-event -->
 
@@ -755,20 +643,6 @@ Output:
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T10:36:15.865Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T10:36:15.865Z
-
-**Identifying sidebar clipping issue**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-07-31T10:36:15.869Z","phase":null} -->
-## Visible reasoning summary · 2026-07-31T10:36:15.869Z
-
-**Investigating dropdown ID conflicts and focus restoration**
 
 <!-- /codex-event -->
 

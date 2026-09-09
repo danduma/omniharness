@@ -28,31 +28,6 @@ parts: 1
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"user","timestamp":"2026-08-03T22:21:17.089Z","phase":null} -->
-## User · 2026-08-03T22:21:17.089Z
-
-
-# Files mentioned by the user:
-
-## codex-clipboard-be387f0a-069e-4724-b485-bd2e4293942e.png: /Users/masterman/.codex/attachments/06fd733c-90b7-4352-95f6-8ce7e8529431/codex-clipboard-be387f0a-069e-4724-b485-bd2e4293942e.png
-
-## My request for Codex:
-it's broken!!!! page not loading!!!
-
-
-
-
-![Attached image](../../../attachments/019fc9b7-6d5c-7f01-bcf7-833c287347f3/wdhglw9-3C4YwAAAABJRU5ErkJggg-d2101706180a4d4c)
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-03T22:21:22.498Z","phase":"commentary"} -->
-## Codex progress · 2026-08-03T22:21:22.498Z
-
-I’m going to check the running app, its HTML, and the actual files under `/assets` to find why those two requested files return 404. I’ll explain the cause, then apply the clear fix in this checkout and verify the page loads. I’m using the debugging and browser-check skills because this is a live page failure.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:21:26.001Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:21:26.001Z
 
@@ -196,13 +171,6 @@ for (const x of r) text(x.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-03T22:21:51.427Z","phase":"commentary"} -->
-## Codex progress · 2026-08-03T22:21:51.427Z
-
-The failure is reproducible: port 3050 serves HTML that names `main-CQKB0SwX.js` and `main-4eXya6NR.css`, but neither file exists. The build folder now contains different hashed filenames. I’m tracing whether the running process cached the old HTML while a rebuild replaced the assets, which would explain this exact blank-page failure.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:21:59.633Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:21:59.633Z
 
@@ -271,71 +239,6 @@ for (const x of r) text(x.output);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:22:23.535Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:22:23.535Z
-
-**Planning dynamic index reload and CSP update**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:22:23.543Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:22:23.543Z
-
-**Designing rebuild-resilient static snapshot loading**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:22:33.955Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:22:33.955Z
-
-**Planning dynamic index reload and CSP update**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:22:33.962Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:22:33.962Z
-
-**Designing rebuild-resilient static snapshot loading**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:22:33.962Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:22:33.962Z
-
-**Planning efficient manifest validation with caching**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:22:36.816Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:22:36.816Z
-
-**Planning dynamic index reload and CSP update**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:22:36.816Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:22:36.816Z
-
-**Designing rebuild-resilient static snapshot loading**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:22:36.816Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:22:36.816Z
-
-**Planning efficient manifest validation with caching**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-03T22:22:38.762Z","phase":"commentary"} -->
-## Codex progress · 2026-08-03T22:22:38.762Z
-
-The cause is now confirmed: the server reads `index.html` once when it starts. The runner started at 22:57; the interface was rebuilt at 23:57. Vite replaced the hashed files, but the still-running server kept sending the hour-old HTML, so every browser refresh requested files that had been removed.
-
-I’m adding a regression test for “rebuild while the runner stays up” before changing the server. The fix will make the server notice a changed `index.html`, validate the new build, and serve the matching filenames without requiring a restart.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:22:49.457Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:22:49.457Z
 
@@ -395,34 +298,6 @@ text(r.output); text(`exit_code=${r.exit_code}`);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:23:04.728Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:23:04.728Z
-
-**Designing clear static-files patch functions**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:23:04.729Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:23:04.729Z
-
-**Implementing refresh snapshot with concurrency control**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:23:06.414Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:23:06.414Z
-
-**Designing clear static-files patch functions**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:23:06.414Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:23:06.414Z
-
-**Implementing refresh snapshot with concurrency control**
 
 <!-- /codex-event -->
 
@@ -488,13 +363,6 @@ text(r.output); text(`exit_code=${r.exit_code}`);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-03T22:23:29.551Z","phase":"commentary"} -->
-## Codex progress · 2026-08-03T22:23:29.551Z
-
-The regression test now passes with the server change. The running process still has the old code in memory, so I’m checking the project’s normal restart path and will restart that same runner safely, then verify the actual HTML and both asset requests on port 3050.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:23:33.907Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:23:33.907Z
 
@@ -545,13 +413,6 @@ for (const x of r) { text(x.output); if (x.exit_code !== undefined) text(`exit_c
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:23:44.717Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:23:44.717Z
-
-**Investigating remote restart control and authentication**
 
 <!-- /codex-event -->
 
@@ -851,13 +712,6 @@ text(r.output); text(`exit_code=${r.exit_code}`);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-03T22:25:06.181Z","phase":"commentary"} -->
-## Codex progress · 2026-08-03T22:25:06.181Z
-
-The restarted runner is now serving the current filenames, and both files return HTTP 200 with the correct JavaScript and CSS types. I’m doing one final browser check for the actual rendered page, not just the network responses.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:25:09.138Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:25:09.138Z
 
@@ -891,13 +745,6 @@ for (const c of (r?.content ?? [])) if (c.type === "text") text(c.text);
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:25:15.123Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:25:15.123Z
-
-**Planning documentation chunking strategy**
 
 <!-- /codex-event -->
 
@@ -1133,13 +980,6 @@ for (const c of (r?.content ?? [])) if (c.type === "text") text(c.text);
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-03T22:25:46.988Z","phase":"commentary"} -->
-## Codex progress · 2026-08-03T22:25:46.988Z
-
-The real page now renders in a browser as “OmniHarness,” shows the password screen, and has no browser console errors. I’m recording the reusable cause and safeguard in the project’s bug-learning format, then I’ll run the final focused checks once more. This step comes from the project’s system-bug learning rule.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:25:48.177Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:25:48.177Z
 
@@ -1195,20 +1035,6 @@ text(await tools.apply_patch(patch));
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:26:07.045Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:26:07.045Z
-
-**Running targeted typecheck and linting**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:26:07.052Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:26:07.052Z
-
-**Fixing concurrency bug in refreshPromise**
 
 <!-- /codex-event -->
 
@@ -1303,13 +1129,6 @@ for (const x of r) { text(x.output); if (x.exit_code !== undefined) text(`exit_c
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:26:32.944Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:26:32.944Z
-
-**Restarting and polling with curl**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:26:35.410Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:26:35.410Z
 
@@ -1373,26 +1192,6 @@ text(r.output); text(`exit_code=${r.exit_code}`);
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"final","timestamp":"2026-08-03T22:26:49.808Z","phase":"final_answer"} -->
-## Codex final · 2026-08-03T22:26:49.808Z
-
-Fixed. The server had cached an old `index.html` while a rebuild replaced its hashed JavaScript and CSS files, causing the 404s.
-
-I changed [static-files.ts](/Users/masterman/NLP/omniharness/src/runtime/http/static-files.ts) to detect rebuilt entrypoints and load the matching assets and security headers. A regression test and learning note were added.
-
-Verified:
-
-- Page returns HTTP 200.
-- JavaScript and CSS both return HTTP 200.
-- Browser renders the OmniHarness password screen with no console errors.
-- 9 focused tests pass.
-- TypeScript and ESLint pass.
-- Runner restarted on port 3050.
-
-Refresh the page once.
 
 <!-- /codex-event -->
 

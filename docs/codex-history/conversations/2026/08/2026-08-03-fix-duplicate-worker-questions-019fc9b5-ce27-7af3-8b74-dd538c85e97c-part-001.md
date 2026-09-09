@@ -28,31 +28,6 @@ parts: 1
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"user","timestamp":"2026-08-03T22:20:30.901Z","phase":null} -->
-## User · 2026-08-03T22:20:30.901Z
-
-in session "a15ab3bbb057" , we get the following. I can confirm this, I saw two pretty much identical, but very slightly different, sets of questions appearing in the UI where I had to select answers. Now the thing is, I, the user, saw them both. Even if the worker had crashed and so in practice one of them was entirely useless, deprecated, it wasn't going to do anything. I still saw it and I still filled it in, I still sent it and of course nothing happened.
-
-Ideally the way to fix this would be that the worker doesn't crash or we just still can send the same thing. But if it did happen and there's no way to recover that etcetera then don't show me the first one, only show me the second one.
-
----
-
-The runner crashed and my permission check failed, so I need to reassess. The user's actual request was to review the guards and make them watertight. I'm supposed to be planning this work and handing it off to Codex rather than implementing it myself. My scoping questions didn't go through, but the user did authorize me to proceed with the work, so I should move forward with what I understand rather than getting stuck on clarifications.
-
-I could retry the question since it's a cheap operation and would genuinely improve the plan, but the restart already cost a cycle. My three key decisions all have clear recommended defaults that I flagged. The better move is to proceed with those recommendations, write out the plan with my assumptions stated explicitly, and hand it to Codex. The user can always redirect if I've misunderstood something.
-
-The runner restarted mid-question. Let me retry the scoping decisions — they materially change the plan.
-
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-03T22:20:35.499Z","phase":"commentary"} -->
-## Codex progress · 2026-08-03T22:20:35.499Z
-
-I’m going to trace this session through the database and event history, then follow the question UI from storage to display and submission. I’m using the debugging and client/server-state guides because this looks like an old worker prompt remaining actionable after a restart. If the cause is clear, I’ll fix it and add a regression test.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:20:38.458Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:20:38.458Z
 
@@ -78,13 +53,6 @@ const r = await tools.exec_command({"cmd":"sed -n '1,240p' /Users/masterman/NLP/
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-03T22:20:40.745Z","phase":"commentary"} -->
-## Codex progress · 2026-08-03T22:20:40.745Z
-
-The first guide path was the project-local alias rather than its actual installed location. I’ve corrected that and am reading the required guidance before touching the code.
 
 <!-- /codex-event -->
 
@@ -141,13 +109,6 @@ const r = await tools.exec_command({"cmd":"git status --short && find . -name 's
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-03T22:20:55.002Z","phase":"commentary"} -->
-## Codex progress · 2026-08-03T22:20:55.002Z
-
-The checkout already has many uncommitted changes, including the question UI and worker-stream code, so I’m treating all of them as user work and won’t overwrite them. I’m now matching the short session ID against the persisted run and reconstructing the worker restart, both question prompts, and both submissions.
 
 <!-- /codex-event -->
 
@@ -347,13 +308,6 @@ const r = await tools.exec_command({"cmd":"jq -c 'select(.type==\"elicitation\")
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-03T22:21:37.863Z","phase":"commentary"} -->
-## Codex progress · 2026-08-03T22:21:37.863Z
-
-The record confirms the bug exactly: request `1785761272281` stayed permanently “pending” when the runner disappeared; recovery then created request `1785790676826`, which was answered successfully. The first answer never reached the surviving worker, but the old pending entry remained in the append-only history, so the UI continued to present it as live. I’m now tracing where “historical pending” gets mistaken for “currently actionable,” including the submission endpoint’s ownership checks.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:21:41.046Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:21:41.046Z
 
@@ -466,13 +420,6 @@ const r = await tools.exec_command({"cmd":"sed -n '850,975p' src/components/home
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:22:02.778Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:22:02.778Z
-
-**Planning stale pending cancellation fix**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:22:05.998Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:22:05.998Z
 
@@ -498,13 +445,6 @@ const r = await tools.exec_command({"cmd":"sed -n '180,275p' src/shared/home-typ
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:22:15.938Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:22:15.938Z
-
-**Inspecting EventStreamStateManager for stale entry bug**
 
 <!-- /codex-event -->
 
@@ -536,13 +476,6 @@ const r = await tools.exec_command({"cmd":"rg -n \"derivePendingElicitations|str
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:22:24.930Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:22:24.930Z
-
-**Inspecting stale submission handling**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:22:27.692Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:22:27.692Z
 
@@ -571,20 +504,6 @@ const r = await tools.exec_command({"cmd":"rg -n \"closeStaleHumanInputEntries\"
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:22:42.005Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:22:42.005Z
-
-**Planning resolver function for live interactions**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:22:42.011Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:22:42.011Z
-
-**Designing pure selection for actionable elicitations**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:22:43.368Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:22:43.368Z
 
@@ -610,13 +529,6 @@ const r = await tools.exec_command({"cmd":"sed -n '1,500p' src/server/runs/recov
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:22:52.390Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:22:52.390Z
-
-**Designing stream request reconciliation logic**
 
 <!-- /codex-event -->
 
@@ -676,22 +588,6 @@ const r = await tools.exec_command({"cmd":"rg -n \"function getAppDataPath|expor
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:23:18.807Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:23:18.807Z
-
-**Deciding implementation scope for recovery handling**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-03T22:23:22.683Z","phase":"commentary"} -->
-## Codex progress · 2026-08-03T22:23:22.683Z
-
-The root cause is now clear. The timeline card is built by merging two sources: the runtime’s live pending requests and old “pending” rows from the transcript. After restart, the runtime correctly knew only about the new question, but the UI appended the old question from history anyway. That violates the basic rule that only the runtime can say a form is still answerable.
-
-I’m fixing this in two layers: the UI will only make runtime-confirmed requests actionable, and recovery will close transcript requests that the reattached runtime no longer owns. This also covers stale permission prompts from the same failure mode.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:23:24.307Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:23:24.307Z
 
@@ -717,34 +613,6 @@ const r = await tools.exec_command({"cmd":"wc -l docs/architecture/lifecycle-obs
   }
 ]
 ````
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:23:34.933Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:23:34.933Z
-
-**Defining selectActionableElicitations logic**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:23:34.936Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:23:34.936Z
-
-**Refining selection logic and testing strategy**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:23:38.313Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:23:38.313Z
-
-**Defining selectActionableElicitations logic**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:23:38.314Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:23:38.314Z
-
-**Refining selection logic and testing strategy**
 
 <!-- /codex-event -->
 
@@ -776,13 +644,6 @@ const r = await tools.exec_command({"cmd":"rg -n \"acp.interaction_resolved|Huma
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:23:46.206Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:23:46.206Z
-
-**Designing stale entry reconciliation function**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:23:48.730Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:23:48.730Z
 
@@ -808,62 +669,6 @@ const r = await tools.exec_command({"cmd":"rg -n \"human-input-entries|closeStal
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:23:59.367Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:23:59.367Z
-
-**Planning human input recovery tests**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:23:59.373Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:23:59.373Z
-
-**Designing stale entry reconciliation event**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:24:09.823Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:24:09.823Z
-
-**Planning human input recovery tests**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:24:09.826Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:24:09.826Z
-
-**Designing stale entry reconciliation event**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:24:10.438Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:24:10.438Z
-
-**Planning human input recovery tests**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:24:10.438Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:24:10.438Z
-
-**Designing stale entry reconciliation event**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:24:10.438Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:24:10.438Z
-
-**Implementing error event and actionable elicitations selector**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-03T22:24:11.561Z","phase":"commentary"} -->
-## Codex progress · 2026-08-03T22:24:11.561Z
-
-I’m writing the regression around the exact sequence before changing production code: an old pending question exists in the worker stream, recovery reattaches a runtime that owns a different current question, and the old one must receive a terminal “cancelled” entry while the current one remains pending. I’ll run it red first.
 
 <!-- /codex-event -->
 
@@ -921,20 +726,6 @@ const r = await tools.exec_command({"cmd":"pnpm vitest run tests/server/runs/rec
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:24:43.353Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:24:43.353Z
-
-**Implementing reconcile helper with patching**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:24:43.359Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:24:43.359Z
-
-**Deciding error handling and refining recovery flow**
 
 <!-- /codex-event -->
 
@@ -1137,20 +928,6 @@ const r = await tools.exec_command({"cmd":"pnpm vitest run tests/ui/conversation
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:25:58.742Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:25:58.742Z
-
-**Planning verification and testing steps**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-03T22:26:00.234Z","phase":"commentary"} -->
-## Codex progress · 2026-08-03T22:26:00.234Z
-
-The regression is green at both layers now: recovery closes the dead request and emits an observable event, while the UI refuses to turn transcript history into a live form. I’m doing the broader recovery and lifecycle checks next. I’m also using the bug-learning guide because this is a recurring ownership mistake—historical state was being treated as current runtime authority.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:26:03.498Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:26:03.498Z
 
@@ -1235,13 +1012,6 @@ const r = await tools.exec_command({"cmd":"sed -n '780,915p' src/server/supervis
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:26:22.992Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:26:22.992Z
-
-**Planning audit of session revival paths**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:26:33.213Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:26:33.213Z
 
@@ -1296,13 +1066,6 @@ const r = await tools.exec_command({"cmd":"pnpm vitest run --config vitest.lifec
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-03T22:26:40.831Z","phase":"commentary"} -->
-## Codex progress · 2026-08-03T22:26:40.831Z
-
-The lifecycle test command uses the project’s own runner rather than a standalone Vitest config; my first direct invocation hit that missing config and didn’t run the test. I’m switching to the repository’s `test:lifecycle` entrypoint and will keep the failed command out of the verification evidence.
 
 <!-- /codex-event -->
 
@@ -1472,13 +1235,6 @@ const r = await tools.exec_command({"cmd":"sed -n '420,525p' src/server/conversa
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:27:25.171Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:27:25.171Z
-
-**Reordering event emission and reconciliation**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:27:32.852Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:27:32.852Z
 
@@ -1593,20 +1349,6 @@ const r = await tools.exec_command({"cmd":"node -e \"const p=require('./package.
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:28:08.533Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:28:08.533Z
-
-**Identifying event handling and retry path issues**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-03T22:28:10.208Z","phase":"commentary"} -->
-## Codex progress · 2026-08-03T22:28:10.208Z
-
-The recovery rule now applies to every way a worker can be reattached or recreated: automatic recovery, supervisor revival, follow-up delivery, and manual retry. I’ve also added the lifecycle event to the public SSE test so this can be checked without relying on the rendered UI. Next I’m running the full relevant test files and TypeScript checks; any unrelated pre-existing failure will be called out separately.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:28:11.173Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:28:11.173Z
 
@@ -1691,34 +1433,6 @@ const r = await tools.exec_command({"cmd":"pnpm test:lifecycle","workdir":"/User
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:28:52.206Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:28:52.206Z
-
-**Inspecting local process and git status**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:28:52.212Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:28:52.212Z
-
-**Planning deterministic IDs for deduplication**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:28:58.336Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:28:58.336Z
-
-**Inspecting local process and git status**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:28:58.342Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:28:58.342Z
-
-**Planning deterministic IDs for deduplication**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:28:59.423Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:28:59.423Z
 
@@ -1744,13 +1458,6 @@ const r = await tools.exec_command({"cmd":"rg -n \"export async function writeWo
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:29:12.268Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:29:12.268Z
-
-**Assessing deterministic ID stability strategies**
 
 <!-- /codex-event -->
 
@@ -1810,20 +1517,6 @@ const r = await tools.exec_command({"cmd":"ls -l /Users/masterman/NLP/cloudcapti
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:29:29.825Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:29:29.825Z
-
-**Analyzing message cancelation timing**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:29:29.827Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:29:29.827Z
-
-**Verifying permission rendering and stale entry handling**
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:29:31.649Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:29:31.649Z
 
@@ -1853,13 +1546,6 @@ text(await tools.apply_patch(patch));
 
 <!-- /codex-event -->
 
-<!-- codex-event:{"kind":"progress","timestamp":"2026-08-03T22:29:35.840Z","phase":"commentary"} -->
-## Codex progress · 2026-08-03T22:29:35.840Z
-
-The persisted transcript confirms the exact user journey: the old form was submitted first, the server rejected it and only then appended a cancellation; 15 seconds later the replacement form was answered successfully. So the first answer was not lost inside the worker—it was sent to a request that no longer existed. The fix removes that trap before the user can interact with it. I’m doing the final diff and evidence check now.
-
-<!-- /codex-event -->
-
 <!-- codex-event:{"kind":"tool-call","timestamp":"2026-08-03T22:29:42.145Z","phase":null} -->
 ## Tool call: exec · 2026-08-03T22:29:42.145Z
 
@@ -1885,44 +1571,6 @@ const r = await tools.exec_command({"cmd":"git diff --check && nl -ba src/server
   }
 ]
 ```
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"reasoning","timestamp":"2026-08-03T22:29:49.381Z","phase":null} -->
-## Visible reasoning summary · 2026-08-03T22:29:49.381Z
-
-**Summarizing test results and workspace status**
-
-<!-- /codex-event -->
-
-<!-- codex-event:{"kind":"final","timestamp":"2026-08-03T22:29:54.730Z","phase":"final_answer"} -->
-## Codex final · 2026-08-03T22:29:54.730Z
-
-Fixed.
-
-For session `a15ab3bbb057`, the sequence was:
-
-- Request `1785761272281` appeared before the crash and remained historically “pending.”
-- The runner recovered and created replacement request `1785790676826`.
-- The UI incorrectly combined the live request with the historical one.
-- Submitting the old form produced a cancellation because the worker no longer owned it.
-- The replacement form was answered successfully 15 seconds later; those answers are persisted.
-
-The fix:
-
-- Only runtime-confirmed requests render as actionable forms.
-- Every reattach/recovery path cancels orphaned questions and permissions before publishing the recovered worker.
-- Reconciliation emits `worker.human_input_reconciled` for debugging and tests.
-
-Core changes are in [human-input-entries.ts](/Users/masterman/NLP/omniharness/src/server/workers/human-input-entries.ts:80), [ConversationMain.tsx](/Users/masterman/NLP/omniharness/src/components/home/ConversationMain.tsx:925), and [WorkerCard.tsx](/Users/masterman/NLP/omniharness/src/components/WorkerCard.tsx:668).
-
-Verification:
-
-- TypeScript checks passed.
-- Relevant suite: 179/179 tests passed.
-- Full lifecycle suite: 33/33 tests passed.
-- Added red/green recovery and SSE lifecycle regressions.
-- No branch was created, and existing unrelated changes were preserved.
 
 <!-- /codex-event -->
 
