@@ -11,6 +11,24 @@ OMNIHARNESS_PUBLIC_API_PROJECT_PATH=D:\\Codex\\Happyvidey
 The API can access only the configured project path. Every request must send
 the key in an `Authorization: Bearer` header.
 
+To expose several projects, replace `OMNIHARNESS_PUBLIC_API_PROJECT_PATH` with
+an allowlist. The IDs are the only project identifiers visible to API callers.
+
+```dotenv
+OMNIHARNESS_PUBLIC_API_PROJECTS=[{"id":"happyvidey","path":"D:\\Codex\\Happyvidey"},{"id":"website","path":"D:\\Code\\website"}]
+```
+
+## Projects and chats
+
+- `GET /api/public/v1/projects` lists available project IDs.
+- `GET /api/public/v1/projects/:projectId/chats` lists that project's chats.
+- `POST /api/public/v1/projects/:projectId/chats` creates a chat from a
+  `{ "message": "..." }` body.
+- `POST /api/public/v1/projects/:projectId/chats/:chatId/messages` sends a
+  message to a specific chat.
+- `GET /api/public/v1/projects/:projectId/chats/:chatId` reads its current
+  transcript; append `/stream` to receive its SSE updates.
+
 ## Start or continue a conversation
 
 `POST /api/public/v1/chat`
