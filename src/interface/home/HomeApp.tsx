@@ -1041,7 +1041,10 @@ export function HomeApp({
       const current = autoResumeStateRef.current.get(runId);
       if (!current) return;
       autoResumeStateRef.current.set(runId, { ...current, attempts: current.attempts + 1, timerId: null });
-      recoverRun.mutate({ runId, action: "retry", targetMessageId });
+      // `resume`, never `retry`: a retry rewinds to `targetMessageId` and
+      // supersedes everything after it. On a conversation whose only user
+      // message is its first one, that discarded the entire transcript.
+      recoverRun.mutate({ runId, action: "resume", targetMessageId });
     }, delay);
     autoResumeStateRef.current.set(runId, { ...state, timerId });
   }, [

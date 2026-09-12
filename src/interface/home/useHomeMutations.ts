@@ -419,7 +419,7 @@ export function useHomeMutations({
   const recoverRun = useMutation({
     mutationFn: async ({ runId, action, targetMessageId, content, gitWorkspaceLaunch, manualRecovery }: {
       runId: string;
-      action: "retry" | "edit" | "fork";
+      action: "retry" | "resume" | "edit" | "fork";
       targetMessageId: string;
       content?: string;
       gitWorkspaceLaunch?: GitWorkspaceLaunchRequest;

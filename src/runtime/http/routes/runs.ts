@@ -741,7 +741,7 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
     const content = typeof body?.content === "string" ? body.content : undefined;
     const manualRecovery = body?.manualRecovery === true;
 
-    if (action !== "retry" && action !== "edit" && action !== "fork") {
+    if (action !== "retry" && action !== "resume" && action !== "edit" && action !== "fork") {
       return errorResponse("Unsupported recovery action", {
         status: 400,
         source: "Runs",
@@ -757,7 +757,12 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
       });
     }
 
-    if (action === "retry" && !manualRecovery && actionRun.status === "failed" && isPermanentAccountFailure(actionRun.lastError)) {
+    if (
+      (action === "retry" || action === "resume")
+      && !manualRecovery
+      && actionRun.status === "failed"
+      && isPermanentAccountFailure(actionRun.lastError)
+    ) {
       return errorResponse("This run cannot be auto-retried while the saved failure is an account, billing, or quota error.", {
         status: 409,
         source: "Runs",

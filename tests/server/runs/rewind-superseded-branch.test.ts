@@ -513,6 +513,111 @@ describe("rewinding a conversation supersedes the discarded branch", () => {
     expect(storedMessage?.content).toBe("first edited wording");
   });
 
+  it("resumes a failed conversation without discarding anything behind its only user message", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const goalMessageId = randomUUID();
+    const start = new Date("2026-07-25T08:40:00.000Z");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct.md",
+      status: "running",
+      createdAt: start,
+      updatedAt: start,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Direct",
+      projectPath: process.cwd(),
+      preferredWorkerType: "claude",
+      allowedWorkerTypes: JSON.stringify(["claude"]),
+      status: "failed",
+      lastError: "Ask failed: bridge disconnected",
+      failedAt: start,
+      createdAt: start,
+      updatedAt: start,
+    });
+    // The shape that made this destructive: a long conversation whose only
+    // user message is its first one, so "rewind to the last user message"
+    // means "discard the whole transcript".
+    await db.insert(messages).values({
+      id: goalMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "/goal implement the plan",
+      createdAt: start,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "error",
+      cwd: process.cwd(),
+      workerNumber: 1,
+      bridgeSessionId: "saved-session-1",
+      bridgeSessionMode: "full-access",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: start,
+      updatedAt: start,
+    });
+    await appendWorkerEntry(runId, workerId, {
+      id: goalMessageId,
+      type: "user_input",
+      text: "/goal implement the plan",
+      timestamp: start.toISOString(),
+    });
+    for (const index of [1, 2, 3]) {
+      await appendWorkerEntry(runId, workerId, {
+        id: `work-${index}`,
+        type: "message",
+        text: `hours of work ${index}`,
+        timestamp: new Date(start.getTime() + index * 10_000).toISOString(),
+      });
+    }
+
+    mockSpawnAgent.mockImplementation(async ({ name }: { name: string }) => ({
+      name,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "saved-session-1",
+      sessionMode: "full-access",
+      outputEntries: [],
+      currentText: "",
+      lastText: "",
+    }));
+    mockAskAgent.mockResolvedValue({ response: "picking up where I left off", state: "idle" });
+    mockGetAgent.mockResolvedValue(null);
+
+    await recoverRun({ runId, action: "resume", targetMessageId: goalMessageId });
+
+    const workerAfter = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(parseSupersededSeqRanges(workerAfter?.supersededSeqRanges)).toEqual([]);
+
+    const { entries } = await readWorkerEntriesSince(runId, workerId, 0);
+    expect(entries.map((entry) => entry.id)).toEqual(
+      expect.arrayContaining([goalMessageId, "work-1", "work-2", "work-3"]),
+    );
+
+    // The resumed turn runs to completion here, so the run settles on its
+    // idle status rather than staying `running`; what matters is that the
+    // failure cleared.
+    const runAfter = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(runAfter?.status).not.toBe("failed");
+    expect(runAfter?.lastError).toBeNull();
+    // Resuming re-delivers the same message id, which the stream dedupes, so
+    // the conversation must not grow a second copy of it.
+    expect(entries.filter((entry) => entry.id === goalMessageId)).toHaveLength(1);
+  });
+
   it("rejects old-turn output that reaches persistence after the rewind fence", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

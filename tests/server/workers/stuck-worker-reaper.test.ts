@@ -2,7 +2,14 @@ import { randomUUID } from "crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { messages, plans, runs, workers } from "@/server/db/schema";
+import {
+  messages,
+  plans,
+  recoveryIncidents,
+  runs,
+  supervisorScheduledWakes,
+  workers,
+} from "@/server/db/schema";
 import {
   __resetNamedEventsForTests,
   getNamedEventsSince,
@@ -279,6 +286,61 @@ describe("reapStuckDirectWorkers", () => {
       runId,
       workerId,
     });
+  });
+
+  it("parks the run for quota recovery instead of failing it when redelivery hits a provider limit", async () => {
+    const TEN_MIN_AGO = new Date(Date.now() - 10 * 60_000);
+    const { runId, workerId } = await setupRun({
+      mode: "direct",
+      workerStatus: "working",
+      workerUpdatedAt: TEN_MIN_AGO,
+    });
+
+    const userMessageId = randomUUID();
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "continue",
+      createdAt: TEN_MIN_AGO,
+    });
+    await writeUserInputEntry(runId, workerId, {
+      id: userMessageId,
+      text: "continue",
+      timestamp: TEN_MIN_AGO,
+    });
+
+    mockCancelAgent.mockResolvedValue({ ok: true });
+    mockResumeMissingDirectWorker.mockImplementation(async () => {
+      await db.update(workers).set({ status: "idle" }).where(eq(workers.id, workerId));
+      return { name: workerId, state: "idle" };
+    });
+    mockAskAgent.mockRejectedValue(
+      new Error("Ask failed: Internal error: You've hit your session limit · resets 5:40pm (Europe/Madrid)"),
+    );
+
+    const outcome = await reapStuckDirectWorkers();
+
+    expect(outcome.ok).toBe(true);
+    const workerAfter = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const runAfter = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    // The reset time is knowable, so this is a wait, not a failure. A failed
+    // run is what left the conversation dead until a human opened it.
+    expect(workerAfter?.status).toBe("cred-exhausted");
+    expect(runAfter?.status).toBe("quota_waiting");
+    expect(runAfter?.lastError).toBeFalsy();
+
+    const incident = await db.select().from(recoveryIncidents)
+      .where(eq(recoveryIncidents.runId, runId)).get();
+    expect(incident?.kind).toBe("quota_exhausted");
+
+    // Without a durable wake there is nothing to resume the conversation on
+    // its own once the window reopens.
+    const wake = await db.select().from(supervisorScheduledWakes)
+      .where(eq(supervisorScheduledWakes.runId, runId)).get();
+    expect(wake).toBeTruthy();
+    expect(new Date(wake!.wakeAt).getTime()).toBeGreaterThan(Date.now());
   });
 
   it("does not touch workers whose stream activity is recent", async () => {

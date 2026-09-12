@@ -35,8 +35,11 @@ import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { persistRunFailure } from "@/server/runs/failures";
 import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
+import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
+import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import {
   isWorkerTurnAbortedError,
+  isWorkerTurnGenerationCurrent,
   isWorkerTurnSupersededError,
 } from "@/server/conversations/worker-turn-gate";
 
@@ -241,6 +244,66 @@ async function claimRecoveredRedelivery(args: {
   });
 }
 
+/**
+ * A recovery attempt that died on a provider quota wall is neither a stuck
+ * worker nor a run failure: the reset time is sitting in the error text, and
+ * the quota subsystem already knows how to park the run and wake it back up
+ * when the window reopens.
+ *
+ * Without this the reaper stored "resets 5:40pm" as an opaque
+ * `worker.resume.failed` banner and stopped there — no `quota_exhausted`
+ * incident, so no durable wake and nothing for the watchdog sweep to find, so
+ * the conversation sat `failed` until a human opened it hours later. Every
+ * other ask path (`send-message`, `runs/recovery`, the supervisor) classifies
+ * the error first; the reaper was the one that did not.
+ *
+ * Must run OUTSIDE `runQuotaRecoveryMutation`: `handleWorkerQuotaExhaustion`
+ * takes that same per-run fence, and the fence is a serial chain rather than a
+ * reentrant lock, so nesting the two would deadlock the run.
+ */
+async function handleRecoveredQuotaError(args: {
+  worker: typeof workers.$inferSelect;
+  error: unknown;
+  turnGeneration?: number;
+}): Promise<boolean> {
+  const quotaInfo = extractQuotaResetInfo(args.error, { provider: args.worker.type });
+  if (!quotaInfo.isQuotaError) {
+    return false;
+  }
+  // Same barrier the failure path uses: a turn already superseded by a newer
+  // one must not park the run on its stale error. Returning false here hands
+  // back to `persistRecoveredRedeliveryFailure`, which sees the same mismatch
+  // and reports the turn as superseded.
+  if (
+    args.turnGeneration !== undefined
+    && !await isWorkerTurnGenerationCurrent(args.worker.id, args.turnGeneration)
+  ) {
+    return false;
+  }
+
+  const result = await handleWorkerQuotaExhaustion({
+    runId: args.worker.runId,
+    workerId: args.worker.id,
+    text: quotaInfo.rawText,
+    provider: args.worker.type,
+  });
+  await recordExecutionEvent({
+    runId: args.worker.runId,
+    workerId: args.worker.id,
+    planItemId: null,
+    eventType: "worker_quota_block_detected",
+    details: {
+      summary: `Stuck-worker recovery for ${args.worker.id} hit a provider quota wall; handed off to quota recovery.`,
+      recoveryState: result.state,
+      resumeAt: result.state === "quota_wait" ? result.resumeAt.toISOString() : null,
+      quotaResetSource: quotaInfo.source,
+      quotaResetConfidence: quotaInfo.confidence,
+    },
+  });
+  notifyEventStreamSubscribers();
+  return true;
+}
+
 async function persistRecoveredRedeliveryFailure(args: {
   runId: string;
   workerId: string;
@@ -440,6 +503,10 @@ export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<Re
         try {
           await resumeMissingDirectWorker(run, worker);
         } catch (error) {
+          if (await handleRecoveredQuotaError({ worker, error })) {
+            recovered++;
+            continue;
+          }
           await db.update(workers).set({
             status: "error",
             updatedAt: new Date(),
@@ -532,6 +599,14 @@ export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<Re
               });
               skipped++;
               notifyEventStreamSubscribers();
+              continue;
+            }
+            if (await handleRecoveredQuotaError({
+              worker,
+              error,
+              turnGeneration: claim.turnGeneration,
+            })) {
+              recovered++;
               continue;
             }
             const failed = await persistRecoveredRedeliveryFailure({

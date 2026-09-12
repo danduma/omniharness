@@ -1,4 +1,4 @@
-type RecoveryAction = "retry" | "edit" | "fork";
+type RecoveryAction = "retry" | "resume" | "edit" | "fork";
 
 type RecoverableRun = {
   id: string;
@@ -68,6 +68,20 @@ export function applyRunRecoveryOptimisticUpdate(
 ) {
   if (args.action === "fork") {
     return state;
+  }
+
+  // A resume continues the existing turn rather than rewinding to the target
+  // message, so the optimistic update must not drop messages or cancel
+  // workers the way the edit branch below does. Only the failure clears.
+  if (args.action === "resume") {
+    return {
+      ...state,
+      runs: state.runs.map((run) => (
+        run.id === args.runId
+          ? { ...run, status: "running", lastError: null, failedAt: null }
+          : run
+      )),
+    };
   }
 
   const targetMessage = state.messages.find((message) => (
