@@ -83,7 +83,17 @@ import {
   runWorkerTurn,
 } from "@/server/conversations/worker-turn-gate";
 
-export type RecoveryAction = "retry" | "edit" | "fork";
+/**
+ * `retry` rewinds: the user picked a message and asked for a different answer,
+ * so everything the worker produced after it becomes a discarded branch.
+ *
+ * `resume` does not. It continues a conversation that stopped against its will
+ * (a crashed runtime, an exhausted quota window) by re-delivering the same
+ * message to the same saved session, leaving the transcript intact. Automated
+ * recovery must use this one: recovery running `retry` against the first
+ * message of a run superseded the entire conversation behind it.
+ */
+export type RecoveryAction = "retry" | "resume" | "edit" | "fork";
 
 interface RecoverRunArgs {
   runId: string;
@@ -709,6 +719,7 @@ async function resumeDirectRunFromSavedSession(
   targetMessage: typeof messages.$inferSelect,
   content: string,
   recoveryEpoch: number,
+  options: { rewind: boolean } = { rewind: true },
 ) {
   const worker = await selectDirectRecoveryWorker(run.id, targetMessage.id);
   const sessionId = worker?.bridgeSessionId?.trim();
@@ -727,16 +738,21 @@ async function resumeDirectRunFromSavedSession(
   }
   const expectedTurnGeneration = worker.turnGeneration;
 
-  const laterMessages = await db.select().from(messages).where(eq(messages.runId, run.id));
-  const laterMessageIds = laterMessages
-    .filter((message) => message.createdAt > targetMessage.createdAt)
-    .map((message) => message.id);
+  // A resume continues work the user still wants; only a rewind discards it.
+  // Re-delivering the message below is idempotent either way — the worker
+  // stream dedupes by entry id — so a resume leaves the transcript untouched.
+  if (options.rewind) {
+    const laterMessages = await db.select().from(messages).where(eq(messages.runId, run.id));
+    const laterMessageIds = laterMessages
+      .filter((message) => message.createdAt > targetMessage.createdAt)
+      .map((message) => message.id);
 
-  if (laterMessageIds.length > 0) {
-    await db.delete(messages).where(inArray(messages.id, laterMessageIds));
+    if (laterMessageIds.length > 0) {
+      await db.delete(messages).where(inArray(messages.id, laterMessageIds));
+    }
+
+    await supersedeDiscardedBranch(run.id, targetMessage.id);
   }
-
-  await supersedeDiscardedBranch(run.id, targetMessage.id);
 
   const sessionMode = worker.bridgeSessionMode?.trim();
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
@@ -1283,11 +1299,13 @@ async function recoverRunUnlocked(args: RecoverRunArgs, recoveryEpoch?: number) 
   }
 
   if (run.mode === "implementation") {
-    if (args.action !== "retry" && args.action !== "edit") {
+    if (args.action !== "retry" && args.action !== "resume" && args.action !== "edit") {
       throw new Error("Fork recovery is only available in direct control conversations");
     }
 
-    if (args.action === "retry") {
+    // `resumeImplementationRun` never rewound in the first place, so retry and
+    // resume are the same operation here.
+    if (args.action === "retry" || args.action === "resume") {
       return resumeImplementationRun(run, plan);
     }
 
@@ -1301,10 +1319,32 @@ async function recoverRunUnlocked(args: RecoverRunArgs, recoveryEpoch?: number) 
   if (recoveryEpoch === undefined) {
     throw new Error("Direct recovery is missing its admission generation");
   }
-  if (args.action === "retry") {
-    const resumed = await resumeDirectRunFromSavedSession(run, targetMessage, nextContent, recoveryEpoch);
+  if (args.action === "retry" || args.action === "resume") {
+    const resumed = await resumeDirectRunFromSavedSession(
+      run,
+      targetMessage,
+      nextContent,
+      recoveryEpoch,
+      { rewind: args.action === "retry" },
+    );
     if (resumed) {
       return resumed;
+    }
+    if (args.action === "resume") {
+      // There is no saved session left to continue. The fall-through below
+      // rebuilds one by rewinding to the target message, which is precisely
+      // what a resume must never do. Surface it and leave the transcript
+      // alone; the user can still choose an explicit retry.
+      const message = `Conversation ${run.id} has no resumable worker session; retry the last message to restart it.`;
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "worker.resume.failed",
+        message,
+        surface: "banner",
+        runId: run.id,
+        cause: null,
+      });
+      throw new Error(message);
     }
   }
 
