@@ -786,39 +786,22 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
   }
 };
 
-export const handleRunDeleteRequest: OmniHttpHandler = async (request, context) => {
-  let deleteFailedRunId = context.params?.id?.trim() ?? "";
+export type ConversationDeleteResult =
+  | { ok: true; runId: string }
+  | { ok: false; status: 404 | 409 | 500; error: unknown };
+
+export async function deleteConversationForApi(runId: string): Promise<ConversationDeleteResult> {
+  let deletionRequested = false;
   try {
-    if (request.method !== "DELETE") {
-      return Response.json({ error: { code: "method_not_allowed", message: "Method not allowed." } }, {
-        status: 405,
-        headers: { allow: "DELETE" },
-      });
-    }
-
-    const auth = await requireApiSession(request, {
-      source: "Runs",
-      action: "Delete",
-      enforceSameOrigin: true,
-    });
-    if (auth.response) {
-      return auth.response;
-    }
-
-    const runId = requireRunId(context);
-    deleteFailedRunId = runId;
     const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
     if (!run) {
-      return errorResponse("Run not found", {
-        status: 404,
-        source: "Runs",
-        action: "Delete",
-      });
+      return { ok: false as const, status: 404 as const, error: new Error("Run not found") };
     }
 
     await settleHandoffsForTargetDeletion(runId);
 
     requestConversationDeletion(runId);
+    deletionRequested = true;
 
     cancelSupervisorWake(runId);
     stopRunObserver(runId);
@@ -905,35 +888,65 @@ export const handleRunDeleteRequest: OmniHttpHandler = async (request, context) 
     completeConversationDeletion(runId);
     notifyEventStreamSubscribers();
 
-    return Response.json({ ok: true, runId });
+    return { ok: true as const, runId };
   } catch (error) {
-    if (deleteFailedRunId) {
-      completeConversationDeletion(deleteFailedRunId);
+    if (deletionRequested) {
+      completeConversationDeletion(runId);
     }
     const cause = error instanceof Error ? error : new Error(String(error));
     const fkMatch = /FOREIGN KEY constraint failed/i.test(cause.message);
     const blockingTable = fkMatch
       ? cause.message.match(/table[: ]\s*([a-z_]+)/i)?.[1] ?? null
       : null;
-    if (deleteFailedRunId) {
-      emitNamedEvent({
-        kind: "conversation.delete_failed",
-        runId: deleteFailedRunId,
-        blockingTable,
-      });
-      emitNamedEvent({
-        kind: "error.surfaced",
-        code: fkMatch ? "conversation.delete.foreign_key" : "conversation.delete.failed",
-        message: fkMatch
-          ? `Could not delete conversation: a related row in ${blockingTable ?? "another table"} blocks the deletion. This is an OmniHarness bug; please report it.`
-          : `Could not delete conversation: ${cause.message}`,
-        surface: "toast",
-        runId: deleteFailedRunId,
-        cause: { name: cause.name, message: cause.message },
+    emitNamedEvent({
+      kind: "conversation.delete_failed",
+      runId,
+      blockingTable,
+    });
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: fkMatch ? "conversation.delete.foreign_key" : "conversation.delete.failed",
+      message: fkMatch
+        ? `Could not delete conversation: a related row in ${blockingTable ?? "another table"} blocks the deletion. This is an OmniHarness bug; please report it.`
+        : `Could not delete conversation: ${cause.message}`,
+      surface: "toast",
+      runId,
+      cause: { name: cause.name, message: cause.message },
+    });
+    return { ok: false, status: fkMatch ? 409 : 500, error };
+  }
+}
+
+export const handleRunDeleteRequest: OmniHttpHandler = async (request, context) => {
+  try {
+    if (request.method !== "DELETE") {
+      return Response.json({ error: { code: "method_not_allowed", message: "Method not allowed." } }, {
+        status: 405,
+        headers: { allow: "DELETE" },
       });
     }
+
+    const auth = await requireApiSession(request, {
+      source: "Runs",
+      action: "Delete",
+      enforceSameOrigin: true,
+    });
+    if (auth.response) {
+      return auth.response;
+    }
+
+    const result = await deleteConversationForApi(requireRunId(context));
+    if (result.ok) {
+      return Response.json(result);
+    }
+    return errorResponse(result.error, {
+      status: result.status,
+      source: "Runs",
+      action: "Delete",
+    });
+  } catch (error) {
     return errorResponse(error, {
-      status: fkMatch ? 409 : 500,
+      status: 500,
       source: "Runs",
       action: "Delete",
     });
