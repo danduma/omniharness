@@ -938,4 +938,10 @@
   "settings.agents.claudeAuth.refresh": "상태 확인",
   "settings.agents.claudeAuth.status.quotaBlocked": "할당량 차단됨",
   "settings.agents.claudeAuth.terminalHistoryTruncated": "이전 터미널 출력은 더 이상 볼 수 없지만 현재 로그인 프로세스는 계속 연결되어 있습니다."
+,  "settings.publicApi.title": "Public API",
+  "settings.publicApi.description": "Generate a key for the project chat HTTP API. Anyone holding this key can control the configured public projects.",
+  "settings.publicApi.generate": "Generate API key",
+  "settings.publicApi.copy": "Copy key",
+  "settings.publicApi.key": "Public API key",
+  "settings.publicApi.saveHelp": "Copy the key now, then select Save. The full key is shown only until you close Settings."
 }

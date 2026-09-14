@@ -162,6 +162,7 @@ export function SettingsDialog({
               <CredentialsSettingsPanel
                 settings={settingsDraft.draft}
                 setSetting={setSetting}
+                secretStates={secretStates}
               />
             ) : null}
             {activeSettingsTab === "agents" ? (
