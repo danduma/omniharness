@@ -671,7 +671,8 @@ export type ConversationEvent =
         | "agent_thread_index"
         | "harness_llm"
         | "harness_fallback"
-        | "leak_repair";
+        | "leak_repair"
+        | "public_api";
       title: string;
     }
   | {

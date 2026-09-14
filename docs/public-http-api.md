@@ -20,16 +20,24 @@ OMNIHARNESS_PUBLIC_API_PROJECTS=[{"id":"happyvidey","path":"D:\\Codex\\Happyvide
 
 ## Projects and chats
 
+- `GET /api/public/v1` returns the API version, available project IDs, and
+  endpoint discovery metadata.
 - `GET /api/public/v1/projects` lists available project IDs.
 - `GET /api/public/v1/projects/:projectId/chats` lists that project's chats.
+  It accepts `limit`, `offset`, and optional `status` query parameters.
 - `POST /api/public/v1/projects/:projectId/chats` creates a session from a
   `{ "message": "..." }` body.
 - `DELETE /api/public/v1/projects/:projectId/chats/:chatId` permanently
   deletes that session and its persisted conversation artifacts.
+- `PATCH /api/public/v1/projects/:projectId/chats/:chatId` renames a session
+  from a `{ "title": "..." }` body.
 - `POST /api/public/v1/projects/:projectId/chats/:chatId/messages` sends a
   message to a specific chat.
+- `POST /api/public/v1/projects/:projectId/chats/:chatId/stop` stops an active
+  session without deleting its transcript.
 - `GET /api/public/v1/projects/:projectId/chats/:chatId` reads its current
-  transcript; append `/stream` to receive its SSE updates.
+  transcript; use `entriesLimit` (up to 1000) to control its tail size, or
+  append `/stream` to receive its SSE updates.
 
 ## Start or continue a conversation
 
