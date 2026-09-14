@@ -22,8 +22,10 @@ OMNIHARNESS_PUBLIC_API_PROJECTS=[{"id":"happyvidey","path":"D:\\Codex\\Happyvide
 
 - `GET /api/public/v1/projects` lists available project IDs.
 - `GET /api/public/v1/projects/:projectId/chats` lists that project's chats.
-- `POST /api/public/v1/projects/:projectId/chats` creates a chat from a
+- `POST /api/public/v1/projects/:projectId/chats` creates a session from a
   `{ "message": "..." }` body.
+- `DELETE /api/public/v1/projects/:projectId/chats/:chatId` permanently
+  deletes that session and its persisted conversation artifacts.
 - `POST /api/public/v1/projects/:projectId/chats/:chatId/messages` sends a
   message to a specific chat.
 - `GET /api/public/v1/projects/:projectId/chats/:chatId` reads its current

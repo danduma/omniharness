@@ -9,6 +9,7 @@ import { RUN_ID_PATTERN } from "@/server/runs/ids";
 import { getPublicOriginFromRequest } from "@/server/auth/config";
 import { decryptSettingValue } from "@/server/settings/crypto";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
+import { deleteConversationForApi } from "./runs";
 
 const MAX_MESSAGE_LENGTH = 100_000;
 const PROJECT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
@@ -240,12 +241,22 @@ export const handlePublicProjectChatsRequest: OmniHttpHandler = async (request, 
 };
 
 export const handlePublicProjectChatRequest: OmniHttpHandler = async (request, context) => {
-  if (request.method !== "GET") return apiError(405, "method_not_allowed", "Method not allowed.");
   const auth = await validateRequest(request);
   if (auth.response || !auth.config) return auth.response!;
   const project = projectForRequest(auth.config, context.params?.projectId);
   if (!project) return apiError(404, "public_api.project_not_found", "Project is not available through the public API.");
-  const state = await getConversationState(context.params?.chatId ?? "", project.path);
+  const chatId = context.params?.chatId ?? "";
+  if (request.method === "DELETE") {
+    if (!await getPublicRun(chatId, project.path)) {
+      return apiError(404, "public_api.conversation_not_found", "Conversation not found for the selected project.");
+    }
+    const result = await deleteConversationForApi(chatId);
+    return result.ok
+      ? Response.json(result)
+      : apiError(result.status, result.status === 404 ? "public_api.conversation_not_found" : "public_api.conversation_delete_failed", "Could not delete the selected conversation.");
+  }
+  if (request.method !== "GET") return apiError(405, "method_not_allowed", "Method not allowed.");
+  const state = await getConversationState(chatId, project.path);
   return state ? Response.json({ ok: true, ...state }) : apiError(404, "public_api.conversation_not_found", "Conversation not found for the selected project.");
 };
 
