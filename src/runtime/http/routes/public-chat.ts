@@ -8,10 +8,13 @@ import { readWorkerEntriesTail } from "@/server/workers/output-store";
 import { RUN_ID_PATTERN } from "@/server/runs/ids";
 import { getPublicOriginFromRequest } from "@/server/auth/config";
 import { decryptSettingValue } from "@/server/settings/crypto";
+import { emitNamedEvent } from "@/server/events/named-events";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { deleteConversationForApi } from "./runs";
+import { deleteConversationForApi, stopConversationForApi } from "./runs";
 
 const MAX_MESSAGE_LENGTH = 100_000;
+const MAX_TITLE_LENGTH = 200;
 const PROJECT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 
 type PublicProject = { id: string; path: string };
@@ -116,19 +119,31 @@ function messageFromBody(body: unknown) {
   return message && message.length <= MAX_MESSAGE_LENGTH ? message : null;
 }
 
+function titleFromBody(body: unknown) {
+  const title = typeof (body as { title?: unknown } | null)?.title === "string"
+    ? (body as { title: string }).title.trim().replace(/\s+/g, " ")
+    : "";
+  return title && title.length <= MAX_TITLE_LENGTH ? title : null;
+}
+
+function queryBoundedInteger(request: Request, name: string, fallback: number, maximum: number) {
+  const value = Number.parseInt(new URL(request.url).searchParams.get(name) ?? "", 10);
+  return Number.isFinite(value) ? Math.min(Math.max(value, 1), maximum) : fallback;
+}
+
 async function getPublicRun(runId: string, projectPath: string) {
   if (!RUN_ID_PATTERN.test(runId)) return null;
   return db.select().from(runs).where(and(eq(runs.id, runId), eq(runs.projectPath, projectPath))).get();
 }
 
-async function getConversationState(runId: string, projectPath: string) {
+async function getConversationState(runId: string, projectPath: string, entriesLimit = 100) {
   const run = await getPublicRun(runId, projectPath);
   if (!run) return null;
   const worker = await db.select().from(workers)
     .where(eq(workers.runId, runId))
     .orderBy(desc(workers.workerNumber), desc(workers.createdAt))
     .get();
-  const tail = worker ? await readWorkerEntriesTail(runId, worker.id, 100) : null;
+  const tail = worker ? await readWorkerEntriesTail(runId, worker.id, entriesLimit) : null;
   const entries = tail?.entries ?? [];
   return {
     conversationId: run.id,
@@ -213,6 +228,25 @@ export const handlePublicProjectsRequest: OmniHttpHandler = async (request) => {
   return Response.json({ ok: true, projects: auth.config.projects.map((project) => ({ id: project.id })) });
 };
 
+export const handlePublicApiDiscoveryRequest: OmniHttpHandler = async (request) => {
+  if (request.method !== "GET") return apiError(405, "method_not_allowed", "Method not allowed.");
+  const auth = await validateRequest(request);
+  if (auth.response || !auth.config) return auth.response!;
+  return Response.json({
+    ok: true,
+    version: "v1",
+    projects: auth.config.projects.map((project) => ({ id: project.id })),
+    endpoints: {
+      projects: "GET /api/public/v1/projects",
+      sessions: "GET|POST /api/public/v1/projects/:projectId/chats",
+      session: "GET|PATCH|DELETE /api/public/v1/projects/:projectId/chats/:chatId",
+      messages: "POST /api/public/v1/projects/:projectId/chats/:chatId/messages",
+      stop: "POST /api/public/v1/projects/:projectId/chats/:chatId/stop",
+      stream: "GET /api/public/v1/projects/:projectId/chats/:chatId/stream",
+    },
+  });
+};
+
 export const handlePublicProjectChatsRequest: OmniHttpHandler = async (request, context) => {
   const auth = await validateRequest(request);
   if (auth.response || !auth.config) return auth.response!;
@@ -224,8 +258,13 @@ export const handlePublicProjectChatsRequest: OmniHttpHandler = async (request, 
   }
   if (request.method !== "GET") return apiError(405, "method_not_allowed", "Method not allowed.");
   const url = new URL(request.url);
-  const requestedLimit = Number.parseInt(url.searchParams.get("limit") ?? "50", 10);
-  const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 100) : 50;
+  const limit = queryBoundedInteger(request, "limit", 50, 100);
+  const requestedOffset = Number.parseInt(url.searchParams.get("offset") ?? "0", 10);
+  const offset = Number.isFinite(requestedOffset) ? Math.max(requestedOffset, 0) : 0;
+  const status = url.searchParams.get("status")?.trim();
+  const conditions = status
+    ? and(eq(runs.projectPath, project.path), eq(runs.status, status))
+    : eq(runs.projectPath, project.path);
   const chats = await db.select({
     id: runs.id,
     title: runs.title,
@@ -235,9 +274,14 @@ export const handlePublicProjectChatsRequest: OmniHttpHandler = async (request, 
     createdAt: runs.createdAt,
     updatedAt: runs.updatedAt,
     lastActivityAt: runs.lastActivityAt,
-  }).from(runs).where(eq(runs.projectPath, project.path))
-    .orderBy(desc(runs.lastActivityAt), desc(runs.createdAt)).limit(limit);
-  return Response.json({ ok: true, project: { id: project.id }, chats });
+  }).from(runs).where(conditions)
+    .orderBy(desc(runs.lastActivityAt), desc(runs.createdAt)).limit(limit).offset(offset);
+  return Response.json({
+    ok: true,
+    project: { id: project.id },
+    chats,
+    page: { limit, offset, nextOffset: chats.length === limit ? offset + chats.length : null },
+  });
 };
 
 export const handlePublicProjectChatRequest: OmniHttpHandler = async (request, context) => {
@@ -255,9 +299,35 @@ export const handlePublicProjectChatRequest: OmniHttpHandler = async (request, c
       ? Response.json(result)
       : apiError(result.status, result.status === 404 ? "public_api.conversation_not_found" : "public_api.conversation_delete_failed", "Could not delete the selected conversation.");
   }
+  if (request.method === "PATCH") {
+    const title = titleFromBody(await request.json().catch(() => null));
+    if (!title) return apiError(400, "public_api.invalid_title", `title must contain 1 to ${MAX_TITLE_LENGTH} characters.`);
+    const run = await getPublicRun(chatId, project.path);
+    if (!run) return apiError(404, "public_api.conversation_not_found", "Conversation not found for the selected project.");
+    await db.update(runs).set({ title, updatedAt: new Date() }).where(eq(runs.id, run.id));
+    emitNamedEvent({ kind: "conversation.title_updated", runId: run.id, source: "public_api", title });
+    notifyEventStreamSubscribers();
+    return Response.json({ ok: true, conversationId: run.id, title });
+  }
   if (request.method !== "GET") return apiError(405, "method_not_allowed", "Method not allowed.");
-  const state = await getConversationState(chatId, project.path);
+  const state = await getConversationState(chatId, project.path, queryBoundedInteger(request, "entriesLimit", 100, 1_000));
   return state ? Response.json({ ok: true, ...state }) : apiError(404, "public_api.conversation_not_found", "Conversation not found for the selected project.");
+};
+
+export const handlePublicProjectChatStopRequest: OmniHttpHandler = async (request, context) => {
+  if (request.method !== "POST") return apiError(405, "method_not_allowed", "Method not allowed.");
+  const auth = await validateRequest(request);
+  if (auth.response || !auth.config) return auth.response!;
+  const project = projectForRequest(auth.config, context.params?.projectId);
+  if (!project) return apiError(404, "public_api.project_not_found", "Project is not available through the public API.");
+  const chatId = context.params?.chatId ?? "";
+  if (!await getPublicRun(chatId, project.path)) {
+    return apiError(404, "public_api.conversation_not_found", "Conversation not found for the selected project.");
+  }
+  const result = await stopConversationForApi(chatId);
+  return result.ok
+    ? Response.json(result)
+    : apiError(result.status, result.status === 404 ? "public_api.conversation_not_found" : "public_api.conversation_stop_refused", result.error.message);
 };
 
 export const handlePublicProjectChatMessageRequest: OmniHttpHandler = async (request, context) => {

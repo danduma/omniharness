@@ -917,6 +917,47 @@ export async function deleteConversationForApi(runId: string): Promise<Conversat
   }
 }
 
+export type ConversationStopResult =
+  | { ok: true; runId: string; status: string; alreadyStopped: boolean }
+  | { ok: false; status: 404 | 409; error: Error };
+
+export async function stopConversationForApi(runId: string): Promise<ConversationStopResult> {
+  return runQuotaRecoveryMutation(runId, async () => {
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    if (!run) {
+      return { ok: false as const, status: 404 as const, error: new Error("Run not found") };
+    }
+    if (normalizeSessionType(run.sessionType) === "process") {
+      return { ok: false as const, status: 409 as const, error: new Error("Process sessions cannot be stopped through the public API") };
+    }
+    if (isSupervisorStopAlreadySettled(run.status)) {
+      return { ok: true as const, runId, status: run.status, alreadyStopped: true };
+    }
+
+    stopRunObserver(runId);
+    await db.update(runs).set({
+      status: "cancelled",
+      updatedAt: new Date(),
+    }).where(eq(runs.id, runId));
+
+    const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
+    const activeWorkers = runWorkers.filter((worker) => isActiveWorkerStatus(worker.status));
+    for (const worker of activeWorkers) {
+      await cancelWorker(worker);
+    }
+    await settleRunRecoveryAfterUserStop(runId);
+    await insertExecutionEvent(runId, "supervisor_stopped", {
+      summary: "Stopped conversation and cancelled active workers through the public API.",
+      reason: "Public API request.",
+      userInitiated: true,
+      source: "public_api",
+      cancelledWorkerIds: activeWorkers.map((worker) => worker.id),
+    });
+    notifyEventStreamSubscribers();
+    return { ok: true as const, runId, status: "cancelled", alreadyStopped: false };
+  });
+}
+
 export const handleRunDeleteRequest: OmniHttpHandler = async (request, context) => {
   try {
     if (request.method !== "DELETE") {
