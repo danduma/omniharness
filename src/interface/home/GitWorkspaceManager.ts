@@ -2,6 +2,7 @@ import { StateManager } from "@/lib/state-manager";
 import type { GitWorkspaceSnapshot, GitWorkspaceTarget } from "@/lib/git-workspace";
 import { t } from "@/lib/i18n";
 import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
+import { runtimeErrorMessage } from "@/runtime-api/request";
 import type { RuntimeAPIs } from "@/runtime-api/types";
 
 export type GitWorkspaceLaunchRequest = {
@@ -171,13 +172,13 @@ function isFreshCachedProject(cached: CachedGitWorkspaceProject | undefined) {
 }
 
 function toErrorState(error: unknown): GitWorkspaceErrorState {
-  if (error instanceof Error) {
-    return {
-      message: error.message,
-      details: (error as Error & { details?: string[] }).details,
-    };
-  }
-  return { message: String(error) };
+  const details = (error as { details?: unknown } | null | undefined)?.details;
+  return {
+    message: runtimeErrorMessage(error),
+    details: Array.isArray(details)
+      ? details.filter((detail): detail is string => typeof detail === "string")
+      : undefined,
+  };
 }
 
 function omitKey<TValue>(record: Record<string, TValue | undefined>, key: string) {
