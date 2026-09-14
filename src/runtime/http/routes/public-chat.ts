@@ -1,12 +1,13 @@
 import crypto from "crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
-import { runs, workers } from "@/server/db/schema";
+import { runs, settings, workers } from "@/server/db/schema";
 import { createConversation } from "@/server/conversations/create";
 import { sendConversationMessage } from "@/server/conversations/send-message";
 import { readWorkerEntriesTail } from "@/server/workers/output-store";
 import { RUN_ID_PATTERN } from "@/server/runs/ids";
 import { getPublicOriginFromRequest } from "@/server/auth/config";
+import { decryptSettingValue } from "@/server/settings/crypto";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 
 const MAX_MESSAGE_LENGTH = 100_000;
@@ -14,10 +15,11 @@ const PROJECT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 
 type PublicProject = { id: string; path: string };
 type PublicApiConfig = { key: string; projects: PublicProject[] };
+const PUBLIC_API_KEY_SETTING = "OMNIHARNESS_PUBLIC_API_KEY";
+const PUBLIC_API_PROJECTS_SETTING = "OMNIHARNESS_PUBLIC_API_PROJECTS";
+const PUBLIC_API_PROJECT_PATH_SETTING = "OMNIHARNESS_PUBLIC_API_PROJECT_PATH";
 
-function publicApiConfig(): PublicApiConfig {
-  const key = process.env.OMNIHARNESS_PUBLIC_API_KEY?.trim() ?? "";
-  const configuredProjects = process.env.OMNIHARNESS_PUBLIC_API_PROJECTS?.trim();
+function parsePublicProjects(configuredProjects: string | undefined, projectPath: string | undefined) {
   if (configuredProjects) {
     try {
       const parsed = JSON.parse(configuredProjects) as unknown;
@@ -30,17 +32,44 @@ function publicApiConfig(): PublicApiConfig {
           return PROJECT_ID_PATTERN.test(id) && path ? [{ id, path }] : [];
         });
         if (projects.length > 0 && new Set(projects.map((project) => project.id)).size === projects.length) {
-          return { key, projects };
+          return projects;
         }
       }
     } catch {
       // A malformed environment value leaves the public API unavailable.
     }
-    return { key, projects: [] };
+    return [];
   }
 
-  const projectPath = process.env.OMNIHARNESS_PUBLIC_API_PROJECT_PATH?.trim() ?? "";
-  return { key, projects: projectPath ? [{ id: "default", path: projectPath }] : [] };
+  return projectPath ? [{ id: "default", path: projectPath }] : [];
+}
+
+async function publicApiConfig(): Promise<PublicApiConfig> {
+  const stored = await db.select().from(settings).where(inArray(settings.key, [
+    PUBLIC_API_KEY_SETTING,
+    PUBLIC_API_PROJECTS_SETTING,
+    PUBLIC_API_PROJECT_PATH_SETTING,
+  ]));
+  const values = new Map<string, string>();
+  for (const setting of stored) {
+    if (typeof setting.key === "string" && typeof setting.value === "string") {
+      values.set(setting.key, setting.value);
+    }
+  }
+  const storedKey = values.get(PUBLIC_API_KEY_SETTING);
+  let key = process.env.OMNIHARNESS_PUBLIC_API_KEY?.trim() ?? "";
+  if (storedKey?.trim()) {
+    try {
+      key = decryptSettingValue(storedKey).trim();
+    } catch {
+      key = "";
+    }
+  }
+  const configuredProjects = values.get(PUBLIC_API_PROJECTS_SETTING)?.trim()
+    || process.env.OMNIHARNESS_PUBLIC_API_PROJECTS?.trim();
+  const projectPath = values.get(PUBLIC_API_PROJECT_PATH_SETTING)?.trim()
+    || process.env.OMNIHARNESS_PUBLIC_API_PROJECT_PATH?.trim();
+  return { key, projects: parsePublicProjects(configuredProjects, projectPath) };
 }
 
 function hasValidApiKey(request: Request, expected: string) {
@@ -63,8 +92,8 @@ function unavailable() {
   return apiError(503, "public_api.unconfigured", "The public chat API is not configured.");
 }
 
-function validateRequest(request: Request) {
-  const config = publicApiConfig();
+async function validateRequest(request: Request) {
+  const config = await publicApiConfig();
   if (!config.key || config.projects.length === 0) return { response: unavailable(), config: null };
   if (!hasValidApiKey(request, config.key)) return { response: unauthorized(), config: null };
   return { response: null, config };
@@ -178,13 +207,13 @@ async function streamChat(request: Request, project: PublicProject, runId: strin
 
 export const handlePublicProjectsRequest: OmniHttpHandler = async (request) => {
   if (request.method !== "GET") return apiError(405, "method_not_allowed", "Method not allowed.");
-  const auth = validateRequest(request);
+  const auth = await validateRequest(request);
   if (auth.response || !auth.config) return auth.response!;
   return Response.json({ ok: true, projects: auth.config.projects.map((project) => ({ id: project.id })) });
 };
 
 export const handlePublicProjectChatsRequest: OmniHttpHandler = async (request, context) => {
-  const auth = validateRequest(request);
+  const auth = await validateRequest(request);
   if (auth.response || !auth.config) return auth.response!;
   const project = projectForRequest(auth.config, context.params?.projectId);
   if (!project) return apiError(404, "public_api.project_not_found", "Project is not available through the public API.");
@@ -212,7 +241,7 @@ export const handlePublicProjectChatsRequest: OmniHttpHandler = async (request, 
 
 export const handlePublicProjectChatRequest: OmniHttpHandler = async (request, context) => {
   if (request.method !== "GET") return apiError(405, "method_not_allowed", "Method not allowed.");
-  const auth = validateRequest(request);
+  const auth = await validateRequest(request);
   if (auth.response || !auth.config) return auth.response!;
   const project = projectForRequest(auth.config, context.params?.projectId);
   if (!project) return apiError(404, "public_api.project_not_found", "Project is not available through the public API.");
@@ -222,7 +251,7 @@ export const handlePublicProjectChatRequest: OmniHttpHandler = async (request, c
 
 export const handlePublicProjectChatMessageRequest: OmniHttpHandler = async (request, context) => {
   if (request.method !== "POST") return apiError(405, "method_not_allowed", "Method not allowed.");
-  const auth = validateRequest(request);
+  const auth = await validateRequest(request);
   if (auth.response || !auth.config) return auth.response!;
   const project = projectForRequest(auth.config, context.params?.projectId);
   if (!project) return apiError(404, "public_api.project_not_found", "Project is not available through the public API.");
@@ -234,7 +263,7 @@ export const handlePublicProjectChatMessageRequest: OmniHttpHandler = async (req
 
 export const handlePublicProjectChatStreamRequest: OmniHttpHandler = async (request, context) => {
   if (request.method !== "GET") return apiError(405, "method_not_allowed", "Method not allowed.");
-  const auth = validateRequest(request);
+  const auth = await validateRequest(request);
   if (auth.response || !auth.config) return auth.response!;
   const project = projectForRequest(auth.config, context.params?.projectId);
   if (!project) return apiError(404, "public_api.project_not_found", "Project is not available through the public API.");
@@ -244,7 +273,7 @@ export const handlePublicProjectChatStreamRequest: OmniHttpHandler = async (requ
 // Legacy single-project endpoints remain available for existing callers.
 export const handlePublicChatRequest: OmniHttpHandler = async (request) => {
   if (request.method !== "POST") return apiError(405, "method_not_allowed", "Method not allowed.");
-  const auth = validateRequest(request);
+  const auth = await validateRequest(request);
   if (auth.response || !auth.config) return auth.response!;
   const project = defaultProject(auth.config);
   if (!project) return unavailable();
@@ -257,7 +286,7 @@ export const handlePublicChatRequest: OmniHttpHandler = async (request) => {
 
 export const handlePublicChatStatusRequest: OmniHttpHandler = async (request, context) => {
   if (request.method !== "GET") return apiError(405, "method_not_allowed", "Method not allowed.");
-  const auth = validateRequest(request);
+  const auth = await validateRequest(request);
   if (auth.response || !auth.config) return auth.response!;
   const project = defaultProject(auth.config);
   if (!project) return unavailable();
@@ -267,7 +296,7 @@ export const handlePublicChatStatusRequest: OmniHttpHandler = async (request, co
 
 export const handlePublicChatStreamRequest: OmniHttpHandler = async (request, context) => {
   if (request.method !== "GET") return apiError(405, "method_not_allowed", "Method not allowed.");
-  const auth = validateRequest(request);
+  const auth = await validateRequest(request);
   if (auth.response || !auth.config) return auth.response!;
   const project = defaultProject(auth.config);
   return project ? streamChat(request, project, context.params?.id ?? "") : unavailable();

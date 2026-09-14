@@ -938,4 +938,10 @@
   "settings.agents.claudeAuth.refresh": "Vérifier l'état",
   "settings.agents.claudeAuth.status.quotaBlocked": "Quota bloqué",
   "settings.agents.claudeAuth.terminalHistoryTruncated": "L'ancienne sortie du terminal n'est plus disponible ; le processus de connexion actuel reste attaché."
+,  "settings.publicApi.title": "Public API",
+  "settings.publicApi.description": "Generate a key for the project chat HTTP API. Anyone holding this key can control the configured public projects.",
+  "settings.publicApi.generate": "Generate API key",
+  "settings.publicApi.copy": "Copy key",
+  "settings.publicApi.key": "Public API key",
+  "settings.publicApi.saveHelp": "Copy the key now, then select Save. The full key is shown only until you close Settings."
 }
