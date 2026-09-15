@@ -3,7 +3,7 @@ import { constants, accessSync, copyFileSync, cpSync, existsSync, lstatSync, mkd
 import { readFile } from "fs/promises";
 import { request as httpRequest } from "http";
 import { request as httpsRequest } from "https";
-import { homedir } from "os";
+import { homedir, platform } from "os";
 import { basename, dirname, isAbsolute, join } from "path";
 import { Readable, Writable } from "stream";
 import * as acp from "@agentclientprotocol/sdk";
@@ -363,7 +363,10 @@ function applyProjectScopedCliStorage(type: string, cwd: string, env: EnvLike, o
       shouldBridgeCredentials = true;
     }
     if (!env.CODEX_SQLITE_HOME?.trim()) {
-      env.CODEX_SQLITE_HOME = join(cliHome, "codex", "sqlite");
+      // Codex 0.154 introduced a new SQLite state runtime. Keep the old
+      // directory intact so prior sessions remain readable while new workers
+      // use the compatible layout.
+      env.CODEX_SQLITE_HOME = join(cliHome, "codex", "sqlite-v2");
     }
   }
   if (type === "claude" && !env.CLAUDE_CONFIG_DIR?.trim()) {
@@ -1573,8 +1576,20 @@ export class AgentRuntimeManager {
         client,
         managedSkillLinks,
       });
+      const windowsManagedCodexAcp = join(
+        finalEnv.LOCALAPPDATA || join(finalEnv.HOME || homedir(), ".omniharness"),
+        "OmniHarness",
+        "codex-acp",
+        "node_modules",
+        "@agentclientprotocol",
+        "codex-acp",
+        "dist",
+        "index.js",
+      );
       const candidates = (useCodexFallback
-        ? [{ command: "codex-acp", args: [] as string[] }]
+        ? [platform() === "win32" && existsSync(windowsManagedCodexAcp)
+          ? { command: process.execPath, args: [windowsManagedCodexAcp] }
+          : { command: "codex-acp", args: [] as string[] }]
         : useClaudeDefault
           ? [{ command: "claude-agent-acp", args: [] as string[] }]
           : useGeminiDefault
