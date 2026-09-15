@@ -663,7 +663,7 @@ export function resolveCommand(command: string, input: CommandLookupInput = {}):
     ? join(env.HOME || homedir(), command.slice(2))
     : command;
 
-  if (expanded.includes("/")) {
+  if (isAbsolute(expanded) || expanded.includes("/") || expanded.includes("\\")) {
     return executableExists(expanded) ? expanded : null;
   }
 
