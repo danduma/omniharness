@@ -89,6 +89,37 @@ export function removeRunFromHomeState(current: EventStreamState, runId: string)
   };
 }
 
+/** Restore only the catalog slice hidden by an optimistic removal. */
+export function restoreRunSlice(
+  current: EventStreamState,
+  captured: EventStreamState,
+  runId: string,
+): EventStreamState {
+  const capturedRun = captured.runs.find((run) => run.id === runId);
+  if (!capturedRun || current.runs.some((run) => run.id === runId)) return current;
+  const workerIds = new Set(captured.workers.filter((worker) => worker.runId === runId).map((worker) => worker.id));
+  const planId = capturedRun.planId;
+  const addUnique = <T>(base: T[], additions: T[], id: (item: T) => string) => {
+    const seen = new Set(base.map(id));
+    return [...base, ...additions.filter((item) => !seen.has(id(item)))];
+  };
+  return {
+    ...current,
+    runs: addUnique(current.runs, [capturedRun], (run) => run.id),
+    plans: addUnique(current.plans, captured.plans.filter((plan) => plan.id === planId), (plan) => plan.id),
+    planItems: addUnique(current.planItems, captured.planItems.filter((item) => item.planId === planId), (item) => item.id),
+    messages: addUnique(current.messages, captured.messages.filter((message) => message.runId === runId), (message) => message.id),
+    workers: addUnique(current.workers, captured.workers.filter((worker) => worker.runId === runId), (worker) => worker.id),
+    clarifications: addUnique(current.clarifications, captured.clarifications.filter((item) => item.runId === runId), (item) => item.id),
+    executionEvents: addUnique(current.executionEvents, captured.executionEvents.filter((item) => item.runId === runId || Boolean(item.workerId && workerIds.has(item.workerId))), (item) => item.id),
+    supervisorInterventions: addUnique(current.supervisorInterventions, captured.supervisorInterventions.filter((item) => item.runId === runId || Boolean(item.workerId && workerIds.has(item.workerId))), (item) => item.id),
+    queuedMessages: addUnique(current.queuedMessages ?? [], (captured.queuedMessages ?? []).filter((item) => item.runId === runId), (item) => item.id),
+    readMarkers: captured.readMarkers?.[runId]
+      ? { ...(current.readMarkers ?? {}), [runId]: captured.readMarkers[runId] }
+      : current.readMarkers,
+  };
+}
+
 export function getConversationTranscriptRunIds({
   selectedRunId,
   selectedRun,
@@ -1610,8 +1641,7 @@ export function resolveComposerModelValue(preferredModel: string | null | undefi
 }
 
 export function resolveSavedComposerModel(savedModel: string | null | undefined) {
-  const normalized = savedModel?.trim() || "";
-  return normalized === "claude-opus-5" ? "gpt-5.6-sol" : normalized;
+  return savedModel?.trim() || "";
 }
 
 export function resolveComposerEffortForPair(savedEffort: string | null | undefined) {
@@ -1626,6 +1656,25 @@ export function resolveComposerEffortValue(selectedEffort: string) {
 export function getWorkerModelOptions(catalog: Partial<WorkerModelCatalog> | undefined, workerType: WorkerType) {
   const discoveredModels = catalog?.[workerType];
   return discoveredModels?.length ? discoveredModels : FALLBACK_WORKER_MODEL_OPTIONS[workerType];
+}
+
+/**
+ * An explicit worker change transfers ownership of the model picker to the
+ * newly selected worker. Preserve the current choice only when that worker
+ * can actually use its normalized id; otherwise initialize from that
+ * worker's catalog. Catalog refreshes do not call this function, so they
+ * still cannot silently replace a saved session model.
+ */
+export function resolveComposerModelAfterWorkerChange(args: {
+  catalog: Partial<WorkerModelCatalog> | undefined;
+  workerType: WorkerType;
+  selectedModel: string;
+}) {
+  const options = getWorkerModelOptions(args.catalog, args.workerType);
+  const resolved = resolveSelectedWorkerModel(args.workerType, args.selectedModel);
+  return options.some((option) => option.value === resolved)
+    ? resolved
+    : options[0]?.value ?? "";
 }
 
 export function resolveComposerEffortLabel(preferredEffort: string | null | undefined) {

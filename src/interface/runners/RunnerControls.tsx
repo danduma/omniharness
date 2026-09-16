@@ -344,8 +344,17 @@ function ConnectedRunnerControls({
         await connection?.retry();
       }
       context.uiManager.close();
-    } catch {
-      context.uiManager.setError("runner.error.generic");
+    } catch (error) {
+      // A refusal the restart route stated itself already says exactly what is
+      // wrong — most often that no control service is running on the target
+      // machine, which is the normal state of a server nobody has started one
+      // for. That is worth showing instead of "the operation failed", and it
+      // matters more now that the target can be a machine the reader is not
+      // sitting at.
+      const code = errorCode(error);
+      context.uiManager.setError(
+        code.startsWith("runner.restart.") ? code : "runner.error.generic",
+      );
     }
   }, [context]);
 
@@ -455,14 +464,26 @@ function ConnectedRunnerControls({
             <UserRoundCog />
             {t("runner.action.sessions")}
           </DropdownMenuItem>
-          {activeProfile.isSameOrigin ? (
-            <DropdownMenuItem
-              onClick={() => context.uiManager.openRestart(active.profileId, menuFocusId)}
-            >
-              <RotateCcw />
-              {t("runner.action.restart")}
-            </DropdownMenuItem>
-          ) : null}
+          {/*
+            Offered for whichever server is selected, including one this page
+            was not served from. The restart travels as an ordinary call to that
+            server's own `/api/runner/restart`, which forwards to the control
+            service on *its* machine — so a remote restart is authorized by the
+            same bearer session as every other action against it, and needs no
+            special path. Gating this on same-origin also hid the action
+            entirely from the Electron and Capacitor shells, whose local server
+            profile is never same-origin.
+          */}
+          <DropdownMenuItem
+            onClick={() => context.uiManager.openRestart(
+              active.profileId,
+              active.runnerName,
+              menuFocusId,
+            )}
+          >
+            <RotateCcw />
+            {t("runner.action.restart")}
+          </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => context.uiManager.openRename(
               active.profileId,
@@ -635,6 +656,14 @@ function RunnerDialog({
               autoFocus
             />
           </Field>
+        ) : null}
+        {ui.dialog === "restart" ? (
+          <div className="rounded-xl border border-border/60 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              {t("runner.restart.target")}
+            </p>
+            <p className="mt-1 truncate text-sm font-medium">{ui.label}</p>
+          </div>
         ) : null}
         {ui.dialog === "tls" ? (
           <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">

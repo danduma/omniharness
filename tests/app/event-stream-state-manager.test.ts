@@ -132,6 +132,26 @@ function memoryStorage() {
 }
 
 describe("EventStreamStateManager", () => {
+  it("removes an obsolete worker from a run whose scoped catalog is declared complete", () => {
+    const initial = multiRunState({
+      runs: ["run-a", "run-b"], messageRunId: "run-a", message: "selected", checksum: "before", catalogComplete: false,
+    });
+    initial.workers = [
+      { id: "stale-a", runId: "run-a" },
+      { id: "keep-b", runId: "run-b" },
+    ] as EventStreamState["workers"];
+    const manager = new EventStreamStateManager(initial, { deferCacheHydration: true });
+    const scoped = multiRunState({
+      runs: ["run-a"], messageRunId: "run-a", message: "selected", checksum: "after", catalogComplete: false,
+    });
+    scoped.snapshotScope = { catalog: { complete: false, completeRunIds: ["run-a"] } };
+    scoped.workers = [{ id: "current-a", runId: "run-a" }] as EventStreamState["workers"];
+
+    manager.updateFromServer(scoped);
+
+    expect(manager.getSnapshot().workers.map((worker) => worker.id).sort()).toEqual(["current-a", "keep-b"]);
+  });
+
   it("does not merge a locally deleted run back into a scoped catalog", () => {
     const manager = new EventStreamStateManager(
       multiRunState({

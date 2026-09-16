@@ -32,7 +32,20 @@ export type ComposerDraft = {
   commandCursor: number;
   mentionIndex: number;
   attachments: PendingChatAttachment[];
+  selection: ComposerSelection;
+  dirtySelectionFields: ComposerSelectionField[];
+  serverSelectionVersion: string | null;
 };
+
+export type ComposerSelection = {
+  conversationMode: ConversationModeOption;
+  worker: ComposerWorkerOption;
+  accountId: string;
+  model: string;
+  effort: string;
+};
+
+export type ComposerSelectionField = keyof ComposerSelection;
 
 export const NEW_CONVERSATION_DRAFT_KEY = "__new__";
 
@@ -41,6 +54,15 @@ const EMPTY_COMPOSER_DRAFT: ComposerDraft = {
   commandCursor: 0,
   mentionIndex: 0,
   attachments: [],
+  selection: {
+    conversationMode: "direct",
+    worker: "auto",
+    accountId: "auto",
+    model: "gpt-5.6-sol",
+    effort: "High",
+  },
+  dirtySelectionFields: [],
+  serverSelectionVersion: null,
 };
 
 export type HomeUiState = {
@@ -77,8 +99,10 @@ export type HomeUiState = {
   renamingRunId: string | null;
   renameValue: string;
   renameSource: RenameSource | null;
+  renameDialogRevision: number;
   movingRunId: string | null;
   moveRunProjectPath: string;
+  moveDialogRevision: number;
   editingMessageId: string | null;
   editingMessageValue: string;
   expandedDirectMessageIds: Set<string>;
@@ -136,8 +160,10 @@ const initialHomeUiState: HomeUiState = {
   renamingRunId: null,
   renameValue: "",
   renameSource: null,
+  renameDialogRevision: 0,
   movingRunId: null,
   moveRunProjectPath: "",
+  moveDialogRevision: 0,
   editingMessageId: null,
   editingMessageValue: "",
   expandedDirectMessageIds: new Set(),
@@ -162,6 +188,8 @@ const initialHomeUiState: HomeUiState = {
 };
 
 export class HomeUiStateManager extends StateManager<HomeUiState> {
+  private readonly acknowledgedSelectionsByRun = new Map<string, ComposerSelection>();
+
   constructor() {
     super(initialHomeUiState);
   }
@@ -259,6 +287,172 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
     });
   }
 
+  private activeSelection(state: HomeUiState): ComposerSelection {
+    return {
+      conversationMode: state.selectedConversationMode,
+      worker: state.selectedCliAgent,
+      accountId: state.selectedWorkerAccountId,
+      model: state.selectedModel,
+      effort: state.selectedEffort,
+    };
+  }
+
+  setComposerSelectionField<TKey extends ComposerSelectionField>(
+    field: TKey,
+    value: StateUpdate<ComposerSelection[TKey]>,
+    options: { userEdited?: boolean } = {},
+  ) {
+    this.update((current) => {
+      const currentSelection = this.activeSelection(current);
+      const nextValue = typeof value === "function"
+        ? (value as (previous: ComposerSelection[TKey]) => ComposerSelection[TKey])(currentSelection[field])
+        : value;
+      if (Object.is(currentSelection[field], nextValue)) return current;
+
+      const key = current.selectedRunId ?? NEW_CONVERSATION_DRAFT_KEY;
+      const stored = current.composerDraftsByRun[key];
+      const dirtySelectionFields = new Set(stored?.dirtySelectionFields ?? []);
+      if (options.userEdited !== false) {
+        const acknowledgedValue = current.selectedRunId
+          ? this.acknowledgedSelectionsByRun.get(current.selectedRunId)?.[field]
+          : undefined;
+        if (current.selectedRunId && Object.is(nextValue, acknowledgedValue)) {
+          dirtySelectionFields.delete(field);
+        } else {
+          dirtySelectionFields.add(field);
+        }
+      }
+      const selection = { ...(stored?.selection ?? currentSelection), [field]: nextValue };
+      const draft: ComposerDraft = {
+        command: current.command,
+        commandCursor: current.commandCursor,
+        mentionIndex: current.mentionIndex,
+        attachments: current.attachments,
+        selection,
+        dirtySelectionFields: [...dirtySelectionFields],
+        serverSelectionVersion: stored?.serverSelectionVersion ?? null,
+      };
+
+      const selectionStatePatch: Partial<HomeUiState> = field === "conversationMode"
+        ? { selectedConversationMode: nextValue as ConversationModeOption }
+        : field === "worker"
+          ? { selectedCliAgent: nextValue as ComposerWorkerOption }
+          : field === "accountId"
+            ? { selectedWorkerAccountId: nextValue as string }
+            : field === "model"
+              ? { selectedModel: nextValue as string }
+              : { selectedEffort: nextValue as string };
+
+      return {
+        ...current,
+        ...selectionStatePatch,
+        composerDraftsByRun: { ...current.composerDraftsByRun, [key]: draft },
+      };
+    });
+  }
+
+  setComposerWorkerSelection(worker: ComposerWorkerOption, model: string) {
+    this.update((current) => {
+      const currentSelection = this.activeSelection(current);
+      const workerChanged = currentSelection.worker !== worker;
+      const modelChanged = currentSelection.model !== model;
+      if (!workerChanged && !modelChanged) return current;
+
+      const key = current.selectedRunId ?? NEW_CONVERSATION_DRAFT_KEY;
+      const stored = current.composerDraftsByRun[key];
+      const dirtySelectionFields = new Set(stored?.dirtySelectionFields ?? []);
+      const acknowledged = current.selectedRunId
+        ? this.acknowledgedSelectionsByRun.get(current.selectedRunId)
+        : undefined;
+
+      if (workerChanged) {
+        if (current.selectedRunId && acknowledged?.worker === worker) {
+          dirtySelectionFields.delete("worker");
+        } else {
+          dirtySelectionFields.add("worker");
+        }
+      }
+      if (modelChanged) {
+        if (current.selectedRunId && acknowledged?.model === model) {
+          dirtySelectionFields.delete("model");
+        } else {
+          dirtySelectionFields.add("model");
+        }
+      }
+
+      const selection = { ...currentSelection, worker, model };
+      const draft: ComposerDraft = {
+        command: current.command,
+        commandCursor: current.commandCursor,
+        mentionIndex: current.mentionIndex,
+        attachments: current.attachments,
+        selection,
+        dirtySelectionFields: [...dirtySelectionFields],
+        serverSelectionVersion: stored?.serverSelectionVersion ?? null,
+      };
+
+      return {
+        ...current,
+        selectedCliAgent: worker,
+        selectedModel: model,
+        composerDraftsByRun: { ...current.composerDraftsByRun, [key]: draft },
+      };
+    });
+  }
+
+  hydrateComposerSelection(args: {
+    runId: string;
+    selection: ComposerSelection;
+    serverVersion: string;
+  }) {
+    this.acknowledgedSelectionsByRun.set(args.runId, { ...args.selection });
+    this.update((current) => {
+      const key = args.runId;
+      const active = current.selectedRunId === args.runId;
+      const currentSelection = active
+        ? this.activeSelection(current)
+        : current.composerDraftsByRun[key]?.selection ?? args.selection;
+      const stored = current.composerDraftsByRun[key];
+      if (
+        stored?.serverSelectionVersion === args.serverVersion
+        && stored.dirtySelectionFields.length === 0
+      ) return current;
+
+      const dirtyFields = new Set(stored?.dirtySelectionFields ?? []);
+      const nextSelection = { ...currentSelection };
+      for (const field of Object.keys(args.selection) as ComposerSelectionField[]) {
+        if (dirtyFields.has(field)) {
+          if (Object.is(currentSelection[field], args.selection[field])) dirtyFields.delete(field);
+          continue;
+        }
+        (nextSelection[field] as ComposerSelection[typeof field]) = args.selection[field];
+      }
+
+      const draft: ComposerDraft = {
+        command: active ? current.command : stored?.command ?? "",
+        commandCursor: active ? current.commandCursor : stored?.commandCursor ?? 0,
+        mentionIndex: active ? current.mentionIndex : stored?.mentionIndex ?? 0,
+        attachments: active ? current.attachments : stored?.attachments ?? [],
+        selection: nextSelection,
+        dirtySelectionFields: [...dirtyFields],
+        serverSelectionVersion: args.serverVersion,
+      };
+
+      return {
+        ...current,
+        ...(active ? {
+          selectedConversationMode: nextSelection.conversationMode,
+          selectedCliAgent: nextSelection.worker,
+          selectedWorkerAccountId: nextSelection.accountId,
+          selectedModel: nextSelection.model,
+          selectedEffort: nextSelection.effort,
+          hydratedRunSelectionId: args.runId,
+        } : {}),
+        composerDraftsByRun: { ...current.composerDraftsByRun, [key]: draft },
+      };
+    });
+  }
+
   selectRun(nextRunId: string | null) {
     this.update((current) => {
       if (current.selectedRunId === nextRunId) return current;
@@ -269,13 +463,21 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
       const hasContent = current.command.length > 0
         || current.commandCursor !== 0
         || current.mentionIndex !== 0
-        || current.attachments.length > 0;
-      if (hasContent) {
+        || current.attachments.length > 0
+        || (current.composerDraftsByRun[prevKey]?.dirtySelectionFields.length ?? 0) > 0;
+      // A clean, server-hydrated selection is still the session's compound
+      // composer state. Keep it in memory so switching back restores the
+      // model/effort/worker atomically instead of flashing the generic new-run
+      // defaults until the hydration effect runs again.
+      if (hasContent || current.composerDraftsByRun[prevKey]) {
         drafts[prevKey] = {
           command: current.command,
           commandCursor: current.commandCursor,
           mentionIndex: current.mentionIndex,
           attachments: current.attachments,
+          selection: this.activeSelection(current),
+          dirtySelectionFields: current.composerDraftsByRun[prevKey]?.dirtySelectionFields ?? [],
+          serverSelectionVersion: current.composerDraftsByRun[prevKey]?.serverSelectionVersion ?? null,
         };
       } else {
         delete drafts[prevKey];
@@ -291,8 +493,26 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
         commandCursor: nextDraft.commandCursor,
         mentionIndex: nextDraft.mentionIndex,
         attachments: nextDraft.attachments,
+        selectedConversationMode: nextDraft.selection.conversationMode,
+        selectedCliAgent: nextDraft.selection.worker,
+        selectedWorkerAccountId: nextDraft.selection.accountId,
+        selectedModel: nextDraft.selection.model,
+        selectedEffort: nextDraft.selection.effort,
+        hydratedRunSelectionId: nextRunId && nextDraft.serverSelectionVersion ? nextRunId : null,
       };
     });
+  }
+
+  setRenamingRunId(runId: string | null) {
+    this.patch((current) => current.renamingRunId === runId
+      ? {}
+      : { renamingRunId: runId, renameDialogRevision: current.renameDialogRevision + 1 });
+  }
+
+  setMovingRunId(runId: string | null) {
+    this.patch((current) => current.movingRunId === runId
+      ? {}
+      : { movingRunId: runId, moveDialogRevision: current.moveDialogRevision + 1 });
   }
 
   revealMoreProjectSessions(projectPath: string) {
@@ -403,21 +623,23 @@ export const homeUiSetters = {
   setVisibleProjectSessionCounts: homeUiStateManager.createSetter("visibleProjectSessionCounts"),
   revealMoreProjectSessions: (projectPath: string) => homeUiStateManager.revealMoreProjectSessions(projectPath),
   resetProjectSessionDisplayLimit: (projectPath: string) => homeUiStateManager.resetProjectSessionDisplayLimit(projectPath),
-  setRenamingRunId: homeUiStateManager.createSetter("renamingRunId"),
+  setRenamingRunId: (value: string | null) => homeUiStateManager.setRenamingRunId(value),
   setRenameValue: homeUiStateManager.createSetter("renameValue"),
   setRenameSource: homeUiStateManager.createSetter("renameSource"),
-  setMovingRunId: homeUiStateManager.createSetter("movingRunId"),
+  setMovingRunId: (value: string | null) => homeUiStateManager.setMovingRunId(value),
   setMoveRunProjectPath: homeUiStateManager.createSetter("moveRunProjectPath"),
   setEditingMessageId: homeUiStateManager.createSetter("editingMessageId"),
   setEditingMessageValue: homeUiStateManager.createSetter("editingMessageValue"),
   setExpandedDirectMessageIds: homeUiStateManager.createSetter("expandedDirectMessageIds"),
   setRouteReady: homeUiStateManager.createSetter("routeReady"),
   setHasReceivedInitialEventStreamPayload: homeUiStateManager.createSetter("hasReceivedInitialEventStreamPayload"),
-  setSelectedConversationMode: homeUiStateManager.createSetter("selectedConversationMode"),
-  setSelectedCliAgent: homeUiStateManager.createSetter("selectedCliAgent"),
-  setSelectedWorkerAccountId: homeUiStateManager.createSetter("selectedWorkerAccountId"),
-  setSelectedModel: homeUiStateManager.createSetter("selectedModel"),
-  setSelectedEffort: homeUiStateManager.createSetter("selectedEffort"),
+  setSelectedConversationMode: (value: StateUpdate<ConversationModeOption>) => homeUiStateManager.setComposerSelectionField("conversationMode", value),
+  setSelectedCliAgent: (value: StateUpdate<ComposerWorkerOption>) => homeUiStateManager.setComposerSelectionField("worker", value),
+  setSelectedWorkerAccountId: (value: StateUpdate<string>) => homeUiStateManager.setComposerSelectionField("accountId", value),
+  setSelectedModel: (value: StateUpdate<string>) => homeUiStateManager.setComposerSelectionField("model", value),
+  setSelectedEffort: (value: StateUpdate<string>) => homeUiStateManager.setComposerSelectionField("effort", value),
+  initializeComposerSelection: <TKey extends ComposerSelectionField>(field: TKey, value: StateUpdate<ComposerSelection[TKey]>) => homeUiStateManager.setComposerSelectionField(field, value, { userEdited: false }),
+  hydrateComposerSelection: (args: Parameters<HomeUiStateManager["hydrateComposerSelection"]>[0]) => homeUiStateManager.hydrateComposerSelection(args),
   setHydratedRunSelectionId: homeUiStateManager.createSetter("hydratedRunSelectionId"),
   setAttachments: homeUiStateManager.createSetter("attachments"),
   setComposerDraft: (patch: Partial<ComposerDraft>) => homeUiStateManager.setComposerDraft(patch),

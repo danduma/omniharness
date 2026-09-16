@@ -114,7 +114,7 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)');
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)');
   expect(pageSource).toContain('const savedModel = resolveSavedComposerModel(savedModelValue)');
-  expect(pageSource).toContain('if (savedModel) {\n      setSelectedModel(savedModel);\n    }');
+  expect(pageSource).toContain('if (savedModel) {\n      homeUiStateManager.setComposerSelectionField("model", savedModel, { userEdited: false });\n    }');
   expect(pageSource).toContain('window.localStorage.getItem(getEffortStorageKey(savedWorker, savedModel))');
   expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, COMPOSER_WORKER_STORAGE_KEY, selectedCliAgent)');
   expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, COMPOSER_MODEL_STORAGE_KEY, selectedModel)');
@@ -128,7 +128,8 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain('hydratedRunSelectionId: null');
   expect(pageSource).toContain('setHydratedRunSelectionId: homeUiStateManager.createSetter("hydratedRunSelectionId")');
   expect(pageSource).toContain('if (!selectedRunId || !selectedRun) {');
-  expect(pageSource).toContain('if (hydratedRunSelectionId === selectedRunId) {');
+  expect(pageSource).toContain("homeUiStateManager.hydrateComposerSelection({");
+  expect(pageSource).not.toContain('if (hydratedRunSelectionId === selectedRunId) {');
 });
 
 test("composer never sends an account that belongs to a different worker type", () => {

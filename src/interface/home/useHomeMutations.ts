@@ -28,6 +28,7 @@ import {
   buildOptimisticSentConversationMessage,
   buildInlineError,
   removeRunFromHomeState,
+  restoreRunSlice,
   resolveOptimisticSentConversationMessage,
   resolveComposerEffortValue,
   resolveSelectedWorkerModel,
@@ -177,15 +178,17 @@ export function useHomeMutations({
 
   const saveSettings = useMutation({
     mutationFn: async () => {
-      const payload = settingsDraftManager.getSavePayload();
-      await runtimeApis.settings.save(payload);
+      const operation = settingsDraftManager.beginSave();
+      await runtimeApis.settings.save(operation.values);
+      return operation;
     },
-    onSuccess: () => {
-      const savedSettings = settingsDraftManager.getSnapshot().draft;
+    onSuccess: (operation) => {
+      settingsDraftManager.acknowledgeSave(operation);
       appearancePreferencesManager.saveDraft();
-      settingsDraftManager.markSaved(savedSettings);
-      setApiKeys((current) => ({ ...current, ...savedSettings }));
-      setShowSettings(false);
+      setApiKeys((current) => ({ ...current, ...operation.values }));
+      if (settingsDraftManager.getSnapshot().dirtyKeys.size === 0) {
+        setShowSettings(false);
+      }
     },
   });
 
@@ -198,51 +201,73 @@ export function useHomeMutations({
       const previousValue = homeUiStateManager.getSnapshot().apiKeys[key] ?? "";
       setApiKeys((current) => ({ ...current, [key]: value }));
       settingsDraftManager.setField(key, value);
-      return { key, previousValue };
+      const fieldRevision = settingsDraftManager.getSnapshot().fieldRevisions[key] ?? 0;
+      return { key, value, previousValue, fieldRevision };
     },
-    onSuccess: ({ key, value }) => {
-      settingsDraftManager.markFieldsSaved({ [key]: value });
+    onSuccess: ({ key, value }, _variables, context) => {
+      settingsDraftManager.markFieldsSaved(
+        { [key]: value },
+        context ? { [key]: context.fieldRevision } : {},
+      );
     },
     onError: (_error, _variables, context) => {
       if (!context) return;
-      setApiKeys((current) => ({ ...current, [context.key]: context.previousValue }));
+      const ownsLatestEdit = settingsDraftManager.getSnapshot().fieldRevisions[context.key] === context.fieldRevision;
+      if (!ownsLatestEdit) return;
+      setApiKeys((current) => current[context.key] === context.value
+        ? { ...current, [context.key]: context.previousValue }
+        : current);
       settingsDraftManager.setField(context.key, context.previousValue);
     },
   });
 
   const renameRun = useMutation({
+    onMutate: () => ({ dialogRevision: homeUiStateManager.getSnapshot().renameDialogRevision }),
     mutationFn: async ({ runId, title }: { runId: string; title: string }) =>
-      runtimeApis.runs.update({ runId, patch: { title } }),
-    onSuccess: (_data, variables) => {
+      runtimeApis.runs.update({ runId, patch: { title } }) as Promise<{
+        ok: true;
+        runId: string;
+        title: string;
+        titleRevision?: number;
+      }>,
+    onSuccess: (data, variables, context) => {
       setState((current: typeof state) => ({
         ...current,
         runs: (current.runs || []).map((run: RunRecord) =>
-          run.id === variables.runId ? { ...run, title: variables.title } : run,
+          run.id === variables.runId ? {
+            ...run,
+            title: data.title || variables.title,
+            ...(typeof data.titleRevision === "number" ? { titleRevision: data.titleRevision } : {}),
+            titleOwnership: "manual",
+          } : run,
         ),
       }));
-      setRenamingRunId(null);
-      setRenameValue("");
-      setRenameSource(null);
+      if (homeUiStateManager.getSnapshot().renameDialogRevision === context?.dialogRevision) {
+        setRenamingRunId(null);
+        setRenameValue("");
+        setRenameSource(null);
+      }
     },
   });
 
   const moveRunToProject = useMutation({
     onMutate: (variables: { runId: string; projectPath: string }) => {
-      const previousState = state;
+      const previousProjectPath = state.runs.find((run) => run.id === variables.runId)?.projectPath ?? null;
+      const dialogRevision = homeUiStateManager.getSnapshot().moveDialogRevision;
       setState((current: typeof state) => ({
         ...current,
         runs: (current.runs || []).map((run: RunRecord) =>
           run.id === variables.runId ? { ...run, projectPath: variables.projectPath } : run,
         ),
       }));
-      return { previousState };
+      return { previousProjectPath, dialogRevision };
     },
     mutationFn: async ({ runId, projectPath }: { runId: string; projectPath: string }) =>
       runtimeApis.runs.update({
         runId,
         patch: { projectPath },
       }) as Promise<{ ok: true; runId: string; projectPath: string }>,
-    onSuccess: (data, variables) => {
+    onSuccess: (data, variables, context) => {
       const nextProjectPath = data.projectPath || variables.projectPath;
       setState((current: typeof state) => ({
         ...current,
@@ -250,12 +275,19 @@ export function useHomeMutations({
           run.id === variables.runId ? { ...run, projectPath: nextProjectPath } : run,
         ),
       }));
-      setMovingRunId(null);
-      setMoveRunProjectPath("");
+      if (homeUiStateManager.getSnapshot().moveDialogRevision === context?.dialogRevision) {
+        setMovingRunId(null);
+        setMoveRunProjectPath("");
+      }
     },
-    onError: (_error, _variables, context) => {
+    onError: (_error, variables, context) => {
       if (!context) return;
-      setState(context.previousState);
+      setState((current) => ({
+        ...current,
+        runs: current.runs.map((run) => run.id === variables.runId && run.projectPath === variables.projectPath
+          ? { ...run, projectPath: context.previousProjectPath }
+          : run),
+      }));
     },
   });
 
@@ -281,6 +313,8 @@ export function useHomeMutations({
         setRenameSource(null);
       }
 
+      const optimisticRenameDialogRevision = homeUiStateManager.getSnapshot().renameDialogRevision;
+
       return {
         previousState,
         previousSelectedRunId,
@@ -289,6 +323,7 @@ export function useHomeMutations({
         previousRenameSource,
         previousPendingCreatedSnapshot,
         hadPendingCreatedSnapshot,
+        optimisticRenameDialogRevision,
       };
     },
     mutationFn: async ({ runId }: { runId: string }) =>
@@ -302,7 +337,7 @@ export function useHomeMutations({
       if (context.hadPendingCreatedSnapshot && context.previousPendingCreatedSnapshot) {
         pendingCreatedConversationSnapshotsRef.current.set(variables.runId, context.previousPendingCreatedSnapshot);
       }
-      setState(context.previousState);
+      setState((current) => restoreRunSlice(current, context.previousState, variables.runId));
       if (shouldRestoreSelectionAfterOptimisticRemovalError({
         removedRunId: variables.runId,
         selectedRunIdAtStart: context.previousSelectedRunId,
@@ -310,9 +345,11 @@ export function useHomeMutations({
       })) {
         setSelectedRunId(context.previousSelectedRunId);
       }
-      setRenamingRunId(context.previousRenamingRunId);
-      setRenameValue(context.previousRenameValue);
-      setRenameSource(context.previousRenameSource);
+      if (homeUiStateManager.getSnapshot().renameDialogRevision === context.optimisticRenameDialogRevision) {
+        setRenamingRunId(context.previousRenamingRunId);
+        setRenameValue(context.previousRenameValue);
+        setRenameSource(context.previousRenameSource);
+      }
     },
   });
 
@@ -338,6 +375,9 @@ export function useHomeMutations({
         setRenameSource(null);
       }
 
+
+      const optimisticRenameDialogRevision = homeUiStateManager.getSnapshot().renameDialogRevision;
+
       return {
         previousState,
         previousSelectedRunId,
@@ -346,6 +386,7 @@ export function useHomeMutations({
         previousRenameSource,
         previousPendingCreatedSnapshot,
         hadPendingCreatedSnapshot,
+        optimisticRenameDialogRevision,
       };
     },
     mutationFn: async ({ runId }: { runId: string }) =>
@@ -359,7 +400,7 @@ export function useHomeMutations({
       if (context.hadPendingCreatedSnapshot && context.previousPendingCreatedSnapshot) {
         pendingCreatedConversationSnapshotsRef.current.set(variables.runId, context.previousPendingCreatedSnapshot);
       }
-      setState(context.previousState);
+      setState((current) => restoreRunSlice(current, context.previousState, variables.runId));
       if (shouldRestoreSelectionAfterOptimisticRemovalError({
         removedRunId: variables.runId,
         selectedRunIdAtStart: context.previousSelectedRunId,
@@ -367,9 +408,11 @@ export function useHomeMutations({
       })) {
         setSelectedRunId(context.previousSelectedRunId);
       }
-      setRenamingRunId(context.previousRenamingRunId);
-      setRenameValue(context.previousRenameValue);
-      setRenameSource(context.previousRenameSource);
+      if (homeUiStateManager.getSnapshot().renameDialogRevision === context.optimisticRenameDialogRevision) {
+        setRenamingRunId(context.previousRenamingRunId);
+        setRenameValue(context.previousRenameValue);
+        setRenameSource(context.previousRenameSource);
+      }
     },
   });
 

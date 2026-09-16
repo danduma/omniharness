@@ -150,6 +150,9 @@ test("models, agents, and runtime panels preserve server-backed settings", () =>
   expect(settingsSource).toContain('["steer", t("settings.runtime.steer")]');
   expect(settingsSource).toContain('["queue", t("settings.runtime.queue")]');
   expect(settingsSource).toContain("BUSY_MESSAGE_ACTION");
+  expect(settingsSource).toContain("RUNTIME_RESOURCE_SETTING_KEYS.outputLogMaxMb");
+  expect(settingsSource).toContain('t("settings.runtime.outputLogMaxGb")');
+  expect(settingsSource).toContain('t("settings.runtime.outputLogMaxHelp")');
   expect(settingsSource).toContain('type="radio"');
   expect(settingsSource).not.toContain("Busy-message behavior");
   expect(settingsSource).not.toContain("Send behaviour");
@@ -169,8 +172,8 @@ test("settings save and cancel use draft semantics for server-backed values", ()
   expect(settingsSource).toContain("dirtyKeys");
   expect(settingsSource).toContain("discardDraft()");
   expect(settingsSource).toContain("getSavePayload()");
-  expect(settingsSource).toContain("settingsDraftManager.getSavePayload()");
-  expect(settingsSource).toContain("settingsDraftManager.markSaved(savedSettings)");
+  expect(settingsSource).toContain("settingsDraftManager.beginSave()");
+  expect(settingsSource).toContain("settingsDraftManager.acknowledgeSave(operation)");
   expect(settingsSource).not.toContain("Local preferences are saved in this browser. Save persists workspace and runtime settings.");
   expect(settingsSource).toContain('disabled={saveSettings.isPending || !isDirty}');
 });

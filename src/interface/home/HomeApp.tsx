@@ -52,6 +52,7 @@ import {
   mergePendingSentConversationMessages,
   parseBrowserConversationRoute,
   parseProjectList,
+  resolveComposerModelAfterWorkerChange,
   resolveRepoName,
   resolveSelectedWorkerModel,
   shouldClearMissingSelectedRunFromAuthoritativeSnapshot,
@@ -302,7 +303,6 @@ export function HomeApp({
     setRouteReady,
     setHasReceivedInitialEventStreamPayload,
     setSelectedConversationMode,
-    setSelectedCliAgent,
     setSelectedWorkerAccountId,
     setSelectedModel,
     setSelectedEffort,
@@ -599,6 +599,18 @@ export function HomeApp({
     conversationWorkerGroups,
   } = vm;
 
+  const setSelectedCliAgent = useCallback((worker: typeof selectedCliAgent) => {
+    const workerType = worker === "auto"
+      ? autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex"
+      : worker;
+    const model = resolveComposerModelAfterWorkerChange({
+      catalog: workerCatalogQuery.data?.workerModels,
+      workerType,
+      selectedModel: homeUiStateManager.getSnapshot().selectedModel,
+    });
+    homeUiStateManager.setComposerWorkerSelection(worker, model);
+  }, [activeAllowedWorkerTypes, autoSelectedWorkerType, workerCatalogQuery.data?.workerModels]);
+
   const hasCredentialReauthFailure = hasVerifiedDeadCredentialMarker(selectedRun?.lastError);
   const credentialReauthAccountId = hasCredentialReauthFailure
     ? readVerifiedDeadCredentialAccountId(selectedRun?.lastError)
@@ -784,10 +796,6 @@ export function HomeApp({
     setSelectedRunId,
     draftProjectPath,
     setDraftProjectPath,
-    setSelectedConversationMode,
-    setSelectedCliAgent,
-    setSelectedModel,
-    setSelectedEffort,
     collapsedProjectPaths,
     setCollapsedProjectPaths,
     leftSidebarWidth,
@@ -828,17 +836,9 @@ export function HomeApp({
     selectedRun,
     activeComposerMode,
     selectedCliAgent,
-    setSelectedCliAgent,
     autoSelectedWorkerType,
     activeAllowedWorkerTypes,
-    hydratedRunSelectionId,
     setHydratedRunSelectionId,
-    selectedModel,
-    setSelectedModel,
-    selectedEffort,
-    setSelectedEffort,
-    selectedWorkerAccountId,
-    setSelectedWorkerAccountId,
     availableWorkerTypes,
     configuredAllowedWorkerTypes,
     apiKeys,
@@ -852,11 +852,30 @@ export function HomeApp({
     if (activeWorkerModelOptions.length === 0) return;
     const resolved = resolveSelectedWorkerModel(vm.activeWorkerModelType, selectedModel);
     if (activeWorkerModelOptions.some((o) => o.value === resolved)) {
-      if (resolved !== selectedModel) setSelectedModel(resolved);
+      if (resolved !== selectedModel) {
+        homeUiStateManager.setComposerSelectionField("model", resolved, { userEdited: false });
+      }
       return;
     }
-    setSelectedModel(activeWorkerModelOptions[0].value);
-  }, [activeWorkerModelOptions, vm.activeWorkerModelType, selectedModel, setSelectedModel]);
+    // Discovery may be a fallback list or an in-progress refresh. Even a
+    // complete catalog is evidence that the saved choice is unavailable, not
+    // permission to silently replace it with the first unrelated model.
+  }, [activeWorkerModelOptions, vm.activeWorkerModelType, selectedModel]);
+
+  const composerModelOptions = useMemo(() => {
+    const resolved = resolveSelectedWorkerModel(vm.activeWorkerModelType, selectedModel);
+    if (!selectedModel || activeWorkerModelOptions.some((option) => option.value === resolved)) {
+      return activeWorkerModelOptions;
+    }
+    const discovered = workerCatalogQuery.data?.workerModels?.[vm.activeWorkerModelType];
+    const catalogComplete = Array.isArray(discovered) && !workerCatalogQuery.data?.workerModelsRefreshing;
+    if (!catalogComplete) return activeWorkerModelOptions;
+    return [{
+      value: selectedModel,
+      label: t("conversation.composer.modelUnavailable", { model: selectedModel }),
+      unavailable: true,
+    }, ...activeWorkerModelOptions];
+  }, [activeWorkerModelOptions, selectedModel, vm.activeWorkerModelType, workerCatalogQuery.data?.workerModels, workerCatalogQuery.data?.workerModelsRefreshing]);
 
   const composerAccountOptions = useMemo(() => {
     const options = [{
@@ -1314,7 +1333,7 @@ export function HomeApp({
       composerAccountOptions={composerAccountOptions}
       selectedModel={selectedModel}
       setSelectedModel={setSelectedModel}
-      activeWorkerModelOptions={activeWorkerModelOptions}
+      activeWorkerModelOptions={composerModelOptions}
       selectedEffort={selectedEffort}
       setSelectedEffort={setSelectedEffort}
       isComposerSendBusy={isComposerSendBusy}

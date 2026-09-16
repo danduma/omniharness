@@ -163,26 +163,24 @@ function mergeScopedCatalog(current: EventStreamState, incoming: EventStreamStat
     };
   }
 
-  const selectedRunIsAbsent = Boolean(
-    catalogIsPartial
-    && scopedRunId
-    && !(incoming.runs ?? []).some((run) => run.id === scopedRunId),
+  // Older servers only supplied `snapshotRunId`; current servers make the
+  // completeness claim explicit. Retain the legacy interpretation during a
+  // rolling upgrade so obsolete children can still be retired safely.
+  const completeRunIds = new Set(
+    incoming.snapshotScope?.catalog?.completeRunIds
+      ?? (scopedRunId ? [scopedRunId] : []),
   );
-  const removedPlanId = selectedRunIsAbsent
-    ? current.runs.find((run) => run.id === scopedRunId)?.planId
-    : null;
-  const currentRuns = selectedRunIsAbsent
-    ? current.runs.filter((run) => run.id !== scopedRunId)
-    : current.runs;
-  const currentPlans = removedPlanId
-    ? current.plans.filter((plan) => plan.id !== removedPlanId)
-    : current.plans;
-  const currentWorkers = selectedRunIsAbsent
-    ? current.workers.filter((worker) => worker.runId !== scopedRunId)
-    : current.workers;
-  const currentSessions = selectedRunIsAbsent
-    ? current.sessions?.filter((session) => session.runId !== scopedRunId)
-    : current.sessions;
+  const incomingRunIds = new Set((incoming.runs ?? []).map((run) => run.id));
+  const absentCompleteRunIds = new Set([...completeRunIds].filter((runId) => !incomingRunIds.has(runId)));
+  const removedPlanIds = new Set(current.runs
+    .filter((run) => completeRunIds.has(run.id))
+    .map((run) => run.planId));
+  const currentRuns = current.runs.filter((run) => !absentCompleteRunIds.has(run.id));
+  const currentPlans = current.plans.filter((plan) => !removedPlanIds.has(plan.id));
+  // A scoped frame explicitly carries the complete worker/session membership
+  // for these runs. Replace that scope while retaining unrelated runs.
+  const currentWorkers = current.workers.filter((worker) => !completeRunIds.has(worker.runId));
+  const currentSessions = current.sessions?.filter((session) => !completeRunIds.has(session.runId));
   const mergedRuns = mergeByKey(currentRuns, incoming.runs, (run) => run.id);
   return {
     ...incoming,
@@ -203,7 +201,24 @@ function mergeScopedRuns(current: EventStreamState, incoming: EventStreamState, 
 }) {
   const catalogMergedIncoming = mergeScopedCatalog(current, incoming);
   if (options.serverAuthoritative) {
-    return catalogMergedIncoming;
+    const currentRunsById = new Map(current.runs.map((run) => [run.id, run]));
+    let changed = false;
+    const runs = catalogMergedIncoming.runs.map((incomingRun) => {
+      const currentRun = currentRunsById.get(incomingRun.id);
+      const currentRevision = currentRun?.titleRevision ?? -1;
+      const incomingRevision = incomingRun.titleRevision ?? -1;
+      if (!currentRun || currentRevision <= incomingRevision) return incomingRun;
+      changed = true;
+      return {
+        ...incomingRun,
+        title: currentRun.title,
+        titleRevision: currentRun.titleRevision,
+        titleOwnership: currentRun.titleOwnership,
+        titleSource: currentRun.titleSource,
+        titleOwnerWorkerId: currentRun.titleOwnerWorkerId,
+      };
+    });
+    return changed ? { ...catalogMergedIncoming, runs } : catalogMergedIncoming;
   }
 
   const incomingRuns = catalogMergedIncoming.runs ?? [];

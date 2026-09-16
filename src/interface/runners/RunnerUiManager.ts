@@ -133,8 +133,21 @@ export class RunnerUiManager extends StateManager<RunnerUiSnapshot> {
     this.openProfileDialog("forget", profileId, returnFocusId);
   }
 
-  openRestart(profileId: string, returnFocusId: string) {
-    this.openProfileDialog("restart", profileId, returnFocusId);
+  /**
+   * Restart is offered for every server the client is connected to, not just
+   * the one serving the page, so the confirmation has to name its target. The
+   * name rides in `label` the way `openRename` uses it — a restart dialog that
+   * only knew a profile id could not tell the reader which machine it was
+   * about to stop.
+   */
+  openRestart(profileId: string, runnerName: string, returnFocusId: string) {
+    this.update({
+      ...initialSnapshot,
+      dialog: "restart",
+      profileId,
+      label: runnerName,
+      returnFocusId,
+    });
   }
 
   openSessions(profileId: string, returnFocusId: string) {
