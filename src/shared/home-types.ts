@@ -60,10 +60,16 @@ export type RunRecord = {
   parentRunId?: string | null;
   projectPath: string | null;
   title: string | null;
+  titleOwnership?: "automatic" | "manual" | "legacy" | null;
+  titleSource?: string | null;
+  titleRevision?: number | null;
+  titleOwnerWorkerId?: string | null;
   preferredWorkerType?: string | null;
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
   preferredWorkerAccountId?: string | null;
+  preferredWorkerRevision?: number | null;
+  preferredWorkerLaunchRevision?: number | null;
   allowedWorkerTypes?: string | null;
   specPath?: string | null;
   artifactPlanPath?: string | null;
@@ -93,6 +99,7 @@ export type MessageRecord = {
   workerId?: string | null;
   attachments?: ChatAttachment[];
   attachmentsJson?: string | null;
+  deliveryStatus?: "accepted" | "delivering" | "delivered" | "failed" | string;
   createdAt: string;
 };
 export type ExecutionEventRecord = {
@@ -215,9 +222,15 @@ export type AgentSnapshot = {
   additionalDirectories?: string[];
   state: string;
   requestedModel?: string | null;
+  pendingModel?: string | null;
   effectiveModel?: string | null;
+  rejectedModel?: string | null;
+  modelStatus?: "unset" | "pending" | "effective" | "rejected" | "unknown";
   requestedEffort?: string | null;
+  pendingEffort?: string | null;
   effectiveEffort?: string | null;
+  rejectedEffort?: string | null;
+  effortStatus?: "unset" | "pending" | "effective" | "rejected" | "unknown";
   sessionMode?: string | null;
   sessionId?: string | null;
   // Seq ranges this worker wrote for turns a retry/edit rewound past.
@@ -383,6 +396,8 @@ export type EventStreamState = {
   snapshotScope?: {
     catalog?: {
       complete: boolean;
+      /** Run-local child collections that are complete even in a partial catalog frame. */
+      completeRunIds?: string[];
     };
     executionEvents?: {
       limit: number;

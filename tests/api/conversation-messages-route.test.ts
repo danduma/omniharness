@@ -22,6 +22,7 @@ import {
 import {
   __resetOutputStoreCachesForTests,
   readWorkerOutputEntries,
+  writeWorkerOutputEntries,
 } from "@/server/workers/output-store";
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 
@@ -70,6 +71,7 @@ import {
 } from "@/../tests/helpers/runtime-routes";
 import * as outputStore from "@/server/workers/output-store";
 import { createQueuedConversationMessage } from "@/server/conversations/queued-messages";
+import { resumeAcceptedDirectMessageDeliveries } from "@/server/conversations/send-message";
 import {
   __resetWorkerTurnChainsForTests,
   advanceWorkerTurnGeneration,
@@ -455,7 +457,11 @@ describe("POST /api/conversations/[id]/messages", () => {
 
     const req = new Request("http://localhost/api/conversations/run-1/messages", {
       method: "POST",
-      body: JSON.stringify({ content: "Wait, I want to change something." }),
+      body: JSON.stringify({
+        content: "Wait, I want to change something.",
+        preferredWorkerType: "claude",
+        preferredWorkerModel: "claude-opus-5",
+      }),
     });
 
     const res = await POST(req, { params: Promise.resolve({ id: runId }) });
@@ -467,6 +473,160 @@ describe("POST /api/conversations/[id]/messages", () => {
     // Verify no message was inserted
     const msgs = await db.select().from(messages).where(eq(messages.runId, runId));
     expect(msgs.length).toBe(0);
+    const unchangedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(unchangedRun).toMatchObject({ preferredWorkerType: null, preferredWorkerModel: null });
+  });
+
+  it("returns an accepted message for a matching client-id retry and rejects conflicting reuse", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const clientMessageId = randomUUID();
+    const now = new Date();
+    await db.insert(plans).values({ id: planId, path: "idempotent.md", status: "running", createdAt: now, updatedAt: now });
+    await db.insert(runs).values({ id: runId, planId, mode: "implementation", status: "running", createdAt: now, updatedAt: now });
+
+    const send = (content: string) => POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content, clientMessageId }),
+    }), { params: Promise.resolve({ id: runId }) });
+    const first = await send("Only once");
+    const retry = await send("Only once");
+    const conflict = await send("Different work");
+    const optionConflict = await POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "Only once", clientMessageId, busyAction: "queue" }),
+    }), { params: Promise.resolve({ id: runId }) });
+
+    expect(first.status).toBe(200);
+    expect(retry.status).toBe(200);
+    expect((await retry.json()).message.id).toBe(clientMessageId);
+    expect(conflict.status).toBe(409);
+    expect(optionConflict.status).toBe(409);
+    expect(await db.select().from(messages).where(eq(messages.id, clientMessageId))).toHaveLength(1);
+  });
+
+  it("resumes an accepted direct message after an interrupted delivery without duplicating it", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const messageId = randomUUID();
+    const now = new Date();
+    await db.insert(plans).values({ id: planId, path: "resume-accepted.md", status: "running", createdAt: now, updatedAt: now });
+    await db.insert(runs).values({ id: runId, planId, mode: "direct", status: "running", createdAt: now, updatedAt: now });
+    await db.insert(workers).values({
+      id: workerId, runId, type: "codex", status: "idle", cwd: "/workspace/app",
+      outputLog: "", outputEntriesJson: "[]", currentText: "", lastText: "", createdAt: now, updatedAt: now,
+    });
+    await writeWorkerOutputEntries(runId, workerId, [{
+      id: messageId, type: "user_input", text: "Resume once", timestamp: now.toISOString(),
+    }]);
+    await db.insert(messages).values({
+      id: messageId, runId, role: "user", kind: "checkpoint", content: "Resume once",
+      deliveryStatus: "accepted", createdAt: now,
+    });
+    mockAskAgent.mockResolvedValueOnce({ response: "Recovered delivery", state: "idle" });
+    mockGetAgent.mockResolvedValueOnce({
+      name: workerId, type: "codex", cwd: "/workspace/app", state: "idle",
+      outputEntries: [], currentText: "", lastText: "Recovered delivery",
+    });
+
+    await expect(resumeAcceptedDirectMessageDeliveries({ messageIds: [messageId] })).resolves.toBe(1);
+    await waitFor(
+      () => db.select().from(messages).where(eq(messages.id, messageId)).get(),
+      (message) => message?.deliveryStatus === "delivered",
+    );
+    expect(await db.select().from(messages).where(eq(messages.id, messageId))).toHaveLength(1);
+    expect(mockAskAgent).toHaveBeenCalledTimes(1);
+    expect(getNamedEventsSince(0, { runId }).events).toContainEqual(expect.objectContaining({
+      event: expect.objectContaining({ kind: "conversation.message_delivery_resumed", messageId }),
+    }));
+  });
+
+  it("does not recreate a direct worker for an allowed-worker policy-only edit", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+    await db.insert(plans).values({ id: planId, path: "policy-only.md", status: "running", createdAt: now, updatedAt: now });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      status: "running",
+      preferredWorkerType: "codex",
+      preferredWorkerModel: "gpt-5.6-sol",
+      preferredWorkerEffort: "high",
+      allowedWorkerTypes: JSON.stringify(["codex"]),
+      preferredWorkerRevision: 0,
+      preferredWorkerLaunchRevision: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      effectiveLaunchModel: "gpt-5.6-sol",
+      effectiveLaunchEffort: "high",
+      launchSelectionRevision: 0,
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+    mockAskAgent.mockResolvedValueOnce({ response: "Continued", state: "idle" });
+    mockGetAgent.mockResolvedValueOnce({
+      name: workerId,
+      type: "codex",
+      cwd: "/workspace/app",
+      state: "idle",
+      outputEntries: [],
+      currentText: "",
+      lastText: "Continued",
+    });
+
+    const response = await POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        content: "Continue without replacing the worker.",
+        preferredWorkerModel: "openai/gpt-5.6-sol",
+        allowedWorkerTypes: ["codex", "claude"],
+      }),
+    }), { params: Promise.resolve({ id: runId }) });
+
+    expect(response.status).toBe(200);
+    await waitForConversationBackgroundTasksForTests();
+    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(updatedRun).toMatchObject({ preferredWorkerRevision: 1, preferredWorkerLaunchRevision: 0 });
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it("rejects a client message id already owned by a non-user record", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const clientMessageId = randomUUID();
+    const now = new Date();
+    await db.insert(plans).values({ id: planId, path: "role-conflict.md", status: "running", createdAt: now, updatedAt: now });
+    await db.insert(runs).values({ id: runId, planId, mode: "implementation", status: "running", createdAt: now, updatedAt: now });
+    await db.insert(messages).values({
+      id: clientMessageId,
+      runId,
+      role: "supervisor",
+      kind: "update",
+      content: "Only once",
+      createdAt: now,
+    });
+
+    const response = await POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "Only once", clientMessageId }),
+    }), { params: Promise.resolve({ id: runId }) });
+
+    expect(response.status).toBe(409);
   });
 
   it("sends attachment-only follow-ups to a planning worker and persists metadata", async () => {
@@ -957,7 +1117,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       preferredWorkerType: "gemini",
       preferredWorkerModel: "gemini-3.5-flash",
       preferredWorkerEffort: "high",
-      allowedWorkerTypes: JSON.stringify(["gemini"]),
+      allowedWorkerTypes: JSON.stringify(["codex", "claude", "gemini", "opencode"]),
     });
     expect(selectionEvent.some((event) => event.eventType === "worker_selection_changed")).toBe(true);
     expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
@@ -1005,7 +1165,7 @@ describe("POST /api/conversations/[id]/messages", () => {
     const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     const selectionEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
     expect(updatedRun?.preferredWorkerType).toBe("gemini");
-    expect(updatedRun?.preferredWorkerModel).toBeNull();
+    expect(updatedRun?.preferredWorkerModel).toBe("gpt-5.5");
     expect(JSON.parse(updatedRun?.allowedWorkerTypes ?? "[]")).toEqual(["gemini"]);
     expect(selectionEvent.some((event) => (
       event.eventType === "worker_selection_changed"
@@ -1598,6 +1758,7 @@ describe("POST /api/conversations/[id]/messages", () => {
       body: JSON.stringify({ content: "One more normal follow-up." }),
     }), { params: Promise.resolve({ id: runId }) });
     expect(response.status).toBe(200);
+    const sent = await response.json();
 
     const updatedRun = await waitFor(
       () => db.select().from(runs).where(eq(runs.id, runId)).get(),
@@ -1606,6 +1767,11 @@ describe("POST /api/conversations/[id]/messages", () => {
 
     expect(updatedRun?.status).toBe("done");
     expect(updatedRun?.lastError).toBeNull();
+    const storedMessage = await waitFor(
+      () => db.select().from(messages).where(eq(messages.id, sent.message.id)).get(),
+      (message) => message?.deliveryStatus === "delivered",
+    );
+    expect(storedMessage?.deliveryStatus).toBe("delivered");
   });
 
   it("serializes rapid direct follow-ups before sending them to the worker", async () => {

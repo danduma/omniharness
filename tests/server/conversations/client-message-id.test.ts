@@ -56,7 +56,7 @@ describe("resolveUserMessageId", () => {
     expect(resolved).not.toBe(clientMessageId);
   });
 
-  it("mints a fresh id when the client id is already taken, rather than colliding", async () => {
+  it("keeps an existing client id as the idempotency key", async () => {
     const runId = await seedRun();
     const clientMessageId = randomUUID();
     await db.insert(messages).values({
@@ -70,8 +70,7 @@ describe("resolveUserMessageId", () => {
 
     const resolved = await resolveUserMessageId(clientMessageId);
 
-    expect(resolved).toMatch(UUID_PATTERN);
-    expect(resolved).not.toBe(clientMessageId);
+    expect(resolved).toBe(clientMessageId);
   });
 });
 
@@ -102,7 +101,7 @@ describe("createQueuedConversationMessage", () => {
     expect(queued.id).toMatch(UUID_PATTERN);
   });
 
-  it("mints a fresh id rather than colliding with an existing queue row", async () => {
+  it("returns a matching existing queue row for an idempotent retry", async () => {
     const runId = await seedRun();
     const clientMessageId = randomUUID();
     await createQueuedConversationMessage({
@@ -115,11 +114,43 @@ describe("createQueuedConversationMessage", () => {
     const resent = await createQueuedConversationMessage({
       runId,
       action: "queue",
-      content: "resend after a partial failure",
+      content: "first",
       clientMessageId,
     });
 
-    expect(resent.id).toMatch(UUID_PATTERN);
-    expect(resent.id).not.toBe(clientMessageId);
+    expect(resent.id).toBe(clientMessageId);
+  });
+
+  it("rejects reuse of a queue id with different content", async () => {
+    const runId = await seedRun();
+    const clientMessageId = randomUUID();
+    await createQueuedConversationMessage({ runId, action: "queue", content: "first", clientMessageId });
+
+    await expect(createQueuedConversationMessage({
+      runId,
+      action: "queue",
+      content: "different",
+      clientMessageId,
+    })).rejects.toMatchObject({ status: 409, code: "conversation_message_id_conflict" });
+  });
+
+  it("rejects reuse of a queue id for different operation options", async () => {
+    const runId = await seedRun();
+    const clientMessageId = randomUUID();
+    await createQueuedConversationMessage({
+      runId,
+      action: "queue",
+      content: "first",
+      clientMessageId,
+      operationFingerprint: "fingerprint-a",
+    });
+
+    await expect(createQueuedConversationMessage({
+      runId,
+      action: "queue",
+      content: "first",
+      clientMessageId,
+      operationFingerprint: "fingerprint-b",
+    })).rejects.toMatchObject({ status: 409, code: "conversation_message_id_conflict" });
   });
 });

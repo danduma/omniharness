@@ -70,6 +70,7 @@ describe("extractAgentSessionTitle", () => {
 
 describe("applyAgentSessionTitle", () => {
   beforeEach(async () => {
+    await db.delete(workers);
     await db.delete(runs);
     await db.delete(plans);
     __resetNamedEventsForTests();
@@ -144,6 +145,79 @@ describe("applyAgentSessionTitle", () => {
     await applyAgentSessionTitle({ runId, title: "   " });
 
     expect(await readTitle(runId)).toBe("Keep me");
+  });
+
+  it("cannot overwrite a title after a manual rename has claimed ownership", async () => {
+    const runId = await insertRun("Manual title");
+    await db.update(runs).set({ titleOwnership: "manual", titleSource: "manual", titleRevision: 4 }).where(eq(runs.id, runId));
+
+    expect(await applyAgentSessionTitle({ runId, title: "Background title" })).toBe("unchanged");
+    expect(await readTitle(runId)).toBe("Manual title");
+  });
+
+  it("accepts automatic titles only from the conversation's earliest worker", async () => {
+    const runId = await insertRun("Fallback title");
+    const now = new Date();
+    const firstWorkerId = randomUUID();
+    const laterWorkerId = randomUUID();
+    await db.insert(workers).values([
+      {
+        id: firstWorkerId,
+        runId,
+        workerNumber: 1,
+        type: "codex",
+        status: "idle",
+        cwd: "/workspace/app",
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: laterWorkerId,
+        runId,
+        workerNumber: 2,
+        type: "codex",
+        status: "idle",
+        cwd: "/workspace/app",
+        outputLog: "",
+        outputEntriesJson: "[]",
+        currentText: "",
+        lastText: "",
+        createdAt: new Date(now.getTime() + 1),
+        updatedAt: now,
+      },
+    ]);
+
+    expect(await applyAgentSessionTitle({
+      runId,
+      workerId: laterWorkerId,
+      title: "Later worker title",
+    })).toBe("unchanged");
+    expect(await applyAgentSessionTitle({
+      runId,
+      workerId: firstWorkerId,
+      title: "Owning worker title",
+    })).toBe("applied");
+    expect(await readTitle(runId)).toBe("Owning worker title");
+  });
+
+  it("does not let a lower-precedence generated title replace a provider custom title", async () => {
+    const runId = await insertRun("Fallback title");
+
+    expect(await applyAgentSessionTitle({
+      runId,
+      source: "provider_custom",
+      title: "Custom provider title",
+    })).toBe("applied");
+    expect(await applyAgentSessionTitle({
+      runId,
+      source: "provider_generated",
+      title: "Later generated title",
+    })).toBe("unchanged");
+    expect(await readTitle(runId)).toBe("Custom provider title");
   });
 
   it("rejects a title that leaks the direct-control prompt", async () => {
@@ -230,6 +304,7 @@ describe("applyAgentSessionTitle", () => {
 describe("repairLeakedConversationTitles", () => {
   beforeEach(async () => {
     await db.delete(messages);
+    await db.delete(workers);
     await db.delete(runs);
     await db.delete(plans);
     __resetNamedEventsForTests();

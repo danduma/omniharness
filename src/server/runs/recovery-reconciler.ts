@@ -304,10 +304,38 @@ async function insertRecoveryExecutionEvent(
   });
 }
 
+/**
+ * Typed so background callers can tell "this run is gone" apart from a genuine
+ * reconciliation failure. A user-initiated recovery still wants the 404; a
+ * background sweep that raced a delete has nothing to fix and nothing to say.
+ */
+export class RunNotFoundError extends Error {
+  readonly code = "run_not_found";
+  readonly status = 404;
+  constructor(readonly runId: string) {
+    super("Run not found");
+    this.name = "RunNotFoundError";
+  }
+}
+
+/**
+ * Should a background reconciliation pass quietly stand down on this error?
+ *
+ * Both cases mean "someone else owns this run now", not "recovery is broken":
+ * the row was deleted between the pass reading the catalog and reaching this
+ * run, or a cross-CLI handoff has the run fenced. Neither is actionable, and
+ * the next pass re-derives the right answer from whatever state remains — so
+ * these must never reach a user-facing error surface.
+ */
+export function isRunReconciliationStandDown(error: unknown) {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return code === "run_not_found" || code === "handoff_in_progress";
+}
+
 async function loadRunRecoveryInputs(runId: string) {
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
   if (!run) {
-    throw new Error("Run not found");
+    throw new RunNotFoundError(runId);
   }
 
   const [runWorkers, runMessages, runQueuedMessages] = await Promise.all([

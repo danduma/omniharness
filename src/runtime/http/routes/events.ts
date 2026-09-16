@@ -84,13 +84,33 @@ async function fetchWithTimeout(url: string, timeoutMs: number) {
   }
 }
 
+async function runEventReconciler(
+  stage: string,
+  options: EventPayloadOptions,
+  run: () => Promise<unknown>,
+) {
+  try {
+    await run();
+  } catch (error) {
+    emitNamedEvent({
+      kind: "runtime.live_enrichment_failed",
+      runId: options.selectedRunId ?? null,
+      reason: `${stage}: ${error instanceof Error ? error.message : String(error)}`,
+    });
+  }
+}
+
 async function readPersistedEventRecords(options: EventPayloadOptions = {}, probe?: { mark: (label: string) => void }) {
-  await reconcileOrphanedProcessSessions();
+  // Housekeeping, not the answer. Reading the catalog is what this function owes
+  // its caller, and it can do that whether or not the reconcilers got their
+  // writes in — so a failure here must not deny the payload and blank the UI.
+  // The next poll runs them again against the state they left behind.
+  await runEventReconciler("process-sessions", options, () => reconcileOrphanedProcessSessions());
   probe?.mark("reconcile");
-  await reconcilePersistedReloadZombies({
+  await runEventReconciler("persisted-zombies", options, () => reconcilePersistedReloadZombies({
     selectedRunId: options.selectedRunId,
     source: "events-snapshot",
-  });
+  }));
   probe?.mark("reconcile.zombies");
   const requestedSelectedRunId = options.selectedRunId?.trim() || null;
   const allPlans = await db.select().from(plans).orderBy(desc(plans.createdAt), desc(plans.id));
@@ -564,6 +584,7 @@ function buildEventPayload(
     snapshotScope: {
       catalog: {
         complete: true,
+        completeRunIds: [],
       },
       executionEvents: {
         limit: EXECUTION_EVENT_LIMIT,
@@ -644,6 +665,7 @@ function buildEventStreamPayload(
       ...payload.snapshotScope,
       catalog: {
         complete: false,
+        completeRunIds: [selectedRunId],
       },
     },
   };
@@ -740,12 +762,36 @@ async function buildRuntimeEnrichedEventPayload(options: EventPayloadOptions = {
   });
   const frontendErrors: AppErrorPayload[] = [];
 
+  // Split deliberately in two. Only reaching the bridge is "streaming live
+  // agent state"; everything after it is local bookkeeping we do *with* the
+  // result. Folding both into one try meant any reconciliation slip — a run
+  // deleted mid-pass, a handoff fence — was reported to the user as a bridge
+  // streaming failure, on whichever conversation they happened to have open.
+  let rawAgents: unknown[] | null = null;
   try {
     const res = await fetchWithTimeout(`${BRIDGE_URL}/agents`, RUNTIME_AGENT_TIMEOUT_MS);
     probe?.mark("bridge.fetch");
-    if (res.ok) {
-      const rawAgentsPayload = await res.json();
-      const rawAgents = Array.isArray(rawAgentsPayload) ? rawAgentsPayload : [];
+    if (!res.ok) {
+      throw new Error(`Agent runtime list request failed with status ${res.status}.`);
+    }
+    const rawAgentsPayload = await res.json();
+    rawAgents = Array.isArray(rawAgentsPayload) ? rawAgentsPayload : [];
+  } catch (error) {
+    agentsData = buildLiveWorkerSnapshots({
+      workers: scopedWorkers,
+      runs: records.allRuns,
+      bridgeError: error,
+    });
+    if (!isTransientSupervisorError(error)) {
+      frontendErrors.push(buildAppError(error, {
+        source: "Agent runtime",
+        action: "Stream live agent state",
+      }));
+    }
+  }
+
+  if (rawAgents) {
+    try {
       const { syncConversationSessions } = await import("@/server/conversations/sync");
       await syncConversationSessions(rawAgents, {
         selectedRunId: options.selectedRunId,
@@ -782,34 +828,22 @@ async function buildRuntimeEnrichedEventPayload(options: EventPayloadOptions = {
         workers: scopedWorkers,
         runs: records.allRuns,
       });
-    } else {
-      const bridgeError = new Error(`Agent runtime list request failed with status ${res.status}.`);
+    } catch (error) {
+      // We already hold both halves of the answer: the persisted records and
+      // the live agent list. Bookkeeping that failed on the way between them
+      // leaves this payload a tick stale, not wrong, and the next poll redoes
+      // it — so this degrades in place and stays off the user's screen. The
+      // event is the record; a banner here would be noise they cannot act on.
+      emitNamedEvent({
+        kind: "runtime.live_enrichment_failed",
+        runId: options.selectedRunId ?? null,
+        reason: error instanceof Error ? error.message : String(error),
+      });
       agentsData = buildLiveWorkerSnapshots({
+        agents: filterRuntimeAgentsForWorkers(rawAgents, scopedWorkers),
         workers: scopedWorkers,
         runs: records.allRuns,
-        bridgeError,
       });
-      if (!isTransientSupervisorError(bridgeError)) {
-        frontendErrors.push(buildAppError(
-          bridgeError,
-          {
-            source: "Agent runtime",
-            action: "Stream live agent state",
-          },
-        ));
-      }
-    }
-  } catch (error) {
-    agentsData = buildLiveWorkerSnapshots({
-      workers: scopedWorkers,
-      runs: records.allRuns,
-      bridgeError: error,
-    });
-    if (!isTransientSupervisorError(error)) {
-      frontendErrors.push(buildAppError(error, {
-        source: "Agent runtime",
-        action: "Stream live agent state",
-      }));
     }
   }
 

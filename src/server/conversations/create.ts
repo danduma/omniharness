@@ -64,6 +64,7 @@ import { prepareClaudeGatewayLaunch } from "@/server/integrations/claude-model-g
 import { assertWorkspaceNotHandoffFenced } from "@/server/handoff/fence";
 import { hasVerifiedDeadCredentialMarker } from "@/lib/provider-account-failures";
 import { resolveCredentialAuthFailureMessage } from "./credential-auth-failure";
+import { normalizeReasoningEffort } from "@/shared/reasoning-effort";
 
 
 function buildInitialWorkerPrompt(mode: ConversationMode, command: string, projectRoot: string) {
@@ -943,7 +944,7 @@ export async function createConversation(args: {
       title: defaultTitle,
       preferredWorkerType,
       preferredWorkerModel: effectivePreferredWorkerModel?.trim() || null,
-      preferredWorkerEffort: effectivePreferredWorkerEffort?.trim().toLowerCase() || null,
+      preferredWorkerEffort: normalizeReasoningEffort(effectivePreferredWorkerEffort),
       preferredWorkerAccountId: effectivePreferredWorkerAccountId?.trim() || null,
       allowedWorkerTypes: JSON.stringify(allowedWorkerTypes),
       parentRunId: args.parentRunId ?? null,
@@ -1030,7 +1031,7 @@ export async function createConversation(args: {
         // truth, leaving direct conversations with no recoverable transcript.
         initialPrompt: command,
         effectiveLaunchModel: requestedModel,
-        effectiveLaunchEffort: effectivePreferredWorkerEffort?.trim().toLowerCase() || null,
+        effectiveLaunchEffort: normalizeReasoningEffort(effectivePreferredWorkerEffort),
         launchCredentialSource: isGatewayRoute ? "gateway" : "account",
         createdAt: new Date(),
         updatedAt: new Date(),
