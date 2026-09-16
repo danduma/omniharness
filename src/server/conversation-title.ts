@@ -13,6 +13,7 @@ import {
   validateSupervisorModelConfig,
 } from "@/server/supervisor/model-config";
 import { buildInitialConversationTitle } from "@/server/conversations/initial-title";
+import { isConversationTitleOwningWorker } from "@/server/conversations/agent-session-title";
 
 const MAX_TITLE_CONTEXT_CHARS = 4_000;
 const MAX_COMPLETED_TITLE_GENERATIONS = 5_000;
@@ -133,14 +134,27 @@ async function generateAndApplyConversationTitle(args: {
   streamCandidateStatus: "missing" | "rejected";
   transcriptCandidateStatus: "not_applicable" | "missing" | "rejected";
 }): Promise<ConversationTitleGenerationOutcome> {
+  const run = await db.select({
+    title: runs.title,
+    titleOwnership: runs.titleOwnership,
+    titleRevision: runs.titleRevision,
+    titleOwnerWorkerId: runs.titleOwnerWorkerId,
+  }).from(runs).where(eq(runs.id, args.runId)).get();
+  if (
+    !run
+    || run.titleOwnership !== "automatic"
+    || (run.titleOwnerWorkerId && run.titleOwnerWorkerId !== args.workerId)
+    || !await isConversationTitleOwningWorker(args.runId, args.workerId)
+  ) {
+    return "skipped";
+  }
   const userMessage = await firstConversationUserMessage(args.runId);
   if (!userMessage || !args.assistantReply.trim()) {
     return "skipped";
   }
 
   const expectedTitle = buildInitialConversationTitle(userMessage);
-  const run = await db.select({ title: runs.title }).from(runs).where(eq(runs.id, args.runId)).get();
-  if (!run || (run.title ?? "").trim() !== expectedTitle) {
+  if ((run.title ?? "").trim() !== expectedTitle) {
     return "skipped";
   }
 
@@ -161,9 +175,21 @@ async function generateAndApplyConversationTitle(args: {
   const source = result.error ? "harness_fallback" as const : "harness_llm" as const;
   const updated = await db
     .update(runs)
-    .set({ title: result.title || "New conversation", updatedAt: new Date() })
-    .where(and(eq(runs.id, args.runId), eq(runs.title, expectedTitle)))
-    .returning({ id: runs.id })
+    .set({
+      title: result.title || "New conversation",
+      titleSource: source,
+      titleRevision: run.titleRevision + 1,
+      titleOwnerWorkerId: args.workerId,
+      updatedAt: new Date(),
+    })
+    .where(and(
+      eq(runs.id, args.runId),
+      eq(runs.title, expectedTitle),
+      eq(runs.titleOwnership, "automatic"),
+      eq(runs.titleRevision, run.titleRevision),
+      or(isNull(runs.titleOwnerWorkerId), eq(runs.titleOwnerWorkerId, args.workerId)),
+    ))
+    .returning({ id: runs.id, revision: runs.titleRevision })
     .get();
 
   if (!updated) {
@@ -175,6 +201,8 @@ async function generateAndApplyConversationTitle(args: {
     runId: args.runId,
     source,
     title: result.title,
+    revision: updated.revision,
+    workerId: args.workerId,
   });
 
   if (result.error) {

@@ -18,7 +18,7 @@ import {
   withWorkerOutputWriteFence,
   writeWorkerOutputEntries,
 } from "@/server/workers/output-store";
-import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
+import { isRunReconciliationStandDown, reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
 import {
   isUnsettledRecoveryIncidentStatus,
   resolveRecoveryIncidentsDisprovedByActiveWork,
@@ -511,6 +511,45 @@ export async function drainQueuedWorkerMessagesWithObservation(args: {
     console.error(`Queued message drain failed for ${args.workerId}:`, error);
   });
   return 0;
+}
+
+/**
+ * Reconcile one run's recovery state without letting it sink the whole pass.
+ *
+ * This loop walks every non-terminal run, and it runs inside the request that
+ * builds the live event payload. An unhandled throw here therefore escaped all
+ * the way to the transport, where the events route attributed it to the bridge
+ * fetch and showed the user "Stream live agent state / Run not found" — for a
+ * run they were not even looking at, about a row that had simply been deleted
+ * mid-pass. Worse, the throw abandoned every remaining run in the catalog.
+ *
+ * Returns null when the run could not be reconciled now. Recovery is derived
+ * from persisted state on every pass, so skipping is the retry.
+ */
+async function reconcileRunRecoveryInPass(
+  runId: string,
+  agents: ReturnType<typeof normalizeAgentRecord>[],
+) {
+  try {
+    return await reconcileRunRecovery({ runId, liveAgents: agents, source: "conversation-sync" });
+  } catch (error) {
+    if (isRunReconciliationStandDown(error)) {
+      emitNamedEvent({
+        kind: "recovery.reconcile_stood_down",
+        runId,
+        code: (error as { code?: string }).code ?? "unknown",
+        source: "conversation-sync",
+      });
+      return null;
+    }
+    emitNamedEvent({
+      kind: "recovery.reconcile_failed",
+      runId,
+      reason: error instanceof Error ? error.message : String(error),
+      source: "conversation-sync",
+    });
+    return null;
+  }
 }
 
 function isRecoverableMissingDirectWorkerStatus(status: string) {
@@ -1051,11 +1090,14 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
         || normalizedStatus(worker.status) === "lost"
       )
     ) {
-      const recoveryResult = await reconcileRunRecovery({
-        runId: run.id,
-        liveAgents: agents,
-        source: "conversation-sync",
-      });
+      const recoveryResult = await reconcileRunRecoveryInPass(run.id, agents);
+      // `null` means this run could not be reconciled on this pass — it was
+      // deleted underneath us, a handoff owns it, or recovery itself failed.
+      // Leave the rest of the run untouched and let the next pass re-derive it;
+      // a whole-catalog sweep must not be decided by one unlucky row.
+      if (!recoveryResult) {
+        continue;
+      }
       if (recoveryResult.action !== "none" && recoveryResult.action !== "wait_for_backoff") {
         continue;
       }

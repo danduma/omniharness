@@ -161,6 +161,15 @@ describe("PATCH /api/runs/[id]", () => {
 
     const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
     expect(updatedRun?.title).toBe("Fix mobile header");
+    expect(updatedRun).toMatchObject({
+      titleOwnership: "manual",
+      titleSource: "manual",
+      titleRevision: 1,
+      titleOwnerWorkerId: null,
+    });
+    expect(getNamedEventsSince(0, { runId }).events).toContainEqual(expect.objectContaining({
+      event: expect.objectContaining({ kind: "conversation.title_updated", source: "manual", revision: 1 }),
+    }));
   });
 
   it("moves a conversation to another project", async () => {

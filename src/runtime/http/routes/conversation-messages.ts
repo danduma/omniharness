@@ -1,6 +1,6 @@
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
-import { sendConversationMessage } from "@/server/conversations/send-message";
+import { sendConversationMessage, type WorkerPreferencePatch } from "@/server/conversations/send-message";
 import { normalizeChatAttachments } from "@/lib/chat-attachments";
 import { db } from "@/server/db";
 import { runs } from "@/server/db/schema";
@@ -64,13 +64,21 @@ export const handleConversationMessagesRequest: OmniHttpHandler = async (request
     const clientMessageId = typeof body?.clientMessageId === "string" ? body.clientMessageId : null;
     const attachments = normalizeChatAttachments(body?.attachments);
     const busyAction = parseBusyMessageAction(body?.busyAction);
-    const preferredWorkerType = typeof body?.preferredWorkerType === "string" ? body.preferredWorkerType : null;
-    const preferredWorkerModel = typeof body?.preferredWorkerModel === "string" ? body.preferredWorkerModel : null;
-    const preferredWorkerEffort = typeof body?.preferredWorkerEffort === "string" ? body.preferredWorkerEffort : null;
-    const preferredWorkerAccountId = typeof body?.preferredWorkerAccountId === "string" ? body.preferredWorkerAccountId : null;
-    const allowedWorkerTypes = Array.isArray(body?.allowedWorkerTypes) || typeof body?.allowedWorkerTypes === "string"
-      ? body.allowedWorkerTypes
-      : null;
+    const preferencePatch: WorkerPreferencePatch = {};
+    const readStringPatch = (key: string) => {
+      if (!body || !Object.prototype.hasOwnProperty.call(body, key)) return undefined;
+      const value = typeof body[key] === "string" ? body[key].trim() : "";
+      return value ? { operation: "set" as const, value } : { operation: "reset" as const };
+    };
+    preferencePatch.workerType = readStringPatch("preferredWorkerType");
+    preferencePatch.model = readStringPatch("preferredWorkerModel");
+    preferencePatch.effort = readStringPatch("preferredWorkerEffort");
+    preferencePatch.accountId = readStringPatch("preferredWorkerAccountId");
+    if (body && Object.prototype.hasOwnProperty.call(body, "allowedWorkerTypes")) {
+      preferencePatch.allowedWorkerTypes = Array.isArray(body.allowedWorkerTypes) || typeof body.allowedWorkerTypes === "string"
+        ? { operation: "set", value: body.allowedWorkerTypes }
+        : { operation: "reset" };
+    }
     if (!content && attachments.length === 0) {
       return errorResponse("Message content or attachment is required", {
         status: 400,
@@ -97,11 +105,7 @@ export const handleConversationMessagesRequest: OmniHttpHandler = async (request
         clientMessageId,
         attachments,
         busyAction,
-        preferredWorkerType,
-        preferredWorkerModel,
-        preferredWorkerEffort,
-        preferredWorkerAccountId,
-        allowedWorkerTypes,
+        preferencePatch,
       });
       probe.mark("sendConversationMessage");
       const response = Response.json(result);

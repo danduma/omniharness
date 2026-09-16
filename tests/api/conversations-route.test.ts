@@ -1398,14 +1398,14 @@ describe("POST /api/conversations", () => {
       mode: "commit",
       preferredWorkerType: "claude",
       preferredWorkerModel: "custom-commit-model",
-      preferredWorkerEffort: "extra high",
+      preferredWorkerEffort: "xhigh",
       allowedWorkerTypes: JSON.stringify(["claude"]),
       preferredWorkerAccountId: null,
     });
     expect(createdWorker).toMatchObject({
       type: "claude",
       effectiveLaunchModel: "custom-commit-model",
-      effectiveLaunchEffort: "extra high",
+      effectiveLaunchEffort: "xhigh",
     });
     await waitFor(() => mockSpawnAgent.mock.calls.length, (count) => count > 0);
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({

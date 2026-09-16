@@ -230,12 +230,26 @@ async function settleUnwatchedOrphanedWorkers(args: {
       runStatus: run.status,
       source: args.source ?? "unwatched-run-sweep",
     });
-    await markStaleWorkerNeedsUser({
-      run,
-      worker: orphan,
-      source: args.source ?? "unwatched-run-sweep",
-      reason: LOST_WORKER_REASON,
-    });
+    // One unlucky row must not abandon the rest of the sweep. Writing an
+    // incident touches several tables, and a run deleted between the read above
+    // and these writes fails on a foreign key — which used to abort every
+    // remaining run and escape into the event payload as a user-facing error.
+    try {
+      await markStaleWorkerNeedsUser({
+        run,
+        worker: orphan,
+        source: args.source ?? "unwatched-run-sweep",
+        reason: LOST_WORKER_REASON,
+      });
+    } catch (error) {
+      emitNamedEvent({
+        kind: "recovery.reconcile_failed",
+        runId: run.id,
+        reason: error instanceof Error ? error.message : String(error),
+        source: args.source ?? "unwatched-run-sweep",
+      });
+      continue;
+    }
     settledRunIds.push(run.id);
   }
 

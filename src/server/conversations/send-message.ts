@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { and, asc, eq } from "drizzle-orm";
 import { askAgent, cancelAgent, getAgent, respondElicitation, spawnAgent } from "@/server/bridge-client";
 import { db } from "@/server/db";
@@ -29,7 +29,12 @@ import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings
 import { appendAttachmentContext, normalizeChatAttachments, parseChatAttachmentsJson, resolveImageAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { getAppDataPath } from "@/server/app-root";
 import { normalizeWorkerType, SUPPORTED_WORKER_TYPES, type SupportedWorkerType } from "@/server/supervisor/worker-types";
-import { createQueuedConversationMessage, type BusyMessageAction } from "./queued-messages";
+import {
+  createQueuedConversationMessage,
+  workerStreamHasOutputAfterInput,
+  type BusyMessageAction,
+} from "./queued-messages";
+import { serializeQueuedConversationMessage } from "./queued-message-records";
 import { interruptWithDraftMessage, preemptRecoveryForInterrupt } from "./queued-message-interrupt";
 import { serializeMessageRecord } from "./message-records";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
@@ -70,6 +75,7 @@ import {
   isConcurrentAgentStartError,
   waitForConcurrentAgentStart,
 } from "@/server/workers/runtime-agent-adoption";
+import { normalizeReasoningEffort } from "@/shared/reasoning-effort";
 
 type RunRecord = typeof runs.$inferSelect;
 type WorkerRecord = typeof workers.$inferSelect;
@@ -79,6 +85,10 @@ type ElicitationContent = Record<string, string | number | boolean | string[]>;
 
 function isDirectRunMode(mode: string | null | undefined) {
   return mode === "direct" || mode === "commit";
+}
+
+function canonicalProviderModelAlias(value: string | null | undefined) {
+  return value?.trim().toLowerCase().replace(/^openai\//, "") || null;
 }
 
 // An Omni run is stored as mode "implementation" for its whole life; its
@@ -188,7 +198,7 @@ async function reconcileDirectWorkerSelection(args: {
 }) {
   const requestedType = args.run.preferredWorkerType?.trim() || args.worker.type;
   const requestedModel = args.run.preferredWorkerModel?.trim() || null;
-  const requestedEffort = args.run.preferredWorkerEffort?.trim().toLowerCase() || null;
+  const requestedEffort = normalizeReasoningEffort(args.run.preferredWorkerEffort);
   const requestedAccountId = args.run.preferredWorkerAccountId?.trim() || null;
   const currentAllocation = await db
     .select()
@@ -196,7 +206,7 @@ async function reconcileDirectWorkerSelection(args: {
     .where(eq(workerCredentialAllocations.workerId, args.worker.id))
     .get();
   const currentModel = args.worker.effectiveLaunchModel?.trim() || null;
-  const currentEffort = args.worker.effectiveLaunchEffort?.trim().toLowerCase() || null;
+  const currentEffort = normalizeReasoningEffort(args.worker.effectiveLaunchEffort);
   const typeChanged = normalizeWorkerType(args.worker.type) !== normalizeWorkerType(requestedType);
   if (typeChanged) {
     assertDirectRunWorkerTypeInvariant({
@@ -205,15 +215,26 @@ async function reconcileDirectWorkerSelection(args: {
       requestedWorkerType: requestedType,
     });
   }
-  const modelChanged = Boolean(currentModel && requestedModel && currentModel !== requestedModel);
-  const effortChanged = Boolean(currentEffort && requestedEffort && currentEffort !== requestedEffort);
+  const selectionRevisionChanged = args.worker.launchSelectionRevision < args.run.preferredWorkerLaunchRevision;
+  // A legacy null is unknown, not proof that the worker launched without the
+  // requested value. Reconcile unknowns when a newer preference revision says
+  // the user actually changed them; otherwise preserve resumable sessions.
+  const modelChanged = Boolean(
+    requestedModel
+    && canonicalProviderModelAlias(currentModel) !== canonicalProviderModelAlias(requestedModel)
+    && (currentModel !== null || selectionRevisionChanged),
+  );
+  const effortChanged = Boolean(
+    requestedEffort
+    && currentEffort !== requestedEffort
+    && (currentEffort !== null || selectionRevisionChanged),
+  );
   const accountChanged = Boolean(
-    requestedAccountId
-    && currentAllocation?.accountId
-    && requestedAccountId !== currentAllocation.accountId,
+    (requestedAccountId && requestedAccountId !== currentAllocation?.accountId)
+    || (!requestedAccountId && currentAllocation?.explicit && selectionRevisionChanged),
   );
 
-  if (!typeChanged && !modelChanged && !effortChanged && !accountChanged) {
+  if (!typeChanged && !modelChanged && !effortChanged && !accountChanged && !selectionRevisionChanged) {
     return null;
   }
 
@@ -325,6 +346,8 @@ async function answerDirectWorkerElicitation(args: {
   attachments: ChatAttachment[];
   attachmentsJson: string | null;
   messageId: string;
+  operationFingerprint: string;
+  deliveryOptionsJson: string;
 }) {
   const snapshot = await Promise.resolve(getAgent(args.worker.id)).catch(() => null);
   const elicitation = snapshot?.pendingElicitations?.[0] ?? null;
@@ -340,6 +363,9 @@ async function answerDirectWorkerElicitation(args: {
     kind: "checkpoint",
     content: args.userText,
     attachmentsJson: args.attachmentsJson,
+    deliveryStatus: "delivered",
+    operationFingerprint: args.operationFingerprint,
+    deliveryOptionsJson: args.deliveryOptionsJson,
     createdAt,
   };
 
@@ -1128,6 +1154,18 @@ async function continueWorkerConversation({
   }
 }
 
+export type WorkerPreferencePatchValue<T> =
+  | { operation: "set"; value: T }
+  | { operation: "reset" };
+
+export type WorkerPreferencePatch = {
+  workerType?: WorkerPreferencePatchValue<string>;
+  model?: WorkerPreferencePatchValue<string>;
+  effort?: WorkerPreferencePatchValue<string>;
+  accountId?: WorkerPreferencePatchValue<string>;
+  allowedWorkerTypes?: WorkerPreferencePatchValue<string[] | string>;
+};
+
 type SendConversationMessageArgs = {
   runId: string;
   content: string;
@@ -1145,6 +1183,7 @@ type SendConversationMessageArgs = {
   preferredWorkerEffort?: string | null;
   preferredWorkerAccountId?: string | null;
   allowedWorkerTypes?: string[] | string | null;
+  preferencePatch?: WorkerPreferencePatch;
 };
 
 const CLIENT_MESSAGE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1153,19 +1192,135 @@ const CLIENT_MESSAGE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
  * A send writes at most one user row — the elicitation-answer, supervised and
  * direct branches are mutually exclusive — so one id covers all three.
  *
- * Falls back to a fresh uuid rather than failing the send when the client id
- * is unusable: malformed, or already taken. The taken case is a resend after
- * a partial failure (the row landed, a later step threw); minting a new id
- * degrades that to a duplicate row instead of a primary-key 500 that would
- * lose the user's text entirely.
+ * A valid client id is an idempotency key. Existing ownership is resolved by
+ * the send path, which either returns the matching accepted operation or
+ * rejects reuse with different input.
  */
 export async function resolveUserMessageId(clientMessageId: string | null | undefined) {
   const candidate = typeof clientMessageId === "string" ? clientMessageId.trim().toLowerCase() : "";
   if (!CLIENT_MESSAGE_ID_PATTERN.test(candidate)) {
     return randomUUID();
   }
-  const existing = await db.select({ id: messages.id }).from(messages).where(eq(messages.id, candidate)).get();
-  return existing ? randomUUID() : candidate;
+  return candidate;
+}
+
+async function recoverAcceptedMessageSubmission(args: {
+  runId: string;
+  clientMessageId: string | null | undefined;
+  content: string;
+  attachmentsJson: string | null;
+  operationFingerprint: string;
+}) {
+  const candidate = typeof args.clientMessageId === "string" ? args.clientMessageId.trim().toLowerCase() : "";
+  if (!CLIENT_MESSAGE_ID_PATTERN.test(candidate)) return null;
+  const [message, queued] = await Promise.all([
+    db.select().from(messages).where(eq(messages.id, candidate)).get(),
+    db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, candidate)).get(),
+  ]);
+  const matches = (record: {
+    runId: string;
+    content: string;
+    attachmentsJson?: string | null;
+    operationFingerprint?: string | null;
+  }) => (
+    record.runId === args.runId
+    && record.content.trim() === args.content
+    && (record.attachmentsJson ?? null) === args.attachmentsJson
+    && (!record.operationFingerprint || record.operationFingerprint === args.operationFingerprint)
+  );
+  if (message) {
+    if (message.role !== "user" || !matches(message)) {
+      throw Object.assign(new Error("Client message id is already owned by different message content."), {
+        status: 409,
+        code: "conversation_message_id_conflict",
+      });
+    }
+    return {
+      result: { ok: true as const, message: serializeMessageRecord(message) },
+      message,
+    };
+  }
+  if (queued) {
+    if (!matches(queued)) {
+      throw Object.assign(new Error("Client message id is already owned by a different queued message."), {
+        status: 409,
+        code: "conversation_message_id_conflict",
+      });
+    }
+    return {
+      result: { ok: true as const, queuedMessage: serializeQueuedConversationMessage(queued) },
+      message: null,
+    };
+  }
+  return null;
+}
+
+async function workerStreamHasProgressAfterMessage(runId: string, workerId: string, messageId: string) {
+  const entries = await readWorkerOutputEntries(runId, workerId);
+  return workerStreamHasOutputAfterInput(entries, messageId);
+}
+
+type DurableDeliveryOptions = {
+  busyAction: BusyMessageAction | null;
+  preferencePatch: WorkerPreferencePatch;
+};
+
+function canonicalPreferencePatch(patch: WorkerPreferencePatch) {
+  const canonicalString = (value: WorkerPreferencePatchValue<string> | undefined, normalize?: (value: string) => string | null) => {
+    if (!value) return null;
+    if (value.operation === "reset") return { operation: "reset" as const };
+    const normalized = normalize ? normalize(value.value) : value.value.trim();
+    return { operation: "set" as const, value: normalized ?? "" };
+  };
+  const allowed = patch.allowedWorkerTypes;
+  let canonicalAllowed: { operation: "reset" } | { operation: "set"; value: string[] } | null = null;
+  if (allowed?.operation === "reset") {
+    canonicalAllowed = { operation: "reset" };
+  } else if (allowed?.operation === "set") {
+    const raw = Array.isArray(allowed.value) ? allowed.value : (() => {
+      try { return JSON.parse(allowed.value) as unknown; } catch { return [allowed.value]; }
+    })();
+    canonicalAllowed = {
+      operation: "set",
+      value: [...new Set((Array.isArray(raw) ? raw : [])
+        .map((value) => parseExplicitWorkerType(typeof value === "string" ? value : null))
+        .filter((value): value is SupportedWorkerType => Boolean(value)))].sort(),
+    };
+  }
+  return {
+    workerType: canonicalString(patch.workerType, parseExplicitWorkerType),
+    model: canonicalString(patch.model, (value) => {
+      const gatewayModel = decodeClaudeGatewayModel(value);
+      return gatewayModel
+        ? `cliproxyapi:${gatewayModel.toLowerCase()}`
+        : value.trim().toLowerCase().replace(/^openai\//, "");
+    }),
+    effort: canonicalString(patch.effort, normalizeReasoningEffort),
+    accountId: canonicalString(patch.accountId),
+    allowedWorkerTypes: canonicalAllowed,
+  };
+}
+
+function buildMessageOperationFingerprint(args: {
+  runId: string;
+  content: string;
+  attachmentsJson: string | null;
+  options: DurableDeliveryOptions;
+}) {
+  const payload = JSON.stringify({
+    version: 1,
+    role: "user",
+    runId: args.runId,
+    content: args.content,
+    attachmentsJson: args.attachmentsJson,
+    busyAction: args.options.busyAction,
+    preferencePatch: canonicalPreferencePatch(args.options.preferencePatch),
+  });
+  return createHash("sha256").update(payload).digest("hex");
+}
+
+async function setMessageDeliveryStatus(messageId: string, deliveryStatus: "accepted" | "delivering" | "delivered" | "failed") {
+  await db.update(messages).set({ deliveryStatus }).where(eq(messages.id, messageId));
 }
 
 function parseExplicitWorkerType(value: string | null | undefined) {
@@ -1189,68 +1344,235 @@ function parseWorkerSwitchFromText(content: string) {
 async function applyWorkerPreferenceForMessage(args: {
   run: RunRecord;
   content: string;
-  preferredWorkerType?: string | null;
-  preferredWorkerModel?: string | null;
-  preferredWorkerEffort?: string | null;
-  preferredWorkerAccountId?: string | null;
-  allowedWorkerTypes?: string[] | string | null;
+  patch: WorkerPreferencePatch;
+  messageId: string;
 }) {
-  const explicitWorkerType = parseExplicitWorkerType(args.preferredWorkerType);
+  const workerPatch = args.patch.workerType;
+  const explicitWorkerType = workerPatch?.operation === "set"
+    ? parseExplicitWorkerType(workerPatch.value)
+    : null;
+  if (workerPatch?.operation === "set" && !explicitWorkerType) {
+    throw Object.assign(new Error(`Unsupported worker type: ${workerPatch.value}`), { status: 400 });
+  }
   const textWorkerType = parseWorkerSwitchFromText(args.content);
-  const nextWorkerType = explicitWorkerType ?? textWorkerType;
-  if (!nextWorkerType) {
-    return args.run;
+  const requestedWorkerType = explicitWorkerType ?? textWorkerType;
+  const hasPatch = Object.values(args.patch).some(Boolean);
+  if (!hasPatch && !requestedWorkerType) {
+    return { run: args.run, previousRun: null };
   }
 
-  const nextAllowedWorkerTypes = [nextWorkerType];
-  const nextPreferredWorkerModel = explicitWorkerType
-    ? args.preferredWorkerModel?.trim() || null
-    : null;
-  const nextPreferredWorkerEffort = args.preferredWorkerEffort?.trim() || args.run.preferredWorkerEffort || null;
-  const nextPreferredWorkerAccountId = args.preferredWorkerAccountId?.trim() || null;
+  const patchValue = (patch: WorkerPreferencePatchValue<string> | undefined, current: string | null) => (
+    !patch ? current : patch.operation === "reset" ? null : patch.value.trim() || null
+  );
+  const nextPreferredWorkerType = workerPatch?.operation === "reset"
+    ? null
+    : requestedWorkerType ?? args.run.preferredWorkerType;
+  const nextPreferredWorkerModel = patchValue(args.patch.model, args.run.preferredWorkerModel);
+  const nextPreferredWorkerEffort = args.patch.effort
+    ? args.patch.effort.operation === "reset"
+      ? null
+      : normalizeReasoningEffort(args.patch.effort.value)
+    : normalizeReasoningEffort(args.run.preferredWorkerEffort);
+  const nextPreferredWorkerAccountId = patchValue(args.patch.accountId, args.run.preferredWorkerAccountId);
+  const allowedPatch = args.patch.allowedWorkerTypes;
+  let nextAllowedWorkerTypes: string[] | null;
+  if (allowedPatch?.operation === "reset") {
+    nextAllowedWorkerTypes = null;
+  } else if (allowedPatch?.operation === "set") {
+    const raw = Array.isArray(allowedPatch.value)
+      ? allowedPatch.value
+      : (() => {
+          try { return JSON.parse(allowedPatch.value) as unknown; } catch { return [allowedPatch.value]; }
+        })();
+    const values = Array.isArray(raw) ? raw : [];
+    nextAllowedWorkerTypes = [...new Set(values
+      .map((value) => parseExplicitWorkerType(typeof value === "string" ? value : null))
+      .filter((value): value is SupportedWorkerType => Boolean(value)))];
+  } else if (requestedWorkerType) {
+    nextAllowedWorkerTypes = [requestedWorkerType];
+  } else {
+    try {
+      const parsed = JSON.parse(args.run.allowedWorkerTypes ?? "null");
+      nextAllowedWorkerTypes = Array.isArray(parsed) ? parsed : null;
+    } catch {
+      nextAllowedWorkerTypes = null;
+    }
+  }
+  const nextAllowedWorkerTypesJson = nextAllowedWorkerTypes ? JSON.stringify(nextAllowedWorkerTypes) : null;
+
+  // Even a value-identical preference request must be checked against the
+  // worker that actually owns a direct conversation. A stale run preference
+  // cannot authorize an in-place cross-CLI continuation.
+  if (nextPreferredWorkerType) {
+    const existingWorkerTypes = await db.select({ type: workers.type }).from(workers).where(eq(workers.runId, args.run.id));
+    assertDirectRunWorkerTypeInvariant({
+      run: args.run,
+      existingWorkerTypes: existingWorkerTypes.map((worker) => worker.type),
+      requestedWorkerType: nextPreferredWorkerType,
+    });
+  }
+
+  if (
+    nextPreferredWorkerType === args.run.preferredWorkerType
+    && canonicalProviderModelAlias(nextPreferredWorkerModel) === canonicalProviderModelAlias(args.run.preferredWorkerModel)
+    && nextPreferredWorkerEffort === normalizeReasoningEffort(args.run.preferredWorkerEffort)
+    && nextPreferredWorkerAccountId === args.run.preferredWorkerAccountId
+    && nextAllowedWorkerTypesJson === args.run.allowedWorkerTypes
+  ) {
+    return { run: args.run, previousRun: null };
+  }
   const now = new Date();
 
-  const existingWorkerTypes = await db.select({ type: workers.type }).from(workers).where(eq(workers.runId, args.run.id));
-  assertDirectRunWorkerTypeInvariant({
-    run: args.run,
-    existingWorkerTypes: existingWorkerTypes.map((worker) => worker.type),
-    requestedWorkerType: nextWorkerType,
-  });
+  const launchSelectionChanged = nextPreferredWorkerType !== args.run.preferredWorkerType
+    || canonicalProviderModelAlias(nextPreferredWorkerModel) !== canonicalProviderModelAlias(args.run.preferredWorkerModel)
+    || nextPreferredWorkerEffort !== normalizeReasoningEffort(args.run.preferredWorkerEffort)
+    || nextPreferredWorkerAccountId !== args.run.preferredWorkerAccountId;
+  // Allowed-worker policy affects future automatic selection, not the launch
+  // identity of the direct worker already running this conversation.
+  const nextRevision = args.run.preferredWorkerRevision + 1;
+  const nextLaunchRevision = launchSelectionChanged
+    ? args.run.preferredWorkerLaunchRevision + 1
+    : args.run.preferredWorkerLaunchRevision;
 
   await db.update(runs).set({
-    preferredWorkerType: nextWorkerType,
+    preferredWorkerType: nextPreferredWorkerType,
     preferredWorkerModel: nextPreferredWorkerModel,
     preferredWorkerEffort: nextPreferredWorkerEffort,
     preferredWorkerAccountId: nextPreferredWorkerAccountId,
-    allowedWorkerTypes: JSON.stringify(nextAllowedWorkerTypes),
+    allowedWorkerTypes: nextAllowedWorkerTypesJson,
+    preferredWorkerRevision: nextRevision,
+    preferredWorkerLaunchRevision: nextLaunchRevision,
     updatedAt: now,
   }).where(eq(runs.id, args.run.id));
-  await recordExecutionEvent({
-    runId: args.run.id,
-    workerId: null,
-    planItemId: null,
-    eventType: "worker_selection_changed",
-    details: {
-      summary: `Changed preferred worker selection to ${nextWorkerType}.`,
-      preferredWorkerType: nextWorkerType,
+  const appliedRun: RunRecord = {
+      ...args.run,
+      preferredWorkerType: nextPreferredWorkerType,
       preferredWorkerModel: nextPreferredWorkerModel,
       preferredWorkerEffort: nextPreferredWorkerEffort,
       preferredWorkerAccountId: nextPreferredWorkerAccountId,
-      allowedWorkerTypes: nextAllowedWorkerTypes,
-      source: explicitWorkerType ? "composer_selection" : "message_text",
-    },
-    createdAt: now,
+      allowedWorkerTypes: nextAllowedWorkerTypesJson,
+      preferredWorkerRevision: nextRevision,
+      preferredWorkerLaunchRevision: nextLaunchRevision,
+      updatedAt: now,
+  };
+  const selectionSource = hasPatch ? "composer_selection" as const : "message_text" as const;
+  emitNamedEvent({
+    kind: "worker.selection_changed",
+    runId: args.run.id,
+    requestedType: nextPreferredWorkerType,
+    preferenceRevision: nextRevision,
+    launchRevision: nextLaunchRevision,
+    source: selectionSource,
   });
+  try {
+    await recordExecutionEvent({
+      runId: args.run.id,
+      workerId: null,
+      planItemId: null,
+      eventType: "worker_selection_changed",
+      details: {
+        summary: `Changed preferred worker selection to ${nextPreferredWorkerType ?? "automatic"}.`,
+        preferredWorkerType: nextPreferredWorkerType,
+        preferredWorkerModel: nextPreferredWorkerModel,
+        preferredWorkerEffort: nextPreferredWorkerEffort,
+        preferredWorkerAccountId: nextPreferredWorkerAccountId,
+        allowedWorkerTypes: nextAllowedWorkerTypes,
+        preferenceRevision: nextRevision,
+        source: selectionSource,
+      },
+      createdAt: now,
+    });
+  } catch (error) {
+    const reason = formatErrorMessage(error);
+    emitNamedEvent({
+      kind: "conversation.preference_audit_failed",
+      runId: args.run.id,
+      messageId: args.messageId,
+      reason,
+    });
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "conversation.preference_audit_failed",
+      message: `Worker preferences were saved, but their audit record could not be persisted: ${reason}`,
+      surface: "log",
+      runId: args.run.id,
+      cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+    });
+  }
 
   return {
-    ...args.run,
-    preferredWorkerType: nextWorkerType,
-    preferredWorkerModel: nextPreferredWorkerModel,
-    preferredWorkerEffort: nextPreferredWorkerEffort,
-    preferredWorkerAccountId: nextPreferredWorkerAccountId,
-    allowedWorkerTypes: JSON.stringify(nextAllowedWorkerTypes),
-    updatedAt: now,
+    run: appliedRun,
+    previousRun: args.run,
   };
+}
+
+async function rollbackUnacceptedWorkerPreference(args: {
+  appliedRun: RunRecord;
+  previousRun: RunRecord;
+  messageId: string;
+}) {
+  const [acceptedMessage, acceptedQueue] = await Promise.all([
+    db.select({ id: messages.id }).from(messages).where(eq(messages.id, args.messageId)).get(),
+    db.select({ id: queuedConversationMessages.id }).from(queuedConversationMessages)
+      .where(eq(queuedConversationMessages.id, args.messageId)).get(),
+  ]);
+  if (acceptedMessage || acceptedQueue) return false;
+  const restoredAt = new Date();
+  const restored = await db.update(runs).set({
+    preferredWorkerType: args.previousRun.preferredWorkerType,
+    preferredWorkerModel: args.previousRun.preferredWorkerModel,
+    preferredWorkerEffort: args.previousRun.preferredWorkerEffort,
+    preferredWorkerAccountId: args.previousRun.preferredWorkerAccountId,
+    allowedWorkerTypes: args.previousRun.allowedWorkerTypes,
+    preferredWorkerRevision: args.previousRun.preferredWorkerRevision,
+    preferredWorkerLaunchRevision: args.previousRun.preferredWorkerLaunchRevision,
+    updatedAt: restoredAt,
+  }).where(and(
+    eq(runs.id, args.appliedRun.id),
+    eq(runs.preferredWorkerRevision, args.appliedRun.preferredWorkerRevision),
+    eq(runs.preferredWorkerLaunchRevision, args.appliedRun.preferredWorkerLaunchRevision),
+  )).returning({ id: runs.id }).get();
+  if (!restored) return false;
+  emitNamedEvent({
+    kind: "worker.selection_rolled_back",
+    runId: args.appliedRun.id,
+    messageId: args.messageId,
+    rejectedPreferenceRevision: args.appliedRun.preferredWorkerRevision,
+    restoredPreferenceRevision: args.previousRun.preferredWorkerRevision,
+  });
+  try {
+    await recordExecutionEvent({
+      runId: args.appliedRun.id,
+      workerId: null,
+      planItemId: null,
+      eventType: "worker_selection_rolled_back",
+      details: {
+        summary: "Restored worker preferences because the associated message was not accepted.",
+        messageId: args.messageId,
+        rejectedPreferenceRevision: args.appliedRun.preferredWorkerRevision,
+        restoredPreferenceRevision: args.previousRun.preferredWorkerRevision,
+      },
+      createdAt: restoredAt,
+    });
+  } catch (error) {
+    const reason = formatErrorMessage(error);
+    emitNamedEvent({
+      kind: "conversation.preference_audit_failed",
+      runId: args.appliedRun.id,
+      messageId: args.messageId,
+      reason,
+    });
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "conversation.preference_audit_failed",
+      message: `Worker preferences were restored, but their rollback audit record could not be persisted: ${reason}`,
+      surface: "log",
+      runId: args.appliedRun.id,
+      cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+    });
+  }
+  notifyEventStreamSubscribers();
+  return true;
 }
 
 async function activateRunAndPersistMessage<T>(args: {
@@ -1504,22 +1826,96 @@ export async function sendConversationMessage(args: SendConversationMessageArgs)
   return runConversationMutation(args.runId, () => sendConversationMessageUnlocked(args));
 }
 
-async function sendConversationMessageUnlocked({
-  runId,
-  content,
-  clientMessageId = null,
-  attachments = [],
-  busyAction = null,
-  preferredWorkerType = null,
-  preferredWorkerModel = null,
-  preferredWorkerEffort = null,
-  preferredWorkerAccountId = null,
-  allowedWorkerTypes = null,
-}: SendConversationMessageArgs) {
+function parseDurableDeliveryOptions(value: string | null): DurableDeliveryOptions {
+  if (!value) return { busyAction: null, preferencePatch: {} };
+  try {
+    const parsed = JSON.parse(value) as Partial<DurableDeliveryOptions>;
+    return {
+      busyAction: parsed.busyAction === "queue" || parsed.busyAction === "steer" ? parsed.busyAction : null,
+      preferencePatch: parsed.preferencePatch && typeof parsed.preferencePatch === "object"
+        ? parsed.preferencePatch
+        : {},
+    };
+  } catch {
+    return { busyAction: null, preferencePatch: {} };
+  }
+}
+
+/** Resume direct deliveries that were durably accepted before this process died. */
+export async function resumeAcceptedDirectMessageDeliveries(options: { messageIds?: string[] } = {}) {
+  const accepted = await db.select().from(messages).where(and(
+    eq(messages.role, "user"),
+    eq(messages.deliveryStatus, "accepted"),
+  )).orderBy(asc(messages.createdAt), asc(messages.id));
+  let resumed = 0;
+  for (const message of accepted) {
+    if (options.messageIds && !options.messageIds.includes(message.id)) continue;
+    const run = await db.select({ mode: runs.mode }).from(runs).where(eq(runs.id, message.runId)).get();
+    if (!run || !isDirectRunMode(run.mode)) continue;
+    const deliveryOptions = parseDurableDeliveryOptions(message.deliveryOptionsJson);
+    try {
+      await sendConversationMessage({
+        runId: message.runId,
+        content: message.content,
+        clientMessageId: message.id,
+        attachments: parseChatAttachmentsJson(message.attachmentsJson),
+        busyAction: deliveryOptions.busyAction,
+        preferencePatch: deliveryOptions.preferencePatch,
+      });
+      resumed += 1;
+      emitNamedEvent({
+        kind: "conversation.message_delivery_resumed",
+        runId: message.runId,
+        messageId: message.id,
+      });
+    } catch (error) {
+      const reason = formatErrorMessage(error);
+      emitNamedEvent({
+        kind: "conversation.message_delivery_resume_failed",
+        runId: message.runId,
+        messageId: message.id,
+        reason,
+      });
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "conversation.delivery_recovery_failed",
+        message: `Could not resume message delivery ${message.id}: ${reason}`,
+        surface: "log",
+        runId: message.runId,
+        cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+      });
+    }
+  }
+  return resumed;
+}
+
+async function sendConversationMessageUnlocked(args: SendConversationMessageArgs) {
+  const {
+    runId,
+    content,
+    clientMessageId = null,
+    attachments = [],
+    busyAction = null,
+  } = args;
+  const preferencePatch: WorkerPreferencePatch = args.preferencePatch ?? {
+    ...(args.preferredWorkerType?.trim() ? { workerType: { operation: "set", value: args.preferredWorkerType } as const } : {}),
+    ...(args.preferredWorkerModel?.trim() ? { model: { operation: "set", value: args.preferredWorkerModel } as const } : {}),
+    ...(args.preferredWorkerEffort?.trim() ? { effort: { operation: "set", value: args.preferredWorkerEffort } as const } : {}),
+    ...(args.preferredWorkerAccountId?.trim() ? { accountId: { operation: "set", value: args.preferredWorkerAccountId } as const } : {}),
+    ...(args.allowedWorkerTypes != null ? { allowedWorkerTypes: { operation: "set", value: args.allowedWorkerTypes } as const } : {}),
+  };
   const trimmedContent = content.trim();
   const userMessageId = await resolveUserMessageId(clientMessageId);
   const normalizedAttachments = normalizeChatAttachments(attachments);
   const attachmentsJson = serializeChatAttachments(normalizedAttachments);
+  const deliveryOptions: DurableDeliveryOptions = { busyAction, preferencePatch };
+  const deliveryOptionsJson = JSON.stringify(deliveryOptions);
+  const operationFingerprint = buildMessageOperationFingerprint({
+    runId,
+    content: trimmedContent,
+    attachmentsJson,
+    options: deliveryOptions,
+  });
   const workerContent = appendAttachmentContext(trimmedContent, normalizedAttachments, {
     resolvePath: (storagePath) => getAppDataPath(storagePath),
     imagesInlined: true,
@@ -1533,36 +1929,60 @@ async function sendConversationMessageUnlocked({
     throw Object.assign(new Error("Conversation not found"), { status: 404 });
   }
   await assertRunNotHandoffFenced(runId);
+  const acceptedRetry = await recoverAcceptedMessageSubmission({
+    runId,
+    clientMessageId,
+    content: trimmedContent,
+    attachmentsJson,
+    operationFingerprint,
+  });
+  const retryableAcceptedMessage = acceptedRetry?.message
+    && isDirectRunMode(run.mode)
+    && (acceptedRetry.message.deliveryStatus === "accepted" || acceptedRetry.message.deliveryStatus === "failed")
+    ? acceptedRetry.message
+    : null;
+  if (acceptedRetry && !retryableAcceptedMessage) return acceptedRetry.result;
   if (normalizedAttachments.length === 0 && isManualStopCommand(trimmedContent)) {
     const stopped = await stopConversationFromManualStopCommand(run);
     return stopped;
   }
-  run = await applyWorkerPreferenceForMessage({
-    run,
-    content: trimmedContent,
-    preferredWorkerType,
-    preferredWorkerModel,
-    preferredWorkerEffort,
-    preferredWorkerAccountId,
-    allowedWorkerTypes,
-  });
-
   if (isPlanningRun(run) && (run.status === "reviewing_plan" || run.status === "revising_plan")) {
     throw Object.assign(new Error("Plan review is in progress. Please wait for the review to complete before sending further messages."), { status: 409 });
   }
 
+  // Validate worker-dependent delivery before committing a preference patch.
+  // A rejected send must not have a settings side effect.
+  const workerRequired = busyAction === "steer"
+    || isDirectRunMode(run.mode)
+    || isPlanningRun(run);
+  let preflightWorker = workerRequired ? await selectConversationWorker(runId) : null;
+  if (workerRequired && !preflightWorker) {
+    throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
+  }
+
+  let preferenceApplication: Awaited<ReturnType<typeof applyWorkerPreferenceForMessage>> | null = null;
+  if (!retryableAcceptedMessage) {
+    preferenceApplication = await applyWorkerPreferenceForMessage({
+      run,
+      content: trimmedContent,
+      patch: preferencePatch,
+      messageId: userMessageId,
+    });
+    run = preferenceApplication.run;
+  }
+
+  try {
   if (isSupervisedRun(run) && (busyAction === "queue" || busyAction === "steer")) {
     if (busyAction === "steer") {
-      const worker = await selectConversationWorker(runId);
-      if (!worker) {
-        throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
-      }
+      const worker = preflightWorker!;
       return interruptWithDraftMessage({
         runId,
         content: trimmedContent,
         attachments: normalizedAttachments,
         targetWorkerId: worker.id,
         source: "api",
+        clientMessageId: userMessageId,
+        operationFingerprint,
       });
     }
 
@@ -1571,17 +1991,15 @@ async function sendConversationMessageUnlocked({
       action: "steer",
       content: trimmedContent,
       attachments: normalizedAttachments,
-      clientMessageId,
+      clientMessageId: userMessageId,
+      operationFingerprint,
     });
     startSupervisorRun(runId);
     return { ok: true, queuedMessage };
   }
 
   if (busyAction === "queue") {
-    const worker = await selectConversationWorker(runId);
-    if (!worker) {
-      throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
-    }
+    const worker = preflightWorker!;
     if (isDirectRunMode(run.mode) || isPlanningRun(run)) {
       await reconcileWorkerUserMessagesInStream(runId, worker.id);
     }
@@ -1592,7 +2010,8 @@ async function sendConversationMessageUnlocked({
       action: "queue",
       content: trimmedContent,
       attachments: normalizedAttachments,
-      clientMessageId,
+      clientMessageId: userMessageId,
+      operationFingerprint,
     });
     // `busyAction` is the client's intent for *if* the worker is busy, and the
     // client decides that from a snapshot that may already be stale by the time
@@ -1622,6 +2041,8 @@ async function sendConversationMessageUnlocked({
       kind: pendingClarification ? "clarification_answer" : "checkpoint",
       content: trimmedContent,
       attachmentsJson,
+      operationFingerprint,
+      deliveryOptionsJson,
       createdAt,
     };
 
@@ -1652,9 +2073,10 @@ async function sendConversationMessageUnlocked({
     };
   }
 
-  let worker = await selectConversationWorker(runId);
-  if (!worker) {
-    throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
+  let worker = preflightWorker!;
+  if (retryableAcceptedMessage && await workerStreamHasProgressAfterMessage(runId, worker.id, retryableAcceptedMessage.id)) {
+    await setMessageDeliveryStatus(retryableAcceptedMessage.id, "delivered");
+    return acceptedRetry!.result;
   }
   // This is user intent captured before Stop can change the worker. A worker
   // already cancelled when the request began may be resumed; one cancelled by
@@ -1673,6 +2095,8 @@ async function sendConversationMessageUnlocked({
       attachments: normalizedAttachments,
       attachmentsJson,
       messageId: userMessageId,
+      operationFingerprint,
+      deliveryOptionsJson,
     });
     if (elicitationAnswer) {
       await retireMatchingQueuedDirectAnswers({
@@ -1703,25 +2127,31 @@ async function sendConversationMessageUnlocked({
       attachments: normalizedAttachments,
       targetWorkerId: worker.id,
       source: "api",
+      clientMessageId: userMessageId,
+      operationFingerprint,
     });
   }
 
-  const userMessageCreatedAt = new Date();
-  const userMessage = {
+  const userMessageCreatedAt = retryableAcceptedMessage?.createdAt ?? new Date();
+  const userMessage = retryableAcceptedMessage ?? {
     id: userMessageId,
     runId,
     role: "user",
     kind: "checkpoint",
     content: trimmedContent,
     attachmentsJson,
+    deliveryStatus: isDirectRunMode(run.mode) ? "accepted" : "delivered",
+    operationFingerprint,
+    deliveryOptionsJson,
     createdAt: userMessageCreatedAt,
   };
 
-  const activation = await activateRunAndPersistMessage({
-    run,
-    nextStatus: isPlanningRun(run) ? "working" : "running",
-    activatedAt: userMessageCreatedAt,
-    persist: async () => {
+  if (!retryableAcceptedMessage) {
+    const activation = await activateRunAndPersistMessage({
+      run,
+      nextStatus: isPlanningRun(run) ? "working" : "running",
+      activatedAt: userMessageCreatedAt,
+      persist: async () => {
       // Stream-first: append the user_input entry BEFORE the DB insert so that
       // a crash between the two writes leaves at most a harmless orphan stream
       // entry rather than a DB row the worker can never see. The stream entry
@@ -1742,10 +2172,11 @@ async function sendConversationMessageUnlocked({
           })),
         });
       }
-      await db.insert(messages).values(userMessage);
-    },
-  });
-  run = activation.run;
+        await db.insert(messages).values(userMessage);
+      },
+    });
+    run = activation.run;
+  }
   notifyEventStreamSubscribers();
 
   if (isDirectRunMode(run.mode)) {
@@ -1760,6 +2191,7 @@ async function sendConversationMessageUnlocked({
     }
     notifyEventStreamSubscribers();
     const expectedTurnGeneration = worker.turnGeneration;
+    await setMessageDeliveryStatus(userMessage.id, "delivering");
 
     if (busyAction === "steer") {
       // Steer runs in the background for the same reason a plain follow-up
@@ -1768,7 +2200,53 @@ async function sendConversationMessageUnlocked({
       // already persisted and streamed, so the caller has everything it needs.
       // A worker that reports busy anyway falls back to a queued row, which
       // reaches the client over the event stream.
-      const steerTurn = trackConversationBackgroundTask(runWorkerTurn(worker.id, () => continueWorkerConversation({
+      trackConversationBackgroundTask(
+        runWorkerTurn(worker.id, () => continueWorkerConversation({
+          run,
+          worker,
+          content: workerContent,
+          userInputText: trimmedContent,
+          userInputId: userMessage.id,
+          attachments: normalizedAttachments,
+          // Already appended above.
+          appendUserInputBeforeAsk: false,
+          allowCancelledWorkerResume,
+          promptOverride,
+          expectedTurnGeneration,
+        })).then(
+          () => setMessageDeliveryStatus(userMessage.id, "delivered"),
+          async (error) => {
+          await setMessageDeliveryStatus(userMessage.id, "failed");
+            if (!isAgentBusyError(error)) {
+              console.error("Direct conversation steer failed:", error);
+              return;
+            }
+            await db.delete(messages).where(eq(messages.id, userMessage.id));
+            await createQueuedConversationMessage({
+              runId,
+              targetWorkerId: worker.id,
+              action: "steer",
+              content: trimmedContent,
+              attachments: normalizedAttachments,
+              clientMessageId: userMessage.id,
+              operationFingerprint,
+            });
+            notifyEventStreamSubscribers();
+          },
+        ),
+        { runId },
+      );
+
+      return {
+        ok: true,
+        message: serializeMessageRecord({ ...userMessage, attachmentsJson }),
+      };
+    }
+
+    // Direct follow-up follows the same "append-immediately" path. The
+    // turn runs in the background.
+    trackConversationBackgroundTask(
+      runWorkerTurn(worker.id, () => continueWorkerConversation({
         run,
         worker,
         content: workerContent,
@@ -1780,51 +2258,17 @@ async function sendConversationMessageUnlocked({
         allowCancelledWorkerResume,
         promptOverride,
         expectedTurnGeneration,
-      })), { runId });
-      steerTurn.catch(async (error) => {
-        if (!isAgentBusyError(error)) {
-          console.error("Direct conversation steer failed:", error);
-          return;
-        }
-        await db.delete(messages).where(eq(messages.id, userMessage.id));
-        await createQueuedConversationMessage({
-          runId,
-          targetWorkerId: worker.id,
-          action: "steer",
-          content: trimmedContent,
-          attachments: normalizedAttachments,
-        });
-        notifyEventStreamSubscribers();
-      });
-
-      return {
-        ok: true,
-        message: serializeMessageRecord({ ...userMessage, attachmentsJson }),
-      };
-    }
-
-    // Direct follow-up follows the same "append-immediately" path. The
-    // turn runs in the background.
-    const turn = trackConversationBackgroundTask(runWorkerTurn(worker.id, () => continueWorkerConversation({
-      run,
-      worker,
-      content: workerContent,
-      userInputText: trimmedContent,
-      userInputId: userMessage.id,
-      attachments: normalizedAttachments,
-      // Already appended above.
-      appendUserInputBeforeAsk: false,
-      allowCancelledWorkerResume,
-      promptOverride,
-      expectedTurnGeneration,
-    })), { runId });
-    turn.catch((error) => {
-      if (isAgentBusyError(error)) {
-        return;
-      }
-
-      console.error("Direct conversation follow-up failed:", error);
-    });
+      })).then(
+        () => setMessageDeliveryStatus(userMessage.id, "delivered"),
+        async (error) => {
+          await setMessageDeliveryStatus(userMessage.id, "failed");
+          if (!isAgentBusyError(error)) {
+            console.error("Direct conversation follow-up failed:", error);
+          }
+        },
+      ),
+      { runId },
+    );
 
     return {
       ok: true,
@@ -1851,6 +2295,8 @@ async function sendConversationMessageUnlocked({
         action: "steer",
         content: trimmedContent,
         attachments: normalizedAttachments,
+        clientMessageId: userMessage.id,
+        operationFingerprint,
       });
       return {
         ok: true,
@@ -1866,4 +2312,25 @@ async function sendConversationMessageUnlocked({
     ok: true,
     message: serializeMessageRecord({ ...userMessage, attachmentsJson }),
   };
+  } catch (error) {
+    if (preferenceApplication?.previousRun) {
+      await rollbackUnacceptedWorkerPreference({
+        appliedRun: preferenceApplication.run,
+        previousRun: preferenceApplication.previousRun,
+        messageId: userMessageId,
+      }).catch((rollbackError) => {
+        emitNamedEvent({
+          kind: "error.surfaced",
+          code: "conversation.delivery_recovery_failed",
+          message: `Could not roll back preferences for rejected message ${userMessageId}: ${formatErrorMessage(rollbackError)}`,
+          surface: "log",
+          runId,
+          cause: rollbackError instanceof Error
+            ? { name: rollbackError.name, message: rollbackError.message }
+            : null,
+        });
+      });
+    }
+    throw error;
+  }
 }

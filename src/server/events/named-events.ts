@@ -43,6 +43,8 @@ export type SurfacedErrorCode =
   | "conversation.delete.worker_cancel_failed"
   | "conversation.continue.failed"
   | "conversation.delivery_refused"
+  | "conversation.delivery_recovery_failed"
+  | "conversation.preference_audit_failed"
   | "conversation.title_generation_failed"
   | "external_session.import_failed"
   | "process.spawn.failed"
@@ -54,6 +56,7 @@ export type SurfacedErrorCode =
   | "recovery.needs_user"
   | "recovery.run_failed"
   | "runtime.resource_pressure"
+  | "runtime.output_logs_prune_failed"
   | "runtime.settings_apply_failed"
   | "runtime.start_failed"
   | "runner.bridge_start_failed"
@@ -125,6 +128,8 @@ export type SurfacedErrorCode =
   // family is never correct, so the launch is refused instead.
   | "worker.model.family_unavailable"
   | "worker.model.pin_unsupported"
+  | "worker.configuration.rejected"
+  | "worker.configuration.unconfirmed"
   | "goal.objective.invalid"
   | "goal.revision_conflict"
   | "goal.action.unsupported"
@@ -215,6 +220,26 @@ export type RuntimeEvent =
   | {
       kind: "runtime.settings_updated";
       keys: string[];
+    }
+  | {
+      kind: "runtime.output_logs_pruned";
+      deletedFiles: number;
+      deletedBytes: number;
+      remainingBytes: number;
+      maxBytes: number;
+    }
+  | {
+      kind: "runtime.output_logs_prune_deferred";
+      remainingBytes: number;
+      maxBytes: number;
+      protectedFiles: number;
+      protectedBytes: number;
+    }
+  | {
+      kind: "runtime.output_logs_prune_failed";
+      directory: string;
+      failures: number;
+      reason: string;
     }
   | {
       kind: "runtime.settings_apply_failed";
@@ -342,6 +367,21 @@ export type WorkerEvent =
       workerId: string;
       requestedType: string;
       reason: "worker_turn_active";
+    }
+  | {
+      kind: "worker.selection_changed";
+      runId: string;
+      requestedType: string | null;
+      preferenceRevision: number;
+      launchRevision: number;
+      source: "composer_selection" | "message_text";
+    }
+  | {
+      kind: "worker.selection_rolled_back";
+      runId: string;
+      messageId: string;
+      rejectedPreferenceRevision: number;
+      restoredPreferenceRevision: number;
     }
   | { kind: "worker.recovery_continuation_started"; runId: string; workerId: string }
   | { kind: "worker.recovery_continuation_completed"; runId: string; workerId: string }
@@ -586,6 +626,24 @@ export type RecoveryEvent =
   | { kind: "recovery.gave_up"; runId: string; incidentId: string; attempts: number }
   | { kind: "recovery.resolved"; runId: string; incidentId: string }
   | {
+      /**
+       * A background pass declined to reconcile a run because someone else owns
+       * it now (deleted mid-pass, or fenced by a handoff). Not a failure, and
+       * deliberately never surfaced to the user.
+       */
+      kind: "recovery.reconcile_stood_down";
+      runId: string;
+      code: string;
+      source: string;
+    }
+  | {
+      /** Background reconciliation threw. The run is left for the next pass. */
+      kind: "recovery.reconcile_failed";
+      runId: string;
+      reason: string;
+      source: string;
+    }
+  | {
       kind: "recovery.quota_wait_preserved";
       runId: string;
       incidentId: string;
@@ -662,17 +720,28 @@ export type ConversationEvent =
     }
   | { kind: "conversation.awaiting_user"; runId: string; workerId?: string; reason: "worker_requested_input" }
   | { kind: "conversation.read"; runId: string; lastReadAt: string }
+  | { kind: "conversation.message_delivery_reclaimed"; runId: string; messageId: string }
+  | { kind: "conversation.message_delivery_resumed"; runId: string; messageId: string }
+  | { kind: "conversation.message_delivery_resume_failed"; runId: string; messageId: string; reason: string }
+  | { kind: "conversation.queued_delivery_recovered"; runId: string; messageId: string; workerId: string }
+  | { kind: "conversation.delivery_reclaim_failed"; runId: string | null; messageId: string | null; reason: string }
+  | { kind: "conversation.preference_audit_failed"; runId: string; messageId: string; reason: string }
   | {
       kind: "conversation.title_updated";
       runId: string;
       source:
+        | "manual"
         | "agent_session"
         | "agent_transcript"
         | "agent_thread_index"
+        | "provider_custom"
+        | "provider_generated"
         | "harness_llm"
         | "harness_fallback"
         | "leak_repair";
       title: string;
+      revision: number;
+      workerId?: string;
     }
   | {
       kind: "conversation.title_sources_missing";
@@ -695,7 +764,7 @@ export type ConversationEvent =
   | {
       kind: "conversation.title_rejected";
       runId: string;
-      source: "agent_session" | "agent_transcript" | "agent_thread_index";
+      source: "agent_session" | "agent_transcript" | "agent_thread_index" | "provider_custom" | "provider_generated";
       reason: "prompt_leak" | "too_long" | "prompt_echo";
       titleLength: number;
       titlePreview: string;
@@ -824,6 +893,11 @@ export type FilesystemEvent =
     };
 
 export type StreamControlEvent = {
+  kind: "runtime.live_enrichment_failed";
+  /** The conversation whose payload was being built, when scoped to one. */
+  runId: string | null;
+  reason: string;
+} | {
   kind: "stream.resync_required";
   reason: StreamResyncReason;
 };
@@ -1028,6 +1102,9 @@ function append(event: NamedEvent | SnapshotMarker, runIdOverride?: string | nul
 const DELTA_ONLY_EVENT_KINDS = new Set<string>([
   "filesystem.directory_created",
   "filesystem.directory_create_failed",
+  "runtime.output_logs_pruned",
+  "runtime.output_logs_prune_deferred",
+  "runtime.output_logs_prune_failed",
   "worker.entry_appended",
   "worker.plan_boundary_started",
   "worker.plan_updated",
