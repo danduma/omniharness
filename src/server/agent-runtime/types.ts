@@ -82,9 +82,17 @@ export type AgentRecord = {
   agentCapabilities: Record<string, unknown> | null;
   authMethods: unknown[];
   requestedModel: string | null;
+  pendingModel: string | null;
   effectiveModel: string | null;
+  rejectedModel: string | null;
+  modelStatus: import("./config-state").ProviderSettingStatus;
+  modelConfigRevision: number;
   requestedEffort: string | null;
+  pendingEffort: string | null;
   effectiveEffort: string | null;
+  rejectedEffort: string | null;
+  effortStatus: import("./config-state").ProviderSettingStatus;
+  effortConfigRevision: number;
   credentialProfile: {
     name: string;
     status: "loaded";

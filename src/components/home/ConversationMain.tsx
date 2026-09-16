@@ -466,7 +466,7 @@ function SupervisorActivityMessage({ item }: { item: Extract<ConversationTimelin
         {icon}
       </div>
       <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
-        <p className="omni-activity-text min-w-0 whitespace-pre-wrap break-words text-[13px] leading-[1.45]">
+        <p className="omni-activity-text min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[13px] leading-[1.45]">
           {renderSupervisorActivityText(item.text)}
         </p>
         <span className="shrink-0 pt-[0.18em] text-[10px] text-muted-foreground/50">

@@ -34,8 +34,11 @@ import {
   appendOutputEntry,
   openAgentOutputArchive,
   renderOutputEntries,
+  resolveAgentOutputArchivePath,
+  resolveAgentRuntimeDataDir,
   selectLiveOutputEntries,
 } from "./output-store";
+import { RuntimeOutputRetentionManager } from "./output-retention";
 import type {
   AgentRecord,
   AgentRuntimeConfig,
@@ -48,6 +51,12 @@ import type {
   StartAgentInput,
 } from "./types";
 import { RuntimeHttpError } from "./types";
+import {
+  applyProviderConfigOptions,
+  beginProviderConfigChange,
+  markProviderConfigUnconfirmed,
+  rejectProviderConfigChange,
+} from "./config-state";
 import {
   applyAccountCredentialEnv,
   resolveAccountCredentials,
@@ -1005,6 +1014,7 @@ export class AgentRuntimeManager {
   private readonly startingAgentAccounts = new Map<string, string | null>();
   private readonly startingAgentResources = new Map<string, StartingAgentResources>();
   private readonly memoryTracer: MemoryTracer;
+  private readonly outputRetentionManager = new RuntimeOutputRetentionManager();
   private readonly pendingAgentReaps = new Map<string, NodeJS.Timeout>();
   private reapSweepTimer: NodeJS.Timeout | null = null;
   private resourcePressureTimer: NodeJS.Timeout | null = null;
@@ -1013,6 +1023,7 @@ export class AgentRuntimeManager {
   private readonly runtimeStartedAt = Date.now();
   private lastAgentUseAt = this.runtimeStartedAt;
   private runtimeSettingsEnv: EnvLike = {};
+  private outputRetentionReady = false;
   private readonly poolMemberMaxAgeMs: number;
   private readonly agentIdleTimeoutMs: number;
   private readonly agentExitGraceMs: number;
@@ -1025,6 +1036,7 @@ export class AgentRuntimeManager {
     } = {},
   ) {
     const baseEnv = this.options.env || process.env;
+    this.outputRetentionReady = typeof baseEnv[RUNTIME_RESOURCE_SETTING_KEYS.outputLogMaxMb] === "string";
     const sizeRaw = baseEnv.OMNIHARNESS_WORKER_POOL_SIZE ?? baseEnv.OMNIHARNESS_GEMINI_POOL_SIZE;
     const parsed = sizeRaw ? Number.parseInt(sizeRaw, 10) : NaN;
     if (Number.isFinite(parsed) && parsed >= 0) {
@@ -1085,11 +1097,23 @@ export class AgentRuntimeManager {
       changed.push(key);
     }
 
+    const outputRetentionWasReady = this.outputRetentionReady;
+    if (typeof env[RUNTIME_RESOURCE_SETTING_KEYS.outputLogMaxMb] === "string") {
+      this.outputRetentionReady = true;
+    }
+
     if (changed.length > 0) {
       this.runtimeSettingsEnv = nextEnv;
       if (options.emit !== false) {
         emitNamedEvent({ kind: "runtime.settings_updated", keys: changed });
       }
+    }
+
+    if (
+      changed.includes(RUNTIME_RESOURCE_SETTING_KEYS.outputLogMaxMb)
+      || (!outputRetentionWasReady && this.outputRetentionReady)
+    ) {
+      this.runOutputRetentionSweep();
     }
 
     return { ok: true, keys: changed };
@@ -1170,6 +1194,32 @@ export class AgentRuntimeManager {
       });
     }
     this.runIdleCleanupSweep(now);
+    this.runOutputRetentionSweep();
+  }
+
+  private runOutputRetentionSweep(): void {
+    if (!this.outputRetentionReady) return;
+
+    const env = this.getRuntimeEnv();
+    const settings = resolveRuntimeResourceSettings(env);
+    const dataDir = resolveAgentRuntimeDataDir({
+      dataDir: env.OMNIHARNESS_RUNTIME_DATA_DIR,
+      rootDir: env.OMNIHARNESS_ROOT,
+    });
+    const protectedPaths = new Set<string>();
+    for (const record of this.agents.values()) {
+      if (record.state === "stopped" || record.state === "error") continue;
+      protectedPaths.add(record.outputArchive.filePath);
+    }
+    for (const name of this.startingAgentAccounts.keys()) {
+      protectedPaths.add(resolveAgentOutputArchivePath({ dataDir, name }));
+    }
+
+    this.outputRetentionManager.sweep({
+      dataDir,
+      maxBytes: settings.outputLogMaxMb * 1024 * 1024,
+      protectedPaths,
+    });
   }
 
   private runIdleCleanupSweep(now: number): void {
@@ -1229,9 +1279,15 @@ export class AgentRuntimeManager {
       agentCapabilities: record.agentCapabilities,
       authMethods: record.authMethods,
       requestedModel: record.requestedModel,
+      pendingModel: record.pendingModel,
       effectiveModel: record.effectiveModel,
+      rejectedModel: record.rejectedModel,
+      modelStatus: record.modelStatus,
       requestedEffort: record.requestedEffort,
+      pendingEffort: record.pendingEffort,
       effectiveEffort: record.effectiveEffort,
+      rejectedEffort: record.rejectedEffort,
+      effortStatus: record.effortStatus,
       credentialProfile: record.credentialProfile,
       sessionMode: record.sessionMode,
       claudeConfigDir: record.claudeConfigDir,
@@ -1819,7 +1875,12 @@ export class AgentRuntimeManager {
     const effortConfig = findSessionConfigOption(sessionConfigOptions, "effort")
       ?? findSessionConfigOption(sessionConfigOptions, "reasoning_effort");
     const effortConfigId = asNonEmptyString(effortConfig?.id);
-    let effectiveEffort = effortConfigId ? sessionConfigValue(sessionConfigOptions, effortConfigId) : null;
+    let effectiveEffort = effortConfigId
+      ? normalizeReasoningEffort(sessionConfigValue(sessionConfigOptions, effortConfigId))
+      : null;
+    let pendingEffort: string | null = null;
+    let rejectedEffort: string | null = null;
+    let effortStatus: AgentRecord["effortStatus"] = effectiveEffort ? "effective" : requestedEffort ? "unknown" : "unset";
     const shouldApplyRequestedEffort = type === "codex" || (type === "claude" && !gatewayOverlay);
     if (
       connection
@@ -1828,6 +1889,8 @@ export class AgentRuntimeManager {
       && effortConfigId
       && effectiveEffort !== requestedEffort
     ) {
+      pendingEffort = requestedEffort;
+      effortStatus = "pending";
       try {
         const result = await connection.setSessionConfigOption({
           sessionId,
@@ -1837,11 +1900,57 @@ export class AgentRuntimeManager {
         const resultRecord = asRecord(result);
         if (Array.isArray(resultRecord?.configOptions)) {
           sessionConfigOptions = resultRecord.configOptions;
+          effectiveEffort = normalizeReasoningEffort(sessionConfigValue(sessionConfigOptions, effortConfigId));
+          pendingEffort = null;
+          const confirmed = effectiveEffort === requestedEffort;
+          rejectedEffort = confirmed ? null : requestedEffort;
+          effortStatus = confirmed ? "effective" : "rejected";
+          if (!confirmed) {
+            emitNamedEvent({
+              kind: "error.surfaced",
+              code: "worker.configuration.rejected",
+              message: `The ${type} provider reported effort "${effectiveEffort ?? "unknown"}" after "${requestedEffort}" was requested.`,
+              surface: "toast",
+              workerId: name,
+              cause: null,
+            });
+          }
+        } else {
+          effectiveEffort = null;
+          pendingEffort = null;
+          effortStatus = "unknown";
+          emitNamedEvent({
+            kind: "error.surfaced",
+            code: "worker.configuration.unconfirmed",
+            message: `The ${type} provider accepted effort "${requestedEffort}" but did not confirm the effective value.`,
+            surface: "toast",
+            workerId: name,
+            cause: null,
+          });
         }
-        effectiveEffort = sessionConfigValue(sessionConfigOptions, effortConfigId);
       } catch (effortError: unknown) {
+        pendingEffort = null;
+        rejectedEffort = requestedEffort;
+        effortStatus = "rejected";
         process.stderr.write(`[${name}] could not set ${type} effort to "${requestedEffort}": ${describeUnknownError(effortError)}\n`);
+        emitNamedEvent({
+          kind: "error.surfaced",
+          code: "worker.configuration.rejected",
+          message: `The ${type} provider rejected effort "${requestedEffort}": ${describeUnknownError(effortError)}`,
+          surface: "toast",
+          workerId: name,
+          cause: effortError instanceof Error ? { name: effortError.name, message: effortError.message } : null,
+        });
       }
+    } else if (requestedEffort && shouldApplyRequestedEffort && !effortConfigId) {
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "worker.configuration.unconfirmed",
+        message: `The ${type} provider did not expose an effort setting, so "${requestedEffort}" could not be confirmed.`,
+        surface: "toast",
+        workerId: name,
+        cause: null,
+      });
     }
 
     const created = nowIso();
@@ -1866,9 +1975,17 @@ export class AgentRuntimeManager {
       agentCapabilities: asRecord(initRecord?.agentCapabilities),
       authMethods: Array.isArray(initRecord?.authMethods) ? initRecord.authMethods : [],
       requestedModel,
-      effectiveModel: pinnedModel ?? requestedModel,
+      pendingModel: null,
+      effectiveModel: pinnedModel ?? sessionConfigValue(sessionConfigOptions, "model"),
+      rejectedModel: null,
+      modelStatus: pinnedModel || sessionConfigValue(sessionConfigOptions, "model") ? "effective" : requestedModel ? "unknown" : "unset",
+      modelConfigRevision: 0,
       requestedEffort,
+      pendingEffort,
       effectiveEffort,
+      rejectedEffort,
+      effortStatus,
+      effortConfigRevision: 0,
       credentialProfile: accountCredentials.credentialProfile.status,
       sessionMode: requestedMode || currentModeId || null,
       claudeConfigDir: type === "claude" ? agentProcessEnv.CLAUDE_CONFIG_DIR?.trim() || null : null,
@@ -1880,6 +1997,7 @@ export class AgentRuntimeManager {
       outputArchive: openAgentOutputArchive({
         name,
         dataDir: baseEnv.OMNIHARNESS_RUNTIME_DATA_DIR,
+        rootDir: baseEnv.OMNIHARNESS_ROOT,
         resume: Boolean(input.resumeSessionId),
       }),
       stopReason: null,
@@ -2021,6 +2139,13 @@ export class AgentRuntimeManager {
   ) {
     const record = this.agents.get(name);
     if (!record) throw new RuntimeHttpError(404, `Agent not found: ${name}`);
+    const configId = method === acp.AGENT_METHODS.session_set_config_option
+      ? asNonEmptyString(params.configId)
+      : null;
+    const configValue = configId ? asNonEmptyString(params.value) : null;
+    const configOperation = configId && configValue
+      ? beginProviderConfigChange(record, configId, configValue)
+      : null;
     emitNamedEvent({ kind: "acp.method_started", workerId: name, method, notification });
     try {
       if (notification) {
@@ -2041,17 +2166,46 @@ export class AgentRuntimeManager {
           raw: { sessionUpdate: "current_mode_update", currentModeId: record.sessionMode },
         });
       }
-      if (method === acp.AGENT_METHODS.session_set_config_option && Array.isArray(resultRecord?.configOptions)) {
-        appendOutputEntry(record, {
-          type: "config_option",
-          text: resultRecord.configOptions.flatMap((option) => asNonEmptyString(asRecord(option)?.name) ?? []).join("\n"),
-          raw: { sessionUpdate: "config_option_update", configOptions: resultRecord.configOptions },
-        });
+      if (method === acp.AGENT_METHODS.session_set_config_option) {
+        if (Array.isArray(resultRecord?.configOptions)) {
+          applyProviderConfigOptions(record, resultRecord.configOptions, configOperation);
+          appendOutputEntry(record, {
+            type: "config_option",
+            text: resultRecord.configOptions.flatMap((option) => asNonEmptyString(asRecord(option)?.name) ?? []).join("\n"),
+            raw: { sessionUpdate: "config_option_update", configOptions: resultRecord.configOptions },
+          });
+          const settingRejected = configId === "model"
+            ? record.modelStatus === "rejected"
+            : configId === "effort" || configId === "reasoning_effort"
+              ? record.effortStatus === "rejected"
+              : false;
+          if (settingRejected) {
+            emitNamedEvent({
+              kind: "error.surfaced",
+              code: "worker.configuration.rejected",
+              message: `The provider did not activate the requested ${configId} value.`,
+              surface: "toast",
+              workerId: name,
+              cause: null,
+            });
+          }
+        } else if (configId) {
+          markProviderConfigUnconfirmed(record, configId, configOperation);
+          emitNamedEvent({
+            kind: "error.surfaced",
+            code: "worker.configuration.unconfirmed",
+            message: `The provider accepted ${configId} but did not confirm its effective value.`,
+            surface: "toast",
+            workerId: name,
+            cause: null,
+          });
+        }
       }
       record.updatedAt = nowIso();
       emitNamedEvent({ kind: "acp.method_completed", workerId: name, method, notification });
       return { ok: true, result };
     } catch (error) {
+      if (configId) rejectProviderConfigChange(record, configId, configOperation);
       emitNamedEvent({
         kind: "acp.method_failed",
         workerId: name,

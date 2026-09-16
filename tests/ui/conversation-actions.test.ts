@@ -350,7 +350,7 @@ test("direct-control terminal user messages render attachment metadata", () => {
   expect(terminalSource).toContain('content: entry.entry.text,');
   expect(terminalSource).toContain('createdAt: authoritativeTimestamp,');
   expect(terminalSource).toContain('activity.attachments.length > 0');
-  expect(terminalSource).toContain('className="max-w-none whitespace-pre-wrap break-words"');
+  expect(terminalSource).toContain('className="max-w-none whitespace-pre-wrap break-words [overflow-wrap:anywhere]"');
   expect(terminalSource).toContain("attachmentImagePreviewManager.open({");
   expect(terminalSource).toContain("name: attachment.name,");
   expect(terminalSource).toContain("size: attachment.size,");

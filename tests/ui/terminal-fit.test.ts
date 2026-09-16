@@ -412,3 +412,34 @@ test("prepended history pays for its own height so the top boundary stops re-tri
   expect(terminalSource).toContain("previousScrollHeightRef.current = currentScrollHeight;");
   expect(terminalSource).not.toContain("previousScrollHeightRef.current = container?.scrollHeight ?? 0;");
 });
+
+test("transcript text wraps inside its container instead of running off a phone screen", () => {
+  // A tool title is normally a file path, and a path offers no soft wrap
+  // opportunity a browser takes on its own. `overflow-wrap: break-word` does
+  // not feed into min-content sizing, so as a flex item in the wrapping tool
+  // row the title kept its full max-content width and ran past the viewport.
+  // Nothing scrolls horizontally on a phone, so the tail was simply lost.
+  // `anywhere` is the only value that also shrinks the intrinsic size.
+  expect(terminalSource).toContain('"min-w-0 [overflow-wrap:anywhere] font-mono leading-[1.45]"');
+
+  // Permission rows carry the same payload: a command line or a path.
+  const permissionWrapMatches = terminalSource.match(
+    /text-\[length:var\(--terminal-permission-(?:title|text)-size\)\]/g,
+  ) ?? [];
+  expect(permissionWrapMatches.length).toBeGreaterThan(0);
+  for (const line of terminalSource.split("\n")) {
+    if (!line.includes("--terminal-permission-title-size")
+      && !line.includes("--terminal-permission-text-size")) {
+      continue;
+    }
+    expect(line).toContain("[overflow-wrap:anywhere]");
+  }
+
+  // Tool panes and plain user message text hold the same unbreakable tokens.
+  expect(terminalSource).toContain(
+    '"min-w-0 flex-1 overflow-auto px-2.5 py-2 font-mono whitespace-pre-wrap break-words [overflow-wrap:anywhere]"',
+  );
+  expect(terminalSource).toContain(
+    '<p className="max-w-none whitespace-pre-wrap break-words [overflow-wrap:anywhere]">',
+  );
+});

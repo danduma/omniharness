@@ -31,6 +31,7 @@ import type {
   ElicitationCreateParams,
   ElicitationResponse,
 } from "../types";
+import { applyProviderConfigOptions } from "../config-state";
 
 const MAX_TEXT_FIELD_CHARS = 100_000;
 const ELICITATION_CREATE_METHOD = "elicitation/create";
@@ -517,6 +518,27 @@ export class RuntimeClient implements acp.Client {
     }
     const update = params.update;
     record.updatedAt = nowIso();
+
+    if (update.sessionUpdate === "config_option_update") {
+      const previousModelStatus = record.modelStatus;
+      const previousEffortStatus = record.effortStatus;
+      applyProviderConfigOptions(record, update.configOptions);
+      if (
+        (record.modelStatus === "rejected" && previousModelStatus !== "rejected")
+        || (record.effortStatus === "rejected" && previousEffortStatus !== "rejected")
+      ) {
+        emitNamedEvent({
+          kind: "error.surfaced",
+          code: "worker.configuration.rejected",
+          message: "The provider reported a different runtime configuration than the requested value.",
+          surface: "toast",
+          workerId: record.name,
+          cause: null,
+        });
+      }
+    } else if (update.sessionUpdate === "current_mode_update") {
+      record.sessionMode = update.currentModeId;
+    }
 
     if (update.sessionUpdate === "usage_update") {
       applySessionUsageUpdate(record, update as unknown as Record<string, unknown>);

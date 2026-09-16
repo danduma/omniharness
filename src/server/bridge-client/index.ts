@@ -25,9 +25,15 @@ export interface AgentRecord {
   agentCapabilities?: Record<string, unknown> | null;
   authMethods?: unknown[];
   requestedModel?: string | null;
+  pendingModel?: string | null;
   effectiveModel?: string | null;
+  rejectedModel?: string | null;
+  modelStatus?: import("@/server/agent-runtime/config-state").ProviderSettingStatus;
   requestedEffort?: string | null;
+  pendingEffort?: string | null;
   effectiveEffort?: string | null;
+  rejectedEffort?: string | null;
+  effortStatus?: import("@/server/agent-runtime/config-state").ProviderSettingStatus;
   credentialProfile?: {
     name: string;
     status: "loaded";
@@ -322,9 +328,13 @@ export function normalizeAgentRecord(value: unknown): AgentRecord {
     state: asString(record.state, "unknown"),
     sessionId: asNullableString(record.sessionId),
     requestedModel: asNullableString(record.requestedModel),
+    pendingModel: asNullableString(record.pendingModel),
     effectiveModel: asNullableString(record.effectiveModel),
+    rejectedModel: asNullableString(record.rejectedModel),
     requestedEffort: asNullableString(record.requestedEffort),
+    pendingEffort: asNullableString(record.pendingEffort),
     effectiveEffort: asNullableString(record.effectiveEffort),
+    rejectedEffort: asNullableString(record.rejectedEffort),
     sessionMode: asNullableString(record.sessionMode),
     lastError: asNullableString(record.lastError),
     contextUsage,
