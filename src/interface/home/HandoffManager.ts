@@ -35,6 +35,7 @@ export class HandoffManager extends StateManager<HandoffManagerState> {
   private api: RuntimeAPIs["handoffs"] | null = null;
   private targetModels: Partial<WorkerModelCatalog> | undefined;
   private requestGeneration = 0;
+  private editRevisions = { targetWorkerType: 0, model: 0, effort: 0, accountId: 0, editObjective: 0, editRemaining: 0 };
   constructor() { super(INITIAL); }
   configure(api: RuntimeAPIs["handoffs"]) { this.api = api; }
   configureTargetModels(targetModels: Partial<WorkerModelCatalog> | undefined) { this.targetModels = targetModels; }
@@ -47,6 +48,8 @@ export class HandoffManager extends StateManager<HandoffManagerState> {
   }
   open(request: HandoffDialogRequest) {
     const generation = ++this.requestGeneration;
+    this.editRevisions = { targetWorkerType: 0, model: 0, effort: 0, accountId: 0, editObjective: 0, editRemaining: 0 };
+    const openedAtRevisions = { ...this.editRevisions };
     const targetWorkerType = request.sourceWorkerType === "claude" ? "codex" : "claude";
     this.update({ ...INITIAL, request, targetWorkerType, ...this.getTargetDefaults(targetWorkerType) });
     void this.api?.getActive({ runId: request.runId }).then((response) => {
@@ -56,23 +59,30 @@ export class HandoffManager extends StateManager<HandoffManagerState> {
       const handoff = response.handoff;
       this.patch({
         handoff,
-        targetWorkerType: handoff.target.workerType,
-        model: handoff.target.model ?? "",
-        effort: handoff.target.effort ?? "",
-        accountId: handoff.target.accountId ?? "",
-        editObjective: handoff.packet?.task.currentObjective ?? "",
-        editRemaining: handoff.packet?.state.remaining.join("\n") ?? "",
+        ...(this.editRevisions.targetWorkerType === openedAtRevisions.targetWorkerType ? { targetWorkerType: handoff.target.workerType } : {}),
+        ...(this.editRevisions.model === openedAtRevisions.model ? { model: handoff.target.model ?? "" } : {}),
+        ...(this.editRevisions.effort === openedAtRevisions.effort ? { effort: handoff.target.effort ?? "" } : {}),
+        ...(this.editRevisions.accountId === openedAtRevisions.accountId ? { accountId: handoff.target.accountId ?? "" } : {}),
+        ...(this.editRevisions.editObjective === openedAtRevisions.editObjective ? { editObjective: handoff.packet?.task.currentObjective ?? "" } : {}),
+        ...(this.editRevisions.editRemaining === openedAtRevisions.editRemaining ? { editRemaining: handoff.packet?.state.remaining.join("\n") ?? "" } : {}),
       });
-    }).catch(() => undefined);
+    }).catch((error) => {
+      if (generation !== this.requestGeneration) return;
+      this.patch({ error: runtimeErrorMessage(error) });
+    });
   }
   close() { if (!this.getSnapshot().preparing && !this.getSnapshot().launching) { this.requestGeneration += 1; this.update(INITIAL); } }
   setTargetWorkerType(value: SupportedWorkerType) {
     if (value === this.getSnapshot().targetWorkerType) return;
+    this.editRevisions.targetWorkerType += 1;
+    this.editRevisions.model += 1;
+    this.editRevisions.effort += 1;
+    this.editRevisions.accountId += 1;
     this.patch({ targetWorkerType: value, ...this.getTargetDefaults(value), handoff: null, error: null });
   }
-  setModel(value: string) { this.patch({ model: value, handoff: null }); }
-  setEffort(value: string) { this.patch({ effort: value, handoff: null }); }
-  setAccountId(value: string) { this.patch({ accountId: value, handoff: null }); }
+  setModel(value: string) { this.editRevisions.model += 1; this.patch({ model: value, handoff: null }); }
+  setEffort(value: string) { this.editRevisions.effort += 1; this.patch({ effort: value, handoff: null }); }
+  setAccountId(value: string) { this.editRevisions.accountId += 1; this.patch({ accountId: value, handoff: null }); }
   async prepare() {
     const state = this.getSnapshot();
     if (!state.request || !this.api) return;
@@ -92,8 +102,8 @@ export class HandoffManager extends StateManager<HandoffManagerState> {
       this.patch({ preparing: false, error: runtimeErrorMessage(error) });
     }
   }
-  setEditObjective(value: string) { this.setKey("editObjective", value); }
-  setEditRemaining(value: string) { this.setKey("editRemaining", value); }
+  setEditObjective(value: string) { this.editRevisions.editObjective += 1; this.setKey("editObjective", value); }
+  setEditRemaining(value: string) { this.editRevisions.editRemaining += 1; this.setKey("editRemaining", value); }
   async saveRevision() {
     const state = this.getSnapshot();
     if (!state.handoff || !this.api) return;

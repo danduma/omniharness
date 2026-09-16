@@ -8,6 +8,13 @@ export type SettingsDraftState = {
   draft: ServerSettingsValues;
   dirtyKeys: Set<string>;
   hydrated: boolean;
+  fieldRevisions: Record<string, number>;
+};
+
+export type SettingsSaveOperation = {
+  id: number;
+  values: ServerSettingsValues;
+  fieldRevisions: Record<string, number>;
 };
 
 function normalizeSettings(values: ServerSettingsValues = {}) {
@@ -22,6 +29,9 @@ function cloneDirtyKeys(dirtyKeys: Set<string>) {
 }
 
 export class SettingsDraftManager extends StateManager<SettingsDraftState> {
+  private nextRevision = 1;
+  private nextOperationId = 1;
+
   constructor(initialValues: ServerSettingsValues = DEFAULT_SERVER_SETTINGS) {
     const normalized = normalizeSettings(initialValues);
     super({
@@ -29,16 +39,33 @@ export class SettingsDraftManager extends StateManager<SettingsDraftState> {
       draft: normalized,
       dirtyKeys: new Set(),
       hydrated: false,
+      fieldRevisions: {},
     });
   }
 
-  hydrate(values: ServerSettingsValues, notify = true) {
+  hydrate(values: ServerSettingsValues, notify = true, mode: "refresh" | "replace" = "refresh") {
     const normalized = normalizeSettings(values);
-    this.patch({
-      baseline: normalized,
-      draft: normalized,
-      dirtyKeys: new Set(),
-      hydrated: true,
+    this.patch((current) => {
+      if (!current.hydrated || mode === "replace") {
+        return {
+          baseline: normalized,
+          draft: normalized,
+          dirtyKeys: new Set(),
+          hydrated: true,
+          fieldRevisions: {},
+        };
+      }
+
+      const draft = { ...current.draft };
+      const dirtyKeys = cloneDirtyKeys(current.dirtyKeys);
+      for (const key of new Set([...Object.keys(current.baseline), ...Object.keys(normalized)])) {
+        if (!dirtyKeys.has(key)) {
+          draft[key] = normalized[key] ?? "";
+        } else if ((draft[key] ?? "") === (normalized[key] ?? "")) {
+          dirtyKeys.delete(key);
+        }
+      }
+      return { baseline: normalized, draft, dirtyKeys, hydrated: true };
     }, notify);
   }
 
@@ -59,12 +86,23 @@ export class SettingsDraftManager extends StateManager<SettingsDraftState> {
       return {
         draft: nextDraft,
         dirtyKeys,
+        fieldRevisions: { ...current.fieldRevisions, [key]: this.nextRevision++ },
       };
     });
   }
 
   patchFields(values: ServerSettingsValues) {
-    Object.entries(values).forEach(([key, value]) => this.setField(key, value));
+    this.patch((current) => {
+      const draft = { ...current.draft, ...values };
+      const dirtyKeys = cloneDirtyKeys(current.dirtyKeys);
+      const fieldRevisions = { ...current.fieldRevisions };
+      for (const [key, value] of Object.entries(values)) {
+        if ((current.baseline[key] ?? "") === value) dirtyKeys.delete(key);
+        else dirtyKeys.add(key);
+        fieldRevisions[key] = this.nextRevision++;
+      }
+      return { draft, dirtyKeys, fieldRevisions };
+    });
   }
 
   discardDraft() {
@@ -75,27 +113,30 @@ export class SettingsDraftManager extends StateManager<SettingsDraftState> {
   }
 
   markSaved(values: ServerSettingsValues = this.getSnapshot().draft) {
-    const normalized = normalizeSettings(values);
-    this.patch({
-      baseline: normalized,
-      draft: normalized,
-      dirtyKeys: new Set(),
-      hydrated: true,
-    });
+    this.markFieldsSaved(values);
   }
 
-  markFieldsSaved(values: ServerSettingsValues) {
+  markFieldsSaved(values: ServerSettingsValues, submittedFieldRevisions: Record<string, number> = {}) {
     this.patch((current) => {
       const nextBaseline = {
         ...current.baseline,
         ...values,
       };
-      const nextDraft = {
-        ...current.draft,
-        ...values,
-      };
+      const nextDraft = { ...current.draft };
       const dirtyKeys = cloneDirtyKeys(current.dirtyKeys);
-      Object.keys(values).forEach((key) => dirtyKeys.delete(key));
+      Object.entries(values).forEach(([key, value]) => {
+        // The acknowledged value becomes the baseline. A later edit stays
+        // dirty only when its current value actually differs from that
+        // baseline; revision ordering must never manufacture dirtiness when a
+        // user changed away and then back while the request was in flight.
+        if ((nextDraft[key] ?? "") === value) {
+          dirtyKeys.delete(key);
+        } else {
+          dirtyKeys.add(key);
+        }
+      });
+
+      void submittedFieldRevisions;
 
       return {
         baseline: nextBaseline,
@@ -113,6 +154,22 @@ export class SettingsDraftManager extends StateManager<SettingsDraftState> {
         .filter((key) => Object.prototype.hasOwnProperty.call(draft, key))
         .map((key) => [key, draft[key]]),
     );
+  }
+
+  beginSave(): SettingsSaveOperation {
+    const snapshot = this.getSnapshot();
+    const values = this.getSavePayload();
+    return {
+      id: this.nextOperationId++,
+      values,
+      fieldRevisions: Object.fromEntries(
+        Object.keys(values).map((key) => [key, snapshot.fieldRevisions[key] ?? 0]),
+      ),
+    };
+  }
+
+  acknowledgeSave(operation: SettingsSaveOperation) {
+    this.markFieldsSaved(operation.values, operation.fieldRevisions);
   }
 }
 

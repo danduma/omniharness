@@ -79,6 +79,34 @@ async function flushAsyncWork() {
 }
 
 describe("LiveEventConnectionManager", () => {
+  it("drops an HTTP snapshot overtaken by a newer live frame", async () => {
+    MockEventSource.instances = [];
+    let resolveSnapshot!: (value: { data: EventStreamState; lastEventId: string }) => void;
+    const snapshot = new Promise<{ data: EventStreamState; lastEventId: string }>((resolve) => { resolveSnapshot = resolve; });
+    const applyUpdate = vi.fn();
+    const manager = new LiveEventConnectionManager({
+      selectedRunId: "run-1",
+      initialLastEventId: "10",
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestSnapshot: vi.fn().mockReturnValue(snapshot),
+      applyUpdate,
+      reportError: vi.fn(),
+      snapshotValidationIntervalMs: null,
+    });
+
+    manager.start();
+    MockEventSource.instances[0]?.emit("update", createState("live-20"), "20");
+    resolveSnapshot({ data: createState("stale-10"), lastEventId: "10" });
+    await snapshot;
+    await Promise.resolve();
+
+    expect(applyUpdate).toHaveBeenCalledTimes(1);
+    expect(applyUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      runs: [expect.objectContaining({ id: "live-20" })],
+    }));
+    manager.stop();
+  });
+
   it("persists cursors behind an injected runner scope key", () => {
     const values = new Map<string, string>();
     const storage = {

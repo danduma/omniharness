@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildOptimisticCreatedConversationSnapshot, buildOptimisticSentConversationMessage, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseBrowserConversationRoute, parseCollapsedProjectPaths, reorderExplicitProjectPaths, resolveComposerEffortForPair, resolveComposerEffortLabel, resolveComposerEffortValue, resolveComposerModelValue, resolveOptimisticSentConversationMessage, resolveSavedComposerModel, resolveSelectedWorkerModel, shouldClearMissingSelectedRunFromAuthoritativeSnapshot, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/interface/home/utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildOptimisticCreatedConversationSnapshot, buildOptimisticSentConversationMessage, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseBrowserConversationRoute, parseCollapsedProjectPaths, reorderExplicitProjectPaths, resolveComposerEffortForPair, resolveComposerEffortLabel, resolveComposerEffortValue, resolveComposerModelAfterWorkerChange, resolveComposerModelValue, resolveOptimisticSentConversationMessage, resolveSavedComposerModel, resolveSelectedWorkerModel, shouldClearMissingSelectedRunFromAuthoritativeSnapshot, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/interface/home/utils";
 import type { EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord, SupervisorInterventionRecord } from "@/interface/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 
@@ -1642,9 +1642,30 @@ describe("worker model normalization", () => {
     expect(resolveComposerModelValue("openai/gpt-5.6-sol")).toBe("openai/gpt-5.6-sol");
   });
 
-  it("migrates only the superseded default while preserving explicit saved choices", () => {
-    expect(resolveSavedComposerModel("claude-opus-5")).toBe("gpt-5.6-sol");
+  it("preserves explicit saved model choices without cross-provider substitution", () => {
+    expect(resolveSavedComposerModel("claude-opus-5")).toBe("claude-opus-5");
     expect(resolveSavedComposerModel("gpt-5.4")).toBe("gpt-5.4");
     expect(resolveSavedComposerModel("  ")).toBe("");
+  });
+
+  it("chooses a valid model when the user explicitly switches workers", () => {
+    const catalog = {
+      codex: [{ value: "gpt-current", label: "GPT Current" }],
+      claude: [{ value: "claude-current", label: "Claude Current" }],
+    };
+
+    expect(resolveComposerModelAfterWorkerChange({
+      catalog,
+      workerType: "claude",
+      selectedModel: "gpt-current",
+    })).toBe("claude-current");
+  });
+
+  it("keeps an equivalent model when the next worker supports its normalized id", () => {
+    expect(resolveComposerModelAfterWorkerChange({
+      catalog: undefined,
+      workerType: "opencode",
+      selectedModel: "gpt-5.6-sol",
+    })).toBe("openai/gpt-5.6-sol");
   });
 });

@@ -85,6 +85,26 @@ describe("RunnerUiManager", () => {
     expect(manager.getSnapshot()).toMatchObject({ dialog: "forget", profileId: "studio" });
   });
 
+  it("names the server a restart confirmation is about", () => {
+    const manager = new RunnerUiManager({ focusElement: () => {} });
+
+    manager.openRestart("studio", "Studio", "runner-studio-menu");
+    expect(manager.getSnapshot()).toMatchObject({
+      dialog: "restart",
+      profileId: "studio",
+      label: "Studio",
+    });
+
+    // Restart targets whichever server the menu was opened for, so reopening it
+    // for another one must not leave the previous server's name on screen.
+    manager.openRestart("laptop", "Laptop", "runner-laptop-menu");
+    expect(manager.getSnapshot()).toMatchObject({
+      dialog: "restart",
+      profileId: "laptop",
+      label: "Laptop",
+    });
+  });
+
   it("restores focus after closing a runner dialog", async () => {
     const focus = vi.fn();
     const manager = new RunnerUiManager({

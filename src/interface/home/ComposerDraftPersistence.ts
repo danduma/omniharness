@@ -3,9 +3,9 @@ import {
   safeSetBrowserStorageItem,
   type BrowserStorage,
 } from "@/lib/browser-storage";
-import { NEW_CONVERSATION_DRAFT_KEY, type HomeUiState, type HomeUiStateManager } from "./HomeUiStateManager";
+import { NEW_CONVERSATION_DRAFT_KEY, type ComposerSelection, type ComposerSelectionField, type HomeUiState, type HomeUiStateManager } from "./HomeUiStateManager";
 
-export const COMPOSER_DRAFTS_STORAGE_KEY = "omni-composer-drafts:v1";
+export const COMPOSER_DRAFTS_STORAGE_KEY = "omni-composer-drafts:v2";
 
 /**
  * Unsent composer text is the one piece of client state a user cannot get back
@@ -15,17 +15,28 @@ export const COMPOSER_DRAFTS_STORAGE_KEY = "omni-composer-drafts:v1";
 export type PersistedComposerDraft = {
   command: string;
   commandCursor: number;
+  selection: ComposerSelection;
+  dirtySelectionFields: ComposerSelectionField[];
+  serverSelectionVersion: string | null;
   updatedAt: number;
 };
 
 type PersistedComposerDraftsEnvelope = {
-  version: 1;
+  version: 2;
   drafts: Record<string, PersistedComposerDraft>;
 };
 
 export type ComposerDraftSource = Pick<
   HomeUiState,
-  "command" | "commandCursor" | "selectedRunId" | "composerDraftsByRun"
+  | "command"
+  | "commandCursor"
+  | "selectedRunId"
+  | "composerDraftsByRun"
+  | "selectedConversationMode"
+  | "selectedCliAgent"
+  | "selectedWorkerAccountId"
+  | "selectedModel"
+  | "selectedEffort"
 >;
 
 const DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -47,7 +58,7 @@ function readPersistedDraft(value: unknown, now: number): PersistedComposerDraft
   }
 
   const record = value as Partial<PersistedComposerDraft>;
-  if (typeof record.command !== "string" || record.command.length === 0) {
+  if (typeof record.command !== "string") {
     return null;
   }
   if (typeof record.updatedAt !== "number" || !Number.isFinite(record.updatedAt)) {
@@ -61,9 +72,28 @@ function readPersistedDraft(value: unknown, now: number): PersistedComposerDraft
     ? record.commandCursor
     : record.command.length;
 
+  const selection = record.selection;
+  if (!selection || typeof selection !== "object") return null;
+  if (
+    typeof selection.conversationMode !== "string"
+    || typeof selection.worker !== "string"
+    || typeof selection.accountId !== "string"
+    || typeof selection.model !== "string"
+    || typeof selection.effort !== "string"
+  ) return null;
+  const dirtySelectionFields = Array.isArray(record.dirtySelectionFields)
+    ? record.dirtySelectionFields.filter((field): field is ComposerSelectionField => (
+        field === "conversationMode" || field === "worker" || field === "accountId" || field === "model" || field === "effort"
+      ))
+    : [];
+  if (record.command.length === 0 && dirtySelectionFields.length === 0) return null;
+
   return {
     command: record.command,
     commandCursor: Math.min(Math.max(Math.trunc(cursor), 0), record.command.length),
+    selection: selection as ComposerSelection,
+    dirtySelectionFields,
+    serverSelectionVersion: typeof record.serverSelectionVersion === "string" ? record.serverSelectionVersion : null,
     updatedAt: record.updatedAt,
   };
 }
@@ -82,7 +112,7 @@ export function parsePersistedComposerDrafts(raw: string | null, now: number) {
   }
 
   const envelope = parsed as Partial<PersistedComposerDraftsEnvelope> | null;
-  if (!envelope || typeof envelope !== "object" || envelope.version !== 1) {
+  if (!envelope || typeof envelope !== "object" || envelope.version !== 2) {
     return {};
   }
   if (!envelope.drafts || typeof envelope.drafts !== "object") {
@@ -112,20 +142,47 @@ export function collectComposerDrafts(
 ) {
   const drafts: Record<string, PersistedComposerDraft> = {};
 
-  const record = (key: string, command: string, commandCursor: number) => {
-    if (command.length === 0) {
+  const record = (
+    key: string,
+    command: string,
+    commandCursor: number,
+    selection: ComposerSelection,
+    dirtySelectionFields: ComposerSelectionField[],
+    serverSelectionVersion: string | null,
+  ) => {
+    if (command.length === 0 && dirtySelectionFields.length === 0) {
       return;
     }
     const prior = previous[key];
-    drafts[key] = prior && prior.command === command && prior.commandCursor === commandCursor
+    const unchanged = prior
+      && prior.command === command
+      && prior.commandCursor === commandCursor
+      && JSON.stringify(prior.selection) === JSON.stringify(selection)
+      && JSON.stringify(prior.dirtySelectionFields) === JSON.stringify(dirtySelectionFields)
+      && prior.serverSelectionVersion === serverSelectionVersion;
+    drafts[key] = unchanged
       ? prior
-      : { command, commandCursor, updatedAt: now };
+      : { command, commandCursor, selection, dirtySelectionFields, serverSelectionVersion, updatedAt: now };
   };
 
   for (const [key, draft] of Object.entries(state.composerDraftsByRun)) {
-    record(key, draft.command, draft.commandCursor);
+    record(key, draft.command, draft.commandCursor, draft.selection, draft.dirtySelectionFields, draft.serverSelectionVersion);
   }
-  record(composerDraftKey(state.selectedRunId), state.command, state.commandCursor);
+  const activeStored = state.composerDraftsByRun[composerDraftKey(state.selectedRunId)];
+  record(
+    composerDraftKey(state.selectedRunId),
+    state.command,
+    state.commandCursor,
+    {
+      conversationMode: state.selectedConversationMode,
+      worker: state.selectedCliAgent,
+      accountId: state.selectedWorkerAccountId,
+      model: state.selectedModel,
+      effort: state.selectedEffort,
+    },
+    activeStored?.dirtySelectionFields ?? [],
+    activeStored?.serverSelectionVersion ?? null,
+  );
 
   return drafts;
 }
@@ -135,7 +192,7 @@ export function serializeComposerDrafts(
   activeKey: string,
 ) {
   const stringify = (entries: Array<[string, PersistedComposerDraft]>) => JSON.stringify({
-    version: 1,
+    version: 2,
     drafts: Object.fromEntries(entries),
   } satisfies PersistedComposerDraftsEnvelope);
 
@@ -236,6 +293,9 @@ export class ComposerDraftPersistence {
           commandCursor: draft.commandCursor,
           mentionIndex: 0,
           attachments: [],
+          selection: draft.selection,
+          dirtySelectionFields: draft.dirtySelectionFields,
+          serverSelectionVersion: draft.serverSelectionVersion,
         };
         restoredAnyRun = true;
       }
@@ -249,7 +309,15 @@ export class ComposerDraftPersistence {
         ...current,
         composerDraftsByRun,
         ...(activeDraft
-          ? { command: activeDraft.command, commandCursor: activeDraft.commandCursor }
+          ? {
+              command: activeDraft.command,
+              commandCursor: activeDraft.commandCursor,
+              selectedConversationMode: activeDraft.selection.conversationMode,
+              selectedCliAgent: activeDraft.selection.worker,
+              selectedWorkerAccountId: activeDraft.selection.accountId,
+              selectedModel: activeDraft.selection.model,
+              selectedEffort: activeDraft.selection.effort,
+            }
           : {}),
       };
     });

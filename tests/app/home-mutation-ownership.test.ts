@@ -1,4 +1,6 @@
 import { describe, expect, test } from "vitest";
+import { INITIAL_EVENT_STREAM_STATE } from "@/interface/home/HomeUiStateManager";
+import { restoreRunSlice } from "@/interface/home/utils";
 import {
   ownsConversationSideEffects,
   ownsOptimisticRunSelection,
@@ -103,6 +105,31 @@ describe("home mutation ownership guards", () => {
       selectedRunIdAtStart: "run-b",
       currentSelectedRunId: "run-b",
     })).toBe(false);
+  });
+
+  test("restores only the failed removal's run slice and preserves newer unrelated state", () => {
+    const captured = {
+      ...INITIAL_EVENT_STREAM_STATE,
+      runs: [
+        { id: "run-a", planId: "plan-a", status: "done", projectPath: null, title: "A", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+        { id: "run-b", planId: "plan-b", status: "done", projectPath: null, title: "B before", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+      ],
+      plans: [
+        { id: "plan-a", path: "/workspace/a", status: "done", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+        { id: "plan-b", path: "/workspace/b", status: "done", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+      ],
+    };
+    const current = {
+      ...captured,
+      runs: [{ ...captured.runs[1]!, title: "B after" }],
+      frontendErrors: [{ message: "newer unrelated state" }],
+    };
+
+    const restored = restoreRunSlice(current, captured, "run-a");
+
+    expect(restored.runs.find((run) => run.id === "run-a")?.title).toBe("A");
+    expect(restored.runs.find((run) => run.id === "run-b")?.title).toBe("B after");
+    expect(restored.frontendErrors).toEqual([{ message: "newer unrelated state" }]);
   });
 
   test("keeps message-send side effects scoped to the submitted conversation", () => {

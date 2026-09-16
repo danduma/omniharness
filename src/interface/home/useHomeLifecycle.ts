@@ -51,10 +51,6 @@ interface UseHomeLifecycleProps {
   setSelectedRunId: (value: string | null) => void;
   draftProjectPath: string | null;
   setDraftProjectPath: React.Dispatch<React.SetStateAction<string | null>>;
-  setSelectedConversationMode: React.Dispatch<React.SetStateAction<ConversationModeOption>>;
-  setSelectedCliAgent: React.Dispatch<React.SetStateAction<ComposerWorkerOption>>;
-  setSelectedModel: React.Dispatch<React.SetStateAction<string>>;
-  setSelectedEffort: React.Dispatch<React.SetStateAction<string>>;
   collapsedProjectPaths: Set<string>;
   setCollapsedProjectPaths: React.Dispatch<React.SetStateAction<Set<string>>>;
   leftSidebarWidth: number;
@@ -109,10 +105,6 @@ export function useHomeLifecycle({
   setSelectedRunId,
   draftProjectPath,
   setDraftProjectPath,
-  setSelectedConversationMode,
-  setSelectedCliAgent,
-  setSelectedModel,
-  setSelectedEffort,
   collapsedProjectPaths,
   setCollapsedProjectPaths,
   leftSidebarWidth,
@@ -260,35 +252,31 @@ export function useHomeLifecycle({
       // Legacy persisted values ("planning"/"implementation") collapse into the
       // single "omni" picker option.
       if (savedMode === "direct") {
-        setSelectedConversationMode("direct");
+        homeUiStateManager.setComposerSelectionField("conversationMode", "direct", { userEdited: false });
       } else if (savedMode === "omni" || savedMode === "planning" || savedMode === "implementation") {
-        setSelectedConversationMode("omni");
+        homeUiStateManager.setComposerSelectionField("conversationMode", "omni", { userEdited: false });
       }
     } else {
       if (route.draftProjectPath) {
         setDraftProjectPath(route.draftProjectPath);
       }
       setSelectedRunId(null);
-      setSelectedConversationMode("direct");
+      homeUiStateManager.setComposerSelectionField("conversationMode", "direct", { userEdited: false });
     }
     if (savedWorker === "auto" || WORKER_OPTIONS.some((option) => option.value === savedWorker)) {
-      setSelectedCliAgent(savedWorker as ComposerWorkerOption);
+      homeUiStateManager.setComposerSelectionField("worker", savedWorker as ComposerWorkerOption, { userEdited: false });
     }
     if (savedModel) {
-      setSelectedModel(savedModel);
+      homeUiStateManager.setComposerSelectionField("model", savedModel, { userEdited: false });
     }
     if (EFFORT_OPTIONS.includes(savedEffort)) {
-      setSelectedEffort(savedEffort);
+      homeUiStateManager.setComposerSelectionField("effort", savedEffort, { userEdited: false });
     }
     setRouteReady(true);
   }, [
     setDraftProjectPath,
     setPairTokenFromUrl,
     setRouteReady,
-    setSelectedCliAgent,
-    setSelectedConversationMode,
-    setSelectedEffort,
-    setSelectedModel,
     setSelectedRunId,
   ]);
 
@@ -600,6 +588,16 @@ export function useHomeLifecycle({
     }
     if (!selectedRunId) {
       lastAuthoritativeRunSelectionIdRef.current = null;
+    } else {
+      // Browser pair defaults initialize only a new conversation. A saved
+      // conversation owns its whole compound selection, including effort, so
+      // catalog aliases and background refreshes cannot reapply a global pair
+      // default over it.
+      const key = getEffortStorageKey(selectedCliAgent, selectedModel);
+      effortPairRef.current = key;
+      pendingEffortHydrationRef.current = null;
+      safeSetBrowserStorageItem(window.localStorage, key, selectedEffort);
+      return;
     }
 
     const key = getEffortStorageKey(selectedCliAgent, selectedModel);
@@ -609,7 +607,7 @@ export function useHomeLifecycle({
       const nextEffort = resolveComposerEffortForPair(saved);
       if (nextEffort !== selectedEffort) {
         pendingEffortHydrationRef.current = { key, value: nextEffort };
-        setSelectedEffort(nextEffort);
+        homeUiStateManager.setComposerSelectionField("effort", nextEffort, { userEdited: false });
         return;
       }
       pendingEffortHydrationRef.current = null;
@@ -626,7 +624,7 @@ export function useHomeLifecycle({
     }
 
     safeSetBrowserStorageItem(window.localStorage, key, selectedEffort);
-  }, [hydratedRunSelectionId, selectedCliAgent, selectedEffort, selectedModel, selectedRunId, setSelectedEffort]);
+  }, [hydratedRunSelectionId, selectedCliAgent, selectedEffort, selectedModel, selectedRunId]);
 
 }
 

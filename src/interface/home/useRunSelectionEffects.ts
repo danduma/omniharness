@@ -4,7 +4,9 @@ import { conversationMainManager } from "@/components/component-state-managers";
 import { getRunLatestUnreadTimestamp } from "@/lib/conversation-state";
 import type { ComposerMode } from "./types";
 import type { AgentSnapshot, ComposerWorkerOption, MessageRecord, RunRecord, WorkerType } from "./types";
-import { parseWorkerType, resolveComposerEffortLabel, resolveComposerModelValue } from "./utils";
+import { homeUiStateManager } from "./HomeUiStateManager";
+import { DEFAULT_COMPOSER_EFFORT } from "./constants";
+import { getWorkerModelOptions, parseWorkerType, resolveComposerEffortLabel, resolveComposerModelValue } from "./utils";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
 
 const CONVERSATION_BOTTOM_THRESHOLD_PX = 8;
@@ -141,17 +143,9 @@ interface UseRunSelectionEffectsProps {
   selectedRun: RunRecord | null;
   activeComposerMode: ComposerMode;
   selectedCliAgent: ComposerWorkerOption;
-  setSelectedCliAgent: React.Dispatch<React.SetStateAction<ComposerWorkerOption>>;
   autoSelectedWorkerType: WorkerType | null;
   activeAllowedWorkerTypes: WorkerType[];
-  hydratedRunSelectionId: string | null;
   setHydratedRunSelectionId: React.Dispatch<React.SetStateAction<string | null>>;
-  selectedModel: string;
-  setSelectedModel: React.Dispatch<React.SetStateAction<string>>;
-  selectedEffort: string;
-  setSelectedEffort: React.Dispatch<React.SetStateAction<string>>;
-  selectedWorkerAccountId: string;
-  setSelectedWorkerAccountId: React.Dispatch<React.SetStateAction<string>>;
   availableWorkerTypes: WorkerType[];
   configuredAllowedWorkerTypes: WorkerType[];
   apiKeys: Record<string, string>;
@@ -168,12 +162,27 @@ export function resolveRunComposerSelection(args: {
   const worker: ComposerWorkerOption = preferredWorker && args.activeAllowedWorkerTypes.includes(preferredWorker)
     ? preferredWorker
     : "auto";
+  const modelWorker = preferredWorker ?? args.activeAllowedWorkerTypes[0] ?? "codex";
   return {
+    conversationMode: args.run.mode === "direct" || args.run.mode === "commit" ? "direct" as const : "omni" as const,
     worker,
-    model: resolveComposerModelValue(args.run.preferredWorkerModel),
-    effort: resolveComposerEffortLabel(args.run.preferredWorkerEffort),
+    model: resolveComposerModelValue(args.run.preferredWorkerModel)
+      ?? getWorkerModelOptions(undefined, modelWorker)[0]?.value
+      ?? "",
+    effort: resolveComposerEffortLabel(args.run.preferredWorkerEffort) ?? DEFAULT_COMPOSER_EFFORT,
     accountId: args.run.preferredWorkerAccountId?.trim() || "auto",
   };
+}
+
+function runSelectionVersion(run: RunRecord) {
+  return JSON.stringify([
+    run.preferredWorkerRevision ?? 0,
+    run.preferredWorkerType ?? null,
+    run.preferredWorkerModel ?? null,
+    run.preferredWorkerEffort ?? null,
+    run.preferredWorkerAccountId ?? null,
+    run.mode,
+  ]);
 }
 
 export function useRunSelectionEffects({
@@ -183,17 +192,9 @@ export function useRunSelectionEffects({
   selectedRun,
   activeComposerMode,
   selectedCliAgent,
-  setSelectedCliAgent,
   autoSelectedWorkerType,
   activeAllowedWorkerTypes,
-  hydratedRunSelectionId,
   setHydratedRunSelectionId,
-  selectedModel,
-  setSelectedModel,
-  selectedEffort,
-  setSelectedEffort,
-  selectedWorkerAccountId,
-  setSelectedWorkerAccountId,
   availableWorkerTypes,
   configuredAllowedWorkerTypes,
   apiKeys,
@@ -312,17 +313,13 @@ export function useRunSelectionEffects({
       if (activeComposerMode === "direct") {
         const nextDirectWorker = selectedCliAgent === "auto" ? (autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex") : selectedCliAgent;
         if (!activeAllowedWorkerTypes.includes(nextDirectWorker as WorkerType)) {
-          setSelectedCliAgent(autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex");
+          homeUiStateManager.setComposerSelectionField("worker", autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex", { userEdited: false });
         } else if (nextDirectWorker !== selectedCliAgent) {
-          setSelectedCliAgent(nextDirectWorker);
+          homeUiStateManager.setComposerSelectionField("worker", nextDirectWorker, { userEdited: false });
         }
       } else if (selectedCliAgent !== "auto" && !activeAllowedWorkerTypes.includes(selectedCliAgent)) {
-        setSelectedCliAgent("auto");
+        homeUiStateManager.setComposerSelectionField("worker", "auto", { userEdited: false });
       }
-      return;
-    }
-
-    if (hydratedRunSelectionId === selectedRunId) {
       return;
     }
 
@@ -330,35 +327,17 @@ export function useRunSelectionEffects({
       run: selectedRun,
       activeAllowedWorkerTypes,
     });
-    if (runSelection.worker !== selectedCliAgent) {
-      setSelectedCliAgent(runSelection.worker);
-    }
-    if (runSelection.model && runSelection.model !== selectedModel) {
-      setSelectedModel(runSelection.model);
-    }
-    if (runSelection.effort && runSelection.effort !== selectedEffort) {
-      setSelectedEffort(runSelection.effort);
-    }
-    if (runSelection.accountId !== selectedWorkerAccountId) {
-      setSelectedWorkerAccountId(runSelection.accountId);
-    }
-    setHydratedRunSelectionId(selectedRunId);
+    homeUiStateManager.hydrateComposerSelection({
+      runId: selectedRunId,
+      selection: runSelection,
+      serverVersion: runSelectionVersion(selectedRun),
+    });
   }, [
     activeComposerMode,
     activeAllowedWorkerTypes,
     autoSelectedWorkerType,
-    hydratedRunSelectionId,
-    selectedCliAgent,
-    selectedEffort,
-    selectedModel,
-    selectedWorkerAccountId,
     selectedRun,
     selectedRunId,
-    setHydratedRunSelectionId,
-    setSelectedCliAgent,
-    setSelectedEffort,
-    setSelectedModel,
-    setSelectedWorkerAccountId,
   ]);
 
   useEffect(() => {

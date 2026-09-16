@@ -384,7 +384,13 @@ export class LiveEventConnectionManager {
     this.eventSource = null;
     this.cursor.clear();
     try {
-      const snapshotLoaded = await this.pollSnapshot({ force: true });
+      let snapshotLoaded = await this.pollSnapshot({ force: true });
+      // A bootstrap poll may have been in flight when the resync cleared its
+      // cursor. That body correctly fails the freshness guard; immediately
+      // issue a clean, post-clear bootstrap instead of waiting for fallback.
+      if (this.active && !snapshotLoaded) {
+        snapshotLoaded = await this.pollSnapshot({ force: true });
+      }
       if (!this.active || !snapshotLoaded) {
         this.startFallbackPolling();
         return;
@@ -464,6 +470,7 @@ export class LiveEventConnectionManager {
 
   private async runSnapshotPoll(): Promise<boolean> {
     const gen = this.connectionGeneration;
+    const cursorAtRequestStart = this.cursor.getCurrent();
     try {
       const result = await this.events.snapshot({
         runId: this.selectedRunId,
@@ -473,7 +480,20 @@ export class LiveEventConnectionManager {
       if (!this.active || gen !== this.connectionGeneration) {
         return false;
       }
-      this.setLastEventId(result.lastEventId);
+      // A live frame that arrived while this HTTP snapshot was being built is
+      // newer authority for the active connection. Even an anchor allocated
+      // after snapshot construction cannot prove the body includes that frame,
+      // so reject the overtaken body (and its cursor hints) wholesale.
+      if (this.cursor.getCurrent() !== cursorAtRequestStart) {
+        return false;
+      }
+      const snapshotAnchor = normalizeLastEventId(result.lastEventId);
+      const currentCursor = this.cursor.getCurrent();
+      if (snapshotAnchor && currentCursor) {
+        const ordering = compareEventIds(snapshotAnchor, currentCursor);
+        if (ordering !== null && ordering < 0) return false;
+      }
+      if (snapshotAnchor && snapshotAnchor !== currentCursor) this.cursor.advance(snapshotAnchor);
       const data = result.data;
       if (isNotModifiedSnapshot(data)) {
         this.workerEntries.onKnownSeqs(data.workerEntrySeqs);
