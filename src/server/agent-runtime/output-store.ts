@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { appendFileSync, closeSync, createReadStream, existsSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmSync, statSync } from "fs";
-import { basename, dirname, join } from "path";
+import { basename, dirname, join, resolve } from "path";
 import { createInterface } from "readline";
 import type { AgentRecord, OutputArchivePage, OutputArchiveStats, OutputEntry } from "./types";
 import { preserveInlineImageContentData } from "@/shared/worker-entries";
@@ -30,6 +30,29 @@ function nowIso() {
 function sanitizePathPart(input: string) {
   const sanitized = input.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
   return sanitized || "agent";
+}
+
+export function resolveAgentRuntimeDataDir(input: {
+  dataDir?: string | null;
+  rootDir?: string | null;
+} = {}) {
+  const configuredDataDir = input.dataDir?.trim();
+  if (configuredDataDir) return resolve(configuredDataDir);
+
+  const configuredRoot = input.rootDir?.trim() || process.env.OMNIHARNESS_ROOT?.trim();
+  return join(configuredRoot ? resolve(configuredRoot) : process.cwd(), ".omniharness");
+}
+
+export function resolveAgentOutputArchivePath(input: {
+  dataDir?: string | null;
+  rootDir?: string | null;
+  name: string;
+}) {
+  return join(
+    resolveAgentRuntimeDataDir(input),
+    "agent-runtime-output",
+    `${sanitizePathPart(input.name)}.jsonl`,
+  );
 }
 
 export function truncateString(value: string, maxChars: number) {
@@ -303,11 +326,15 @@ export class AgentOutputArchive {
   }
 }
 
-export function openAgentOutputArchive(input: { dataDir?: string | null; name: string; resume?: boolean }) {
-  const dataDir = input.dataDir?.trim() || join(process.cwd(), ".omniharness");
+export function openAgentOutputArchive(input: {
+  dataDir?: string | null;
+  rootDir?: string | null;
+  name: string;
+  resume?: boolean;
+}) {
   return new AgentOutputArchive(
     input.name,
-    join(dataDir, "agent-runtime-output", `${sanitizePathPart(input.name)}.jsonl`),
+    resolveAgentOutputArchivePath(input),
     { truncate: !input.resume },
   );
 }

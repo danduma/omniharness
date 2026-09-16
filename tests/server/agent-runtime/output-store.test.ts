@@ -9,6 +9,7 @@ import {
   appendMessageChunk,
   openAgentOutputArchive,
   reassembleArchivedEntries,
+  resolveAgentRuntimeDataDir,
   summarizeToolCallUpdate,
 } from "@/server/agent-runtime/output-store";
 import type { AgentRecord } from "@/server/agent-runtime/types";
@@ -28,6 +29,13 @@ describe("agent runtime output store", () => {
     tempRoots.push(root);
     return root;
   }
+
+  it("keeps raw archives inside the configured runtime or app-data root", () => {
+    expect(resolveAgentRuntimeDataDir({ dataDir: "/tmp/omni-runtime-data" }))
+      .toBe("/tmp/omni-runtime-data");
+    expect(resolveAgentRuntimeDataDir({ rootDir: "/tmp/omni-app-root" }))
+      .toBe("/tmp/omni-app-root/.omniharness");
+  });
 
   describe("appendBoundedText", () => {
     it("keeps recent text without adding an omitted-output placeholder", () => {

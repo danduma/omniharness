@@ -1,4 +1,5 @@
 import { decodeClaudeGatewayModel } from "@/lib/claude-model-gateway";
+import { normalizeReasoningEffort } from "@/shared/reasoning-effort";
 
 export type WorkerLaunchSelection = {
   model: string | null;
@@ -38,7 +39,8 @@ export function resolveWorkerLaunchSelection(
   const accountId = run.preferredWorkerAccountId?.trim() || allocation?.accountId?.trim() || null;
   return {
     model: worker.effectiveLaunchModel?.trim() || fallbackModel,
-    effort: worker.effectiveLaunchEffort?.trim().toLowerCase() || run.preferredWorkerEffort?.trim().toLowerCase() || null,
+    effort: normalizeReasoningEffort(worker.effectiveLaunchEffort)
+      ?? normalizeReasoningEffort(run.preferredWorkerEffort),
     accountId: credentialSource === "gateway" ? null : accountId,
     credentialSource,
   };
