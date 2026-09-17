@@ -99,20 +99,8 @@ export function buildCodexAcpConfig(input: {
 
   const model = input.model?.trim();
   const effort = normalizeReasoningEffort(input.effort);
-  const existingShellEnvironmentPolicy = config.shell_environment_policy;
-  const shellEnvironmentPolicy = existingShellEnvironmentPolicy
-    && typeof existingShellEnvironmentPolicy === "object"
-    && !Array.isArray(existingShellEnvironmentPolicy)
-    ? existingShellEnvironmentPolicy as Record<string, unknown>
-    : {};
   return JSON.stringify({
     ...config,
-    // Codex app-server otherwise starts tools with a reduced environment on
-    // Windows, which omits executables such as Git from PATH.
-    shell_environment_policy: {
-      ...shellEnvironmentPolicy,
-      inherit: "all",
-    },
     ...(model ? { model } : {}),
     ...(effort ? { model_reasoning_effort: effort } : {}),
   });

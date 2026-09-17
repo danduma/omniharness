@@ -101,8 +101,6 @@ export async function codexStateDirCandidates(worker: WorkerLike) {
     accountHome ? join(accountHome, "home") : null,
     process.env.CODEX_SQLITE_HOME,
     process.env.CODEX_HOME,
-    projectHome ? join(projectHome, "sqlite-v3") : null,
-    projectHome ? join(projectHome, "sqlite-v2") : null,
     projectHome ? join(projectHome, "sqlite") : null,
     projectHome ? join(projectHome, "home") : null,
     join(homedir(), ".codex", "sqlite"),
