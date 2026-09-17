@@ -25,6 +25,7 @@
     "GET /api/external-sessions",
     "GET /api/fs",
     "GET /api/fs/files",
+    "GET /api/fs/files/image",
     "GET /api/handoffs/:id",
     "GET /api/healthz",
     "GET /api/integrations/claude-model-gateway",

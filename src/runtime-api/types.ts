@@ -174,6 +174,10 @@ export interface RuntimeAPIs {
       root: string;
       file?: string;
     }, options?: RuntimeCallOptions): Promise<unknown>;
+    image(input: {
+      root: string;
+      file: string;
+    }, options?: RuntimeCallOptions): Promise<Blob>;
     upload(input: FormData, options?: RuntimeCallOptions): Promise<unknown>;
     attachment(input: {
       path: string;

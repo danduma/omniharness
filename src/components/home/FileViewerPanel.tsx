@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, BookOpen, Copy, Ellipsis, FileText, LoaderCircle, RefreshCw, WrapText } from "lucide-react";
+import { AlertTriangle, BookOpen, Copy, Ellipsis, FileText, Image as ImageIcon, LoaderCircle, Maximize2, RefreshCw, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -15,9 +15,11 @@ import {
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { fileViewerPanelManager } from "@/components/component-state-managers";
 import { formatBytes } from "@/lib/chat-attachments";
+import { isImagePath } from "@/lib/file-media";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { buildProjectFileFullPath } from "@/lib/project-file-links";
 import { detectSyntaxLanguage, highlightCodeLine } from "@/lib/syntax-highlighting";
+import { runtimeErrorMessage } from "@/runtime-api/request";
 import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { ProjectFileContentResponse } from "@/interface/home/types";
@@ -35,20 +37,44 @@ export function FileViewerPanel({
   className?: string;
 }) {
   const targetLineRef = useRef<HTMLDivElement | null>(null);
-  const { wordWrap, renderMarkdown } = useManagerSnapshot(fileViewerPanelManager);
+  const { wordWrap, renderMarkdown, actualSize, imageByKey } = useManagerSnapshot(fileViewerPanelManager);
+  const isImage = isImagePath(relativePath);
   const isMarkdown = /\.(md|mdx|markdown)$/i.test(relativePath);
   const renderAsMarkdown = isMarkdown && renderMarkdown;
   useI18nSnapshot();
   const runtimeApis = useRuntimeAPIs();
+  const imageKey = `${root}:${relativePath}`;
+  const imageState = imageByKey[imageKey];
   const fileQuery = useQuery<ProjectFileContentResponse>({
     queryKey: ["project-file", root, relativePath],
     queryFn: () => runtimeApis.files.list({
       root,
       file: relativePath,
     }) as Promise<ProjectFileContentResponse>,
-    enabled: Boolean(root && relativePath),
+    enabled: Boolean(root && relativePath) && !isImage,
     staleTime: 30_000,
   });
+  const imageQuery = useQuery<Blob>({
+    queryKey: ["project-file-image", root, relativePath],
+    queryFn: () => runtimeApis.files.image({ root, file: relativePath }),
+    enabled: Boolean(root && relativePath) && isImage,
+    staleTime: 30_000,
+  });
+  const activeQuery = isImage ? imageQuery : fileQuery;
+
+  const imageBlob = imageQuery.data;
+  const imageUrl = useMemo(
+    () => imageBlob ? URL.createObjectURL(imageBlob) : null,
+    [imageBlob],
+  );
+  // Each blob gets its own object URL, so the previous one is unreachable the
+  // moment a refetch replaces it — release it rather than leaking the bytes for
+  // the lifetime of the document.
+  useEffect(() => () => {
+    if (imageUrl) {
+      URL.revokeObjectURL(imageUrl);
+    }
+  }, [imageUrl]);
 
   useEffect(() => {
     targetLineRef.current?.scrollIntoView({ block: "center" });
@@ -69,7 +95,9 @@ export function FileViewerPanel({
       <div className="shrink-0 border-b border-border/60 px-3 py-2.5">
         <div className="flex min-w-0 items-start gap-2">
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+            {isImage
+              ? <ImageIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+              : <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />}
             <div className="min-w-0">
               <div className="truncate font-mono text-xs font-semibold text-foreground" title={relativePath}>
                 {relativePath}
@@ -88,22 +116,34 @@ export function FileViewerPanel({
               <Ellipsis className="h-4 w-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-40">
-              {isMarkdown ? (
+              {isImage ? (
                 <DropdownMenuCheckboxItem
-                  checked={renderMarkdown}
-                  onCheckedChange={() => fileViewerPanelManager.toggleRenderMarkdown()}
+                  checked={actualSize}
+                  onCheckedChange={() => fileViewerPanelManager.toggleActualSize()}
                 >
-                  <BookOpen className="h-4 w-4" />
-                  <span>{t("fileViewer.menu.renderMarkdown")}</span>
+                  <Maximize2 className="h-4 w-4" />
+                  <span>{t("fileViewer.menu.actualSize")}</span>
                 </DropdownMenuCheckboxItem>
-              ) : null}
-              <DropdownMenuCheckboxItem
-                checked={wordWrap}
-                onCheckedChange={() => fileViewerPanelManager.toggleWordWrap()}
-              >
-                <WrapText className="h-4 w-4" />
-                <span>{t("fileViewer.menu.wordWrap")}</span>
-              </DropdownMenuCheckboxItem>
+              ) : (
+                <>
+                  {isMarkdown ? (
+                    <DropdownMenuCheckboxItem
+                      checked={renderMarkdown}
+                      onCheckedChange={() => fileViewerPanelManager.toggleRenderMarkdown()}
+                    >
+                      <BookOpen className="h-4 w-4" />
+                      <span>{t("fileViewer.menu.renderMarkdown")}</span>
+                    </DropdownMenuCheckboxItem>
+                  ) : null}
+                  <DropdownMenuCheckboxItem
+                    checked={wordWrap}
+                    onCheckedChange={() => fileViewerPanelManager.toggleWordWrap()}
+                  >
+                    <WrapText className="h-4 w-4" />
+                    <span>{t("fileViewer.menu.wordWrap")}</span>
+                  </DropdownMenuCheckboxItem>
+                </>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={() => {
@@ -113,27 +153,44 @@ export function FileViewerPanel({
                 <Copy className="h-4 w-4" />
                 <span>{t("fileViewer.menu.copyFullPath")}</span>
               </DropdownMenuItem>
+              {isImage ? null : (
+                <DropdownMenuItem
+                  disabled={!fileQuery.data}
+                  onClick={() => {
+                    void navigator.clipboard.writeText(content);
+                  }}
+                >
+                  <Copy className="h-4 w-4" />
+                  <span>{t("fileViewer.menu.copyContents")}</span>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem
-                disabled={!fileQuery.data}
                 onClick={() => {
-                  void navigator.clipboard.writeText(content);
+                  if (isImage) {
+                    fileViewerPanelManager.forgetImage(imageKey);
+                  }
+                  void activeQuery.refetch();
                 }}
               >
-                <Copy className="h-4 w-4" />
-                <span>{t("fileViewer.menu.copyContents")}</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => {
-                  void fileQuery.refetch();
-                }}
-              >
-                <RefreshCw className={cn("h-4 w-4", fileQuery.isFetching && "animate-spin")} />
+                <RefreshCw className={cn("h-4 w-4", activeQuery.isFetching && "animate-spin")} />
                 <span>{t("fileViewer.menu.refresh")}</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        {fileQuery.data ? (
+        {isImage && imageBlob ? (
+          <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
+            <span>{formatBytes(imageBlob.size)}</span>
+            {imageState && !imageState.failed ? (
+              <span>
+                {t("fileViewer.metadata.dimensions", {
+                  width: imageState.width,
+                  height: imageState.height,
+                })}
+              </span>
+            ) : null}
+          </div>
+        ) : fileQuery.data ? (
           <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
             <span>{formatBytes(fileQuery.data.size)}</span>
             {line ? <span>{t("fileViewer.metadata.line", { line })}</span> : null}
@@ -147,20 +204,44 @@ export function FileViewerPanel({
         ) : null}
       </div>
 
-      {fileQuery.isLoading ? (
+      {activeQuery.isLoading ? (
         <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
           <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
           {t("fileViewer.loading")}
         </div>
-      ) : fileQuery.error ? (
+      ) : activeQuery.error ? (
         <div className="m-3 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-sm text-destructive">
           <div className="flex items-center gap-2 font-semibold">
             <AlertTriangle className="h-4 w-4" />
             {t("fileViewer.errorTitle")}
           </div>
-          <p className="mt-1 break-words text-xs leading-5">
-            {fileQuery.error instanceof Error ? fileQuery.error.message : String(fileQuery.error)}
+          <p className="mt-1 text-xs leading-5 [overflow-wrap:anywhere]">
+            {runtimeErrorMessage(activeQuery.error)}
           </p>
+        </div>
+      ) : isImage ? (
+        <div className={cn(
+          "omni-image-canvas min-h-0 flex-1 overflow-auto [scrollbar-width:thin]",
+          actualSize ? "" : "flex items-center justify-center p-4",
+        )}>
+          {imageState?.failed ? (
+            <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+              <AlertTriangle className="h-4 w-4" />
+              {t("fileViewer.image.decodeFailed")}
+            </div>
+          ) : imageUrl ? (
+            <img
+              src={imageUrl}
+              alt={t("fileViewer.image.alt", { path: relativePath })}
+              className={cn(actualSize ? "max-w-none" : "max-h-full max-w-full object-contain")}
+              onLoad={(event) => fileViewerPanelManager.markImageLoaded(
+                imageKey,
+                event.currentTarget.naturalWidth,
+                event.currentTarget.naturalHeight,
+              )}
+              onError={() => fileViewerPanelManager.markImageFailed(imageKey)}
+            />
+          ) : null}
         </div>
       ) : renderAsMarkdown ? (
         <div className="omni-conversation-text-scale min-h-0 flex-1 overflow-auto bg-background [scrollbar-width:thin]">

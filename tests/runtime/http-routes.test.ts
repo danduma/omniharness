@@ -14,7 +14,7 @@ import { handleAuthPairRedeemRequest } from "@/runtime/http/routes/auth-pair-red
 import { handleNotificationsRequest } from "@/runtime/http/routes/notifications";
 import { handlePlansRequest } from "@/runtime/http/routes/plans";
 import { handleProjectMemoryRequest } from "@/runtime/http/routes/project-memory";
-import { handleBrowseFilesystemRequest, handleProjectFilesRequest } from "@/runtime/http/routes/filesystem";
+import { handleBrowseFilesystemRequest, handleProjectFilesRequest, handleProjectImageRequest } from "@/runtime/http/routes/filesystem";
 import { handleGitRequest } from "@/runtime/http/routes/git";
 import { handleSettingsRequest } from "@/runtime/http/routes/settings";
 import { handleAccountsRequest } from "@/runtime/http/routes/accounts";
@@ -331,6 +331,36 @@ describe("portable runtime HTTP routes", () => {
       });
     } finally {
       fs.rmSync(projectPath, { recursive: true, force: true });
+    }
+  });
+
+  it("serves project image bytes and refuses non-image project files", async () => {
+    const allowedRoot = path.resolve(process.cwd(), "..");
+    const root = fs.mkdtempSync(path.join(allowedRoot, "omni-runtime-image-"));
+    try {
+      const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      fs.writeFileSync(path.join(root, "logo.png"), pngBytes);
+      fs.writeFileSync(path.join(root, "notes.txt"), "not an image");
+
+      const imageResponse = await handleProjectImageRequest(new Request(
+        `http://localhost/api/fs/files/image?root=${encodeURIComponent(root)}&file=${encodeURIComponent("logo.png")}`,
+      ), { surface: "test" });
+      const textResponse = await handleProjectImageRequest(new Request(
+        `http://localhost/api/fs/files/image?root=${encodeURIComponent(root)}&file=${encodeURIComponent("notes.txt")}`,
+      ), { surface: "test" });
+      const missingResponse = await handleProjectImageRequest(new Request(
+        `http://localhost/api/fs/files/image?root=${encodeURIComponent(root)}&file=${encodeURIComponent("absent.png")}`,
+      ), { surface: "test" });
+
+      expect(imageResponse.status).toBe(200);
+      expect(imageResponse.headers.get("content-type")).toBe("image/png");
+      expect(imageResponse.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(imageResponse.headers.get("content-security-policy")).toContain("sandbox");
+      expect(Buffer.from(await imageResponse.arrayBuffer()).equals(pngBytes)).toBe(true);
+      expect(textResponse.status).toBe(415);
+      expect(missingResponse.status).toBe(404);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 

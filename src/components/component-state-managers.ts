@@ -210,9 +210,21 @@ export const planningArtifactsManager = new class extends StateManager<{ selecte
 
 const FILE_VIEWER_RENDER_MARKDOWN_STORAGE_KEY = "omni-file-viewer-render-markdown";
 
-export class FileViewerPanelManager extends StateManager<{ wordWrap: boolean; renderMarkdown: boolean }> {
+/** What the browser made of an image the viewer handed it, once it settled. */
+export type FileViewerImageState = {
+  width: number;
+  height: number;
+  failed: boolean;
+};
+
+export class FileViewerPanelManager extends StateManager<{
+  wordWrap: boolean;
+  renderMarkdown: boolean;
+  actualSize: boolean;
+  imageByKey: Record<string, FileViewerImageState>;
+}> {
   constructor() {
-    super({ wordWrap: true, renderMarkdown: true });
+    super({ wordWrap: true, renderMarkdown: true, actualSize: false, imageByKey: {} });
   }
 
   hydrateFromLocalStorage() {
@@ -238,6 +250,29 @@ export class FileViewerPanelManager extends StateManager<{ wordWrap: boolean; re
       return next;
     });
   };
+
+  toggleActualSize = () => this.setKey("actualSize", (current) => !current);
+
+  markImageLoaded = (key: string, width: number, height: number) => this.setKey("imageByKey", (current) => (
+    current[key]?.width === width && current[key]?.height === height && !current[key]?.failed
+      ? current
+      : { ...current, [key]: { width, height, failed: false } }
+  ));
+
+  markImageFailed = (key: string) => this.setKey("imageByKey", (current) => (
+    current[key]?.failed
+      ? current
+      : { ...current, [key]: { width: 0, height: 0, failed: true } }
+  ));
+
+  /** Drop a remembered result so a refetched image is measured again. */
+  forgetImage = (key: string) => this.setKey("imageByKey", (current) => {
+    if (!(key in current)) {
+      return current;
+    }
+    const { [key]: _removed, ...rest } = current;
+    return rest;
+  });
 }
 
 export const fileViewerPanelManager = new FileViewerPanelManager();
