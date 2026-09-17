@@ -950,5 +950,11 @@
   "settings.agents.claudeAuth.removeConfirm": "Quitar y conservar datos",
   "settings.agents.claudeAuth.refresh": "Comprobar estado",
   "settings.agents.claudeAuth.status.quotaBlocked": "Cuota bloqueada",
-  "settings.agents.claudeAuth.terminalHistoryTruncated": "La salida anterior del terminal ya no está disponible; el proceso de inicio de sesión sigue conectado."
+  "settings.agents.claudeAuth.terminalHistoryTruncated": "La salida anterior del terminal ya no está disponible; el proceso de inicio de sesión sigue conectado.",
+  "settings.publicApi.title": "API pública",
+  "settings.publicApi.description": "Genera una clave para la API HTTP de chats del proyecto. Cualquiera con esta clave puede controlar los proyectos públicos configurados.",
+  "settings.publicApi.generate": "Generar clave de API",
+  "settings.publicApi.copy": "Copiar clave",
+  "settings.publicApi.key": "Clave de API pública",
+  "settings.publicApi.saveHelp": "Copia ahora la clave y selecciona Guardar. La clave completa solo se muestra hasta que cierres Configuración."
 }

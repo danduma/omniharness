@@ -950,5 +950,11 @@
   "settings.agents.claudeAuth.removeConfirm": "Retirer et conserver les données",
   "settings.agents.claudeAuth.refresh": "Vérifier l'état",
   "settings.agents.claudeAuth.status.quotaBlocked": "Quota bloqué",
-  "settings.agents.claudeAuth.terminalHistoryTruncated": "L'ancienne sortie du terminal n'est plus disponible ; le processus de connexion actuel reste attaché."
+  "settings.agents.claudeAuth.terminalHistoryTruncated": "L'ancienne sortie du terminal n'est plus disponible ; le processus de connexion actuel reste attaché.",
+  "settings.publicApi.title": "API publique",
+  "settings.publicApi.description": "Générez une clé pour l’API HTTP des discussions de projet. Toute personne disposant de cette clé peut contrôler les projets publics configurés.",
+  "settings.publicApi.generate": "Générer une clé API",
+  "settings.publicApi.copy": "Copier la clé",
+  "settings.publicApi.key": "Clé d’API publique",
+  "settings.publicApi.saveHelp": "Copiez la clé maintenant, puis sélectionnez Enregistrer. La clé complète n’est affichée que jusqu’à la fermeture des paramètres."
 }
