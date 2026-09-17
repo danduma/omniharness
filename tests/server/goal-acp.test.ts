@@ -132,6 +132,59 @@ describe("goal ACP control dispatch", () => {
     expect(sendSlashCommand).not.toHaveBeenCalled();
   });
 
+  it("defers the slash fallback while the agent is mid-turn instead of failing the goal", async () => {
+    // A slash fallback is a prompt, and the runtime refuses a prompt while the
+    // agent is working. Recording that as a transport failure burned the goal
+    // into `error`, and every retry pressed during the turn repeated it.
+    const sendSlashCommand = vi.fn(async () => {
+      throw new Error("Ask failed: Agent is busy: worker-1");
+    });
+    const dispatcher = createGoalAcpDispatcher({
+      getAgent: vi.fn(async () => ({
+        agentCapabilities: {},
+        outputEntries: [{ type: "available_commands", raw: { availableCommands: [{ name: "goal" }] } }],
+      })),
+      invokeExtension: vi.fn(),
+      sendSlashCommand,
+    });
+
+    expect(await dispatcher.dispatch(snapshot({ status: "error" }), "retry")).toEqual({
+      kind: "deferred",
+      reason: "worker_busy",
+    });
+    expect(sendSlashCommand).toHaveBeenCalledWith("worker-1", "/goal Ship it");
+  });
+
+  it("defers an extension dispatch the runtime refuses because the agent is busy", async () => {
+    const invokeExtension = vi.fn(async () => {
+      throw new Error("Agent is busy: worker-1");
+    });
+    const dispatcher = createGoalAcpDispatcher({
+      getAgent: vi.fn(async () => ({
+        agentCapabilities: { _meta: { goal: { version: 1, capabilities: { set: true } } } },
+      })),
+      invokeExtension,
+      sendSlashCommand: vi.fn(),
+    });
+
+    expect(await dispatcher.dispatch(snapshot(), "set")).toEqual({ kind: "deferred", reason: "worker_busy" });
+  });
+
+  it("still fails a slash fallback that broke for any other reason", async () => {
+    const dispatcher = createGoalAcpDispatcher({
+      getAgent: vi.fn(async () => ({
+        agentCapabilities: {},
+        outputEntries: [{ type: "available_commands", raw: { availableCommands: [{ name: "goal" }] } }],
+      })),
+      invokeExtension: vi.fn(),
+      sendSlashCommand: vi.fn(async () => {
+        throw new Error("Ask failed: fetch failed (caused by: read ECONNRESET)");
+      }),
+    });
+
+    await expect(dispatcher.dispatch(snapshot(), "set")).rejects.toThrow(/ECONNRESET/);
+  });
+
   it("rethrows a transport failure so it is not mistaken for a missing worker", async () => {
     const dispatcher = createGoalAcpDispatcher({
       getAgent: vi.fn(async () => {
