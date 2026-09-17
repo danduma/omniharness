@@ -356,7 +356,7 @@ test("workspace side window owns workers and file tabs", () => {
   expect(sideWindowSource).toContain(') : activeTab?.kind === "workers" ? (');
   expect(pageSource).toContain("DropdownMenuCheckboxItem");
   expect(pageSource).toContain("fileViewerPanelManager.toggleWordWrap()");
-  expect(pageSource).toContain("void fileQuery.refetch()");
+  expect(pageSource).toContain("void activeQuery.refetch()");
   expect(pageSource).toContain('className="omni-conversation-text-scale min-h-0 flex-1 overflow-auto bg-muted/15 [scrollbar-width:thin]"');
   expect(pageSource).toContain('"min-w-0 overflow-hidden break-words [overflow-wrap:anywhere] leading-relaxed"');
   expect(pageSource).not.toContain('"overflow-x-auto leading-relaxed"');
@@ -367,6 +367,25 @@ test("workspace side window owns workers and file tabs", () => {
     sideWindowSource.indexOf('<span className="truncate">{tab.kind === "workers" ? workersTabLabel : tab.title}</span>'),
   );
   expect(sideWindowSource).toContain("showHeader={false}");
+});
+
+test("file viewer draws images instead of asking the text reader for their bytes", () => {
+  expect(pageSource).toContain("const isImage = isImagePath(relativePath);");
+  expect(pageSource).toContain('enabled: Boolean(root && relativePath) && !isImage');
+  expect(pageSource).toContain("runtimeApis.files.image({ root, file: relativePath })");
+  expect(pageSource).toContain("URL.createObjectURL(imageBlob)");
+  expect(pageSource).toContain("URL.revokeObjectURL(imageUrl)");
+  expect(pageSource).toContain('t("fileViewer.image.alt", { path: relativePath })');
+  expect(pageSource).toContain("fileViewerPanelManager.markImageLoaded(");
+  expect(pageSource).toContain("fileViewerPanelManager.markImageFailed(imageKey)");
+  expect(pageSource).toContain('t("fileViewer.menu.actualSize")');
+  expect(pageSource).toContain('t("fileViewer.metadata.dimensions"');
+  expect(pageSource).toContain("omni-image-canvas");
+});
+
+test("file viewer errors name the runtime failure instead of stringifying it", () => {
+  expect(pageSource).toContain("runtimeErrorMessage(activeQuery.error)");
+  expect(pageSource).not.toContain("String(fileQuery.error)");
 });
 
 test("workers sidebar gives a single visible worker the full available window and scrolls multi-worker lists", () => {

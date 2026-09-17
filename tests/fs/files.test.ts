@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { listProjectFiles, readProjectTextFile } from "@/server/fs/files";
+import {
+  listProjectFiles,
+  ProjectFileTooLargeError,
+  readProjectImageFile,
+  readProjectTextFile,
+  UnsupportedProjectFileTypeError,
+} from "@/server/fs/files";
 
 describe("listProjectFiles", () => {
   it("returns nested files relative to the project root", () => {
@@ -87,5 +93,51 @@ describe("readProjectTextFile", () => {
       truncated: true,
     });
     expect(result.content).toHaveLength(32);
+  });
+});
+
+describe("readProjectImageFile", () => {
+  const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01]);
+
+  it("returns the raw bytes and an allowlisted mime type", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "omni-image-read-"));
+    fs.mkdirSync(path.join(root, "assets"), { recursive: true });
+    fs.writeFileSync(path.join(root, "assets", "logo.PNG"), PNG_BYTES);
+
+    const result = readProjectImageFile(root, "assets/logo.PNG");
+
+    expect(result).toMatchObject({
+      root: path.resolve(root),
+      path: "assets/logo.PNG",
+      mimeType: "image/png",
+      size: PNG_BYTES.length,
+    });
+    expect(result.bytes.equals(PNG_BYTES)).toBe(true);
+  });
+
+  it("rejects traversal outside the root", () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "omni-image-traversal-"));
+    const root = path.join(parent, "repo");
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(parent, "outside.png"), PNG_BYTES);
+
+    expect(() => readProjectImageFile(root, "../outside.png")).toThrow(/outside the project root/i);
+  });
+
+  it("refuses file types that are not on the image allowlist", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "omni-image-type-"));
+    fs.writeFileSync(path.join(root, "secrets.env"), "TOKEN=1");
+    fs.writeFileSync(path.join(root, "png"), PNG_BYTES);
+
+    expect(() => readProjectImageFile(root, "secrets.env")).toThrow(UnsupportedProjectFileTypeError);
+    expect(() => readProjectImageFile(root, "png")).toThrow(UnsupportedProjectFileTypeError);
+  });
+
+  it("refuses images over the preview cap instead of loading them", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "omni-image-large-"));
+    fs.writeFileSync(path.join(root, "huge.png"), Buffer.alloc(2048));
+
+    expect(() => readProjectImageFile(root, "huge.png", { maxBytes: 1024 }))
+      .toThrow(ProjectFileTooLargeError);
   });
 });
