@@ -5,6 +5,7 @@ import {
 } from "@/lib/claude-model-gateway";
 import { StateManager } from "@/lib/state-manager";
 import type { RuntimeAPIs } from "@/runtime-api/types";
+import { runtimeErrorMessage } from "@/runtime-api/request";
 
 type GatewayManagerState = {
   status: ClaudeModelGatewayStatus | null;
@@ -66,7 +67,7 @@ export class ClaudeModelGatewayManager extends StateManager<GatewayManagerState>
       this.applyLiveStatus(payload.status);
     } catch (error) {
       if (this.latestRequest !== requestId) return;
-      this.patch({ error: error instanceof Error ? error.message : String(error) });
+      this.patch({ error: runtimeErrorMessage(error) });
     } finally {
       if (this.latestRequest === requestId) this.patch({ loading: false });
     }
@@ -88,7 +89,7 @@ export class ClaudeModelGatewayManager extends StateManager<GatewayManagerState>
       }
     } catch (error) {
       if (this.latestRequest !== requestId) return;
-      this.patch({ error: error instanceof Error ? error.message : String(error) });
+      this.patch({ error: runtimeErrorMessage(error) });
     } finally {
       if (this.latestRequest === requestId) this.patch({ pendingAction: null });
     }

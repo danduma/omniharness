@@ -31,6 +31,7 @@ import {
 } from "./entry-retention";
 import type { RuntimeAPIs } from "@/runtime-api/types";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
+import { runtimeErrorMessage } from "@/runtime-api/request";
 
 /**
  * Collapse multiple rows that share an entry `id` into a single
@@ -534,7 +535,7 @@ export class WorkerEntriesManager {
         });
       },
       (error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = runtimeErrorMessage(error);
         const failing = this.getState(workerId);
         this.updateState(workerId, { ...failing, status: "error", lastError: message });
       },
@@ -599,7 +600,7 @@ export class WorkerEntriesManager {
         });
       },
       (error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = runtimeErrorMessage(error);
         const failing = this.getState(workerId);
         this.updateState(workerId, { ...failing, status: "error", lastError: message });
       },
@@ -625,7 +626,7 @@ export class WorkerEntriesManager {
         this.applyFetchResult(workerId, afterSeq, response);
       },
       (error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = runtimeErrorMessage(error);
         const failing = this.getState(workerId);
         this.updateState(workerId, { ...failing, status: "error", lastError: message });
       },
