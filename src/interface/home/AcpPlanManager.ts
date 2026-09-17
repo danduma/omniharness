@@ -1,6 +1,7 @@
 import type { RuntimeAPIs } from "@/runtime-api/types";
 import type { PlanSurfaceOwner, WorkerPlanScope } from "@/shared/acp-plan";
 import { StateManager } from "@/lib/state-manager";
+import { runtimeErrorMessage } from "@/runtime-api/request";
 
 export type AcpPlanManagerState = {
   scope: WorkerPlanScope | null;
@@ -227,7 +228,7 @@ export class AcpPlanManager extends StateManager<AcpPlanManagerState> {
       this.publish({
         scope: this.getSnapshot().scope,
         status: "error",
-        lastError: error instanceof Error ? error.message : String(error),
+        lastError: runtimeErrorMessage(error),
       });
     } finally {
       if (generation === this.scopeGeneration && this.requestVersions.get(requestKey) === requestVersion) {

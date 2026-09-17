@@ -1,5 +1,6 @@
 import { StateManager } from "@/lib/state-manager";
 import type { RuntimeAPIs } from "@/runtime-api/types";
+import { runtimeErrorMessage } from "@/runtime-api/request";
 
 export interface ProjectMemoryFileEntry {
   path: string;
@@ -117,7 +118,7 @@ export class ProjectMemoryPanelManager extends StateManager<ProjectMemoryPanelSt
       }
       this.patch({
         loading: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: runtimeErrorMessage(error),
       });
     }
   }
@@ -178,7 +179,7 @@ export class ProjectMemoryPanelManager extends StateManager<ProjectMemoryPanelSt
       }
       this.patch({
         loading: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: runtimeErrorMessage(error),
       });
     }
   }
@@ -205,7 +206,7 @@ export class ProjectMemoryPanelManager extends StateManager<ProjectMemoryPanelSt
       if (this.activeToggleRequestId !== requestId || this.getSnapshot().projectPath !== projectPath) {
         return;
       }
-      this.patch({ error: error instanceof Error ? error.message : String(error) });
+      this.patch({ error: runtimeErrorMessage(error) });
     }
   }
 
@@ -262,7 +263,7 @@ export class ProjectMemoryPanelManager extends StateManager<ProjectMemoryPanelSt
       }
       this.patch({
         saving: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: runtimeErrorMessage(error),
       });
     }
   }

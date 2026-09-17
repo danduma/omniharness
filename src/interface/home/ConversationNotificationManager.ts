@@ -4,6 +4,7 @@ import { t } from "@/lib/i18n";
 import { registerServiceWorker } from "@/lib/pwa";
 import type { AgentSnapshot, EventStreamState, RunRecord } from "./types";
 import type { RuntimeAPIs } from "@/runtime-api/types";
+import { runtimeErrorMessage } from "@/runtime-api/request";
 
 export const CONVERSATION_NOTIFICATIONS_STORAGE_KEY = "omni-notifications-enabled";
 
@@ -381,7 +382,7 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
         this.patch({
           enabled: false,
           permission,
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: runtimeErrorMessage(error),
         });
         return;
       }
@@ -405,7 +406,7 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
         return undefined;
       }).catch((error: unknown) => {
         this.patch({
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: runtimeErrorMessage(error),
         });
       });
     }
@@ -518,7 +519,7 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
     for (const notification of notifications) {
       void this.notifier.notify(notification).catch((error: unknown) => {
         this.patch({
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: runtimeErrorMessage(error),
         });
       });
     }
