@@ -937,11 +937,11 @@
   "settings.agents.claudeAuth.removeConfirm": "Rimuovi e conserva i dati",
   "settings.agents.claudeAuth.refresh": "Controlla stato",
   "settings.agents.claudeAuth.status.quotaBlocked": "Quota bloccata",
-  "settings.agents.claudeAuth.terminalHistoryTruncated": "L'output precedente del terminale non è più disponibile; il processo di accesso corrente resta collegato."
-,  "settings.publicApi.title": "Public API",
-  "settings.publicApi.description": "Generate a key for the project chat HTTP API. Anyone holding this key can control the configured public projects.",
-  "settings.publicApi.generate": "Generate API key",
-  "settings.publicApi.copy": "Copy key",
-  "settings.publicApi.key": "Public API key",
-  "settings.publicApi.saveHelp": "Copy the key now, then select Save. The full key is shown only until you close Settings."
+  "settings.agents.claudeAuth.terminalHistoryTruncated": "L'output precedente del terminale non è più disponibile; il processo di accesso corrente resta collegato.",
+  "settings.publicApi.title": "API pubblica",
+  "settings.publicApi.description": "Genera una chiave per l’API HTTP delle chat del progetto. Chiunque disponga di questa chiave può controllare i progetti pubblici configurati.",
+  "settings.publicApi.generate": "Genera chiave API",
+  "settings.publicApi.copy": "Copia chiave",
+  "settings.publicApi.key": "Chiave API pubblica",
+  "settings.publicApi.saveHelp": "Copia ora la chiave, quindi seleziona Salva. La chiave completa viene mostrata solo fino alla chiusura delle Impostazioni."
 }

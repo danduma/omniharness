@@ -9,13 +9,21 @@ import { RUN_ID_PATTERN } from "@/server/runs/ids";
 import { getPublicOriginFromRequest } from "@/server/auth/config";
 import { decryptSettingValue } from "@/server/settings/crypto";
 import { emitNamedEvent } from "@/server/events/named-events";
-import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import {
+  notifyEventStreamSubscribers,
+  waitForEventStreamNotification,
+} from "@/server/events/live-updates";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { deleteConversationForApi, stopConversationForApi } from "./runs";
+import { stopConversationForApi } from "./runs";
 
 const MAX_MESSAGE_LENGTH = 100_000;
 const MAX_TITLE_LENGTH = 200;
 const PROJECT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
+const CREATE_CHAT_LIMIT = 10;
+const CREATE_CHAT_WINDOW_MS = 60_000;
+
+type CreateChatLimitRecord = { count: number; windowStartedAt: number };
+const createChatRateLimits = new Map<string, CreateChatLimitRecord>();
 
 type PublicProject = { id: string; path: string };
 type PublicApiConfig = { key: string; projects: PublicProject[] };
@@ -66,7 +74,8 @@ async function publicApiConfig(): Promise<PublicApiConfig> {
     try {
       key = decryptSettingValue(storedKey).trim();
     } catch {
-      key = "";
+      // A stale or corrupt stored value must not disable a valid deployment
+      // key supplied by the environment.
     }
   }
   const configuredProjects = values.get(PUBLIC_API_PROJECTS_SETTING)?.trim()
@@ -79,9 +88,26 @@ async function publicApiConfig(): Promise<PublicApiConfig> {
 function hasValidApiKey(request: Request, expected: string) {
   const value = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? "";
   if (!expected || !value) return false;
-  const actual = Buffer.from(value);
-  const configured = Buffer.from(expected);
-  return actual.length === configured.length && crypto.timingSafeEqual(actual, configured);
+  const actual = crypto.createHash("sha256").update(value).digest();
+  const configured = crypto.createHash("sha256").update(expected).digest();
+  return crypto.timingSafeEqual(actual, configured);
+}
+
+function checkCreateChatRateLimit(projectId: string) {
+  const now = Date.now();
+  const current = createChatRateLimits.get(projectId);
+  const record = !current || now - current.windowStartedAt >= CREATE_CHAT_WINDOW_MS
+    ? { count: 0, windowStartedAt: now }
+    : current;
+  record.count += 1;
+  createChatRateLimits.set(projectId, record);
+  return record.count <= CREATE_CHAT_LIMIT
+    ? { allowed: true as const }
+    : { allowed: false as const, retryAfterMs: CREATE_CHAT_WINDOW_MS - (now - record.windowStartedAt) };
+}
+
+export function resetPublicChatRateLimitsForTests() {
+  createChatRateLimits.clear();
 }
 
 function apiError(status: number, code: string, message: string) {
@@ -184,7 +210,6 @@ async function streamChat(request: Request, project: PublicProject, runId: strin
     return apiError(404, "public_api.conversation_not_found", "Conversation not found for the selected project.");
   }
   const encoder = new TextEncoder();
-  let timer: ReturnType<typeof setInterval> | null = null;
   let closed = false;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -195,7 +220,6 @@ async function streamChat(request: Request, project: PublicProject, runId: strin
           controller.enqueue(encoder.encode("event: error\ndata: {\"code\":\"public_api.conversation_not_found\"}\n\n"));
           controller.close();
           closed = true;
-          if (timer) clearInterval(timer);
           return;
         }
         controller.enqueue(encoder.encode(`event: update\ndata: ${JSON.stringify(state)}\n\n`));
@@ -203,19 +227,28 @@ async function streamChat(request: Request, project: PublicProject, runId: strin
           controller.enqueue(encoder.encode(`event: done\ndata: ${JSON.stringify({ conversationId: state.conversationId, status: state.status })}\n\n`));
           controller.close();
           closed = true;
-          if (timer) clearInterval(timer);
         }
       };
-      void send().catch((error) => controller.error(error));
-      timer = setInterval(() => { void send().catch((error) => controller.error(error)); }, 1_000);
+      const pump = async () => {
+        try {
+          while (!closed) {
+            await send();
+            if (!closed) {
+              await waitForEventStreamNotification(30_000, undefined, request.signal);
+            }
+          }
+        } catch (error) {
+          closed = true;
+          controller.error(error);
+        }
+      };
+      void pump();
       request.signal.addEventListener("abort", () => {
         closed = true;
-        if (timer) clearInterval(timer);
       }, { once: true });
     },
     cancel() {
       closed = true;
-      if (timer) clearInterval(timer);
     },
   });
   return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive", "x-accel-buffering": "no" } });
@@ -239,7 +272,7 @@ export const handlePublicApiDiscoveryRequest: OmniHttpHandler = async (request) 
     endpoints: {
       projects: "GET /api/public/v1/projects",
       sessions: "GET|POST /api/public/v1/projects/:projectId/chats",
-      session: "GET|PATCH|DELETE /api/public/v1/projects/:projectId/chats/:chatId",
+      session: "GET|PATCH /api/public/v1/projects/:projectId/chats/:chatId",
       messages: "POST /api/public/v1/projects/:projectId/chats/:chatId/messages",
       stop: "POST /api/public/v1/projects/:projectId/chats/:chatId/stop",
       stream: "GET /api/public/v1/projects/:projectId/chats/:chatId/stream",
@@ -254,7 +287,17 @@ export const handlePublicProjectChatsRequest: OmniHttpHandler = async (request, 
   if (!project) return apiError(404, "public_api.project_not_found", "Project is not available through the public API.");
   if (request.method === "POST") {
     const message = messageFromBody(await request.json().catch(() => null));
-    return message ? createChat(request, project, message) : apiError(400, "public_api.invalid_message", `message must contain 1 to ${MAX_MESSAGE_LENGTH} characters.`);
+    if (!message) {
+      return apiError(400, "public_api.invalid_message", `message must contain 1 to ${MAX_MESSAGE_LENGTH} characters.`);
+    }
+    const rateLimit = checkCreateChatRateLimit(project.id);
+    if (!rateLimit.allowed) {
+      return Response.json({ error: { code: "public_api.rate_limited", message: "Too many chats were created. Try again shortly." } }, {
+        status: 429,
+        headers: { "retry-after": String(Math.max(1, Math.ceil(rateLimit.retryAfterMs / 1_000))) },
+      });
+    }
+    return createChat(request, project, message);
   }
   if (request.method !== "GET") return apiError(405, "method_not_allowed", "Method not allowed.");
   const url = new URL(request.url);
@@ -290,15 +333,6 @@ export const handlePublicProjectChatRequest: OmniHttpHandler = async (request, c
   const project = projectForRequest(auth.config, context.params?.projectId);
   if (!project) return apiError(404, "public_api.project_not_found", "Project is not available through the public API.");
   const chatId = context.params?.chatId ?? "";
-  if (request.method === "DELETE") {
-    if (!await getPublicRun(chatId, project.path)) {
-      return apiError(404, "public_api.conversation_not_found", "Conversation not found for the selected project.");
-    }
-    const result = await deleteConversationForApi(chatId);
-    return result.ok
-      ? Response.json(result)
-      : apiError(result.status, result.status === 404 ? "public_api.conversation_not_found" : "public_api.conversation_delete_failed", "Could not delete the selected conversation.");
-  }
   if (request.method === "PATCH") {
     const title = titleFromBody(await request.json().catch(() => null));
     if (!title) return apiError(400, "public_api.invalid_title", `title must contain 1 to ${MAX_TITLE_LENGTH} characters.`);

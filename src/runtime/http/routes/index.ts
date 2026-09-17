@@ -92,7 +92,6 @@ export function createOmniRuntimeHttpRegistry() {
     .route("POST", "/api/public/v1/projects/:projectId/chats", handlePublicProjectChatsRequest, { auth: "public", responseKind: "json" })
     .route("GET", "/api/public/v1/projects/:projectId/chats/:chatId", handlePublicProjectChatRequest, { auth: "public", responseKind: "json" })
     .route("PATCH", "/api/public/v1/projects/:projectId/chats/:chatId", handlePublicProjectChatRequest, { auth: "public", responseKind: "json" })
-    .route("DELETE", "/api/public/v1/projects/:projectId/chats/:chatId", handlePublicProjectChatRequest, { auth: "public", responseKind: "json" })
     .route("POST", "/api/public/v1/projects/:projectId/chats/:chatId/stop", handlePublicProjectChatStopRequest, { auth: "public", responseKind: "json" })
     .route("POST", "/api/public/v1/projects/:projectId/chats/:chatId/messages", handlePublicProjectChatMessageRequest, { auth: "public", responseKind: "json" })
     .route("GET", "/api/public/v1/projects/:projectId/chats/:chatId/stream", handlePublicProjectChatStreamRequest, { auth: "public", responseKind: "stream" })
