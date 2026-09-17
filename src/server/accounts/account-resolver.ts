@@ -11,6 +11,8 @@ import {
 import { RuntimeHttpError } from "@/server/agent-runtime/types";
 import { resolveAccountCliHome, resolveClaudeConfigDir } from "@/server/accounts/cli-home";
 import { claudeCredentialRoutingKeys } from "@/server/accounts/claude-auth-contract";
+import { canBypassDisabledAccountAfterAuthTimeout } from "@/server/accounts/account-launch-policy";
+import { emitNamedEvent } from "@/server/events/named-events";
 
 type EnvLike = Record<string, string | undefined>;
 type AccountRow = typeof accounts.$inferSelect;
@@ -116,8 +118,17 @@ export async function resolveAccountCredentials(input: {
     throw new RuntimeHttpError(400, `Account "${account.id}" cannot be used for ${input.workerType} workers.`);
   }
 
-  if (!account.enabled) {
+  const bypassAuthTimeout = canBypassDisabledAccountAfterAuthTimeout(account);
+  if (!account.enabled && !bypassAuthTimeout) {
     throw new RuntimeHttpError(400, `Account "${account.id}" is disabled.`);
+  }
+  if (bypassAuthTimeout) {
+    emitNamedEvent({
+      kind: "account.auth_timeout_bypassed",
+      accountId: account.id,
+      workerType: input.workerType,
+      reason: "status_probe_timeout",
+    });
   }
 
   if (account.authMode === "isolated_cli_home") {
