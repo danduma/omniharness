@@ -2,7 +2,7 @@ import { execFileSync } from "child_process";
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
-import { resolveCommand, withManagedPath } from "@/server/agent-runtime/tool-env";
+import { withManagedPath } from "@/server/agent-runtime/tool-env";
 import { isCredentialProfileConfigured } from "@/server/agent-runtime/external-credentials";
 import { SUPPORTED_WORKER_TYPES, type SupportedWorkerType, normalizeWorkerType } from "./worker-types";
 
@@ -80,7 +80,16 @@ function resolveCommandPath(command: string, options: WorkerDetectionOptions = {
     return options.commandResolver(command, lookupEnv);
   }
 
-  return resolveCommand(command, { env: lookupEnv, cwd: options.cwd });
+  try {
+    return String(execFileSync("which", [command], {
+      encoding: "utf8",
+      env: lookupEnv as NodeJS.ProcessEnv,
+      timeout: 1_500,
+      maxBuffer: 64 * 1024,
+    })).trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 function workerBinaryAvailable(type: SupportedWorkerType, options: WorkerDetectionOptions = {}) {

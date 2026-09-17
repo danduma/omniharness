@@ -3,7 +3,7 @@ import { constants, accessSync, copyFileSync, cpSync, existsSync, lstatSync, mkd
 import { readFile } from "fs/promises";
 import { request as httpRequest } from "http";
 import { request as httpsRequest } from "https";
-import { homedir, platform } from "os";
+import { homedir } from "os";
 import { basename, dirname, isAbsolute, join } from "path";
 import { Readable, Writable } from "stream";
 import * as acp from "@agentclientprotocol/sdk";
@@ -363,10 +363,7 @@ function applyProjectScopedCliStorage(type: string, cwd: string, env: EnvLike, o
       shouldBridgeCredentials = true;
     }
     if (!env.CODEX_SQLITE_HOME?.trim()) {
-      // Codex upgrades can leave an earlier state runtime unreadable. Keep
-      // previous directories intact for recovery and give new workers a fresh
-      // compatible state store.
-      env.CODEX_SQLITE_HOME = join(cliHome, "codex", "sqlite-v3");
+      env.CODEX_SQLITE_HOME = join(cliHome, "codex", "sqlite");
     }
   }
   if (type === "claude" && !env.CLAUDE_CONFIG_DIR?.trim()) {
@@ -1576,35 +1573,12 @@ export class AgentRuntimeManager {
         client,
         managedSkillLinks,
       });
-      const windowsManagedCodexAcp = join(
-        finalEnv.LOCALAPPDATA || join(finalEnv.HOME || homedir(), ".omniharness"),
-        "OmniHarness",
-        "codex-acp",
-        "node_modules",
-        "@agentclientprotocol",
-        "codex-acp",
-        "dist",
-        "index.js",
-      );
-      const windowsManagedGemini = join(
-        finalEnv.APPDATA || join(finalEnv.HOME || homedir(), "AppData", "Roaming"),
-        "npm",
-        "node_modules",
-        "@google",
-        "gemini-cli",
-        "bundle",
-        "gemini.js",
-      );
       const candidates = (useCodexFallback
-        ? [platform() === "win32" && existsSync(windowsManagedCodexAcp)
-          ? { command: process.execPath, args: [windowsManagedCodexAcp] }
-          : { command: "codex-acp", args: [] as string[] }]
+        ? [{ command: "codex-acp", args: [] as string[] }]
         : useClaudeDefault
           ? [{ command: "claude-agent-acp", args: [] as string[] }]
           : useGeminiDefault
-            ? [platform() === "win32" && existsSync(windowsManagedGemini)
-              ? { command: process.execPath, args: [windowsManagedGemini, ...buildGeminiArgs({ model: requestedModel, mode: requestedMode })] }
-              : { command: "gemini", args: buildGeminiArgs({ model: requestedModel, mode: requestedMode }) }]
+            ? [{ command: "gemini", args: buildGeminiArgs({ model: requestedModel, mode: requestedMode }) }]
             : [{ command: defaultCommand, args: defaultArgsList }])
         .filter((candidate) => commandExists(candidate.command, finalEnv));
 

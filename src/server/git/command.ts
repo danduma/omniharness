@@ -1,6 +1,5 @@
 import { execFile } from "child_process";
 import fs from "fs";
-import path from "path";
 import { promisify } from "util";
 
 const execFileAsync = promisify(execFile);
@@ -51,7 +50,7 @@ export class GitCommandError extends Error {
 }
 
 function assertSafeCwd(cwd: string) {
-  if (!cwd || !path.isAbsolute(cwd)) {
+  if (!cwd || !cwd.startsWith("/")) {
     throw new GitCommandError("Git command cwd must be an absolute path.", {
       code: "invalid_git_cwd",
       args: [],
