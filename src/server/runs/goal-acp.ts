@@ -1,5 +1,5 @@
 import { normalizeAcpGoalMetadata } from "@/server/agent-runtime/acp/goal-state";
-import { isMissingAgentError } from "@/server/supervisor/retry";
+import { isAgentBusyError, isMissingAgentError } from "@/server/supervisor/retry";
 import type { GoalMutationAction, GoalSnapshot } from "@/shared/goal-plan";
 
 interface GoalAcpAgentSnapshot {
@@ -15,7 +15,7 @@ interface GoalAcpDependencies {
 
 export type GoalAcpDispatchResult =
   | { kind: "dispatched"; method: "extension" | "slash" }
-  | { kind: "deferred"; reason: "no_active_lease" }
+  | { kind: "deferred"; reason: "no_active_lease" | "worker_busy" }
   | { kind: "unsupported"; reason: string };
 
 const defaultDependencies: GoalAcpDependencies = {
@@ -101,15 +101,20 @@ export class GoalAcpDispatcher {
     }
     const goalMetadata = metadataGoal(agent.agentCapabilities);
     if (goalMetadata && extensionSupports(normalizeAcpGoalMetadata({ _meta: { goal: goalMetadata } }), action)) {
-      await this.dependencies.invokeExtension(snapshot.workerId, "_session/goal", {
-        sessionId: snapshot.acpSessionId,
-        goalId: snapshot.goalId,
-        revision: snapshot.revision,
-        action: action === "retry" ? "set" : action,
-        ...(action === "set" || action === "edit" || action === "retry"
-          ? { objective: snapshot.objective }
-          : {}),
-      });
+      try {
+        await this.dependencies.invokeExtension(snapshot.workerId, "_session/goal", {
+          sessionId: snapshot.acpSessionId,
+          goalId: snapshot.goalId,
+          revision: snapshot.revision,
+          action: action === "retry" ? "set" : action,
+          ...(action === "set" || action === "edit" || action === "retry"
+            ? { objective: snapshot.objective }
+            : {}),
+        });
+      } catch (error) {
+        if (!isAgentBusyError(error)) throw error;
+        return { kind: "deferred", reason: "worker_busy" };
+      }
       return { kind: "dispatched", method: "extension" };
     }
 
@@ -134,7 +139,17 @@ export class GoalAcpDispatcher {
     if (!supported) {
       return { kind: "unsupported", reason: `fallback_not_advertised_for_${action}` };
     }
-    await this.dependencies.sendSlashCommand(snapshot.workerId, fallbackCommand(snapshot, action));
+    try {
+      await this.dependencies.sendSlashCommand(snapshot.workerId, fallbackCommand(snapshot, action));
+    } catch (error) {
+      // The slash fallback is a prompt, and a prompt cannot start while the
+      // agent is mid-turn. That is a "not yet", not a broken transport: burning
+      // it into `error` left the goal dead for the rest of the session, and
+      // every retry the user pressed while the turn ran repeated the same
+      // failure. Defer instead; the turn-settled reconciliation re-dispatches.
+      if (!isAgentBusyError(error)) throw error;
+      return { kind: "deferred", reason: "worker_busy" };
+    }
     return { kind: "dispatched", method: "slash" };
   }
 }

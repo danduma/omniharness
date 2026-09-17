@@ -206,6 +206,16 @@ export function isMissingAgentError(error: unknown) {
     || message.includes("failed to load resumed session data from file");
 }
 
+/**
+ * The runtime refused the call because the agent is mid-turn. Distinct from a
+ * transport failure — the same call succeeds once the turn settles, so callers
+ * must defer and retry rather than record a permanent failure.
+ */
+export function isAgentBusyError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\bagent is busy\b/i.test(message);
+}
+
 export function isRecoverableConnectionSupervisorError(error: unknown) {
   return extractErrorChain(error).some((entry) => {
     const message = typeof entry.message === "string" ? entry.message : "";

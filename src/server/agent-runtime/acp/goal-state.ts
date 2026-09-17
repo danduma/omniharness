@@ -293,7 +293,7 @@ export async function initializeWorkerGoalSession(
   options: {
     dispatch?: (snapshot: import("@/shared/goal-plan").GoalSnapshot) => Promise<
       | { kind: "dispatched"; method: "extension" | "slash" }
-      | { kind: "deferred"; reason: "no_active_lease" }
+      | { kind: "deferred"; reason: "no_active_lease" | "worker_busy" }
       | { kind: "unsupported"; reason: string }
     >;
   } = {},

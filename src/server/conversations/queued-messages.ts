@@ -9,6 +9,7 @@ import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
+import { isAgentBusyError } from "@/server/supervisor/retry";
 import { appendAttachmentContext, normalizeChatAttachments, resolveImageAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { getAppDataPath } from "@/server/app-root";
 import { serializeMessageRecord } from "./message-records";
@@ -36,6 +37,7 @@ import {
   type BusyMessageAction,
 } from "./queued-message-records";
 export type { BusyMessageAction, QueuedConversationMessageStatus } from "./queued-message-records";
+export { isAgentBusyError };
 
 export type WorkerAskResponse = Awaited<ReturnType<typeof askAgent>>;
 type WorkerSnapshot = Awaited<ReturnType<typeof getAgent>>;
@@ -69,11 +71,6 @@ const lastQueuedMessageCreatedAtByRun = new Map<string, number>();
 
 export function parseBusyMessageAction(value: unknown): BusyMessageAction | null {
   return value === "queue" || value === "steer" ? value : null;
-}
-
-export function isAgentBusyError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  return /\bagent is busy\b/i.test(message);
 }
 
 export function errorMessage(error: unknown) {
