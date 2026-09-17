@@ -11,7 +11,7 @@ export function buildGeminiArgs(input: {
   model?: string | null;
   mode?: string | null;
 }) {
-  const args = ["--experimental-acp"];
+  const args = ["--acp"];
   if (isFullAccessAgentMode(input.mode)) {
     args.push("--approval-mode", "yolo");
   }

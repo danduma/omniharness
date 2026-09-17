@@ -1586,6 +1586,15 @@ export class AgentRuntimeManager {
         "dist",
         "index.js",
       );
+      const windowsManagedGemini = join(
+        finalEnv.APPDATA || join(finalEnv.HOME || homedir(), "AppData", "Roaming"),
+        "npm",
+        "node_modules",
+        "@google",
+        "gemini-cli",
+        "bundle",
+        "gemini.js",
+      );
       const candidates = (useCodexFallback
         ? [platform() === "win32" && existsSync(windowsManagedCodexAcp)
           ? { command: process.execPath, args: [windowsManagedCodexAcp] }
@@ -1593,7 +1602,9 @@ export class AgentRuntimeManager {
         : useClaudeDefault
           ? [{ command: "claude-agent-acp", args: [] as string[] }]
           : useGeminiDefault
-            ? [{ command: "gemini", args: buildGeminiArgs({ model: requestedModel, mode: requestedMode }) }]
+            ? [platform() === "win32" && existsSync(windowsManagedGemini)
+              ? { command: process.execPath, args: [windowsManagedGemini, ...buildGeminiArgs({ model: requestedModel, mode: requestedMode })] }
+              : { command: "gemini", args: buildGeminiArgs({ model: requestedModel, mode: requestedMode }) }]
             : [{ command: defaultCommand, args: defaultArgsList }])
         .filter((candidate) => commandExists(candidate.command, finalEnv));
 
