@@ -35,7 +35,10 @@ import { reconcileOrphanedProcessSessions } from "@/server/session-providers/pro
 import { reconcilePersistedReloadZombies } from "@/server/runs/persisted-zombie-reconciler";
 import { toAccountDto } from "@/server/accounts/dto";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
-import { createBoundedByteStream } from "@/runtime/http/bounded-byte-stream";
+import {
+  createBoundedByteStream,
+  type BoundedByteStreamOversizedFrame,
+} from "@/runtime/http/bounded-byte-stream";
 import { startSlowProbe } from "@/server/slow-probe";
 import { getClaudeModelGatewayService } from "@/server/integrations/claude-model-gateway";
 import {
@@ -969,6 +972,16 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
 
   let streamClosed = false;
   let unsubscribeRevocation: (() => void) | null = null;
+  // Set by `onOversizedFrame` during the `enqueue` call that dropped the frame,
+  // and read by `writeFrame` immediately after it returns. Recorded rather than
+  // acted on in the handler so the replacement frame is written outside the
+  // enqueue that produced it.
+  let oversizedFrame: BoundedByteStreamOversizedFrame | null = null;
+  const takeOversizedFrame = (): BoundedByteStreamOversizedFrame | null => {
+    const frame = oversizedFrame;
+    oversizedFrame = null;
+    return frame;
+  };
   const stream = createBoundedByteStream({
     async start(controller) {
       const encoder = new TextEncoder();
@@ -986,11 +999,44 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
       // poll iteration without re-emitting events we already replayed.
 
       const writeFrame = (id: string, event: string, serializedData: string) => {
-        if (!controller.enqueue(encoder.encode(
+        takeOversizedFrame();
+        if (controller.enqueue(encoder.encode(
           `id: ${id}\nevent: ${event}\ndata: ${serializedData}\n\n`,
         ))) {
-          streamClosed = true;
+          return true;
         }
+        const dropped = takeOversizedFrame();
+        if (!dropped) {
+          streamClosed = true;
+          return false;
+        }
+        // The frame is too big for the stream, but the snapshot route has no
+        // such ceiling. Send the client to it rather than dropping the
+        // connection: the previous behaviour disconnected on the opening frame,
+        // the client reconnected, and the same oversized snapshot disconnected
+        // it again roughly every 1.5s for as long as the payload stayed large.
+        emitNamedEvent({
+          kind: "stream.oversized_frame",
+          stream: "events",
+          surface: context.surface,
+          rejectedBytes: dropped.rejectedBytes,
+          maxQueuedBytes: dropped.maxQueuedBytes,
+          ...(runIdScope ? { runId: runIdScope } : {}),
+        });
+        const marker = recordSnapshotMarker(
+          getEventStreamNotificationVersion(),
+          runIdScope,
+        );
+        if (!controller.enqueue(encoder.encode(
+          `id: ${marker.streamId}\nevent: stream.resync_required\ndata: ${
+            JSON.stringify({ reason: "frame_too_large" })
+          }\n\n`,
+        ))) {
+          streamClosed = true;
+          return false;
+        }
+        lastDeliveredId = marker.id;
+        return false;
       };
       const sendEvent = (event: string, data: any, id: string) => {
         writeFrame(id, event, JSON.stringify(data));
@@ -1037,7 +1083,12 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
           if (entry.event.kind === "snapshot.marker") {
             continue;
           }
-          writeFrame(entry.streamId, entry.event.kind, JSON.stringify(entry.event));
+          // A frame that did not go out must not advance the cursor past it:
+          // the stream is either closed or has just told the client to
+          // re-bootstrap, and both make the rest of this replay moot.
+          if (!writeFrame(entry.streamId, entry.event.kind, JSON.stringify(entry.event))) {
+            return;
+          }
           lastDeliveredId = entry.id;
         }
       };
@@ -1201,6 +1252,9 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
       streamClosed = true;
       unsubscribeRevocation?.();
       unsubscribeRevocation = null;
+    },
+    onOversizedFrame(frame) {
+      oversizedFrame = frame;
     },
     onOverflow(overflow) {
       streamClosed = true;
