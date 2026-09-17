@@ -4,6 +4,7 @@ import { chmodSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { withManagedPath } from "@/server/agent-runtime/tool-env";
 
 /**
  * In-process registry of interactive PTY sessions backing the UI terminal.
@@ -92,6 +93,25 @@ function defaultShell(): string {
   return process.env.SHELL || "/bin/bash";
 }
 
+function interactiveShellArgs(shell: string): string[] {
+  switch (path.basename(shell).toLowerCase()) {
+    case "zsh":
+    case "csh":
+    case "tcsh":
+      return ["-f"];
+    case "bash":
+      return ["--noprofile", "--norc"];
+    case "fish":
+      return ["--no-config"];
+    case "powershell.exe":
+    case "pwsh":
+    case "pwsh.exe":
+      return ["-NoLogo", "-NoProfile"];
+    default:
+      return [];
+  }
+}
+
 class TerminalManager {
   private readonly sessions = new Map<string, TerminalSession>();
   private reaper: ReturnType<typeof setInterval> | null = null;
@@ -100,12 +120,12 @@ class TerminalManager {
     const cols = clampDimension(options.cols, DEFAULT_COLS);
     const rows = clampDimension(options.rows, DEFAULT_ROWS);
     const shell = defaultShell();
-    const pty = spawn(shell, [], {
+    const pty = spawn(shell, interactiveShellArgs(shell), {
       name: "xterm-color",
       cols,
       rows,
       cwd: options.cwd,
-      env: sanitizedEnv(),
+      env: sanitizedEnv(options.cwd),
     });
 
     return this.registerPty(pty, {
@@ -442,7 +462,7 @@ function clampDimension(value: number | undefined, fallback: number): number {
   return Math.min(1000, Math.max(1, Math.floor(value)));
 }
 
-function sanitizedEnv(): Record<string, string> {
+function sanitizedEnv(cwd: string): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value === "string") {
@@ -452,7 +472,10 @@ function sanitizedEnv(): Record<string, string> {
   // Ensure a sane TERM so curses apps render; HOME for shells launched in CI.
   env.TERM = env.TERM || "xterm-256color";
   env.HOME = env.HOME || os.homedir();
-  return env;
+  // Shell startup files are intentionally disabled for responsiveness. Supply
+  // the same managed executable path as agent processes so user-installed
+  // tools (for example ~/.local/bin/claude) remain available.
+  return withManagedPath(env, cwd, { loginShellPathMode: "cached" });
 }
 
 /**

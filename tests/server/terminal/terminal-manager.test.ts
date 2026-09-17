@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
+import { join } from "node:path";
 import { getTerminalManager, type TerminalChunk } from "@/server/terminal/terminal-manager";
 
 const manager = getTerminalManager();
@@ -99,6 +101,72 @@ describe("TerminalManager", () => {
     manager.write(id, "echo OMNI_MARKER_123\r");
     const out = await waitForOutput(id, (acc) => acc.includes("OMNI_MARKER_123"));
     expect(out).toContain("OMNI_MARKER_123");
+  });
+
+  it("starts a responsive shell without waiting for interactive startup files", async () => {
+    if (process.platform === "win32") return;
+
+    const fixtureRoot = mkdtempSync(join(os.tmpdir(), "omni-terminal-shell-"));
+    const shell = join(fixtureRoot, "zsh");
+    writeFileSync(shell, [
+      "#!/bin/sh",
+      "if [ \"$1\" != \"-f\" ]; then sleep 10; fi",
+      "exec /bin/sh",
+      "",
+    ].join("\n"));
+    chmodSync(shell, 0o755);
+    const originalShell = process.env.SHELL;
+    process.env.SHELL = shell;
+
+    try {
+      const { id } = open();
+      manager.write(id, "printf 'OMNI_%s\\n' FAST_SHELL\r");
+      const out = await waitForOutput(id, (acc) => acc.includes("OMNI_FAST_SHELL"));
+      expect(out).toContain("OMNI_FAST_SHELL");
+    } finally {
+      if (originalShell === undefined) delete process.env.SHELL;
+      else process.env.SHELL = originalShell;
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("adds managed user bin directories when shell startup files are disabled", async () => {
+    if (process.platform === "win32") return;
+
+    const fixtureRoot = mkdtempSync(join(os.tmpdir(), "omni-terminal-path-"));
+    const localBin = join(fixtureRoot, ".local", "bin");
+    const command = join(localBin, "omni-path-probe");
+    const shell = join(fixtureRoot, "zsh");
+    mkdirSync(localBin, { recursive: true });
+    writeFileSync(command, "#!/bin/sh\nprintf 'OMNI_PATH_READY\\n'\n");
+    chmodSync(command, 0o755);
+    writeFileSync(shell, "#!/bin/sh\nexec /bin/sh\n");
+    chmodSync(shell, 0o755);
+
+    const originalHome = process.env.HOME;
+    const originalPath = process.env.PATH;
+    const originalShell = process.env.SHELL;
+    process.env.HOME = fixtureRoot;
+    process.env.PATH = "/usr/bin:/bin";
+    process.env.SHELL = shell;
+
+    try {
+      const { id } = open();
+      manager.write(id, "omni-path-probe\r");
+      const out = await waitForOutput(id, (acc) => (
+        acc.includes("OMNI_PATH_READY") || acc.includes("not found")
+      ));
+      expect(out).toContain("OMNI_PATH_READY");
+      expect(out).not.toContain("not found");
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalShell === undefined) delete process.env.SHELL;
+      else process.env.SHELL = originalShell;
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   it("replays buffered output to a late subscriber from a given seq", async () => {
