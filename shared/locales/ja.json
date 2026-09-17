@@ -937,11 +937,11 @@
   "settings.agents.claudeAuth.removeConfirm": "データを保持して削除",
   "settings.agents.claudeAuth.refresh": "状態を確認",
   "settings.agents.claudeAuth.status.quotaBlocked": "利用上限で停止",
-  "settings.agents.claudeAuth.terminalHistoryTruncated": "以前の端末出力は利用できません。現在のログイン処理への接続は継続しています。"
-,  "settings.publicApi.title": "Public API",
-  "settings.publicApi.description": "Generate a key for the project chat HTTP API. Anyone holding this key can control the configured public projects.",
-  "settings.publicApi.generate": "Generate API key",
-  "settings.publicApi.copy": "Copy key",
-  "settings.publicApi.key": "Public API key",
-  "settings.publicApi.saveHelp": "Copy the key now, then select Save. The full key is shown only until you close Settings."
+  "settings.agents.claudeAuth.terminalHistoryTruncated": "以前の端末出力は利用できません。現在のログイン処理への接続は継続しています。",
+  "settings.publicApi.title": "パブリック API",
+  "settings.publicApi.description": "プロジェクトチャット HTTP API のキーを生成します。このキーを持つ人は、設定済みの公開プロジェクトを操作できます。",
+  "settings.publicApi.generate": "API キーを生成",
+  "settings.publicApi.copy": "キーをコピー",
+  "settings.publicApi.key": "パブリック API キー",
+  "settings.publicApi.saveHelp": "今すぐキーをコピーしてから、保存を選択してください。完全なキーは設定を閉じるまでしか表示されません。"
 }

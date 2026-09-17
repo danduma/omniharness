@@ -937,11 +937,11 @@
   "settings.agents.claudeAuth.removeConfirm": "移除并保留数据",
   "settings.agents.claudeAuth.refresh": "检查状态",
   "settings.agents.claudeAuth.status.quotaBlocked": "配额受限",
-  "settings.agents.claudeAuth.terminalHistoryTruncated": "较早的终端输出已不可用；当前登录进程仍保持连接。"
-,  "settings.publicApi.title": "Public API",
-  "settings.publicApi.description": "Generate a key for the project chat HTTP API. Anyone holding this key can control the configured public projects.",
-  "settings.publicApi.generate": "Generate API key",
-  "settings.publicApi.copy": "Copy key",
-  "settings.publicApi.key": "Public API key",
-  "settings.publicApi.saveHelp": "Copy the key now, then select Save. The full key is shown only until you close Settings."
+  "settings.agents.claudeAuth.terminalHistoryTruncated": "较早的终端输出已不可用；当前登录进程仍保持连接。",
+  "settings.publicApi.title": "公共 API",
+  "settings.publicApi.description": "为项目聊天 HTTP API 生成密钥。持有此密钥的任何人都可以控制已配置的公共项目。",
+  "settings.publicApi.generate": "生成 API 密钥",
+  "settings.publicApi.copy": "复制密钥",
+  "settings.publicApi.key": "公共 API 密钥",
+  "settings.publicApi.saveHelp": "现在复制密钥，然后选择保存。完整密钥仅在关闭设置前显示。"
 }

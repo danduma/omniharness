@@ -5,7 +5,7 @@ runner:
 
 ```dotenv
 OMNIHARNESS_PUBLIC_API_KEY=generate-a-long-random-secret
-OMNIHARNESS_PUBLIC_API_PROJECT_PATH=D:\\Codex\\Happyvidey
+OMNIHARNESS_PUBLIC_API_PROJECT_PATH=/Users/you/code/project
 ```
 
 The API can access only the configured project path. Every request must send
@@ -15,7 +15,7 @@ To expose several projects, replace `OMNIHARNESS_PUBLIC_API_PROJECT_PATH` with
 an allowlist. The IDs are the only project identifiers visible to API callers.
 
 ```dotenv
-OMNIHARNESS_PUBLIC_API_PROJECTS=[{"id":"happyvidey","path":"D:\\Codex\\Happyvidey"},{"id":"website","path":"D:\\Code\\website"}]
+OMNIHARNESS_PUBLIC_API_PROJECTS=[{"id":"app","path":"/Users/you/code/app"},{"id":"website","path":"/Users/you/code/website"}]
 ```
 
 ## Projects and chats
@@ -26,9 +26,8 @@ OMNIHARNESS_PUBLIC_API_PROJECTS=[{"id":"happyvidey","path":"D:\\Codex\\Happyvide
 - `GET /api/public/v1/projects/:projectId/chats` lists that project's chats.
   It accepts `limit`, `offset`, and optional `status` query parameters.
 - `POST /api/public/v1/projects/:projectId/chats` creates a session from a
-  `{ "message": "..." }` body.
-- `DELETE /api/public/v1/projects/:projectId/chats/:chatId` permanently
-  deletes that session and its persisted conversation artifacts.
+  `{ "message": "..." }` body. It is limited to 10 new chats per project
+  per minute; a limited request receives `429` and a `Retry-After` header.
 - `PATCH /api/public/v1/projects/:projectId/chats/:chatId` renames a session
   from a `{ "title": "..." }` body.
 - `POST /api/public/v1/projects/:projectId/chats/:chatId/messages` sends a

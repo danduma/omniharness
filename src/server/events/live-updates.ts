@@ -46,7 +46,11 @@ export function getEventStreamSnapshotVersion() {
   return snapshotVersion;
 }
 
-export function waitForEventStreamNotification(timeoutMs: number, afterVersion = notificationVersion) {
+export function waitForEventStreamNotification(
+  timeoutMs: number,
+  afterVersion = notificationVersion,
+  signal?: AbortSignal,
+) {
   return new Promise<EventStreamWaitResult>((resolve) => {
     if (notificationVersion > afterVersion) {
       resolve({ notified: true });
@@ -66,11 +70,18 @@ export function waitForEventStreamNotification(timeoutMs: number, afterVersion =
         clearTimeout(timeout);
       }
       listeners.delete(listener);
+      signal?.removeEventListener("abort", onAbort);
       resolve(result);
     };
 
     const listener = () => cleanup({ notified: true });
+    const onAbort = () => cleanup({ notified: false });
     listeners.add(listener);
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
     timeout = setTimeout(() => cleanup({ notified: false }), timeoutMs);
   });
 }
