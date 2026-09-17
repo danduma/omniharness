@@ -15,6 +15,7 @@ const execFileAsync = promisify(execFile);
 export type WorkerModelOption = {
   value: string;
   label: string;
+  source?: "gateway";
 };
 
 export type WorkerModelCatalog = Record<SupportedWorkerType, WorkerModelOption[]>;
@@ -45,8 +46,6 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
     { value: "gpt-6-astra", label: "GPT-6 Astra" },
-    { value: "claude-sonnet-5", label: "Sonnet 5" },
-    { value: "claude-sonnet-4", label: "Sonnet 4" },
   ],
   claude: [
     { value: "claude-opus-5", label: "Opus 5" },
@@ -112,6 +111,7 @@ function mergeModelOptions(base: WorkerModelOption[], discovered: WorkerModelOpt
     merged.push({
       value,
       label: normalizeLabel(value, model.label),
+      ...(model.source ? { source: model.source } : {}),
     });
   }
 
@@ -138,6 +138,7 @@ export function mergeClaudeGatewayModelsIntoCatalog(
   const gatewayModels = mergeClaudeGatewayModels(input).map((model) => ({
     value: model.value,
     label: model.label,
+    source: "gateway" as const,
   }));
   return {
     ...catalog,
@@ -166,7 +167,9 @@ function normalizeCachedCatalog(catalog: Partial<WorkerModelCatalog> | null | un
       }
 
       const value = typeof model.value === "string" ? model.value.trim() : "";
-      if (!value || DEPRECATED_WORKER_MODELS[type]?.has(value)) {
+      const isIncompatibleCodexModel = type === "codex"
+        && (value.startsWith("claude-") || value.startsWith("anthropic/"));
+      if (!value || isIncompatibleCodexModel || DEPRECATED_WORKER_MODELS[type]?.has(value)) {
         return [];
       }
 
@@ -312,7 +315,10 @@ export class WorkerModelCatalogManager {
     ]);
 
     if (codexResult.status === "fulfilled") {
-      baseCatalog.codex = mergeModelOptions(codexResult.value, HARDCODED_WORKER_MODELS.codex);
+      baseCatalog.codex = mergeModelOptions(
+        codexResult.value.filter((model) => !model.value.startsWith("claude-") && !model.value.startsWith("anthropic/")),
+        HARDCODED_WORKER_MODELS.codex,
+      );
     }
 
     if (openCodeResult.status === "fulfilled") {

@@ -324,7 +324,7 @@ export type WorkerAvailability = {
   authentication?: WorkerAuthentication;
   tokenQuota?: WorkerTokenQuota;
 };
-export type WorkerModelOption = { value: string; label: string };
+export type WorkerModelOption = { value: string; label: string; source?: "gateway" };
 export type WorkerModelCatalog = Record<WorkerType, WorkerModelOption[]>;
 export type WorkerCatalogResponse = {
   workers: WorkerAvailability[];

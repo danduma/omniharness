@@ -153,6 +153,7 @@
   "settings.agents.installedDir": "インストール先ディレクトリ",
   "settings.agents.notInstalled": "未インストール",
   "settings.agents.noModelsReported": "モデルは報告されていません。",
+  "settings.agents.modelSource.gateway": "ゲートウェイ",
   "settings.agents.errorSource": "エージェントランタイム",
   "settings.agents.loadWorkerAvailability": "Worker 可用性を読み込む",
   "settings.runtime.defaultSendBehaviour": "既定の送信動作",

@@ -201,6 +201,7 @@
   "settings.agents.installedDir": "Installed dir",
   "settings.agents.notInstalled": "Not installed",
   "settings.agents.noModelsReported": "No models reported.",
+  "settings.agents.modelSource.gateway": "Gateway",
   "settings.agents.errorSource": "Agent runtime",
   "settings.agents.loadWorkerAvailability": "Load worker availability",
   "settings.runtime.defaultSendBehaviour": "Default send behaviour",
