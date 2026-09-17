@@ -1,8 +1,28 @@
 {
   "version": 2,
   "projectRoot": "/Users/masterman/NLP/omniharness",
-  "generatedAt": "2026-09-16T10:00:19.427Z",
+  "generatedAt": "2026-09-16T22:00:19.938Z",
   "conversations": [
+    {
+      "provider": "claude",
+      "id": "6f165093-e375-4625-a4b2-dfeb690d9373",
+      "title": "Worker stuck timeout reaper",
+      "startedAt": "2026-09-16T16:38:10.665Z",
+      "updatedAt": "2026-09-16T16:42:53.132Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "b6e97df80633fe952102d816209826b91359714100eb5be1f623c6e11cdc42d5",
+      "parts": [
+        "conversations/2026/09/2026-09-16-claude-worker-stuck-timeout-reaper-6f165093-e375-4625-a4b2-dfeb690d9373-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 157,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
     {
       "provider": "claude",
       "id": "553f509b-0e82-4969-81b5-246189d1039e",
