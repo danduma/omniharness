@@ -363,10 +363,10 @@ function applyProjectScopedCliStorage(type: string, cwd: string, env: EnvLike, o
       shouldBridgeCredentials = true;
     }
     if (!env.CODEX_SQLITE_HOME?.trim()) {
-      // Codex 0.154 introduced a new SQLite state runtime. Keep the old
-      // directory intact so prior sessions remain readable while new workers
-      // use the compatible layout.
-      env.CODEX_SQLITE_HOME = join(cliHome, "codex", "sqlite-v2");
+      // Codex upgrades can leave an earlier state runtime unreadable. Keep
+      // previous directories intact for recovery and give new workers a fresh
+      // compatible state store.
+      env.CODEX_SQLITE_HOME = join(cliHome, "codex", "sqlite-v3");
     }
   }
   if (type === "claude" && !env.CLAUDE_CONFIG_DIR?.trim()) {
