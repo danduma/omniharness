@@ -8,7 +8,7 @@ import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
-import { readWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
+import { refreshWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
 import { buildTranscriptReplayPrompt } from "./session-recovery";
 import { and, eq } from "drizzle-orm";
 
@@ -61,7 +61,13 @@ export async function recreateWorkerFromTranscript(args: {
   const { env: envParams } = await readRuntimeEnvFromSettings();
   const launchSelection = args.selection
     ?? resolveWorkerLaunchSelection(args.worker, args.run, {
-      accountId: await readWorkerAllocatedAccountId(args.worker.id),
+      accountId: await refreshWorkerAllocatedAccountId({
+        workerId: args.worker.id,
+        runId: args.run.id,
+        workerType: args.worker.type,
+        explicitAccountId: args.run.preferredWorkerAccountId,
+        env: envParams,
+      }),
     });
   const spawnParams = {
     type: args.selection?.type ?? args.worker.type,

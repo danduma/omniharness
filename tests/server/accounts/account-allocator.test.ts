@@ -12,6 +12,7 @@ import {
   workers,
 } from "@/server/db/schema";
 import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
+import { refreshWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
 
 async function insertAccount(input: Partial<typeof accounts.$inferInsert> & { id?: string; cliType: string; priority?: number }) {
   const now = new Date("2026-06-29T13:00:00.000Z");
@@ -27,6 +28,7 @@ async function insertAccount(input: Partial<typeof accounts.$inferInsert> & { id
     enabled: input.enabled ?? true,
     priority: input.priority ?? 0,
     status: input.status ?? "healthy",
+    lifecycleOperationErrorCode: input.lifecycleOperationErrorCode ?? null,
     createdAt: input.createdAt ?? now,
     updatedAt: input.updatedAt ?? now,
   });
@@ -66,6 +68,26 @@ async function insertRunAndWorker(workerType = "codex") {
 }
 
 describe("account allocator", () => {
+  it("selects a Claude system session when only its status probe timed out", async () => {
+    const accountId = await insertAccount({
+      cliType: "claude",
+      provider: "anthropic",
+      type: "subscription",
+      authMode: "local_session",
+      authRef: "local-session:claude",
+      enabled: false,
+      status: "login_required",
+      lifecycleOperationErrorCode: "account.auth.timeout",
+    });
+
+    const allocation = await allocateWorkerAccount({
+      workerType: "claude",
+      strategy: "subscription_then_api",
+    });
+
+    expect(allocation.account?.id).toBe(accountId);
+  });
+
   it.each(["authenticating", "verifying", "auth_failed", "logging_out", "removing", "purging"])(
     "never selects an enabled account in lifecycle status %s",
     async (status) => {
@@ -105,6 +127,72 @@ describe("account allocator", () => {
       explicit: true,
       strategy: "manual",
     });
+  });
+
+  it("replaces a worker's stale automatic allocation instead of appending a duplicate", async () => {
+    const workerType = `claude-${randomUUID()}`;
+    const staleAccountId = await insertAccount({
+      cliType: workerType,
+      priority: 10,
+      enabled: true,
+      status: "available",
+    });
+    const replacementAccountId = await insertAccount({
+      cliType: workerType,
+      priority: 1,
+      enabled: true,
+      status: "available",
+    });
+    const { runId, workerId } = await insertRunAndWorker(workerType);
+
+    await allocateWorkerAccount({ workerType, runId, workerId, strategy: "subscription_then_api" });
+    await db.update(accounts).set({ enabled: false, status: "login_required" })
+      .where(eq(accounts.id, staleAccountId));
+
+    const replacement = await refreshWorkerAllocatedAccountId({
+      workerType,
+      runId,
+      workerId,
+    });
+
+    expect(replacement).toBe(replacementAccountId);
+    const rows = await db.select().from(workerCredentialAllocations)
+      .where(eq(workerCredentialAllocations.workerId, workerId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      accountId: replacementAccountId,
+      explicit: false,
+      strategy: "subscription_then_api",
+    });
+  });
+
+  it("does not replace a stale allocation that was explicitly pinned", async () => {
+    const workerType = `claude-${randomUUID()}`;
+    const pinnedAccountId = await insertAccount({
+      cliType: workerType,
+      priority: 1,
+      enabled: true,
+      status: "available",
+    });
+    await insertAccount({
+      cliType: workerType,
+      priority: 10,
+      enabled: true,
+      status: "available",
+    });
+    const { runId, workerId } = await insertRunAndWorker(workerType);
+    await allocateWorkerAccount({
+      workerType,
+      runId,
+      workerId,
+      explicitAccountId: pinnedAccountId,
+    });
+    await db.update(accounts).set({ enabled: false, status: "login_required" })
+      .where(eq(accounts.id, pinnedAccountId));
+
+    const allocation = await refreshWorkerAllocatedAccountId({ workerType, runId, workerId });
+
+    expect(allocation).toBe(pinnedAccountId);
   });
 
   it("chooses the highest-priority usable account by default", async () => {

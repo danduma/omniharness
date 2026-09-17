@@ -669,6 +669,7 @@ export type AccountEvent =
   | { kind: "account.auth_verifying"; accountId: string; operationId: string; workerType: "claude" }
   | { kind: "account.auth_completed"; accountId: string; operationId: string; workerType: "claude"; status: "available" }
   | { kind: "account.auth_failed"; accountId: string; operationId: string; workerType: "claude"; code: string; reason: string }
+  | { kind: "account.auth_timeout_bypassed"; accountId: string; workerType: string; reason: "status_probe_timeout" }
   | { kind: "account.auth_cancelled"; accountId: string; operationId: string; workerType: "claude" }
   | { kind: "account.auth_interrupted"; accountId: string; operationId: string; workerType: "claude"; recovered: boolean }
   | { kind: "account.auth_exit_ignored"; accountId: string; operationId: string; workerType: "claude"; reason: "operation_missing" | "operation_replaced" | "operation_not_authenticating" | "cancel_owner_mismatch" }

@@ -53,8 +53,23 @@ import {
 
 const execFileAsync = promisify(execFile);
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
-const COMMAND_TIMEOUT_MS = 10_000;
+// Claude Code can spend close to a minute loading under host contention before
+// even returning `auth status --json`. Keep this bounded, but leave enough room
+// for a conclusive credential result instead of persisting a false timeout.
+const COMMAND_TIMEOUT_MS = 2 * 60_000;
 const COMMAND_MAX_BUFFER = 256 * 1024;
+
+function buildManagedLoginEnv(env: Record<string, string | undefined>, configDir: string) {
+  const childEnv = buildClaudeAuthChildEnv(env, configDir);
+  if (process.platform !== "win32") {
+    // OmniHarness is commonly opened from another machine. Prevent Claude from
+    // launching OAuth on the runner host, where its localhost callback cannot
+    // be reached by the remote browser. Claude then prints the hosted sign-in
+    // URL and accepts the returned code in this managed terminal.
+    childEnv.BROWSER = "/usr/bin/false";
+  }
+  return childEnv;
+}
 
 export type ClaudeAccountAuthPhase =
   | "authenticating"
@@ -179,22 +194,6 @@ export class ClaudeAccountAuthService {
       return runStatusCommand(configDir);
     });
     const assertCapability = dependencies.assertCapability ?? (async (configDir, requireIsolation) => {
-      const [version, loginHelp, statusHelp] = await Promise.all([
-        runCommand(["--version"], configDir),
-        runCommand(["auth", "login", "--help"], configDir),
-        runCommand(["auth", "status", "--help"], configDir),
-      ]);
-      if (!/Claude Code|\d+\.\d+\.\d+/i.test(version.stdout)) {
-        throw new Error("The installed Claude CLI version is unsupported.");
-      }
-      for (const required of ["--claudeai", "--email", "--sso"]) {
-        if (!loginHelp.stdout.includes(required)) {
-          throw new Error(`The installed Claude CLI is unsupported because auth login lacks ${required}.`);
-        }
-      }
-      if (!statusHelp.stdout.includes("--json")) {
-        throw new Error("The installed Claude CLI is unsupported because auth status lacks --json.");
-      }
       if (!requireIsolation) return;
       const sentinelIds = [
         `sentinel-${randomUUID()}`,
@@ -425,7 +424,7 @@ export class ClaudeAccountAuthService {
       const created = this.deps.terminalManager.createManagedTerminal({
         command: this.deps.binary,
         args: buildClaudeLoginArgs(options),
-        env: buildClaudeAuthChildEnv(this.deps.env, configDir),
+        env: buildManagedLoginEnv(this.deps.env, configDir),
         cwd: accountHome,
         cols: 100,
         rows: 30,
@@ -694,10 +693,15 @@ export class ClaudeAccountAuthService {
       throw error;
     }
     const nextStatus = status.loggedIn ? "available" : "login_required";
+    const recoveredFromAuthFailure = !existing.enabled && (
+      ["login_required", "auth_failed"].includes(previousStatus ?? "")
+      || existing.lifecycleOperationErrorCode?.startsWith("account.auth.") === true
+    );
     await db.update(accounts).set({
-      enabled: status.loggedIn ? existing.enabled : false,
+      enabled: status.loggedIn ? existing.enabled || recoveredFromAuthFailure : false,
       status: nextStatus,
       statusCheckedAt: now,
+      lifecycleOperationErrorCode: status.loggedIn ? null : existing.lifecycleOperationErrorCode,
       metadataJson: status.loggedIn
         ? serializeMetadata(existing.metadataJson, claudeSafeIdentity(status, now))
         : existing.metadataJson,
