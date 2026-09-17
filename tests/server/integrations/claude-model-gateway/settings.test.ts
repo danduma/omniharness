@@ -5,6 +5,7 @@ import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
 import { decryptSettingValue } from "@/server/settings/crypto";
 import {
+  readClaudeGatewayModelsFromSettingRows,
   readClaudeModelGatewaySettings,
   saveClaudeModelGatewayCatalog,
   saveClaudeModelGatewaySettings,
@@ -27,6 +28,16 @@ afterEach(async () => {
 });
 
 describe("Claude gateway settings", () => {
+  test("only exposes gateway models to workers when the gateway is enabled", () => {
+    expect(readClaudeGatewayModelsFromSettingRows([])).toEqual({ custom: [], discovered: [] });
+    expect(readClaudeGatewayModelsFromSettingRows([
+      { key: CLAUDE_MODEL_GATEWAY_SETTING_KEYS.enabled, value: "true" },
+    ])).toEqual({
+      custom: [{ id: "gpt-5.6-sol", label: "GPT-5.6 SOL" }],
+      discovered: [],
+    });
+  });
+
   test("returns safe managed defaults including the requested model", async () => {
     await expect(readClaudeModelGatewaySettings()).resolves.toMatchObject({
       mode: "managed",

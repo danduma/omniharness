@@ -153,6 +153,7 @@
   "settings.agents.installedDir": "Cartella installata",
   "settings.agents.notInstalled": "Non installato",
   "settings.agents.noModelsReported": "Nessun modello segnalato.",
+  "settings.agents.modelSource.gateway": "Gateway",
   "settings.agents.errorSource": "Runtime agenti",
   "settings.agents.loadWorkerAvailability": "Carica disponibilità worker",
   "settings.runtime.defaultSendBehaviour": "Comportamento di invio predefinito",

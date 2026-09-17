@@ -165,8 +165,6 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
     { value: "gpt-6-astra", label: "GPT-6 Astra" },
-    { value: "claude-sonnet-5", label: "Sonnet 5" },
-    { value: "claude-sonnet-4", label: "Sonnet 4" },
   ],
   claude: [
     { value: "claude-opus-5", label: "Opus 5" },

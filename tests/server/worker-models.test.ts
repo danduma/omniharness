@@ -17,9 +17,9 @@ describe("worker model catalog", () => {
     });
     expect(merged.claude.slice(0, catalog.claude.length)).toEqual(catalog.claude);
     expect(merged.claude.slice(catalog.claude.length)).toEqual([
-      { value: "cliproxyapi:gpt-5.6-sol", label: "GPT-5.6 SOL" },
-      { value: "cliproxyapi:team/custom", label: "Team Custom" },
-      { value: "cliproxyapi:new/model", label: "new/model" },
+      { value: "cliproxyapi:gpt-5.6-sol", label: "GPT-5.6 SOL", source: "gateway" },
+      { value: "cliproxyapi:team/custom", label: "Team Custom", source: "gateway" },
+      { value: "cliproxyapi:new/model", label: "new/model", source: "gateway" },
     ]);
     expect(catalog.claude.some((model) => model.value.startsWith("cliproxyapi:"))).toBe(false);
   });
@@ -100,6 +100,25 @@ describe("worker model catalog", () => {
       { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
       { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
     ]);
+    expect(catalog.codex.some((model) => model.value.startsWith("claude-") || model.value.startsWith("anthropic/"))).toBe(false);
+  });
+
+  it("drops incompatible Claude models from a cached Codex catalog", async () => {
+    const manager = new WorkerModelCatalogManager({
+      loadCachedCatalog: async () => ({
+        codex: [
+          { value: "claude-sonnet-5", label: "Sonnet 5" },
+          { value: "anthropic/claude-sonnet-4", label: "Sonnet 4" },
+          { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+        ],
+      }),
+      runCommand: async () => "",
+    });
+
+    const snapshot = await manager.getCatalogSnapshot();
+
+    expect(snapshot.catalog.codex).toContainEqual({ value: "gpt-5.6-sol", label: "GPT-5.6 Sol" });
+    expect(snapshot.catalog.codex.some((model) => model.value.startsWith("claude-") || model.value.startsWith("anthropic/"))).toBe(false);
   });
 
   it("keeps GPT-6 Astra available when discovery is unavailable", async () => {

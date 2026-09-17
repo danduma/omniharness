@@ -153,6 +153,7 @@
   "settings.agents.installedDir": "설치된 디렉터리",
   "settings.agents.notInstalled": "설치되지 않음",
   "settings.agents.noModelsReported": "보고된 모델이 없습니다.",
+  "settings.agents.modelSource.gateway": "게이트웨이",
   "settings.agents.errorSource": "에이전트 런타임",
   "settings.agents.loadWorkerAvailability": "Worker 사용 가능 여부 불러오기",
   "settings.runtime.defaultSendBehaviour": "기본 전송 동작",

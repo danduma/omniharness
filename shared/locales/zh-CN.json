@@ -153,6 +153,7 @@
   "settings.agents.installedDir": "安装目录",
   "settings.agents.notInstalled": "未安装",
   "settings.agents.noModelsReported": "未报告模型。",
+  "settings.agents.modelSource.gateway": "网关",
   "settings.agents.errorSource": "代理运行时",
   "settings.agents.loadWorkerAvailability": "加载 worker 可用性",
   "settings.runtime.defaultSendBehaviour": "默认发送行为",

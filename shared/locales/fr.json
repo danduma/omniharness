@@ -153,6 +153,7 @@
   "settings.agents.installedDir": "Dossier installé",
   "settings.agents.notInstalled": "Non installé",
   "settings.agents.noModelsReported": "Aucun modèle signalé.",
+  "settings.agents.modelSource.gateway": "Passerelle",
   "settings.agents.errorSource": "Runtime d'agents",
   "settings.agents.loadWorkerAvailability": "Charger la disponibilité des workers",
   "settings.runtime.defaultSendBehaviour": "Comportement d'envoi par défaut",
