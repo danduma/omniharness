@@ -409,6 +409,8 @@ export function buildOptimisticCreatedConversationSnapshot(args: {
   projectPath: string | null;
   mode: ConversationModeOption;
   preferredWorkerType?: string | null;
+  preferredWorkerModel?: string | null;
+  preferredWorkerEffort?: string | null;
   preferredWorkerAccountId?: string | null;
   createdAt?: string;
   now?: Date;
@@ -435,6 +437,11 @@ export function buildOptimisticCreatedConversationSnapshot(args: {
       projectPath: args.projectPath,
       title: buildInitialConversationTitle(args.content ?? ""),
       preferredWorkerType: args.preferredWorkerType ?? null,
+      // Carried so the composer that hydrates from this placeholder resolves
+      // the model the conversation was launched with, rather than falling
+      // through to the first entry in the worker's catalogue.
+      preferredWorkerModel: args.preferredWorkerModel ?? null,
+      preferredWorkerEffort: args.preferredWorkerEffort ?? null,
       preferredWorkerAccountId: args.preferredWorkerAccountId ?? null,
     },
   };

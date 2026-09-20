@@ -1,6 +1,7 @@
 "use client";
 
 import type React from "react";
+import { useCallback, useMemo } from "react";
 import { useMutation } from "@tanstack/react-query";
 import type { PendingChatAttachment } from "@/lib/chat-attachments";
 import { mergeAppErrors } from "@/lib/app-errors";
@@ -13,6 +14,11 @@ import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { useQueuedMessageMutations } from "./useQueuedMessageMutations";
 import { uploadPendingChatAttachments } from "./upload-attachments";
 import { shouldSelectRecoveredRunAfterSuccess } from "./auto-resume-selection";
+import {
+  buildLaunchPreferenceBody,
+  resolveComposerLaunchSelection,
+  type ComposerLaunchSelection,
+} from "./composer-launch-selection";
 import { homeUiSetters, homeUiStateManager } from "./HomeUiStateManager";
 import { sentConversationMessagesManager } from "./SentConversationMessagesManager";
 import { appearancePreferencesManager } from "./AppearancePreferencesManager";
@@ -30,8 +36,6 @@ import {
   removeRunFromHomeState,
   restoreRunSlice,
   resolveOptimisticSentConversationMessage,
-  resolveComposerEffortValue,
-  resolveSelectedWorkerModel,
   type CreatedConversationSnapshot,
 } from "./utils";
 import type {
@@ -84,6 +88,7 @@ export interface UseHomeMutationsParams {
   selectedEffort: string;
   autoSelectedWorkerType: string | null;
   activeAllowedWorkerTypes: string[];
+  activeWorkerModelValues: string[];
   renamingRunId: string | null;
   pendingDeletedRunIdsRef: React.RefObject<Set<string>>;
   pendingCreatedConversationSnapshotsRef: React.RefObject<Map<string, CreatedConversationSnapshot>>;
@@ -103,6 +108,7 @@ export function useHomeMutations({
   selectedEffort,
   autoSelectedWorkerType,
   activeAllowedWorkerTypes,
+  activeWorkerModelValues,
   renamingRunId,
   pendingDeletedRunIdsRef,
   pendingCreatedConversationSnapshotsRef,
@@ -130,7 +136,25 @@ export function useHomeMutations({
     setAttachments,
     clearAttachments,
   } = homeUiSetters;
-  const preferredWorkerAccountId = selectedWorkerAccountId === "auto" ? null : selectedWorkerAccountId;
+  const composerLaunchSelection = useMemo(() => resolveComposerLaunchSelection({
+    conversationMode: selectedConversationMode,
+    selectedCliAgent,
+    selectedModel,
+    selectedEffort,
+    selectedWorkerAccountId,
+    autoSelectedWorkerType: autoSelectedWorkerType as WorkerType | null,
+    activeAllowedWorkerTypes: activeAllowedWorkerTypes as WorkerType[],
+    activeWorkerModelValues,
+  }), [
+    activeAllowedWorkerTypes,
+    activeWorkerModelValues,
+    autoSelectedWorkerType,
+    selectedCliAgent,
+    selectedConversationMode,
+    selectedEffort,
+    selectedModel,
+    selectedWorkerAccountId,
+  ]);
 
   // Worker-scoped failures still belong to a conversation, so resolve the
   // owning run to keep the error out of every other session's banner.
@@ -466,9 +490,16 @@ export function useHomeMutations({
   });
 
   const runCommand = useMutation({
-    mutationFn: async (payload: { content: string; attachments: PendingChatAttachment[]; projectPath: string | null; requestedRunId: string }) => {
-      const isAutoWorkerSelection = selectedCliAgent === "auto";
-      const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel);
+    // `launch` is resolved by the caller, before `onMutate` selects the new
+    // conversation. Re-reading the composer here would read the selection this
+    // mutation itself just reset.
+    mutationFn: async (payload: {
+      content: string;
+      attachments: PendingChatAttachment[];
+      projectPath: string | null;
+      requestedRunId: string;
+      launch: ComposerLaunchSelection;
+    }) => {
       const uploadedAttachments = await uploadPendingChatAttachments(
         payload.attachments,
         runtimeApis.files,
@@ -481,17 +512,13 @@ export function useHomeMutations({
         ? workspaceState?.selectedTargetsByProject[payload.projectPath] ?? null
         : null;
       return runtimeApis.conversations.create({
-          mode: selectedConversationMode,
+          mode: payload.launch.conversationMode,
           command: payload.content,
           projectPath: payload.projectPath,
           requestedRunId: payload.requestedRunId,
           gitWorkspaceLaunch: pendingWorkspaceLaunch,
           gitWorkspaceTarget: selectedWorkspaceTarget,
-          preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
-          preferredWorkerModel: resolvedSelectedModel,
-          preferredWorkerEffort: resolveComposerEffortValue(selectedEffort),
-          preferredWorkerAccountId,
-          allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
+          ...buildLaunchPreferenceBody(payload.launch),
           attachments: uploadedAttachments,
         }) as Promise<{ runId?: string } & CreatedConversationSnapshot>;
     },
@@ -507,13 +534,19 @@ export function useHomeMutations({
         runId: requestedRunId,
         content: payload.content,
         projectPath: payload.projectPath,
-        mode: selectedConversationMode,
-        preferredWorkerType: selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent,
-        preferredWorkerAccountId,
+        mode: payload.launch.conversationMode,
+        preferredWorkerType: payload.launch.workerType,
+        preferredWorkerModel: payload.launch.model,
+        preferredWorkerEffort: payload.launch.effort,
+        preferredWorkerAccountId: payload.launch.accountId,
       });
       pendingCreatedConversationSnapshotsRef.current.set(requestedRunId, optimisticSnapshot);
       setCommand("");
       homeUiSetters.setCommandCursor(0);
+      // Before the selection moves: the new run has no draft of its own yet, and
+      // switching to a draftless run resets the composer to the generic
+      // new-conversation defaults.
+      homeUiSetters.adoptSelectionForCreatedRun(requestedRunId);
       setSelectedRunId(requestedRunId);
       replaceBrowserConversationPath(requestedRunId, null);
       setState((current) => appendCreatedConversationSnapshot(current, optimisticSnapshot));
@@ -593,6 +626,7 @@ export function useHomeMutations({
       clientMessageId: string;
       attachments: PendingChatAttachment[];
       busyAction?: BusyMessageAction;
+      launch: ComposerLaunchSelection;
     }) => {
       const snapshot = homeUiStateManager.getSnapshot();
       const attachments = payload.attachments.map(({ id, kind, name, mimeType, size, previewUrl }) => (
@@ -650,12 +684,8 @@ export function useHomeMutations({
       clientMessageId: string;
       attachments: PendingChatAttachment[];
       busyAction?: BusyMessageAction;
+      launch: ComposerLaunchSelection;
     }) => {
-      const isAutoWorkerSelection = selectedCliAgent === "auto";
-      const selectedWorkerType = isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent;
-      const resolvedSelectedModel = selectedWorkerType
-        ? resolveSelectedWorkerModel(selectedWorkerType as WorkerType, selectedModel)
-        : null;
       const uploadedAttachments = await uploadPendingChatAttachments(
         payload.attachments,
         runtimeApis.files,
@@ -669,11 +699,7 @@ export function useHomeMutations({
           clientMessageId: payload.clientMessageId,
           attachments: uploadedAttachments,
           busyAction: payload.busyAction,
-          preferredWorkerType: selectedWorkerType,
-          preferredWorkerModel: isAutoWorkerSelection ? null : resolvedSelectedModel,
-          preferredWorkerEffort: resolveComposerEffortValue(selectedEffort),
-          preferredWorkerAccountId,
-          allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedWorkerType],
+          ...buildLaunchPreferenceBody(payload.launch),
         },
       }) as Promise<{
         ok: true;
@@ -790,17 +816,11 @@ export function useHomeMutations({
       attachmentsAtStart: homeUiStateManager.getSnapshot().attachments,
     }),
     mutationFn: async (payload: { projectPath: string; action: ManualCommitAction }) => {
-      const isAutoWorkerSelection = selectedCliAgent === "auto";
-      const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel);
       return runtimeApis.conversations.create({
           mode: "commit",
           command: getManualProjectCommitPrompt(payload.action),
           projectPath: payload.projectPath,
-          preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
-          preferredWorkerModel: resolvedSelectedModel,
-          preferredWorkerEffort: resolveComposerEffortValue(selectedEffort),
-          preferredWorkerAccountId,
-          allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
+          ...buildLaunchPreferenceBody(composerLaunchSelection),
         }) as Promise<{ runId?: string } & CreatedConversationSnapshot>;
     },
     onSuccess: (data, _variables, context) => {
@@ -1034,6 +1054,30 @@ export function useHomeMutations({
     }
   };
 
+  // Both entry points freeze the composer selection here, in the caller's
+  // render, so the request carries the worker/model the user was looking at
+  // when they hit send.
+  const runCommandMutate = runCommand.mutate;
+  const startConversation = useCallback((payload: {
+    content: string;
+    attachments: PendingChatAttachment[];
+    projectPath: string | null;
+    requestedRunId: string;
+  }) => {
+    runCommandMutate({ ...payload, launch: composerLaunchSelection });
+  }, [composerLaunchSelection, runCommandMutate]);
+
+  const sendConversationMessageMutate = sendConversationMessage.mutate;
+  const sendMessageToConversation = useCallback((payload: {
+    runId: string;
+    content: string;
+    clientMessageId: string;
+    attachments: PendingChatAttachment[];
+    busyAction?: BusyMessageAction;
+  }) => {
+    sendConversationMessageMutate({ ...payload, launch: composerLaunchSelection });
+  }, [composerLaunchSelection, sendConversationMessageMutate]);
+
   return {
     loginMutation,
     logoutMutation,
@@ -1047,7 +1091,9 @@ export function useHomeMutations({
     recoverRun,
     resumeRunRecovery,
     runCommand,
+    startConversation,
     sendConversationMessage,
+    sendMessageToConversation,
     cancelQueuedMessage,
     sendQueuedMessageNow,
     interruptQueuedMessage,

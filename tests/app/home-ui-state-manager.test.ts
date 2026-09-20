@@ -171,4 +171,28 @@ describe("HomeUiStateManager", () => {
     );
     expect(notifications).toBe(1);
   });
+  it("keeps the launch selection on the conversation it just created", () => {
+    const manager = new HomeUiStateManager();
+    manager.setComposerWorkerSelection("claude", "claude-fable-5-1");
+
+    manager.adoptSelectionForCreatedRun("run-new");
+    manager.selectRun("run-new");
+
+    expect(manager.getSnapshot()).toMatchObject({
+      selectedCliAgent: "claude",
+      selectedModel: "claude-fable-5-1",
+    });
+  });
+
+  it("leaves an existing conversation draft alone", () => {
+    const manager = new HomeUiStateManager();
+    manager.selectRun("run-a");
+    manager.setComposerSelectionField("model", "claude-fable-5-1");
+    manager.selectRun(null);
+    manager.setComposerSelectionField("model", "claude-opus-5");
+
+    manager.adoptSelectionForCreatedRun("run-a");
+
+    expect(manager.getSnapshot().composerDraftsByRun["run-a"]?.selection.model).toBe("claude-fable-5-1");
+  });
 });

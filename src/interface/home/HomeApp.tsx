@@ -693,6 +693,11 @@ export function HomeApp({
     selectedAccountId: selectedWorkerAccountId,
   });
 
+  const activeWorkerModelValues = useMemo(
+    () => activeWorkerModelOptions.map((option) => option.value),
+    [activeWorkerModelOptions],
+  );
+
   // Mutations
   const mutations = useHomeMutations({
     state,
@@ -705,6 +710,7 @@ export function HomeApp({
     selectedEffort,
     autoSelectedWorkerType,
     activeAllowedWorkerTypes,
+    activeWorkerModelValues,
     renamingRunId,
     pendingDeletedRunIdsRef,
     pendingCreatedConversationSnapshotsRef,
@@ -726,7 +732,9 @@ export function HomeApp({
     recoverRun,
     resumeRunRecovery,
     runCommand,
+    startConversation,
     sendConversationMessage,
+    sendMessageToConversation,
     cancelQueuedMessage,
     sendQueuedMessageNow,
     interruptQueuedMessage,
@@ -1255,8 +1263,8 @@ export function HomeApp({
   const stopWorkerMutate = stopWorker.mutate;
   const interruptQueuedMessageMutate = interruptQueuedMessage.mutate;
   const cancelQueuedMessageMutate = cancelQueuedMessage.mutate;
-  const sendConversationMessageMutate = sendConversationMessage.mutate;
-  const runCommandMutate = runCommand.mutate;
+  const sendConversationMessageMutate = sendMessageToConversation;
+  const runCommandMutate = startConversation;
 
   const handleStopConversation = useCallback(() => {
     if (!selectedRunId || isStopConversationPending) return;
@@ -1615,7 +1623,7 @@ export function HomeApp({
           handleSaveEditedMessage={(messageId) => actions.handleSaveEditedMessage(messageId, editingMessageValue)}
           handlePreflightConfirmationAnswer={(content) => {
             if (selectedRunId) {
-              sendConversationMessage.mutate({ runId: selectedRunId, content, clientMessageId: createSentConversationMessageId(), attachments: [] });
+              sendMessageToConversation({ runId: selectedRunId, content, clientMessageId: createSentConversationMessageId(), attachments: [] });
             }
           }}
           isPreflightConfirmationAnswering={isSendingSelectedConversationMessage}
