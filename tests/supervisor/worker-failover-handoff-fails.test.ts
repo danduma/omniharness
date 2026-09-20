@@ -102,9 +102,10 @@ describe("worker failover when the handoff turn itself fails", () => {
       updatedAt: now,
     });
 
-    // Handoff ask rejects (outgoing worker is unresponsive), but the replacement receives the synthetic seed.
-    mockAskAgent.mockRejectedValueOnce(new Error("Ask failed: agent unresponsive"))
-      .mockResolvedValueOnce({
+    // The outgoing worker is never asked for its own handoff — `buildPersistedHandoff`
+    // treats it as unavailable and reconstructs the report from persisted state — so
+    // the only ask here belongs to the replacement receiving the synthetic seed.
+    mockAskAgent.mockResolvedValueOnce({
         response: "Replacement continued from synthetic handoff.",
         state: "idle",
         stopReason: "end_turn",

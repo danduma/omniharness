@@ -90,7 +90,11 @@ function parseRelevantFiles(raw: string | undefined): string[] | undefined {
   const entries = raw
     .split(/[\n,]/)
     .map((entry) => entry.replace(/^\s*[-*]\s*/, "").trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    // The report format asks for "none" when nothing is relevant, so the
+    // sentinel arrives as an ordinary entry and would otherwise be carried
+    // into the packet as a file literally named "none".
+    .filter((entry) => entry.toLowerCase() !== "none");
   return entries.length > 0 ? entries : undefined;
 }
 
