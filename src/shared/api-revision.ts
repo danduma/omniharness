@@ -7,10 +7,12 @@ export const RUNNER_API_REVISION = {
 
 export const RUNNER_CAPABILITIES = [
   "browser_authorization_pkce",
+  "claude_account_auth",
   "cross_origin_stream_tickets",
   "cross_cli_handoff",
   "filesystem_directory_creation",
   "goal_control",
+  "project_file_image_preview",
   "runner_administration",
   "unified_worker_stream",
 ] as const;
@@ -34,12 +36,13 @@ export type ApiContractChangeClassification =
 
 export const ROUTE_CONTRACT_DECLARATION = {
   fixtureSchemaVersion: 1,
-  // Bumped by adding the cross-CLI handoff routes.
-  // This is an additive capability, so the revision window is unchanged:
+  // Bumped by adding the Claude account auth routes (auth-operation, logout,
+  // purge, connect) and the project image preview route.
+  // These are additive capabilities, so the revision window is unchanged:
   // an older client simply never calls the new routes.
-  fingerprint: "fnv1a32:d9f24774",
+  fingerprint: "fnv1a32:1143f776",
   classification: "additive-capability",
-  capability: "cross_cli_handoff",
+  capability: "project_file_image_preview",
   apiRevision: 1,
 } as const;
 
