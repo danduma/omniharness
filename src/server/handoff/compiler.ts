@@ -111,6 +111,10 @@ export function compileHybridHandoffPacket(input: CompileHybridHandoffInput): Hy
     .filter((value): value is string => Boolean(value)));
 
   const relevantUnchangedFiles = input.advisory.relevantFiles
+    // "none" is the report format's empty answer, not a path. The parser drops
+    // it, but advisory input reaches here from any summarizer, so the packet
+    // boundary refuses it too rather than trusting every upstream.
+    .filter((value) => value.trim().toLowerCase() !== "none")
     .map(sanitizeProjectRelativePath)
     .filter((value): value is string => Boolean(value))
     .filter((value) => !modifiedPaths.has(value))

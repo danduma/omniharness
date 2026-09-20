@@ -15,7 +15,6 @@ import {
   shouldIndex,
 } from "@/server/artifacts/stream-index";
 import { emitNamedEvent } from "@/server/events/named-events";
-import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import type {
   WorkerEntry,
 } from "@/server/workers/entries-types";
@@ -592,6 +591,10 @@ async function recordStaleWorkerOutputIgnored(args: {
   source: "entry_append" | "snapshot_batch";
 }) {
   emitNamedEvent({ kind: "worker.stale_output_ignored", ...args });
+  // Loaded on demand like the turn-generation lookup above: reading a worker
+  // stream is a hot path that must not pull the database in with it, and
+  // ignoring stale output is rare enough that the import costs nothing here.
+  const { recordExecutionEvent } = await import("@/server/events/execution-event-store");
   await recordExecutionEvent({
     runId: args.runId,
     workerId: args.workerId,

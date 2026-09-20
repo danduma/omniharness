@@ -136,14 +136,19 @@ function describeEdit(oldValue: unknown, newValue: unknown): string | null {
 }
 
 function editEvidenceForPath(group: readonly WorkerEntry[], targetPath: string, projectPath: string): string[] {
-  const evidence = new Set<string>();
+  const changes: Array<{ oldText: string | null; newText: string | null }> = [];
+  const collect = (oldValue: unknown, newValue: unknown) => {
+    const oldText = compactCodeEvidence(oldValue, 100);
+    const newText = compactCodeEvidence(newValue, 160);
+    if (oldText || newText) changes.push({ oldText, newText });
+  };
+
   for (const entry of group) {
     const raw = asRecord(entry.raw);
     for (const content of Array.isArray(raw?.content) ? raw.content : []) {
       const record = asRecord(content);
       if (projectRelativeToolPath(record?.path, projectPath) !== targetPath) continue;
-      const description = describeEdit(record?.oldText, record?.newText);
-      if (description) evidence.add(description);
+      collect(record?.oldText, record?.newText);
     }
 
     const rawInput = asRecord(raw?.rawInput);
@@ -151,11 +156,10 @@ function editEvidenceForPath(group: readonly WorkerEntry[], targetPath: string, 
       .map((value) => projectRelativeToolPath(value, projectPath))
       .find((value) => value === targetPath);
     if (inputPath) {
-      const description = describeEdit(
+      collect(
         rawInput?.old_string ?? rawInput?.oldString,
         rawInput?.new_string ?? rawInput?.newString ?? rawInput?.content,
       );
-      if (description) evidence.add(description);
     }
 
     const claudeCode = asRecord(asRecord(raw?._meta)?.claudeCode);
@@ -165,9 +169,25 @@ function editEvidenceForPath(group: readonly WorkerEntry[], targetPath: string, 
       projectPath,
     );
     if (responsePath === targetPath) {
-      const description = describeEdit(response?.oldString ?? response?.old_string, response?.newString ?? response?.new_string);
-      if (description) evidence.add(description);
+      collect(response?.oldString ?? response?.old_string, response?.newString ?? response?.new_string);
     }
+  }
+
+  // One tool call arrives as several progress updates, and an early one often
+  // carries only half the pair the finished diff reports in full. Rendering
+  // both leaves `Removed "old".` sitting next to the `Changed "old" to "new".`
+  // that already describes it, so a half is dropped once a complete change
+  // covers the same text.
+  const completeChanges = changes.filter((change) => change.oldText && change.newText);
+  const evidence = new Set<string>();
+  for (const change of changes) {
+    const isSubsumed = !(change.oldText && change.newText) && completeChanges.some((complete) => (
+      (change.oldText !== null && complete.oldText === change.oldText)
+      || (change.newText !== null && complete.newText === change.newText)
+    ));
+    if (isSubsumed) continue;
+    const description = describeEdit(change.oldText, change.newText);
+    if (description) evidence.add(description);
   }
   return [...evidence].slice(0, 8);
 }
@@ -247,7 +267,11 @@ function verificationResult(args: {
   output: string | null;
 }): HandoffVerification["result"] {
   const failureEvidence = Boolean(args.output && (
-    /(?:^|\n)\s*(?:FAIL\b|Error:|error TS\d+)/m.test(args.output)
+    /(?:^|\n)\s*(?:FAIL\b|Error:)/m.test(args.output)
+    // tsc writes diagnostics as `file(line,col): error TS1234: message`, so the
+    // code never begins the line and a line-anchored match misses every real
+    // typecheck failure.
+    || /\berror TS\d+\b/.test(args.output)
     || /\b[1-9]\d*\s+failed\b|\bbuild failed\b|\btypecheck failed\b/i.test(args.output)
   ));
   if (args.failed || (args.exitCode !== null && args.exitCode !== 0) || failureEvidence) return "failed";
