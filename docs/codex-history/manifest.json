@@ -1,8 +1,88 @@
 {
   "version": 2,
   "projectRoot": "/Users/masterman/NLP/omniharness",
-  "generatedAt": "2026-09-16T22:00:19.938Z",
+  "generatedAt": "2026-09-19T22:00:18.136Z",
   "conversations": [
+    {
+      "provider": "claude",
+      "id": "99d9a76e-7376-400e-83b3-a9ec17a00583",
+      "title": "Launch selection picker behavior and hydration",
+      "startedAt": "2026-09-19T20:41:55.723Z",
+      "updatedAt": "2026-09-19T21:01:45.667Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "bb18215d7cdbc389bdffae2fe086e85a955863815af442bdf3c9731b300d2d7e",
+      "parts": [
+        "conversations/2026/09/2026-09-19-claude-launch-selection-picker-behavior-and-hydration-99d9a76e-7376-400e-83b3-a9ec17a00583-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 546,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "5b04dea2-0c7d-48c2-a906-957bb70926a6",
+      "title": "Image viewer binary file error",
+      "startedAt": "2026-09-17T12:44:19.888Z",
+      "updatedAt": "2026-09-19T21:00:39.207Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "b3d8c712323d1ddbf3332cfc9c9ab254f4f6982a397e797ffce75a4cc3380712",
+      "parts": [
+        "conversations/2026/09/2026-09-17-claude-image-viewer-binary-file-error-5b04dea2-0c7d-48c2-a906-957bb70926a6-part-001.md"
+      ],
+      "attachmentCount": 2,
+      "eventCount": 1434,
+      "malformedLines": 0,
+      "redactions": 2,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "9700df44-9db0-4081-bec3-d019ec42d921",
+      "title": "Snapshot bug with missing supervisor question",
+      "startedAt": "2026-09-17T14:20:49.238Z",
+      "updatedAt": "2026-09-17T14:49:35.722Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "a91d0791532a97907d4894f74831e27706ab93cd625a04da3c9a2f5d8934df9c",
+      "parts": [
+        "conversations/2026/09/2026-09-17-claude-snapshot-bug-with-missing-supervisor-question-9700df44-9db0-4081-bec3-d019ec42d921-part-001.md"
+      ],
+      "attachmentCount": 5,
+      "eventCount": 185,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "571b0391-2f85-45e2-9428-39920962bc63",
+      "title": "Goal retry on busy worker recovery",
+      "startedAt": "2026-09-17T11:33:23.153Z",
+      "updatedAt": "2026-09-17T11:58:15.990Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "3a0748d3f6c5c143d585310d51dc7be59ddf9e8bd1070fd9ec0d32ec80111cef",
+      "parts": [
+        "conversations/2026/09/2026-09-17-claude-goal-retry-on-busy-worker-recovery-571b0391-2f85-45e2-9428-39920962bc63-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 574,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
     {
       "provider": "claude",
       "id": "6f165093-e375-4625-a4b2-dfeb690d9373",
@@ -791,7 +871,7 @@
       "updatedAt": "2026-08-20T18:18:30.695Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "a66ecbc717619bd96bec16d87631ce97924a29dca5e80941763b2820a9c56fc5",
       "parts": [
@@ -831,7 +911,7 @@
       "updatedAt": "2026-08-19T17:30:46.418Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "203075778e276534c0debc4843a8de4df3b7cb488b11f148d8e612e4a879af8e",
       "parts": [
@@ -851,7 +931,7 @@
       "updatedAt": "2026-08-19T11:49:15.777Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "b7ddb71f80b1eb19c3b5a107db6a5689ee2a67773c7e474e0a663ceaf6da82b6",
       "parts": [
@@ -871,7 +951,7 @@
       "updatedAt": "2026-08-19T09:10:17.231Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "1596d5ce250d0216f143337ffd0db41cf60783a498eadef89b0cdbe4a4a7568e",
       "parts": [
