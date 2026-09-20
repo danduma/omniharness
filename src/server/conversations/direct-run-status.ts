@@ -195,7 +195,16 @@ export async function updateDirectRunStatusFromWorkerOutput(args: WorkerOutputSo
     const sourceWorker = runWorkers.find((worker) => worker.id === args.workerId);
     const sourceWorkerStatus = normalizeWorkerStatus(sourceWorker?.status);
     const sourceWorkerCancelled = sourceWorkerStatus === "cancelled" || sourceWorkerStatus === "canceled";
-    if (currentWorker && (sourceWorkerCancelled || currentWorker.id !== args.workerId)) {
+    // A cancelled worker's terminal snapshot is only stale when something else
+    // already owns the run's status: a newer worker that replaced it, or a stop
+    // the user already recorded on the run itself (that path writes `cancelled`
+    // directly, and this is what keeps a later sync from relabelling it `done`).
+    // A run still marked running whose newest worker was cancelled has nothing
+    // left to produce output, so let its status settle instead of leaving the
+    // conversation busy forever.
+    const runStatus = run.status.trim().toLowerCase();
+    const runAlreadyCancelled = runStatus === "cancelled" || runStatus === "canceled";
+    if (currentWorker && ((sourceWorkerCancelled && runAlreadyCancelled) || currentWorker.id !== args.workerId)) {
       const attemptedStatus = resolveDirectRunStatusFromWorkerOutput(args);
       const reason = sourceWorkerCancelled ? "worker_cancelled" : "newer_worker_owns_run";
       emitNamedEvent({

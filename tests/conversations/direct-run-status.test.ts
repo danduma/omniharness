@@ -280,4 +280,66 @@ describe("directWorkerOutputHasPendingHumanInput", () => {
       }),
     );
   });
+
+  async function seedSoleCancelledWorkerRun(runId: string, runStatus: string) {
+    const now = new Date("2026-09-19T09:00:00.000Z");
+    await db.insert(plans).values({
+      id: `plan-${runId}`,
+      path: `vibes/ad-hoc/${runId}.md`,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId: `plan-${runId}`,
+      mode: "direct",
+      title: "Sole cancelled worker",
+      status: runStatus,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(workers).values({
+      id: `${runId}-worker-1`,
+      runId,
+      type: "claude",
+      status: "cancelled",
+      cwd: process.cwd(),
+      workerNumber: 1,
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  it("settles a running conversation whose newest worker was cancelled", async () => {
+    await seedSoleCancelledWorkerRun("run-sole-cancelled", "running");
+
+    await updateDirectRunStatusFromWorkerOutput({
+      runId: "run-sole-cancelled",
+      workerId: "run-sole-cancelled-worker-1",
+      workerStatus: "cancelled",
+      responseText: "Partial answer before the worker stopped.",
+    });
+
+    const run = await db.select().from(runs).where(eq(runs.id, "run-sole-cancelled")).get();
+    expect(run?.status).toBe("done");
+  });
+
+  it("keeps a run the user already cancelled from being relabelled done", async () => {
+    await seedSoleCancelledWorkerRun("run-user-cancelled", "cancelled");
+
+    await updateDirectRunStatusFromWorkerOutput({
+      runId: "run-user-cancelled",
+      workerId: "run-user-cancelled-worker-1",
+      workerStatus: "cancelled",
+      responseText: "Partial answer before the user pressed stop.",
+    });
+
+    const run = await db.select().from(runs).where(eq(runs.id, "run-user-cancelled")).get();
+    expect(run?.status).toBe("cancelled");
+  });
 });
