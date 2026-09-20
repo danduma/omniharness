@@ -1049,7 +1049,7 @@ test("new conversations expose only direct control and existing direct runs lock
   expect(pageSource).toContain('const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct"');
   expect(pageSource).not.toContain("Direct worker:");
   expect(pageSource).toContain("{shouldLockDirectWorker ? (");
-  expect(pageSource).toContain('mode: selectedConversationMode');
+  expect(pageSource).toContain('mode: payload.launch.conversationMode');
 });
 
 test("starting a project-scoped conversation keeps the composer empty", () => {

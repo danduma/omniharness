@@ -13,6 +13,7 @@ const pageSource = [
   "src/interface/home/useHomeLifecycle.ts",
   "src/interface/home/useRunSelectionEffects.ts",
   "src/interface/home/useHomeMutations.ts",
+  "src/interface/home/composer-launch-selection.ts",
   "src/interface/home/useHomeViewModel.ts",
   "src/interface/home/useConversationActions.ts",
   "src/components/home/ConversationComposer.tsx",
@@ -100,15 +101,17 @@ test("mobile composer keeps vertical touch scrolling available when viewport hei
 });
 
 test("composer supports auto agent selection while pinning explicit agent choices", () => {
-  expect(pageSource).toContain('const isAutoWorkerSelection = selectedCliAgent === "auto"');
+  expect(pageSource).toContain('const explicitWorkerType = args.selectedCliAgent === "auto" ? null : args.selectedCliAgent;');
   expect(pageSource).toContain("const autoSelectedWorkerType = useMemo(() => {");
   expect(pageSource).toContain("return activeAllowedWorkerTypes[0] ?? null;");
-  expect(pageSource).toContain("preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent");
-  expect(pageSource).toContain("const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel)");
-  expect(pageSource).toContain("preferredWorkerModel: resolvedSelectedModel");
-  expect(pageSource.match(/preferredWorkerEffort: resolveComposerEffortValue\(selectedEffort\)/g)).toHaveLength(3);
+  expect(pageSource).toContain("const workerType = explicitWorkerType ?? args.autoSelectedWorkerType;");
+  expect(pageSource).toContain("preferredWorkerType: selection.workerType");
+  expect(pageSource).toContain("preferredWorkerEffort: selection.effort");
   expect(pageSource).not.toContain("preferredWorkerEffort: selectedEffort.toLowerCase()");
-  expect(pageSource).toContain("allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent]");
+  expect(pageSource).toContain("effort: resolveComposerEffortValue(args.selectedEffort)");
+  // Every request that carries worker preferences builds them from one frozen
+  // selection, so none of them can pick up a composer reset mid-flight.
+  expect(pageSource.match(/buildLaunchPreferenceBody\(/g)).toHaveLength(4);
   expect(pageSource).toContain("options={composerWorkerOptions}");
   expect(composerSelectSource).toContain("options.map");
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)');

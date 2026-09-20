@@ -453,6 +453,39 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
     });
   }
 
+  /**
+   * Hand the composer's current selection to the conversation it just created.
+   *
+   * `selectRun` restores the target run's draft, and a run created a moment ago
+   * has none, so the composer fell back to the generic new-conversation
+   * defaults and then hydrated from an optimistic run record that carries no
+   * model — which resolves to the first model in the worker's catalogue. A
+   * conversation launched on Fable 5.1 came back showing Opus 5, and the next
+   * message went out on Opus 5. Seeding the new run's draft keeps the launch
+   * selection attached to the conversation it launched.
+   */
+  adoptSelectionForCreatedRun(runId: string) {
+    this.update((current) => {
+      if (current.composerDraftsByRun[runId]) return current;
+
+      return {
+        ...current,
+        composerDraftsByRun: {
+          ...current.composerDraftsByRun,
+          [runId]: {
+            command: "",
+            commandCursor: 0,
+            mentionIndex: 0,
+            attachments: [],
+            selection: this.activeSelection(current),
+            dirtySelectionFields: [],
+            serverSelectionVersion: null,
+          },
+        },
+      };
+    });
+  }
+
   selectRun(nextRunId: string | null) {
     this.update((current) => {
       if (current.selectedRunId === nextRunId) return current;
@@ -600,6 +633,7 @@ export const homeUiSetters = {
     goalPlanManager.switchRun(value);
     homeUiStateManager.selectRun(value);
   },
+  adoptSelectionForCreatedRun: (runId: string) => homeUiStateManager.adoptSelectionForCreatedRun(runId),
   setLeftSidebarOpen: homeUiStateManager.createSetter("leftSidebarOpen"),
   setLeftSidebarWidth: homeUiStateManager.createSetter("leftSidebarWidth"),
   setRightSidebarOpen: homeUiStateManager.createSetter("rightSidebarOpen"),
