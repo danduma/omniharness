@@ -5,7 +5,40 @@ import { getAppDataPath } from '@/server/app-root';
 
 const dbPath = getAppDataPath('sqlite.db');
 const DB_SCHEMA_VERSION = 10;
+const CONNECTION_BUSY_TIMEOUT_MS = 15_000;
 export type DbClient = ReturnType<typeof createClient>;
+
+/**
+ * `busy_timeout` is connection-scoped, and libsql's local client hands its open
+ * connection to `transaction()` before dropping its own reference, so the next
+ * query runs on a replacement connection that never saw the pragma set during
+ * schema init. Left alone, every query after the first transaction abandons a
+ * contended write immediately instead of waiting out the other writer — which
+ * is the failure the `withSqliteBusyRetry` call sites keep catching.
+ *
+ * Re-apply the pragma as soon as the configured connection is taken away.
+ * Doing it here rather than after the commit also opens the replacement while
+ * the transaction is still running, so a query arriving in between finds a
+ * configured connection instead of opening a bare one.
+ */
+function preserveConnectionPragmas(client: DbClient): DbClient {
+  const applyPragmas = () => client.execute(`PRAGMA busy_timeout = ${CONNECTION_BUSY_TIMEOUT_MS}`);
+  const openTransaction = client.transaction.bind(client);
+  const reconnect = client.reconnect.bind(client);
+
+  client.transaction = (async (...args: Parameters<typeof openTransaction>) => {
+    const transaction = await openTransaction(...args);
+    await applyPragmas();
+    return transaction;
+  }) as typeof client.transaction;
+
+  client.reconnect = (async () => {
+    await reconnect();
+    await applyPragmas();
+  }) as typeof client.reconnect;
+
+  return client;
+}
 
 async function tableColumns(client: DbClient, table: string): Promise<Set<string>> {
   const result = await client.execute(`PRAGMA table_info(${table})`);
@@ -13,7 +46,7 @@ async function tableColumns(client: DbClient, table: string): Promise<Set<string
 }
 
 export async function initializeDatabaseSchema(client: DbClient) {
-await client.execute('PRAGMA busy_timeout = 15000');
+await client.execute(`PRAGMA busy_timeout = ${CONNECTION_BUSY_TIMEOUT_MS}`);
 const versionResult = await client.execute('PRAGMA user_version');
 const currentSchemaVersion = Number((versionResult.rows[0] as Record<string, unknown> | undefined)?.user_version ?? 0);
 
@@ -1281,7 +1314,7 @@ COMMIT;
 }
 
 function createDbState() {
-  const client = createClient({ url: `file:${dbPath}` });
+  const client = preserveConnectionPragmas(createClient({ url: `file:${dbPath}` }));
   const schemaInitStart = Date.now();
   const dbReady = initializeDatabaseSchema(client).then(() => {
     console.log(`[db] schema ready in ${Date.now() - schemaInitStart}ms`);
