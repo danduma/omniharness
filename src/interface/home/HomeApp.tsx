@@ -360,6 +360,12 @@ export function HomeApp({
     },
     [selectedRunId, stateManager],
   );
+  const reconcileServerCatalog = useCallback(
+    (snapshot: EventStreamState) => {
+      stateManager.reconcileServerCatalog(snapshot);
+    },
+    [stateManager],
+  );
   const getSnapshotChecksum = useCallback(
     () => stateManager.getSnapshot().snapshotChecksum ?? null,
     [stateManager],
@@ -789,6 +795,7 @@ export function HomeApp({
     setHasReceivedInitialEventStreamPayload,
     setState,
     applyServerEventStreamState,
+    reconcileServerCatalog,
     applyGoalEvent,
     setRuntimeErrors,
     routeReady,
@@ -844,8 +851,11 @@ export function HomeApp({
     selectedRun,
     activeComposerMode,
     selectedCliAgent,
+    selectedModel,
     autoSelectedWorkerType,
     activeAllowedWorkerTypes,
+    workerModelCatalog: workerCatalogQuery.data?.workerModels,
+    workerModelsRefreshing: Boolean(workerCatalogQuery.data?.workerModelsRefreshing),
     setHydratedRunSelectionId,
     availableWorkerTypes,
     configuredAllowedWorkerTypes,

@@ -1,5 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { StateManager } from "@/lib/state-manager";
+import { refetchFailedQueries } from "@/lib/failed-query-retry";
 import { assessApiCompatibility } from "@/shared/api-revision";
 import type { RunnerBootstrapIdentity } from "@/shared/bootstrap";
 import type {
@@ -24,7 +25,6 @@ export type RunnerConnectionStatus =
   | "identity-mismatch"
   | "incompatible"
   | "resync"
-  | "degraded"
   | "runner-stopping";
 
 export type RunnerConnectionSnapshot = {
@@ -95,6 +95,20 @@ export type RunnerConnectionPersistence = {
 };
 
 type ScheduleHandle = unknown;
+
+/**
+ * How long a dropped event stream may stay dropped before the UI stops
+ * calling the runner online and takes over the reconnect itself.
+ *
+ * `runtime.events_reconnecting` means the browser's own `EventSource` is
+ * already retrying, which it does after every routine blip — a backgrounded
+ * tab, a sleeping laptop, a proxy closing an idle connection. A connection is
+ * either up or it is not: a blip the browser heals within this window is not
+ * something the user needs to hear about, and reacting to it sooner meant
+ * competing with the browser's retry — our reconnect tore down streams it had
+ * already healed, which produced the next blip.
+ */
+const STREAM_RECONNECT_GRACE_MS = 20_000;
 
 export function calculateRunnerReconnectDelay(attempt: number, random = Math.random()) {
   const exponential = 1_000 * 2 ** Math.max(0, Math.floor(attempt));
@@ -212,6 +226,15 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
   private readonly terminalStreams = new Map<string, RuntimeSubscription>();
   private retryTimer: ScheduleHandle | null = null;
   private retryAttempt = 0;
+  private reconnectGraceTimer: ScheduleHandle | null = null;
+  /**
+   * Set by any stream drop, cleared when the stream reopens. Tracked apart from
+   * the visible status because the grace period deliberately keeps a brief drop
+   * out of the UI, while requests issued during that drop still failed and
+   * still need retrying once the stream is back.
+   */
+  private streamInterrupted = false;
+  private readonly streamReconnectGraceMs: number;
   private generation = 0;
   private started = false;
   private connecting: Promise<void> | null = null;
@@ -229,6 +252,7 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
     schedule?: (callback: () => void, delay: number) => ScheduleHandle;
     cancelSchedule?: (handle: ScheduleHandle) => void;
     random?: () => number;
+    streamReconnectGraceMs?: number;
     onIdentity?: (connection: RunnerConnection) => void;
   }) {
     super({
@@ -254,6 +278,7 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
       clearTimeout(handle as ReturnType<typeof setTimeout>);
     });
     this.random = options.random ?? Math.random;
+    this.streamReconnectGraceMs = options.streamReconnectGraceMs ?? STREAM_RECONNECT_GRACE_MS;
     this.onIdentity = options.onIdentity;
     this.cursor = options.persistence.getScopedState(options.profile.id).cursors.events || null;
   }
@@ -466,8 +491,19 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
         if (!this.isCurrent(generation)) return;
         this.retryAttempt = 0;
         this.clearRetry();
+        this.clearReconnectGraceTimer();
+        const wasInterrupted = this.streamInterrupted
+          || this.getSnapshot().status !== "online";
+        this.streamInterrupted = false;
         if (this.getSnapshot().status !== "runner-stopping") {
           this.patch({ status: "online", retryAt: null, lastError: null });
+        }
+        // Requests that failed while this runner was unreachable keep their
+        // error until something fetches them again, and nothing else does.
+        // Keyed on the interruption rather than the visible status, so a drop
+        // short enough to stay inside the grace period still clears them.
+        if (wasInterrupted) {
+          void refetchFailedQueries(this.queryClient);
         }
       },
       onEvent: (event) => {
@@ -479,8 +515,7 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
         if (this.isCurrent(generation)) {
           if (error.code === "runtime.events_reconnecting") {
             if (this.getSnapshot().status !== "runner-stopping") {
-              this.patch({ status: "degraded", lastError: error, retryAt: null });
-              this.scheduleReconnect();
+              this.noteStreamInterrupted(error, generation);
             }
             return;
           }
@@ -571,8 +606,10 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
       this.mainStream?.close();
       this.mainStream = null;
       await this.persistCursor("");
+      // Backing off is a reconnect like any other; the user sees "Connecting"
+      // until it lands, not a verdict on the connection's quality.
       this.patch({
-        status: "degraded",
+        status: "connecting",
         lastError: {
           code: "runtime.resync_storm",
           message: "Repeated stream resynchronization entered backoff.",
@@ -590,7 +627,9 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
     try {
       const result = await this.runtime.events.snapshot({ persisted: true });
       if (!this.isCurrent(generation)) return;
-      if (this.getSnapshot().status === "degraded") return;
+      // A resync storm closed the stream and scheduled a fresh connection
+      // while this snapshot was in flight; that connection owns the stream now.
+      if (this.retryTimer) return;
       if (result.lastEventId) {
         await this.persistCursor(result.lastEventId);
       }
@@ -608,8 +647,35 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
     }
   }
 
+  /**
+   * Record a stream drop the browser is already retrying. The runner stays
+   * "online" for the grace period; only if the stream has not come back by
+   * then does the connection show "connecting" and take over the reconnect
+   * itself. There is no intermediate state: a blip the browser heals is
+   * invisible, and one it cannot heal becomes an ordinary reconnect.
+   */
+  private noteStreamInterrupted(error: RuntimeApiError, generation: number) {
+    this.streamInterrupted = true;
+    if (this.reconnectGraceTimer) return;
+    this.reconnectGraceTimer = this.schedule(() => {
+      this.reconnectGraceTimer = null;
+      if (!this.isCurrent(generation) || !this.streamInterrupted) return;
+      if (this.getSnapshot().status === "runner-stopping") return;
+      this.patch({ status: "connecting", lastError: error, retryAt: null });
+      this.scheduleReconnect();
+    }, this.streamReconnectGraceMs);
+  }
+
+  private clearReconnectGraceTimer() {
+    if (!this.reconnectGraceTimer) return;
+    this.cancelSchedule(this.reconnectGraceTimer);
+    this.reconnectGraceTimer = null;
+  }
+
   private handleConnectionError(error: RuntimeApiError) {
     const status = statusForError(error);
+    this.clearReconnectGraceTimer();
+    this.streamInterrupted = true;
     this.patch({ status, lastError: error });
     this.mainStream?.close();
     this.mainStream = null;
@@ -641,6 +707,8 @@ export class RunnerConnection extends StateManager<RunnerConnectionSnapshot> {
     this.started = false;
     this.generation += 1;
     this.clearRetry();
+    this.clearReconnectGraceTimer();
+    this.streamInterrupted = false;
     this.mainStream?.close();
     this.mainStream = null;
     this.closeTerminalStreams();

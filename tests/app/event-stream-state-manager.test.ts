@@ -3,6 +3,7 @@ import { EventStreamSnapshotCacheManager } from "@/interface/home/EventStreamSna
 import { EventStreamStateManager } from "@/interface/home/EventStreamStateManager";
 import { applyStopSupervisorOptimisticUpdate } from "@/interface/home/mutations/optimistic-state";
 import { resolveSelectedRecoveryState } from "@/interface/home/useRunRecoveryState";
+import { buildConversationGroups } from "@/lib/conversations";
 import type { EventStreamState } from "@/interface/home/types";
 
 function state(runId: string, message: string, checksum: string): EventStreamState {
@@ -115,6 +116,30 @@ function multiRunState(args: {
     snapshotScope: args.catalogComplete === undefined
       ? undefined
       : { catalog: { complete: args.catalogComplete } },
+  };
+}
+
+// A complete catalog in one project, ordered by the sidebar's activity sort.
+function catalogWithActivity(
+  lastActivityAtByRunId: Record<string, string>,
+  checksum: string,
+): EventStreamState {
+  const runIds = Object.keys(lastActivityAtByRunId);
+  return {
+    ...multiRunState({
+      runs: runIds,
+      messageRunId: runIds[0]!,
+      message: "conversation",
+      checksum,
+      catalogComplete: true,
+    }),
+    runs: runIds.map((id) => ({
+      ...run(id),
+      projectPath: "/project",
+      createdAt: "2026-09-21T23:00:00.000Z",
+      lastActivityAt: lastActivityAtByRunId[id]!,
+    })),
+    snapshotRunId: null,
   };
 }
 
@@ -909,5 +934,127 @@ describe("EventStreamStateManager", () => {
     });
 
     expect(manager.getSnapshot().agents[0]?.pendingElicitations).toEqual([]);
+  });
+
+  it("does not rewind a run's activity stamp when a late snapshot body lands after a newer frame", () => {
+    const manager = new EventStreamStateManager(
+      catalogWithActivity({ "run-finished": "2026-09-21T23:30:53.000Z" }, "sha256:live"),
+      { deferCacheHydration: true, initialSnapshotSource: "server" },
+    );
+
+    // Built from SQLite before the run's last turn ended, delivered after it.
+    manager.updateFromServer(
+      catalogWithActivity({ "run-finished": "2026-09-21T23:27:03.000Z" }, "sha256:late-body"),
+    );
+
+    expect(manager.getSnapshot().runs[0]?.lastActivityAt).toBe("2026-09-21T23:30:53.000Z");
+  });
+
+  it("holds a finished conversation's sidebar position against a late snapshot body", () => {
+    const activity = {
+      "run-streaming": "2026-09-21T23:38:20.000Z",
+      "run-finished": "2026-09-21T23:30:53.000Z",
+      "run-older": "2026-09-21T23:30:26.000Z",
+    };
+    const manager = new EventStreamStateManager(
+      catalogWithActivity(activity, "sha256:live"),
+      { deferCacheHydration: true, initialSnapshotSource: "server" },
+    );
+    const sidebarOrder = () => buildConversationGroups({
+      explicitProjects: ["/project"],
+      plans: manager.getSnapshot().plans,
+      runs: manager.getSnapshot().runs as Parameters<typeof buildConversationGroups>[0]["runs"],
+    })[0]!.runs.map((item) => item.id);
+
+    expect(sidebarOrder()).toEqual(["run-streaming", "run-finished", "run-older"]);
+
+    manager.updateFromServer(catalogWithActivity({
+      ...activity,
+      // The late body predates the finished run's last turn, which used to drop
+      // it below a sibling that had not moved in SQLite for hours.
+      "run-finished": "2026-09-21T23:27:03.000Z",
+    }, "sha256:late-body"));
+
+    expect(sidebarOrder()).toEqual(["run-streaming", "run-finished", "run-older"]);
+  });
+
+  it("still adopts a newer activity stamp from the server", () => {
+    const manager = new EventStreamStateManager(
+      catalogWithActivity({ "run-finished": "2026-09-21T23:30:53.000Z" }, "sha256:live"),
+      { deferCacheHydration: true, initialSnapshotSource: "server" },
+    );
+
+    manager.updateFromServer(
+      catalogWithActivity({ "run-finished": "2026-09-21T23:41:00.000Z" }, "sha256:newer"),
+    );
+
+    expect(manager.getSnapshot().runs[0]?.lastActivityAt).toBe("2026-09-21T23:41:00.000Z");
+  });
+
+  it("reconciles a finished run from an overtaken catalog snapshot without touching the selected scope", () => {
+    const base: EventStreamState = {
+      ...state("run-selected", "hello", "sha256:live"),
+      snapshotScope: { catalog: { complete: true, completeRunIds: [] } },
+    };
+    const manager = new EventStreamStateManager({
+      ...base,
+      runs: [
+        { ...run("run-selected"), status: "running", updatedAt: "2026-09-22T11:40:00.000Z" },
+        // Finished during a stream blip; the stream will never re-send it.
+        { ...run("run-finished"), status: "running", updatedAt: "2026-09-22T11:20:00.000Z" },
+        { ...run("run-local"), status: "running", updatedAt: "2026-09-22T11:50:00.000Z" },
+      ],
+      sessions: [
+        { id: "run-finished", runId: "run-finished", sessionType: "omni", status: "running", capabilities: [], primaryActorId: null, title: "run-finished", projectPath: null, providerMetadata: null },
+      ] as unknown as EventStreamState["sessions"],
+    }, { deferCacheHydration: true, initialSnapshotSource: "server" });
+
+    const applied = manager.reconcileServerCatalog({
+      ...base,
+      messages: [],
+      snapshotRunId: null,
+      snapshotChecksum: "sha256:overtaken",
+      runs: [
+        // Older than the live frame that overtook this body: must not rewind.
+        { ...run("run-selected"), status: "done", updatedAt: "2026-09-22T11:39:00.000Z" },
+        { ...run("run-finished"), status: "done", updatedAt: "2026-09-22T11:32:22.000Z" },
+        // Locally newer (optimistic) row wins over the older server copy.
+        { ...run("run-local"), status: "done", updatedAt: "2026-09-22T11:45:00.000Z" },
+        { ...run("run-new"), status: "done", updatedAt: "2026-09-22T11:33:00.000Z" },
+      ],
+      sessions: [
+        { id: "run-finished", runId: "run-finished", sessionType: "omni", status: "done", capabilities: [], primaryActorId: null, title: "run-finished", projectPath: null, providerMetadata: null },
+      ] as unknown as EventStreamState["sessions"],
+    });
+
+    expect(applied).toBe(true);
+    const snapshot = manager.getSnapshot();
+    const statusOf = (id: string) => snapshot.runs.find((item) => item.id === id)?.status;
+    expect(statusOf("run-selected")).toBe("running");
+    expect(statusOf("run-finished")).toBe("done");
+    expect(statusOf("run-local")).toBe("running");
+    expect(statusOf("run-new")).toBe("done");
+    expect(snapshot.sessions?.find((session) => session.runId === "run-finished")?.status).toBe("done");
+    // The selected conversation's transcript and checksum are not the body's.
+    expect(snapshot.messages).toHaveLength(1);
+    expect(snapshot.snapshotChecksum).toBe("sha256:live");
+    expect(snapshot.snapshotRunId).toBe("run-selected");
+  });
+
+  it("ignores partial catalogs and unchanged rows when reconciling", () => {
+    const base = state("run-selected", "hello", "sha256:live");
+    const manager = new EventStreamStateManager(base, { deferCacheHydration: true, initialSnapshotSource: "server" });
+    const before = manager.getSnapshot();
+
+    expect(manager.reconcileServerCatalog({
+      ...base,
+      snapshotScope: { catalog: { complete: false, completeRunIds: ["run-selected"] } },
+      runs: [{ ...run("run-selected"), status: "running" }],
+    })).toBe(false);
+    expect(manager.reconcileServerCatalog({
+      ...base,
+      snapshotScope: { catalog: { complete: true, completeRunIds: [] } },
+    })).toBe(false);
+    expect(manager.getSnapshot()).toBe(before);
   });
 });

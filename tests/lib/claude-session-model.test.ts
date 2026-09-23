@@ -101,6 +101,35 @@ describe("claude session model pinning", () => {
   });
 
   describe("the requested version wins over context size", () => {
+    it("does not answer an Opus 5.5 request with Opus 5", () => {
+      expect(resolveClaudeSessionModel({
+        options: [
+          { value: "claude-opus-5", name: "Opus 5" },
+          { value: "claude-opus-4-8", name: "Opus 4.8" },
+        ],
+        requested: "claude-opus-5-5",
+        current: "claude-opus-5",
+      })).toEqual({
+        status: "unavailable",
+        reason: "version_unavailable",
+        requested: "claude-opus-5-5",
+        requestedFamily: "opus",
+        requestedVersion: "5.5",
+        available: ["claude-opus-5", "claude-opus-4-8"],
+      });
+    });
+
+    it("runs Opus 5.5 when the adapter offers it", () => {
+      expect(resolveClaudeSessionModel({
+        options: [
+          { value: "claude-opus-5", name: "Opus 5" },
+          { value: "claude-opus-5-5", name: "Opus 5.5" },
+        ],
+        requested: "claude-opus-5-5",
+        current: "claude-opus-5",
+      })).toEqual({ status: "pin", value: "claude-opus-5-5", reason: "requested" });
+    });
+
     it("recognizes an ACP family alias through its unambiguous version metadata", () => {
       expect(resolveClaudeSessionModel({
         options: [

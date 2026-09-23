@@ -1590,6 +1590,10 @@ function isClaudeDisplayLabel(normalizedLower: string, bareLabel: string) {
   return normalizedLower === bareLabel || normalizedLower === `claude ${bareLabel}`;
 }
 
+// Named-variant OpenAI models are spelled the same on both sides; only the
+// `openai/` prefix differs between the Codex and OpenCode catalogs.
+const OPENAI_NAMED_VARIANT_PATTERN = /^gpt-(?:5\.6-(?:sol|terra|luna)|6-(?:sol|luna))$/;
+
 export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel: string) {
   const normalized = selectedModel.trim();
   if (!normalized) {
@@ -1601,11 +1605,13 @@ export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel
     "gpt-5.6 sol": "gpt-5.6-sol",
     "gpt-5.6 terra": "gpt-5.6-terra",
     "gpt-5.6 luna": "gpt-5.6-luna",
+    "gpt-6 sol": "gpt-6-sol",
+    "gpt-6 luna": "gpt-6-luna",
   };
   const openAiModel = openAiDisplayAliases[normalizedLower]
     ?? normalizedLower.replace(/^openai\//, "");
   if (workerType === "opencode") {
-    if (/^gpt-5\.6-(sol|terra|luna)$/.test(openAiModel)) return `openai/${openAiModel}`;
+    if (OPENAI_NAMED_VARIANT_PATTERN.test(openAiModel)) return `openai/${openAiModel}`;
     if (selectedModel === "GPT-5.4" || normalizedLower === "gpt-5.4") return "openai/gpt-5.4";
     if (selectedModel === "GPT-5.4 Mini" || normalizedLower === "gpt-5.4-mini") return "openai/gpt-5.4-mini";
     if (selectedModel === "GPT-5.3 Codex" || normalizedLower === "gpt-5.3-codex") return "openai/gpt-5.3-codex";
@@ -1614,7 +1620,7 @@ export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel
   }
 
   if (workerType === "codex") {
-    if (/^gpt-5\.6-(sol|terra|luna)$/.test(openAiModel)) return openAiModel;
+    if (OPENAI_NAMED_VARIANT_PATTERN.test(openAiModel)) return openAiModel;
     if (selectedModel === "GPT-5.4" || normalizedLower === "openai/gpt-5.4") return "gpt-5.4";
     if (selectedModel === "GPT-5.4 Mini" || normalizedLower === "openai/gpt-5.4-mini") return "gpt-5.4-mini";
     if (selectedModel === "GPT-5.3 Codex" || normalizedLower === "openai/gpt-5.3-codex") return "gpt-5.3-codex";

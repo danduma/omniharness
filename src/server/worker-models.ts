@@ -38,6 +38,9 @@ type WorkerModelCatalogManagerOptions = {
 
 const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
   codex: [
+    { value: "gpt-6-sol", label: "GPT-6 Sol" },
+    { value: "gpt-6-luna", label: "GPT-6 Luna" },
+    { value: "gpt-6-astra", label: "GPT-6 Astra" },
     { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
@@ -45,24 +48,21 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "gpt-5.4", label: "GPT-5.4" },
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
-    { value: "gpt-6-astra", label: "GPT-6 Astra" },
   ],
   claude: [
-    { value: "claude-opus-5", label: "Opus 5" },
+    { value: "claude-opus-5-5", label: "Opus 5.5" },
     { value: "claude-fable-5-1", label: "Fable 5.1" },
     { value: "claude-fable-5", label: "Fable 5" },
-    { value: "claude-opus-4-8", label: "Opus 4.8" },
-    { value: "claude-opus-4-7", label: "Opus 4.7" },
-    { value: "claude-opus-4-6", label: "Opus 4.6" },
+    { value: "claude-opus-5", label: "Opus 5" },
     { value: "claude-sonnet-5", label: "Sonnet 5" },
-    { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
-    { value: "claude-sonnet-4", label: "Sonnet 4" },
   ],
   gemini: [
     { value: "gemini-3", label: "Gemini 3" },
     { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
   ],
   opencode: [
+    { value: "openai/gpt-6-sol", label: "GPT-6 Sol" },
+    { value: "openai/gpt-6-luna", label: "GPT-6 Luna" },
     { value: "openai/gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { value: "openai/gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { value: "openai/gpt-5.6-luna", label: "GPT-5.6 Luna" },
@@ -71,12 +71,20 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "openai/gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },
     { value: "anthropic/claude-sonnet-5", label: "Sonnet 5" },
-    { value: "anthropic/claude-sonnet-4", label: "Sonnet 4" },
   ],
 };
 
 const DEPRECATED_WORKER_MODELS: Partial<Record<SupportedWorkerType, Set<string>>> = {
   gemini: new Set(["gemini-3.5-flash"]),
+  // Claude models are not discovered from a CLI, so a catalog cache written
+  // before these were retired is the only way they can come back.
+  claude: new Set([
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4",
+  ]),
 };
 
 async function defaultRunCommand(command: string, args: string[], env: EnvLike = process.env) {

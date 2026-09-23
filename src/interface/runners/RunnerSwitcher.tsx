@@ -78,7 +78,6 @@ const recoveryActionKeys: Partial<Record<RunnerConnectionStatus, string>> = {
   incompatible: "runner.action.updateRequired",
   deferred: "runner.action.waiting",
   offline: "common.retry",
-  degraded: "common.retry",
 };
 
 export function RunnerConnectionStatusPanel({

@@ -92,13 +92,13 @@ describe("worker model catalog", () => {
     expect(catalog.codex.some((model) => model.value === "codex-auto-review")).toBe(false);
   });
 
-  it("uses GPT-5.6 Sol as the first Codex fallback when discovery is unavailable", async () => {
+  it("uses GPT-6 Sol as the first Codex fallback when discovery is unavailable", async () => {
     const catalog = await buildWorkerModelCatalog({ runCommand: async () => "" });
 
     expect(catalog.codex.slice(0, 3)).toEqual([
-      { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-      { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-      { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+      { value: "gpt-6-sol", label: "GPT-6 Sol" },
+      { value: "gpt-6-luna", label: "GPT-6 Luna" },
+      { value: "gpt-6-astra", label: "GPT-6 Astra" },
     ]);
     expect(catalog.codex.some((model) => model.value.startsWith("claude-") || model.value.startsWith("anthropic/"))).toBe(false);
   });
@@ -127,16 +127,40 @@ describe("worker model catalog", () => {
     expect(catalog.codex).toContainEqual({ value: "gpt-6-astra", label: "GPT-6 Astra" });
   });
 
-  it("offers Claude Opus 5 as the default Claude Code model", async () => {
+  it("lists Claude models newest first, with Opus 5.5 as the default", async () => {
     const catalog = await buildWorkerModelCatalog({
       runCommand: async () => "",
     });
 
-    expect(catalog.claude.slice(0, 4)).toEqual([
-      { value: "claude-opus-5", label: "Opus 5" },
+    expect(catalog.claude).toEqual([
+      { value: "claude-opus-5-5", label: "Opus 5.5" },
       { value: "claude-fable-5-1", label: "Fable 5.1" },
       { value: "claude-fable-5", label: "Fable 5" },
-      { value: "claude-opus-4-8", label: "Opus 4.8" },
+      { value: "claude-opus-5", label: "Opus 5" },
+      { value: "claude-sonnet-5", label: "Sonnet 5" },
+    ]);
+  });
+
+  it("does not resurrect retired Opus and Sonnet models from a stale catalog cache", async () => {
+    const manager = new WorkerModelCatalogManager({
+      loadCachedCatalog: async () => ({
+        claude: [
+          { value: "claude-opus-4-8", label: "Opus 4.8" },
+          { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+          { value: "claude-sonnet-4", label: "Sonnet 4" },
+        ],
+      }),
+      runCommand: async () => "",
+    });
+
+    const snapshot = await manager.getCatalogSnapshot();
+
+    expect(snapshot.catalog.claude.map((model) => model.value)).toEqual([
+      "claude-opus-5-5",
+      "claude-fable-5-1",
+      "claude-fable-5",
+      "claude-opus-5",
+      "claude-sonnet-5",
     ]);
   });
 

@@ -107,6 +107,39 @@ describe("LiveEventConnectionManager", () => {
     manager.stop();
   });
 
+  it("hands an overtaken complete snapshot to catalog reconciliation instead of dropping it", async () => {
+    MockEventSource.instances = [];
+    let resolveSnapshot!: (value: { data: EventStreamState; lastEventId: string }) => void;
+    const snapshot = new Promise<{ data: EventStreamState; lastEventId: string }>((resolve) => { resolveSnapshot = resolve; });
+    const applyUpdate = vi.fn();
+    const reconcileCatalog = vi.fn();
+    const manager = new LiveEventConnectionManager({
+      selectedRunId: "run-1",
+      initialLastEventId: "10",
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestSnapshot: vi.fn().mockReturnValue(snapshot),
+      applyUpdate,
+      reconcileCatalog,
+      reportError: vi.fn(),
+      snapshotValidationIntervalMs: null,
+    });
+
+    manager.start();
+    MockEventSource.instances[0]?.emit("update", createState("live-20"), "20");
+    const overtaken: EventStreamState = {
+      ...createState("stale-10"),
+      snapshotScope: { catalog: { complete: true, completeRunIds: [] } },
+    };
+    resolveSnapshot({ data: overtaken, lastEventId: "10" });
+    await snapshot;
+    await Promise.resolve();
+
+    expect(applyUpdate).toHaveBeenCalledTimes(1);
+    expect(reconcileCatalog).toHaveBeenCalledTimes(1);
+    expect(reconcileCatalog).toHaveBeenCalledWith(overtaken);
+    manager.stop();
+  });
+
   it("persists cursors behind an injected runner scope key", () => {
     const values = new Map<string, string>();
     const storage = {
@@ -208,6 +241,105 @@ describe("LiveEventConnectionManager", () => {
     expect(applyUpdate).toHaveBeenCalledWith(expect.objectContaining({
       runs: [expect.objectContaining({ id: "persisted-recovery" })],
     }));
+
+    manager.stop();
+    vi.useRealTimers();
+  });
+
+  it("announces a restored connection after a transient outage", async () => {
+    vi.useFakeTimers();
+    MockEventSource.instances = [];
+    const onConnectionRestored = vi.fn();
+    const requestJson = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(createState("persisted-recovery"));
+
+    const manager = new LiveEventConnectionManager({
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestJson,
+      applyUpdate: vi.fn(),
+      reportError: vi.fn(),
+      onConnectionRestored,
+      fallbackIntervalMs: 100,
+      fallbackCooldownMs: 0,
+      snapshotValidationIntervalMs: null,
+    });
+
+    manager.start();
+    await vi.runAllTicks();
+    await Promise.resolve();
+    expect(onConnectionRestored).not.toHaveBeenCalled();
+
+    MockEventSource.instances[0]?.onerror?.();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(onConnectionRestored).toHaveBeenCalledTimes(1);
+
+    manager.stop();
+    vi.useRealTimers();
+  });
+
+  it("reconciles against a complete snapshot when EventSource reopens itself", async () => {
+    vi.useFakeTimers();
+    MockEventSource.instances = [];
+    const applyUpdate = vi.fn();
+    const requestJson = vi.fn().mockResolvedValue(createState("catalog-truth"));
+
+    const manager = new LiveEventConnectionManager({
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestJson,
+      applyUpdate,
+      reportError: vi.fn(),
+      fallbackCooldownMs: 0,
+      snapshotValidationIntervalMs: null,
+    });
+
+    manager.start();
+    await flushAsyncWork();
+    const source = MockEventSource.instances[0]!;
+    source.onopen?.();
+    await flushAsyncWork();
+
+    // The browser drops the stream and restores it on its own. Settle the
+    // outage poll first, so what this asserts is the reopen reconciling —
+    // not the `onerror` poll that already happened.
+    source.onerror?.();
+    await flushAsyncWork();
+    const pollsBeforeReopen = requestJson.mock.calls.length;
+
+    source.onopen?.();
+    await flushAsyncWork();
+
+    expect(requestJson.mock.calls.length).toBe(pollsBeforeReopen + 1);
+    expect(applyUpdate).toHaveBeenCalled();
+    expect(source.closed).toBe(false);
+
+    manager.stop();
+    vi.useRealTimers();
+  });
+
+  it("stays quiet while the connection was never lost", async () => {
+    vi.useFakeTimers();
+    MockEventSource.instances = [];
+    const onConnectionRestored = vi.fn();
+    const manager = new LiveEventConnectionManager({
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestJson: vi.fn().mockResolvedValue(createState("persisted-initial")),
+      applyUpdate: vi.fn(),
+      reportError: vi.fn(),
+      onConnectionRestored,
+      snapshotValidationIntervalMs: null,
+    });
+
+    manager.start();
+    await vi.runAllTicks();
+    await Promise.resolve();
+    MockEventSource.instances[0]?.onopen?.();
+    MockEventSource.instances[0]?.emit("update", createState("live-1"), "1");
+    await vi.runAllTicks();
+
+    expect(onConnectionRestored).not.toHaveBeenCalled();
 
     manager.stop();
     vi.useRealTimers();

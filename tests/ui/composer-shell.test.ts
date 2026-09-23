@@ -143,8 +143,11 @@ test("composer never sends an account that belongs to a different worker type", 
 test("direct mode requires an explicit cli agent and tightens dropdown alignment", () => {
   expect(pageSource).toContain('const shouldOfferAutoWorkerOption = activeComposerMode !== "direct"');
   expect(pageSource).toContain('return shouldOfferAutoWorkerOption');
-  expect(pageSource).toContain('if (activeComposerMode === "direct") {');
-  expect(pageSource).toContain('const nextDirectWorker = selectedCliAgent === "auto" ? (autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex") : selectedCliAgent;');
+  expect(pageSource).toContain('if (args.composerMode === "direct") {');
+  expect(pageSource).toContain('const current = args.selectedCliAgent === "auto" ? fallbackWorker : args.selectedCliAgent;');
+  // The worker the composer is coerced onto owns the model picker, or a new
+  // session comes up as "Codex · claude-opus-5 (unavailable)".
+  expect(pageSource).toContain("homeUiStateManager.setComposerWorkerSelection(reconciled.worker, reconciled.model, { userEdited: false })");
   expect(pageSource).toContain('<ComposerSelect');
   expect(pageSource).toContain('<ComposerModelPicker');
   expect(composerSelectSource).toContain('"h-7 min-w-0 appearance-none rounded-md border-0 bg-transparent py-0 pl-1.5 pr-5 text-xs shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/45 sm:h-8 sm:pl-2 sm:text-sm"');
