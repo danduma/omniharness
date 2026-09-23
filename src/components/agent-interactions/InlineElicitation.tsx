@@ -46,7 +46,12 @@ function otherDraftKey(prefix: string, fieldName: string) {
 }
 
 const QUESTION_FIELD_PATTERN = /^question_\d+$/;
+const QUESTION_CUSTOM_FIELD_PATTERN = /^(question_\d+)_custom$/;
 const CUSTOM_ANSWER_FIELD = "customAnswer";
+
+function companionQuestionName(fieldName: string) {
+  return fieldName.match(QUESTION_CUSTOM_FIELD_PATTERN)?.[1] ?? null;
+}
 
 /** Only a question that offers a choice needs a free-text escape hatch. */
 function acceptsOtherText(field: ElicitationField) {
@@ -91,7 +96,11 @@ export function InlineElicitation({
     ? fields.filter((field) => field.name !== CUSTOM_ANSWER_FIELD)
     : fields;
   const visibleFields = usesQuestionTabs
-    ? answerFields.filter((field) => !QUESTION_FIELD_PATTERN.test(field.name) || field.name === activeQuestion?.name)
+    ? answerFields.filter((field) => {
+        const companionQuestion = companionQuestionName(field.name);
+        if (companionQuestion) return companionQuestion === activeQuestion?.name;
+        return !QUESTION_FIELD_PATTERN.test(field.name) || field.name === activeQuestion?.name;
+      })
     : answerFields;
   const values = Object.fromEntries(answerFields.map((field) => {
     const other = perQuestionOther && acceptsOtherText(field)
