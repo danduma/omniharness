@@ -1,8 +1,68 @@
 {
   "version": 2,
   "projectRoot": "/Users/masterman/NLP/omniharness",
-  "generatedAt": "2026-09-19T22:00:18.136Z",
+  "generatedAt": "2026-09-22T10:00:21.984Z",
   "conversations": [
+    {
+      "provider": "claude",
+      "id": "0159d6a1-a6a8-4e06-9655-c892375d9c61",
+      "title": "Stable project order on tab re-entry",
+      "startedAt": "2026-09-21T23:36:05.231Z",
+      "updatedAt": "2026-09-22T00:07:20.801Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "266eebefa074daf81f7d8f7c609f7bb6c2db359ecbb4b912ebf39257c1bdfadd",
+      "parts": [
+        "conversations/2026/09/2026-09-21-claude-stable-project-order-on-tab-re-entry-0159d6a1-a6a8-4e06-9655-c892375d9c61-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 679,
+      "malformedLines": 0,
+      "redactions": 6,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "0599f0bc-e143-4546-b930-83f54cc9d558",
+      "title": "LiveEventConnectionManager flapping and snapshot poll",
+      "startedAt": "2026-09-21T23:36:55.259Z",
+      "updatedAt": "2026-09-22T00:02:28.160Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "ccdb512006d74279fc2074e3bbd2fa39b93e2ec7ba512585c3ef5e939e035f11",
+      "parts": [
+        "conversations/2026/09/2026-09-21-claude-liveeventconnectionmanager-flapping-and-snapshot-poll-0599f0bc-e143-4546-b930-83f54cc9d558-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 453,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "fe11c814-af84-416e-9322-20c8b76d3cb8",
+      "title": "Query retry on connection recovery",
+      "startedAt": "2026-09-20T17:52:23.130Z",
+      "updatedAt": "2026-09-21T23:24:05.705Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "0dfc867fcd61d4b76a2a046178a3b5e54ec824714f7625d2346c3abff361aeb8",
+      "parts": [
+        "conversations/2026/09/2026-09-20-claude-query-retry-on-connection-recovery-fe11c814-af84-416e-9322-20c8b76d3cb8-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 411,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
     {
       "provider": "claude",
       "id": "99d9a76e-7376-400e-83b3-a9ec17a00583",
@@ -831,7 +891,7 @@
       "updatedAt": "2026-08-21T22:52:17.783Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "60681349e5a7edb44dc5a2aa098161d224e1305a371732b550cda504cb5ea5b9",
       "parts": [
@@ -851,7 +911,7 @@
       "updatedAt": "2026-08-21T16:08:14.040Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "6f588589fb534f2e03d7111b84654a8b10b769e1c98feeab93b67b4b5914445b",
       "parts": [
