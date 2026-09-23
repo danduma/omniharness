@@ -739,7 +739,8 @@ export type ConversationEvent =
         | "provider_generated"
         | "harness_llm"
         | "harness_fallback"
-        | "leak_repair";
+        | "leak_repair"
+        | "public_api";
       title: string;
       revision: number;
       workerId?: string;
