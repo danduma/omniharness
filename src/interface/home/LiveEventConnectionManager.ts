@@ -52,6 +52,20 @@ interface LiveEventConnectionManagerOptions {
   applyGoalEvent?: (snapshot: GoalSnapshot, eventKey: string | null) => boolean;
   reportError: (error: AppErrorDescriptor) => void;
   onStreamResync?: () => void;
+  /**
+   * Fired when the stream recovers after a failure. `navigator.onLine` does not
+   * notice a connection that is up but cannot reach the runtime, so the stream's
+   * own health is the only trustworthy "we are back" signal this app has.
+   */
+  onConnectionRestored?: () => void;
+  /**
+   * Receives a complete snapshot that a live frame overtook while it was in
+   * flight. The body is stale for the selected conversation, but its catalog
+   * rows are still the only word the client will get about runs that changed
+   * while the stream was down. Without this, the reconciliation poll after a
+   * reconnect is discarded whenever anything is streaming, which is always.
+   */
+  reconcileCatalog?: (state: EventStreamState) => void;
   fallbackIntervalMs?: number;
   fallbackCooldownMs?: number;
   snapshotValidationIntervalMs?: number | null;
@@ -185,6 +199,8 @@ export class LiveEventConnectionManager {
   private readonly applyGoalEvent?: (snapshot: GoalSnapshot, eventKey: string | null) => boolean;
   private readonly reportError: (error: AppErrorDescriptor) => void;
   private readonly onStreamResync?: () => void;
+  private readonly onConnectionRestored?: () => void;
+  private readonly reconcileCatalog?: (state: EventStreamState) => void;
   private readonly fallbackIntervalMs: number;
   private readonly fallbackCooldownMs: number;
   private readonly snapshotValidationIntervalMs: number | null;
@@ -195,6 +211,7 @@ export class LiveEventConnectionManager {
   private pollingSnapshot = false;
   private snapshotPollPromise: Promise<boolean> | null = null;
   private reconnectingAfterResync = false;
+  private connectionDegraded = false;
   private lastSnapshotPollAt = 0;
   private readonly cursor: LiveEventCursorManager;
   private connectionGeneration = 0;
@@ -216,6 +233,8 @@ export class LiveEventConnectionManager {
     this.applyGoalEvent = options.applyGoalEvent;
     this.reportError = options.reportError;
     this.onStreamResync = options.onStreamResync;
+    this.onConnectionRestored = options.onConnectionRestored;
+    this.reconcileCatalog = options.reconcileCatalog;
     this.fallbackIntervalMs = options.fallbackIntervalMs ?? SNAPSHOT_FALLBACK_INTERVAL_MS;
     this.fallbackCooldownMs = options.fallbackCooldownMs ?? SNAPSHOT_FALLBACK_COOLDOWN_MS;
     this.snapshotValidationIntervalMs = options.snapshotValidationIntervalMs === undefined
@@ -236,13 +255,33 @@ export class LiveEventConnectionManager {
   }
 
   private openEventSource() {
+    // `EventSource` reconnects itself after a drop and fires `onopen` again on
+    // the same object, so this distinguishes the first open from a recovery.
+    let opened = false;
     this.eventSource = this.events.open({
       snapshot: false,
       runId: this.selectedRunId,
       lastEventId: this.cursor.getCurrent(),
     }, {
       onOpen: () => {
+        const reopened = opened;
+        opened = true;
         this.stopFallbackPolling();
+        this.markConnectionHealthy();
+        if (reopened) {
+          // A resumed stream replays named events from our cursor and then
+          // carries only the rows that change from here on: the server diffs
+          // the catalog against what *this* connection has delivered, and a
+          // fresh connection starts that baseline from the rows it is about to
+          // skip. So a run that reached a terminal state while the stream was
+          // down changed exactly once, against no baseline, and is never sent
+          // again — the sidebar keeps the pre-drop "running" row and spins its
+          // working indicator for the life of the page. The poll issued from
+          // `onError` was made while the runtime was still unreachable, so it
+          // cannot stand in for this one. Reconcile against a complete
+          // snapshot; an unchanged catalog costs a checksum round-trip.
+          void this.pollSnapshot({ force: true });
+        }
       },
       onEvent: (event) => {
         const streamEvent = event as {
@@ -268,6 +307,7 @@ export class LiveEventConnectionManager {
         }
       },
       onError: () => {
+        this.markConnectionDegraded();
         this.startFallbackPolling();
         void this.pollSnapshot({ force: true });
       },
@@ -283,6 +323,25 @@ export class LiveEventConnectionManager {
     this.eventSource = null;
   }
 
+  private markConnectionDegraded() {
+    this.connectionDegraded = true;
+  }
+
+  /**
+   * Requests issued during an outage fail and stay failed: a React Query error
+   * is only cleared by a later successful fetch, and nothing else in the app
+   * asks for one. Announcing the recovery here is what lets those callers retry
+   * instead of leaving a dead "Failed to fetch" on screen.
+   */
+  private markConnectionHealthy() {
+    if (!this.connectionDegraded) {
+      return;
+    }
+
+    this.connectionDegraded = false;
+    this.onConnectionRestored?.();
+  }
+
   private handleUpdateEvent(event: { payload?: unknown; lastEventId?: string | null }) {
     try {
       if (event.lastEventId && !this.cursor.advance(event.lastEventId)) {
@@ -293,6 +352,7 @@ export class LiveEventConnectionManager {
         throw new TypeError("Invalid live update.");
       }
       this.stopFallbackPolling();
+      this.markConnectionHealthy();
       this.applyUpdate(data);
       this.workerEntries.onKnownSeqs(data.workerEntrySeqs);
       this.planManager.onKnownSeqs(data.workerEntrySeqs);
@@ -480,19 +540,31 @@ export class LiveEventConnectionManager {
       if (!this.active || gen !== this.connectionGeneration) {
         return false;
       }
+      // The server answered, so the runtime is reachable again even if the
+      // freshness guards below discard this particular body.
+      this.markConnectionHealthy();
       // A live frame that arrived while this HTTP snapshot was being built is
       // newer authority for the active connection. Even an anchor allocated
       // after snapshot construction cannot prove the body includes that frame,
-      // so reject the overtaken body (and its cursor hints) wholesale.
-      if (this.cursor.getCurrent() !== cursorAtRequestStart) {
+      // so the overtaken body (and its cursor hints) is not applied as a
+      // snapshot. Its catalog rows still get reconciled row by row: that is
+      // the only correction for runs that changed while the stream was down.
+      const overtakenByLiveFrame = () => {
+        if (this.cursor.getCurrent() !== cursorAtRequestStart) return true;
+        const snapshotAnchor = normalizeLastEventId(result.lastEventId);
+        const currentCursor = this.cursor.getCurrent();
+        if (!snapshotAnchor || !currentCursor) return false;
+        const ordering = compareEventIds(snapshotAnchor, currentCursor);
+        return ordering !== null && ordering < 0;
+      };
+      if (overtakenByLiveFrame()) {
+        if (!isNotModifiedSnapshot(result.data) && result.data && typeof result.data === "object") {
+          this.reconcileCatalog?.(result.data);
+        }
         return false;
       }
       const snapshotAnchor = normalizeLastEventId(result.lastEventId);
       const currentCursor = this.cursor.getCurrent();
-      if (snapshotAnchor && currentCursor) {
-        const ordering = compareEventIds(snapshotAnchor, currentCursor);
-        if (ordering !== null && ordering < 0) return false;
-      }
       if (snapshotAnchor && snapshotAnchor !== currentCursor) this.cursor.advance(snapshotAnchor);
       const data = result.data;
       if (isNotModifiedSnapshot(data)) {
@@ -508,6 +580,8 @@ export class LiveEventConnectionManager {
       return true;
     } catch (error) {
       if (this.active) {
+        this.markConnectionDegraded();
+
         if (isTransientConnectivityError(error)) {
           return false;
         }

@@ -157,6 +157,9 @@ export const DEFAULT_ALLOWED_WORKER_TYPES = JSON.stringify(WORKER_OPTIONS.map((o
 DEFAULT_SERVER_SETTINGS.WORKER_ALLOWED_TYPES = DEFAULT_ALLOWED_WORKER_TYPES;
 export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
   codex: [
+    { value: "gpt-6-sol", label: "GPT-6 Sol" },
+    { value: "gpt-6-luna", label: "GPT-6 Luna" },
+    { value: "gpt-6-astra", label: "GPT-6 Astra" },
     { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
@@ -164,24 +167,21 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
     { value: "gpt-5.4", label: "GPT-5.4" },
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
-    { value: "gpt-6-astra", label: "GPT-6 Astra" },
   ],
   claude: [
-    { value: "claude-opus-5", label: "Opus 5" },
+    { value: "claude-opus-5-5", label: "Opus 5.5" },
     { value: "claude-fable-5-1", label: "Fable 5.1" },
     { value: "claude-fable-5", label: "Fable 5" },
-    { value: "claude-opus-4-8", label: "Opus 4.8" },
-    { value: "claude-opus-4-7", label: "Opus 4.7" },
-    { value: "claude-opus-4-6", label: "Opus 4.6" },
+    { value: "claude-opus-5", label: "Opus 5" },
     { value: "claude-sonnet-5", label: "Sonnet 5" },
-    { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
-    { value: "claude-sonnet-4", label: "Sonnet 4" },
   ],
   gemini: [
     { value: "gemini-3", label: "Gemini 3" },
     { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
   ],
   opencode: [
+    { value: "openai/gpt-6-sol", label: "GPT-6 Sol" },
+    { value: "openai/gpt-6-luna", label: "GPT-6 Luna" },
     { value: "openai/gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { value: "openai/gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { value: "openai/gpt-5.6-luna", label: "GPT-5.6 Luna" },
@@ -190,7 +190,6 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
     { value: "openai/gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },
     { value: "anthropic/claude-sonnet-5", label: "Sonnet 5" },
-    { value: "anthropic/claude-sonnet-4", label: "Sonnet 4" },
   ],
 };
 export const EFFORT_OPTIONS = ["Low", "Medium", "High", "Extra High", "Max"];
@@ -223,17 +222,16 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
     { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
   ],
   anthropic: [
-    { value: "claude-opus-5", label: "Opus 5" },
+    { value: "claude-opus-5-5", label: "Opus 5.5" },
     { value: "claude-fable-5-1", label: "Fable 5.1" },
     { value: "claude-fable-5", label: "Fable 5" },
-    { value: "claude-opus-4-8", label: "Opus 4.8" },
-    { value: "claude-opus-4-7", label: "Opus 4.7" },
-    { value: "claude-opus-4-6", label: "Opus 4.6" },
+    { value: "claude-opus-5", label: "Opus 5" },
     { value: "claude-sonnet-5", label: "Sonnet 5" },
-    { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
     { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
   ],
   openai: [
+    { value: "gpt-6-sol", label: "GPT-6 Sol" },
+    { value: "gpt-6-luna", label: "GPT-6 Luna" },
     { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
@@ -243,22 +241,24 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
     { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
   ],
   codex: [
+    { value: "gpt-6-sol", label: "GPT-6 Sol" },
+    { value: "gpt-6-luna", label: "GPT-6 Luna" },
+    { value: "gpt-6-astra", label: "GPT-6 Astra" },
     { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
     { value: "gpt-5.5", label: "GPT-5.5" },
     { value: "gpt-5.4", label: "GPT-5.4" },
-    { value: "gpt-6-astra", label: "GPT-6 Astra" },
     { value: "o3-mini", label: "o3-mini" },
   ],
   openrouter: [
-    { value: "anthropic/claude-opus-5", label: "Opus 5" },
+    { value: "anthropic/claude-opus-5-5", label: "Opus 5.5" },
     { value: "anthropic/claude-fable-5-1", label: "Fable 5.1" },
     { value: "anthropic/claude-fable-5", label: "Fable 5" },
-    { value: "anthropic/claude-opus-4-8", label: "Opus 4.8" },
-    { value: "anthropic/claude-opus-4-7", label: "Opus 4.7" },
+    { value: "anthropic/claude-opus-5", label: "Opus 5" },
     { value: "anthropic/claude-sonnet-5", label: "Sonnet 5" },
-    { value: "anthropic/claude-sonnet-4-6", label: "Sonnet 4.6" },
+    { value: "openai/gpt-6-sol", label: "GPT-6 Sol" },
+    { value: "openai/gpt-6-luna", label: "GPT-6 Luna" },
     { value: "openai/gpt-5.5", label: "GPT-5.5" },
     { value: "google/gemini-3.5-flash", label: "Gemini 3.5 Flash" },
   ],
@@ -267,10 +267,10 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
 
 export const LLM_DEFAULT_MODEL: Record<LlmProviderId, string> = {
   gemini: "gemini-3.5-flash",
-  anthropic: "claude-opus-4-8",
+  anthropic: "claude-opus-5-5",
   openai: "gpt-5.6-sol",
   codex: "gpt-5.6-sol",
-  openrouter: "anthropic/claude-opus-4-8",
+  openrouter: "anthropic/claude-opus-5-5",
   "openai-compatible": "",
 };
 

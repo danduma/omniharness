@@ -171,6 +171,20 @@ describe("HomeUiStateManager", () => {
     );
     expect(notifications).toBe(1);
   });
+
+  it("clears the dirty markers a reconciled worker change invalidated", () => {
+    const manager = new HomeUiStateManager();
+    manager.setComposerWorkerSelection("claude", "claude-opus-5");
+
+    manager.setComposerWorkerSelection("codex", "gpt-5.6-sol", { userEdited: false });
+
+    expect(manager.getSnapshot()).toMatchObject({
+      selectedCliAgent: "codex",
+      selectedModel: "gpt-5.6-sol",
+    });
+    expect(manager.getSnapshot().composerDraftsByRun.__new__?.dirtySelectionFields ?? []).toEqual([]);
+  });
+
   it("keeps the launch selection on the conversation it just created", () => {
     const manager = new HomeUiStateManager();
     manager.setComposerWorkerSelection("claude", "claude-fable-5-1");

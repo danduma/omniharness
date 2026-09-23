@@ -63,7 +63,6 @@ export type SurfacedErrorCode =
   | "runner.restarting"
   | "runner.start_failed"
   | "stream.subscriber_overflow"
-  | "stream.oversized_frame"
   | "acp.method.failed"
   | "acp.compatibility.unsupported"
   | "account.invalid_explicit"
@@ -907,8 +906,7 @@ export type StreamControlEvent = {
 export type StreamResyncReason =
   | "epoch_mismatch"
   | "cursor_evicted"
-  | "subscriber_overflow"
-  | "frame_too_large";
+  | "subscriber_overflow";
 
 export type StreamHeartbeatEvent = {
   kind: "stream.heartbeat";
@@ -924,18 +922,6 @@ export type StreamDiagnosticEvent = {
   rejectedBytes: number;
   runId?: string;
   terminalId?: string;
-} | {
-  /**
-   * One frame exceeded the whole queue budget, so it was replaced with a
-   * resync instruction. Distinct from `stream.subscriber_overflow`: the
-   * subscriber is keeping up and stays connected.
-   */
-  kind: "stream.oversized_frame";
-  stream: "events" | "terminal";
-  surface: string;
-  rejectedBytes: number;
-  maxQueuedBytes: number;
-  runId?: string;
 };
 
 export type ArtifactStreamKindLabel =

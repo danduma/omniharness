@@ -63,7 +63,6 @@ export function runnerStatusMessageKey(status: RunnerConnectionStatus) {
     "identity-mismatch": "runner.status.identityMismatch",
     incompatible: "runner.status.incompatible",
     resync: "runner.status.resync",
-    degraded: "runner.status.degraded",
     "runner-stopping": "runner.status.stopping",
   } satisfies Record<RunnerConnectionStatus, string>)[status];
 }

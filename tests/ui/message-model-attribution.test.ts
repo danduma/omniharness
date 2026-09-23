@@ -110,6 +110,9 @@ describe("formatMessageModelAttribution", () => {
     expect(formatMessageModelAttribution("claude-opus-5", "high")).toBe("Opus 5 (High)");
     expect(formatMessageModelAttribution("claude-opus-5[1m]", "xhigh")).toBe("Opus 5 (Extra High)");
     expect(formatMessageModelAttribution("gpt-5.6-sol", "medium")).toBe("GPT-5.6 Sol (Medium)");
+    expect(formatMessageModelAttribution("claude-opus-5-5", "high")).toBe("Opus 5.5 (High)");
+    expect(formatMessageModelAttribution("gpt-6-sol", "medium")).toBe("GPT-6 Sol (Medium)");
+    expect(formatMessageModelAttribution("gpt-6-luna", "medium")).toBe("GPT-6 Luna (Medium)");
   });
 
   test("drops the effort when the session reports one we cannot name", () => {

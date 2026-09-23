@@ -168,7 +168,7 @@ describe("RunnerRegistry", () => {
     const registry = new RunnerRegistry({
       profileStore: profileStore([
         profile("online"),
-        profile("degraded"),
+        profile("connecting"),
         profile("offline"),
         profile("auth"),
       ]),
@@ -179,14 +179,15 @@ describe("RunnerRegistry", () => {
       },
     });
     await registry.start();
-    connections.get("degraded")?.patch({ status: "degraded" });
+    connections.get("connecting")?.patch({ status: "connecting" });
     connections.get("offline")?.patch({ status: "offline" });
     connections.get("auth")?.patch({ status: "needs-reauth" });
 
     registry.retryRecoverableConnections();
 
-    expect(connections.get("degraded")?.retry).toHaveBeenCalledOnce();
     expect(connections.get("offline")?.retry).toHaveBeenCalledOnce();
+    // A connection already reconnecting on its own must not be restarted.
+    expect(connections.get("connecting")?.retry).not.toHaveBeenCalled();
     expect(connections.get("online")?.retry).not.toHaveBeenCalled();
     expect(connections.get("auth")?.retry).not.toHaveBeenCalled();
   });

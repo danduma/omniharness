@@ -121,7 +121,7 @@ export class RunnerRegistry extends StateManager<RunnerRegistrySnapshot> {
   retryRecoverableConnections() {
     for (const connection of this.connections.values()) {
       const status = connection.getSnapshot().status;
-      if (status === "degraded" || status === "offline") {
+      if (status === "offline") {
         void connection.retry();
       }
     }

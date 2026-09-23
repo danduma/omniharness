@@ -3,10 +3,10 @@ import type React from "react";
 import { conversationMainManager } from "@/components/component-state-managers";
 import { getRunLatestUnreadTimestamp } from "@/lib/conversation-state";
 import type { ComposerMode } from "./types";
-import type { AgentSnapshot, ComposerWorkerOption, MessageRecord, RunRecord, WorkerType } from "./types";
+import type { AgentSnapshot, ComposerWorkerOption, MessageRecord, RunRecord, WorkerModelCatalog, WorkerType } from "./types";
 import { homeUiStateManager } from "./HomeUiStateManager";
 import { DEFAULT_COMPOSER_EFFORT } from "./constants";
-import { getWorkerModelOptions, parseWorkerType, resolveComposerEffortLabel, resolveComposerModelValue } from "./utils";
+import { getWorkerModelOptions, parseWorkerType, resolveComposerEffortLabel, resolveComposerModelAfterWorkerChange, resolveComposerModelValue } from "./utils";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
 
 const CONVERSATION_BOTTOM_THRESHOLD_PX = 8;
@@ -143,8 +143,11 @@ interface UseRunSelectionEffectsProps {
   selectedRun: RunRecord | null;
   activeComposerMode: ComposerMode;
   selectedCliAgent: ComposerWorkerOption;
+  selectedModel: string;
   autoSelectedWorkerType: WorkerType | null;
   activeAllowedWorkerTypes: WorkerType[];
+  workerModelCatalog: Partial<WorkerModelCatalog> | undefined;
+  workerModelsRefreshing: boolean;
   setHydratedRunSelectionId: React.Dispatch<React.SetStateAction<string | null>>;
   availableWorkerTypes: WorkerType[];
   configuredAllowedWorkerTypes: WorkerType[];
@@ -174,6 +177,65 @@ export function resolveRunComposerSelection(args: {
   };
 }
 
+/**
+ * Reconcile the new-conversation composer's worker/model pair.
+ *
+ * The worker half has to move on its own: direct mode cannot launch on "auto",
+ * and a worker the runner does not offer is not a launchable choice. The model
+ * half used to be left behind, which is how a brand new session came up reading
+ * "Codex · claude-opus-5 (unavailable)" after the Claude CLI went missing from
+ * the runner. It was worse than a wrong label — coercing "auto" to an explicit
+ * worker is exactly what makes `resolveComposerLaunchSelection` assert the
+ * model instead of dropping it, so the send went out asking Codex for an
+ * Anthropic model.
+ *
+ * A worker change transfers ownership of the model picker, same rule as the
+ * user's own worker change. When the worker is already right, the model is only
+ * overridden once that worker's catalogue has finished discovery: mid-refresh
+ * the fallback list is not evidence that a saved choice is gone, and the
+ * composer says "(unavailable)" rather than silently swapping.
+ *
+ * Returns `null` when the composer is already consistent.
+ */
+export function resolveNewConversationWorkerSelection(args: {
+  composerMode: ComposerMode;
+  selectedCliAgent: ComposerWorkerOption;
+  selectedModel: string;
+  autoSelectedWorkerType: WorkerType | null;
+  activeAllowedWorkerTypes: WorkerType[];
+  workerModelCatalog: Partial<WorkerModelCatalog> | undefined;
+  workerModelsRefreshing: boolean;
+}): { worker: ComposerWorkerOption; model: string } | null {
+  const fallbackWorker = args.autoSelectedWorkerType ?? args.activeAllowedWorkerTypes[0] ?? "codex";
+
+  let worker: ComposerWorkerOption;
+  if (args.composerMode === "direct") {
+    const current = args.selectedCliAgent === "auto" ? fallbackWorker : args.selectedCliAgent;
+    worker = args.activeAllowedWorkerTypes.includes(current) ? current : fallbackWorker;
+  } else if (args.selectedCliAgent !== "auto" && !args.activeAllowedWorkerTypes.includes(args.selectedCliAgent)) {
+    worker = "auto";
+  } else {
+    worker = args.selectedCliAgent;
+  }
+
+  const workerType = worker === "auto" ? fallbackWorker : worker;
+  const workerChanged = worker !== args.selectedCliAgent;
+  const catalogComplete = Array.isArray(args.workerModelCatalog?.[workerType]) && !args.workerModelsRefreshing;
+  if (!workerChanged && !catalogComplete) {
+    return null;
+  }
+
+  const model = resolveComposerModelAfterWorkerChange({
+    catalog: args.workerModelCatalog,
+    workerType,
+    selectedModel: args.selectedModel,
+  });
+  if (!workerChanged && model === args.selectedModel) {
+    return null;
+  }
+  return { worker, model };
+}
+
 function runSelectionVersion(run: RunRecord) {
   return JSON.stringify([
     run.preferredWorkerRevision ?? 0,
@@ -192,8 +254,11 @@ export function useRunSelectionEffects({
   selectedRun,
   activeComposerMode,
   selectedCliAgent,
+  selectedModel,
   autoSelectedWorkerType,
   activeAllowedWorkerTypes,
+  workerModelCatalog,
+  workerModelsRefreshing,
   setHydratedRunSelectionId,
   availableWorkerTypes,
   configuredAllowedWorkerTypes,
@@ -310,15 +375,23 @@ export function useRunSelectionEffects({
   useEffect(() => {
     if (!selectedRunId || !selectedRun) {
       setHydratedRunSelectionId(null);
-      if (activeComposerMode === "direct") {
-        const nextDirectWorker = selectedCliAgent === "auto" ? (autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex") : selectedCliAgent;
-        if (!activeAllowedWorkerTypes.includes(nextDirectWorker as WorkerType)) {
-          homeUiStateManager.setComposerSelectionField("worker", autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex", { userEdited: false });
-        } else if (nextDirectWorker !== selectedCliAgent) {
-          homeUiStateManager.setComposerSelectionField("worker", nextDirectWorker, { userEdited: false });
-        }
-      } else if (selectedCliAgent !== "auto" && !activeAllowedWorkerTypes.includes(selectedCliAgent)) {
-        homeUiStateManager.setComposerSelectionField("worker", "auto", { userEdited: false });
+      // A run id without a run is a conversation whose snapshot has not landed
+      // yet; its own saved model is still authoritative, so only the genuinely
+      // new-conversation composer gets reconciled here.
+      if (selectedRunId) {
+        return;
+      }
+      const reconciled = resolveNewConversationWorkerSelection({
+        composerMode: activeComposerMode,
+        selectedCliAgent,
+        selectedModel,
+        autoSelectedWorkerType,
+        activeAllowedWorkerTypes,
+        workerModelCatalog,
+        workerModelsRefreshing,
+      });
+      if (reconciled) {
+        homeUiStateManager.setComposerWorkerSelection(reconciled.worker, reconciled.model, { userEdited: false });
       }
       return;
     }
@@ -336,8 +409,13 @@ export function useRunSelectionEffects({
     activeComposerMode,
     activeAllowedWorkerTypes,
     autoSelectedWorkerType,
+    selectedCliAgent,
+    selectedModel,
     selectedRun,
     selectedRunId,
+    setHydratedRunSelectionId,
+    workerModelCatalog,
+    workerModelsRefreshing,
   ]);
 
   useEffect(() => {

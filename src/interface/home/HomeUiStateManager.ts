@@ -351,7 +351,11 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
     });
   }
 
-  setComposerWorkerSelection(worker: ComposerWorkerOption, model: string) {
+  setComposerWorkerSelection(
+    worker: ComposerWorkerOption,
+    model: string,
+    options: { userEdited?: boolean } = {},
+  ) {
     this.update((current) => {
       const currentSelection = this.activeSelection(current);
       const workerChanged = currentSelection.worker !== worker;
@@ -365,18 +369,27 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
         ? this.acknowledgedSelectionsByRun.get(current.selectedRunId)
         : undefined;
 
-      if (workerChanged) {
-        if (current.selectedRunId && acknowledged?.worker === worker) {
-          dirtySelectionFields.delete("worker");
-        } else {
-          dirtySelectionFields.add("worker");
+      if (options.userEdited === false) {
+        // The app reconciling its own composer is not the user choosing, so it
+        // must not promote these fields to "defend against server hydration".
+        // It does have to clear a dirty marker the reconciliation just
+        // invalidated, or the stale choice keeps winning every hydration.
+        if (workerChanged) dirtySelectionFields.delete("worker");
+        if (modelChanged) dirtySelectionFields.delete("model");
+      } else {
+        if (workerChanged) {
+          if (current.selectedRunId && acknowledged?.worker === worker) {
+            dirtySelectionFields.delete("worker");
+          } else {
+            dirtySelectionFields.add("worker");
+          }
         }
-      }
-      if (modelChanged) {
-        if (current.selectedRunId && acknowledged?.model === model) {
-          dirtySelectionFields.delete("model");
-        } else {
-          dirtySelectionFields.add("model");
+        if (modelChanged) {
+          if (current.selectedRunId && acknowledged?.model === model) {
+            dirtySelectionFields.delete("model");
+          } else {
+            dirtySelectionFields.add("model");
+          }
         }
       }
 

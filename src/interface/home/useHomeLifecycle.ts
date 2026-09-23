@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type React from "react";
-import { type UseMutationResult } from "@tanstack/react-query";
+import { type UseMutationResult, useQueryClient } from "@tanstack/react-query";
 import { type AppErrorDescriptor, mergeAppErrors } from "@/lib/app-errors";
 import {
   clampConversationSidebarWidth,
@@ -21,6 +21,7 @@ import { homeUiStateManager } from "./HomeUiStateManager";
 import { LiveEventConnectionManager, LiveEventCursorManager } from "./LiveEventConnectionManager";
 import { acpPlanManager } from "./AcpPlanManager";
 import { goalPlanManager } from "./GoalPlanManager";
+import { refetchFailedQueries } from "@/lib/failed-query-retry";
 import type { ComposerWorkerOption, ConversationModeOption, EventStreamState } from "./types";
 import { buildConversationPath, buildInlineError, parseBrowserConversationRoute, parseCollapsedProjectPaths, resolveComposerEffortForPair, resolveSavedComposerModel } from "./utils";
 import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
@@ -36,6 +37,7 @@ interface UseHomeLifecycleProps {
   setHasReceivedInitialEventStreamPayload: React.Dispatch<React.SetStateAction<boolean>>;
   setState: React.Dispatch<React.SetStateAction<EventStreamState>>;
   applyServerEventStreamState?: React.Dispatch<React.SetStateAction<EventStreamState>>;
+  reconcileServerCatalog?: (state: EventStreamState) => void;
   applyGoalEvent?: (snapshot: import("@/shared/goal-plan").GoalSnapshot, eventKey: string | null) => boolean;
   setRuntimeErrors: React.Dispatch<React.SetStateAction<AppErrorDescriptor[]>>;
   routeReady: boolean;
@@ -90,6 +92,7 @@ export function useHomeLifecycle({
   setHasReceivedInitialEventStreamPayload,
   setState,
   applyServerEventStreamState,
+  reconcileServerCatalog,
   applyGoalEvent,
   setRuntimeErrors,
   routeReady,
@@ -127,6 +130,7 @@ export function useHomeLifecycle({
   runnerConnection,
 }: UseHomeLifecycleProps) {
   const runtimeApis = useRuntimeAPIs();
+  const queryClient = useQueryClient();
   acpPlanManager.configure(runtimeApis.workers.getPlan);
   const didMountThemeEffectRef = useRef(false);
   const didHydrateCollapsedProjectsRef = useRef(false);
@@ -197,10 +201,22 @@ export function useHomeLifecycle({
       getSnapshotChecksum,
       planManager: acpPlanManager,
       applyUpdate: applyEventStreamUpdate,
+      reconcileCatalog: (data) => {
+        if (!isActive) {
+          return;
+        }
+        reconcileServerCatalog?.(filterEventStreamState?.(data) ?? data);
+      },
       applyGoalEvent,
       onStreamResync: () => {
         claudeModelGatewayManager.resetRevisionAuthority();
         goalPlanManager.reconnect();
+      },
+      onConnectionRestored: () => {
+        if (!isActive) {
+          return;
+        }
+        void refetchFailedQueries(queryClient);
       },
       reportError: (error) => {
         if (!isActive) {
@@ -222,7 +238,9 @@ export function useHomeLifecycle({
     filterEventStreamState,
     getSnapshotChecksum,
     applyServerEventStreamState,
+    reconcileServerCatalog,
     applyGoalEvent,
+    queryClient,
     routeReady,
     runnerConnection,
     runtimeApis.events,

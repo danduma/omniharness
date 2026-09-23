@@ -768,7 +768,6 @@
   "runner.status.identityMismatch": "Server identity changed",
   "runner.status.incompatible": "Server version is incompatible",
   "runner.status.resync": "Resynchronizing",
-  "runner.status.degraded": "Connection degraded",
   "runner.status.stopping": "Server is stopping",
   "runner.switcher.aria": "Switch server. {runner} is {status}.",
   "runner.activity.needsInput": "{count} conversations need input",

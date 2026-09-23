@@ -17,7 +17,6 @@ describe("RunnerUiManager", () => {
       "identity-mismatch",
       "incompatible",
       "resync",
-      "degraded",
       "runner-stopping",
     ] as const).map(runnerStatusMessageKey)).toEqual([
       "runner.status.connecting",
@@ -29,7 +28,6 @@ describe("RunnerUiManager", () => {
       "runner.status.identityMismatch",
       "runner.status.incompatible",
       "runner.status.resync",
-      "runner.status.degraded",
       "runner.status.stopping",
     ]);
   });

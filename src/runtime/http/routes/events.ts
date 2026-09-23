@@ -37,7 +37,6 @@ import { toAccountDto } from "@/server/accounts/dto";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import {
   createBoundedByteStream,
-  type BoundedByteStreamOversizedFrame,
 } from "@/runtime/http/bounded-byte-stream";
 import { startSlowProbe } from "@/server/slow-probe";
 import { getClaudeModelGatewayService } from "@/server/integrations/claude-model-gateway";
@@ -972,16 +971,6 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
 
   let streamClosed = false;
   let unsubscribeRevocation: (() => void) | null = null;
-  // Set by `onOversizedFrame` during the `enqueue` call that dropped the frame,
-  // and read by `writeFrame` immediately after it returns. Recorded rather than
-  // acted on in the handler so the replacement frame is written outside the
-  // enqueue that produced it.
-  let oversizedFrame: BoundedByteStreamOversizedFrame | null = null;
-  const takeOversizedFrame = (): BoundedByteStreamOversizedFrame | null => {
-    const frame = oversizedFrame;
-    oversizedFrame = null;
-    return frame;
-  };
   const stream = createBoundedByteStream({
     async start(controller) {
       const encoder = new TextEncoder();
@@ -998,44 +987,20 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
       // client; used to drain only newly-buffered named events on each
       // poll iteration without re-emitting events we already replayed.
 
+      // A frame is refused only when this subscriber has fallen behind, and the
+      // stream is closed by then. The frame's own size is never a reason: the
+      // stream's byte budget bounds the backlog, so a catalog snapshot larger
+      // than the budget still goes out. Replacing such a snapshot with a resync
+      // instruction put the client in a loop — re-bootstrap, reconnect, receive
+      // the same oversized snapshot, resync again — that the UI reported as a
+      // degraded connection for as long as the catalog stayed large.
       const writeFrame = (id: string, event: string, serializedData: string) => {
-        takeOversizedFrame();
         if (controller.enqueue(encoder.encode(
           `id: ${id}\nevent: ${event}\ndata: ${serializedData}\n\n`,
         ))) {
           return true;
         }
-        const dropped = takeOversizedFrame();
-        if (!dropped) {
-          streamClosed = true;
-          return false;
-        }
-        // The frame is too big for the stream, but the snapshot route has no
-        // such ceiling. Send the client to it rather than dropping the
-        // connection: the previous behaviour disconnected on the opening frame,
-        // the client reconnected, and the same oversized snapshot disconnected
-        // it again roughly every 1.5s for as long as the payload stayed large.
-        emitNamedEvent({
-          kind: "stream.oversized_frame",
-          stream: "events",
-          surface: context.surface,
-          rejectedBytes: dropped.rejectedBytes,
-          maxQueuedBytes: dropped.maxQueuedBytes,
-          ...(runIdScope ? { runId: runIdScope } : {}),
-        });
-        const marker = recordSnapshotMarker(
-          getEventStreamNotificationVersion(),
-          runIdScope,
-        );
-        if (!controller.enqueue(encoder.encode(
-          `id: ${marker.streamId}\nevent: stream.resync_required\ndata: ${
-            JSON.stringify({ reason: "frame_too_large" })
-          }\n\n`,
-        ))) {
-          streamClosed = true;
-          return false;
-        }
-        lastDeliveredId = marker.id;
+        streamClosed = true;
         return false;
       };
       const sendEvent = (event: string, data: any, id: string) => {
@@ -1252,9 +1217,6 @@ export const handleEventsRequest: OmniHttpHandler = async (request, context) => 
       streamClosed = true;
       unsubscribeRevocation?.();
       unsubscribeRevocation = null;
-    },
-    onOversizedFrame(frame) {
-      oversizedFrame = frame;
     },
     onOverflow(overflow) {
       streamClosed = true;
