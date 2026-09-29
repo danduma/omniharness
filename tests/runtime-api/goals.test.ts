@@ -15,6 +15,12 @@ const bridgeMocks = vi.hoisted(() => ({
 
 vi.mock("@/server/bridge-client", () => bridgeMocks);
 
+const revivalMocks = vi.hoisted(() => ({
+  reviveGoalWorker: vi.fn(async () => undefined),
+}));
+
+vi.mock("@/server/runs/goal-worker-revival", () => revivalMocks);
+
 function request(method: string, body?: unknown, id = runId) {
   return new Request(`http://localhost/api/runs/${id}/goal${method === "POST" ? "/actions" : ""}`, {
     method,
@@ -43,6 +49,7 @@ describe("run goal API", () => {
     bridgeMocks.getAgent.mockReset();
     bridgeMocks.invokeAgentAcpMethod.mockReset();
     bridgeMocks.askAgent.mockReset();
+    revivalMocks.reviveGoalWorker.mockClear();
   });
 
   afterEach(() => {
@@ -148,6 +155,37 @@ describe("run goal API", () => {
       action: "set",
       objective: "Bind then dispatch",
     });
+  });
+
+  it("resumes the leased worker when the runtime reaped it while idle", async () => {
+    const now = new Date();
+    await db.insert(workers).values({
+      id: "goal-worker-1",
+      runId,
+      type: "claude",
+      status: "idle",
+      cwd: "/tmp",
+      bridgeSessionId: "goal-session-1",
+      createdAt: now,
+      updatedAt: now,
+    });
+    bridgeMocks.getAgent.mockRejectedValue(new Error("Get agent failed: not_found"));
+
+    const created = await call("PUT", {
+      goalId: "goal-reaped",
+      expectedRevision: 0,
+      operationId: "op-reaped",
+      objective: "fix all of the bugs",
+    });
+
+    expect(created.status).toBe(200);
+    expect(await created.json()).toMatchObject({
+      goal: { status: "pending", workerId: "goal-worker-1" },
+      control: { kind: "deferred", reason: "no_active_lease" },
+    });
+    expect(revivalMocks.reviveGoalWorker).toHaveBeenCalledWith(
+      expect.objectContaining({ runId, goalId: "goal-reaped", workerId: "goal-worker-1" }),
+    );
   });
 
   it("recovers a replayed operation committed before ACP dispatch", async () => {

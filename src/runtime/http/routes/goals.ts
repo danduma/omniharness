@@ -7,6 +7,7 @@ import { goalOutboxDispatcher } from "@/server/runs/goal-outbox";
 import { goalRateLimitManager } from "@/server/runs/goal-rate-limit";
 import { redactGoalErrorMessage } from "@/server/runs/goal-errors";
 import { attachGoalMutationToActiveWorker } from "@/server/runs/goal-worker-lease";
+import { reviveGoalWorker } from "@/server/runs/goal-worker-revival";
 import {
   GOAL_ACTIONS,
   type GoalAction,
@@ -152,6 +153,10 @@ async function dispatchAndPublish(
       workerId: control.snapshot.workerId,
       reason: control.reason,
     });
+    // The leased worker was reaped while idle. Resume it so its session
+    // initialization delivers the goal, instead of waiting for the user's
+    // next message to do it.
+    if (control.reason === "no_active_lease") void reviveGoalWorker(control.snapshot);
   }
   if (control.kind !== "unsupported" && control.kind !== "superseded" && action !== "set" && action !== "edit") {
       emitNamedEvent({
