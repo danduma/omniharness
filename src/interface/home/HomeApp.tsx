@@ -18,6 +18,7 @@ import { AttachmentImagePreviewDialog } from "@/components/AttachmentImagePrevie
 import { ConversationMain } from "@/components/home/ConversationMain";
 import { ConversationSidebar } from "@/components/home/ConversationSidebar";
 import { HomeHeader } from "@/components/home/HomeHeader";
+import { useIsCompactLayout } from "@/hooks/use-mobile";
 import { resolveProjectScope } from "@/lib/project-scope";
 import { clearPreviewCacheStorage } from "@/lib/browser-storage";
 import { WORKER_OPTIONS } from "./constants";
@@ -782,6 +783,9 @@ export function HomeApp({
 
   // Layout controller
   const layout = useHomeLayoutController();
+  // Below `lg` the desktop sidebar is display:none, but mounted it still
+  // re-rendered every row (each with its own menu) on every live frame.
+  const isCompactLayout = useIsCompactLayout();
   const handleOpenMobileConversationList = useCallback(() => {
     setMobileNavOpen(true);
   }, [setMobileNavOpen]);
@@ -1498,11 +1502,13 @@ export function HomeApp({
           onPointerDown={layout.handleLeftSidebarResizeStart}
         />
         <div className={`flex h-full min-w-0 flex-1 transition-transform duration-150 ease-out motion-reduce:transition-none ${leftSidebarOpen ? "translate-x-0" : "-translate-x-3"}`}>
-          <ConversationSidebar
-            {...sharedSidebarProps}
-            runnerControlsMode="desktop"
-            onCollapse={() => setLeftSidebarOpen(false)}
-          />
+          {isCompactLayout ? null : (
+            <ConversationSidebar
+              {...sharedSidebarProps}
+              runnerControlsMode="desktop"
+              onCollapse={() => setLeftSidebarOpen(false)}
+            />
+          )}
         </div>
       </div>
 
