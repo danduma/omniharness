@@ -276,12 +276,18 @@ test("stopping a conversation updates local worker state before the request reso
   expect(pageSource).toContain('status: "cancelled"');
 });
 
-test("direct control user messages expose retry, edit, and fork recovery controls", () => {
+test("direct control user messages expose retry and edit; assistant replies expose fork", () => {
   expect(pageSource).toContain("conversation.message.action.retryFromHere");
   expect(pageSource).toContain("conversation.message.action.editInPlace");
-  expect(pageSource).toContain("conversation.message.action.forkFromHere");
   expect(pageSource).toContain("const canRecoverUserMessage = isDirectConversation || isImplementationConversation;");
   expect(pageSource).toContain("getUserMessageActions={getUserMessageActions}");
+  expect(pageSource).toContain("getAssistantMessageActions={getAssistantMessageActions}");
+  const userActionsStart = pageSource.indexOf("const getUserMessageActions = useCallback(");
+  const assistantActionsStart = pageSource.indexOf("const getAssistantMessageActions = useCallback(");
+  expect(userActionsStart).toBeGreaterThanOrEqual(0);
+  expect(assistantActionsStart).toBeGreaterThan(userActionsStart);
+  expect(pageSource.slice(userActionsStart, assistantActionsStart)).not.toContain("conversation.message.action.forkFromHere");
+  expect(pageSource.slice(assistantActionsStart)).toContain("conversation.message.action.forkFromHere");
   expect(pageSource).toContain("actions={userMessageActions}");
   expect(pageSource).toContain('body: { action, targetMessageId, content, gitWorkspaceLaunch, manualRecovery }');
   expect(pageSource).toContain('manualRecovery: true');

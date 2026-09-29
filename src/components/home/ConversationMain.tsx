@@ -1,5 +1,5 @@
 import type React from "react";
-import { lazy, memo, useCallback, useEffect, useMemo } from "react";
+import { lazy, memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { ArrowDown, ArrowLeftRight, Blocks, Check, ChevronDown, CirclePlay, CircleStop, Copy, FolderGit2, GitBranch, MoreHorizontal, Pencil, RotateCcw, Route } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -1108,31 +1108,6 @@ const ConversationMain = memo(function ConversationMain({
         disabled: recoverRun.isPending,
         onClick: () => handleStartEditingMessage(message),
       },
-      {
-        label: t("conversation.message.action.forkFromHere"),
-        icon: <GitBranch className="h-3.5 w-3.5" />,
-        disabled: recoverRun.isPending,
-        menuItems: [
-          {
-            label: t("conversation.message.action.forkFromHere"),
-            icon: <GitBranch className="h-3.5 w-3.5" />,
-            disabled: recoverRun.isPending,
-            onClick: () => handleForkMessage(message),
-          },
-          {
-            label: t("git.workspace.action.forkMessageWorktree"),
-            icon: <FolderGit2 className="h-3.5 w-3.5" />,
-            disabled: recoverRun.isPending,
-            onClick: () => handleForkMessageIntoWorktree(message),
-          },
-          {
-            label: t("conversation.message.action.forkDifferentCli"),
-            icon: <ArrowLeftRight className="h-3.5 w-3.5" />,
-            disabled: recoverRun.isPending,
-            onClick: () => handleForkMessageToDifferentCli(message),
-          },
-        ],
-      },
     ];
   }, [
     canRecoverUserMessage,
@@ -1142,11 +1117,54 @@ const ConversationMain = memo(function ConversationMain({
     handleCopyDirectMessage,
     handleRetryMessage,
     handleStartEditingMessage,
-    handleForkMessage,
-    handleForkMessageIntoWorktree,
-    handleForkMessageToDifferentCli,
     // Action labels come from `t()`, so they must be rebuilt when the language
     // changes rather than captured once.
+    i18nSnapshot,
+  ]);
+  // Forking belongs on the reply: the new conversation keeps everything up to
+  // and including it, and the user continues from there. This is handed to
+  // every transcript row, so it must stay stable; the fork handlers arrive as
+  // fresh closures each render and are only needed on click, so read them
+  // through a ref instead of listing them as dependencies.
+  const forkHandlersRef = useRef({ handleForkMessage, handleForkMessageIntoWorktree, handleForkMessageToDifferentCli });
+  useEffect(() => {
+    forkHandlersRef.current = { handleForkMessage, handleForkMessageIntoWorktree, handleForkMessageToDifferentCli };
+  });
+  const getAssistantMessageActions = useCallback((message: Pick<MessageRecord, "id" | "content">): UserInputMessageAction[] => {
+    if (!isDirectConversation) {
+      return [];
+    }
+
+    return [
+      {
+        label: t("conversation.message.action.forkFromHere"),
+        icon: <GitBranch className="h-4 w-4" />,
+        disabled: recoverRun.isPending,
+        menuItems: [
+          {
+            label: t("conversation.message.action.forkFromHere"),
+            icon: <GitBranch className="h-3.5 w-3.5" />,
+            disabled: recoverRun.isPending,
+            onClick: () => forkHandlersRef.current.handleForkMessage(message),
+          },
+          {
+            label: t("git.workspace.action.forkMessageWorktree"),
+            icon: <FolderGit2 className="h-3.5 w-3.5" />,
+            disabled: recoverRun.isPending,
+            onClick: () => forkHandlersRef.current.handleForkMessageIntoWorktree(message),
+          },
+          {
+            label: t("conversation.message.action.forkDifferentCli"),
+            icon: <ArrowLeftRight className="h-3.5 w-3.5" />,
+            disabled: recoverRun.isPending,
+            onClick: () => forkHandlersRef.current.handleForkMessageToDifferentCli(message),
+          },
+        ],
+      },
+    ];
+  }, [
+    isDirectConversation,
+    recoverRun.isPending,
     i18nSnapshot,
   ]);
   const handleScrollToLatestOutput = () => {
@@ -1232,6 +1250,7 @@ const ConversationMain = memo(function ConversationMain({
                 ungatedUserMessageIds={locallySentUserMessageIds}
                 sendingUserMessageIds={sendingUserMessageIds}
                 getUserMessageActions={getUserMessageActions}
+                getAssistantMessageActions={getAssistantMessageActions}
                 editingUserMessageId={editingMessageId}
                 editingUserMessageValue={editingMessageValue}
                 isEditingUserMessageSaving={recoverRun.isPending}
