@@ -599,6 +599,9 @@ export type GoalEvent =
   | { kind: "goal.reconciliation.refused"; runId: string; goalId: string; workerId: string | null; reason: string }
   | { kind: "goal.reconciliation.failed"; runId: string; goalId: string; workerId: string | null; reason: string }
   | { kind: "goal.worker_transferred"; runId: string; goalId: string; previousWorkerId: string | null; workerId: string; leaseGeneration: number }
+  | { kind: "goal.worker_revival.started"; runId: string; goalId: string; workerId: string }
+  | { kind: "goal.worker_revival.completed"; runId: string; goalId: string; workerId: string }
+  | { kind: "goal.worker_revival.skipped"; runId: string; goalId: string; workerId: string | null; reason: string }
   | { kind: "goal.stale_lease_ignored"; runId: string; goalId: string; workerId: string; leaseGeneration: number; currentLeaseGeneration: number }
   | { kind: "goal.payload_rejected"; runId: string; goalId: string; workerId: string; reason: string }
   | {
