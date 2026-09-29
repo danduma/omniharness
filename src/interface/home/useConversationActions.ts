@@ -274,9 +274,13 @@ export function useConversationActions({
     );
   };
 
+  // Message forks start after an assistant reply, so the prompt is the user's
+  // next message in the new conversation, not a copy of the reply.
+  const promptForForkContinuation = () => window.prompt("Continue the fork with:", "")?.trim() || null;
+
   const handleForkMessage = (message: Pick<MessageRecord, "id" | "content">) => {
     if (!selectedRunId) return;
-    const content = window.prompt("Fork with this prompt:", message.content)?.trim();
+    const content = promptForForkContinuation();
     if (!content) return;
     mutations.recoverRun.mutate({ runId: selectedRunId, action: "fork", targetMessageId: message.id, content });
   };
@@ -286,7 +290,9 @@ export function useConversationActions({
     const selectedRun = runs.find((run) => run.id === selectedRunId);
     const projectPath = selectedRun?.projectPath || currentProjectScope;
     if (!projectPath) return;
-    gitWorkspaceManager.requestForkMessageWorktree(projectPath, selectedRunId, message.id, message.content);
+    const content = promptForForkContinuation();
+    if (!content) return;
+    gitWorkspaceManager.requestForkMessageWorktree(projectPath, selectedRunId, message.id, content);
   };
 
   const handleForkSessionIntoWorktree = () => {

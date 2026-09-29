@@ -419,7 +419,6 @@ export async function gatherHandoffCandidates(args: {
   const boundaryMessage = args.forkedFromMessageId
     ? await db.select().from(messages).where(and(eq(messages.id, args.forkedFromMessageId), eq(messages.runId, args.runId))).get()
     : null;
-  if (args.forkedFromMessageId && !boundaryMessage) throw new Error("The requested fork message does not belong to the source conversation.");
   const contextWorkers = await db.select().from(workers)
     .where(eq(workers.runId, args.runId))
     .orderBy(asc(workers.createdAt), asc(workers.id));
@@ -434,25 +433,32 @@ export async function gatherHandoffCandidates(args: {
     return entries;
   }));
   const allContextEntries = contextEntrySets.flat();
-  const forkBoundaryTimestamp = args.forkedFromMessageId
+  // A fork boundary is either a user checkpoint (a `messages` row, whose reply
+  // is left out) or an assistant reply (a stream entry, kept as the last thing
+  // the new conversation inherits).
+  const boundaryEntry = args.forkedFromMessageId
     ? allContextEntries
-      .filter((entry) => entry.id === args.forkedFromMessageId && entry.type === "user_input")
-      .map((entry) => entry.timestamp)
-      .sort()[0] ?? boundaryMessage?.createdAt.toISOString() ?? null
+      .filter((entry) => entry.id === args.forkedFromMessageId && (boundaryMessage ? entry.type === "user_input" : entry.type === "message"))
+      .sort((left, right) => left.timestamp.localeCompare(right.timestamp))[0] ?? null
     : null;
+  if (args.forkedFromMessageId && !boundaryMessage && !boundaryEntry) throw new Error("The requested fork message does not belong to the source conversation.");
+  const forkBoundaryTimestamp = args.forkedFromMessageId
+    ? boundaryEntry?.timestamp ?? boundaryMessage?.createdAt.toISOString() ?? null
+    : null;
+  const boundaryCreatedAt = boundaryMessage?.createdAt ?? (forkBoundaryTimestamp ? new Date(forkBoundaryTimestamp) : null);
   const boundedContextEntries = forkBoundaryTimestamp
     ? allContextEntries.filter((entry) => entry.timestamp <= forkBoundaryTimestamp)
     : allContextEntries;
   const streamCandidates = selectWorkerEntryCandidates(boundedContextEntries, null, projectPath);
   const boundedMessages = (await db.select().from(messages)
-    .where(boundaryMessage ? and(eq(messages.runId, args.runId), lte(messages.createdAt, boundaryMessage.createdAt)) : eq(messages.runId, args.runId))
+    .where(boundaryCreatedAt ? and(eq(messages.runId, args.runId), lte(messages.createdAt, boundaryCreatedAt)) : eq(messages.runId, args.runId))
     .orderBy(desc(messages.createdAt), desc(messages.id))
     .limit(80)).reverse();
   const originalUserMessage = await db.select().from(messages)
     .where(and(
       eq(messages.runId, args.runId),
       eq(messages.role, "user"),
-      ...(boundaryMessage ? [lte(messages.createdAt, boundaryMessage.createdAt)] : []),
+      ...(boundaryCreatedAt ? [lte(messages.createdAt, boundaryCreatedAt)] : []),
     ))
     .orderBy(asc(messages.createdAt), asc(messages.id))
     .limit(1).get();

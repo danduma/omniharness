@@ -79,6 +79,8 @@ interface TerminalProps {
   /** Ids of user messages whose send request is still in flight. */
   sendingUserMessageIds?: ReadonlySet<string>;
   getUserMessageActions?: (message: TerminalUserMessage) => TerminalUserMessageAction[];
+  /** Extra hover actions for an assistant reply, shown beside Copy. */
+  getAssistantMessageActions?: (message: TerminalAssistantMessage) => TerminalUserMessageAction[];
   editingUserMessageId?: string | null;
   editingUserMessageValue?: string;
   isEditingUserMessageSaving?: boolean;
@@ -111,6 +113,11 @@ export interface TerminalUserMessage {
   content: string;
   createdAt: string;
   attachments?: ChatAttachment[];
+}
+
+export interface TerminalAssistantMessage {
+  id: string;
+  content: string;
 }
 
 export interface TerminalUserMessageAction {
@@ -2146,6 +2153,42 @@ function GeneratedImagesCarousel({ activity }: { activity: GeneratedImagesActivi
  * The props are all scalars, stable callbacks, or entries from Terminal's
  * memoized `activity` array, so the shallow comparison is meaningful.
  */
+function MessageActionMenu({
+  action,
+  menuItems,
+  align = "end",
+}: {
+  action: TerminalUserMessageAction;
+  menuItems: TerminalUserMessageActionItem[];
+  align?: "start" | "end";
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label={action.label}
+        title={action.title ?? action.label}
+        disabled={action.disabled}
+        className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {action.icon}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align={align}>
+        {menuItems.map((item) => (
+          <DropdownMenuItem
+            key={item.label}
+            className="cursor-pointer whitespace-nowrap"
+            disabled={item.disabled}
+            onClick={item.onClick}
+          >
+            <span className="mr-2 inline-flex h-4 w-4 items-center justify-center">{item.icon}</span>
+            {item.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 const ActivityRow = memo(function ActivityRow({
   activity,
   connectorExtendsAfter = false,
@@ -2158,6 +2201,7 @@ const ActivityRow = memo(function ActivityRow({
   onEditingUserMessageValueChange,
   onCancelEditingUserMessage,
   onSaveEditedUserMessage,
+  getAssistantMessageActions,
   thoughtsDefaultOpen,
   toolGroupsDefaultOpen,
   projectRoot,
@@ -2174,6 +2218,7 @@ const ActivityRow = memo(function ActivityRow({
   onEditingUserMessageValueChange?: (value: string) => void;
   onCancelEditingUserMessage?: () => void;
   onSaveEditedUserMessage?: (messageId: string) => void;
+  getAssistantMessageActions?: (message: TerminalAssistantMessage) => TerminalUserMessageAction[];
   thoughtsDefaultOpen: boolean;
   toolGroupsDefaultOpen: boolean;
   projectRoot?: string | null;
@@ -2209,6 +2254,10 @@ const ActivityRow = memo(function ActivityRow({
   const modelAttributionLabel = activity.kind === "message"
     ? formatMessageModelAttribution(activity.model, activity.effort)
     : null;
+  // A live fallback bubble has no stream entry behind it to act on.
+  const assistantMessageActions = activity.kind === "message" && !activity.live && activity.text.trim()
+    ? getAssistantMessageActions?.({ id: activity.id, content: activity.text }) ?? []
+    : [];
 
   if (activity.kind === "user_message") {
     const isEditing = activity.messageId === editingUserMessageId
@@ -2246,29 +2295,7 @@ const ActivityRow = memo(function ActivityRow({
               const showCopiedNotice = action.feedback === "copy-message" && copiedIdForThisRow === activity.messageId;
 
               return action.menuItems?.length ? (
-                <DropdownMenu key={action.label}>
-                  <DropdownMenuTrigger
-                    aria-label={action.label}
-                    title={action.title ?? action.label}
-                    disabled={action.disabled}
-                    className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {action.icon}
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    {action.menuItems.map((item) => (
-                      <DropdownMenuItem
-                        key={item.label}
-                        className="cursor-pointer whitespace-nowrap"
-                        disabled={item.disabled}
-                        onClick={item.onClick}
-                      >
-                        <span className="mr-2 inline-flex h-4 w-4 items-center justify-center">{item.icon}</span>
-                        {item.label}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <MessageActionMenu key={action.label} action={action} menuItems={action.menuItems} />
               ) : (
                 <span key={action.label} className="relative inline-flex flex-col items-center">
                   <button
@@ -2377,6 +2404,23 @@ const ActivityRow = memo(function ActivityRow({
                   >
                     <Copy className="h-4 w-4" />
                   </button>
+                  {assistantMessageActions.map((action) => (
+                    action.menuItems?.length ? (
+                      <MessageActionMenu key={action.label} action={action} menuItems={action.menuItems} align="start" />
+                    ) : (
+                      <button
+                        key={action.label}
+                        type="button"
+                        aria-label={action.label}
+                        title={action.title ?? action.label}
+                        disabled={action.disabled}
+                        onClick={action.onClick}
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {action.icon}
+                      </button>
+                    )
+                  ))}
                   {modelAttributionLabel ? (
                     <span className="whitespace-nowrap text-[11px] font-medium leading-none">
                       {modelAttributionLabel}
@@ -2488,6 +2532,7 @@ export function Terminal({
   ungatedUserMessageIds,
   sendingUserMessageIds,
   getUserMessageActions,
+  getAssistantMessageActions,
   editingUserMessageId = null,
   editingUserMessageValue = "",
   isEditingUserMessageSaving = false,
@@ -3038,6 +3083,7 @@ export function Terminal({
                   onEditingUserMessageValueChange={onEditingUserMessageValueChange}
                   onCancelEditingUserMessage={onCancelEditingUserMessage}
                   onSaveEditedUserMessage={onSaveEditedUserMessage}
+                  getAssistantMessageActions={getAssistantMessageActions}
                   thoughtsDefaultOpen={thoughtsDefaultOpen}
                   toolGroupsDefaultOpen={effectiveToolGroupsDefaultOpen}
                   projectRoot={projectRoot}

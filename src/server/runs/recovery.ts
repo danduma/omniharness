@@ -34,12 +34,14 @@ import {
 import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/supervisor/worker-types";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import {
+  appendWorkerEntryWithResult,
   findWorkerEntrySeqById,
   readWorkerLatestSeq,
   readWorkerOutputEntries,
   withWorkerOutputWriteFence,
 } from "@/server/workers/output-store";
 import { parseSupersededSeqRanges, serializeSupersededSeqRanges } from "@/lib/superseded-entries";
+import type { WorkerEntry } from "@/server/workers/entries-types";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { appendWorkerSessionMetadata, readWorkerSessionMetadata } from "@/server/workers/session-metadata";
@@ -69,6 +71,7 @@ import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget,
 import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
 import { reconcileRecoveredHumanInputEntries } from "@/server/workers/human-input-entries";
 import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
+import { readVisibleConversationTranscript, type ConversationTranscriptEntry } from "@/server/conversations/visible-transcript";
 import {
   abortWorkerTurn,
   advanceWorkerTurnGeneration,
@@ -81,6 +84,7 @@ import {
   runConversationMutation,
   runConversationRecoveryWorkerTurn,
   runWorkerTurn,
+  trackConversationBackgroundTask,
 } from "@/server/conversations/worker-turn-gate";
 
 /**
@@ -324,6 +328,14 @@ async function startDirectRerun(
   attachments: ChatAttachment[] = [],
   options: {
     replayTargetMessageId?: string | null;
+    /**
+     * History a fork inherits. Written to the new worker's stream ahead of the
+     * user input, so the forked conversation shows it and the worker is
+     * primed with it.
+     */
+    seedEntries?: Array<Omit<WorkerEntry, "seq">>;
+    /** Called once the seeded history is on disk, before the worker spawns. */
+    onHistorySeeded?: () => void;
     recoveryEpoch?: number;
   } = {},
 ) {
@@ -358,6 +370,11 @@ async function startDirectRerun(
     updatedAt: now,
   });
   emitNamedEvent({ kind: "worker.spawned", runId: run.id, workerId, workerType });
+  for (const entry of options.seedEntries ?? []) {
+    await appendWorkerEntryWithResult(run.id, workerId, entry, { expectedTurnGeneration });
+  }
+  options.onHistorySeeded?.();
+  const seededHistory = Boolean(options.seedEntries?.length && userInputId);
   const accountAllocation = launchSelection.credentialSource === "gateway" ? null : await allocateWorkerAccount({
     workerType,
     runId: run.id,
@@ -474,29 +491,34 @@ async function startDirectRerun(
         imagesInlined: true,
       });
       const nextUserPrompt = buildDirectWorkerPrompt(run.mode, workerContent, cwd);
-      const replay = options.replayTargetMessageId
+      // Seeded fork history sits in this run's stream right before the new
+      // user input, so it replays exactly like an edited checkpoint does.
+      const replayTargetMessageId = options.replayTargetMessageId ?? (seededHistory ? userInputId! : null);
+      const replay = replayTargetMessageId
         ? await buildConversationTranscriptReplayPromptBeforeEntry({
           runId: run.id,
-          targetEntryId: options.replayTargetMessageId,
+          targetEntryId: replayTargetMessageId,
           nextUserPrompt,
         })
         : null;
-      if (options.replayTargetMessageId && !replay) {
-        throw new Error(`Cannot reconstruct the visible conversation before edited checkpoint ${options.replayTargetMessageId}.`);
+      if (replayTargetMessageId && !replay) {
+        throw new Error(`Cannot reconstruct the visible conversation before checkpoint ${replayTargetMessageId}.`);
       }
       const workerPrompt = replay?.prompt ?? nextUserPrompt;
-      if (replay && options.replayTargetMessageId) {
+      if (replay && replayTargetMessageId) {
         await recordExecutionEvent({
           runId: run.id,
           workerId,
           planItemId: null,
           eventType: "worker_session_recreated_from_transcript",
           details: {
-            summary: `Started ${workerId} with run-wide visible conversation context before the edited checkpoint.`,
-            sourceRunId: run.id,
+            summary: options.replayTargetMessageId
+              ? `Started ${workerId} with run-wide visible conversation context before the edited checkpoint.`
+              : `Started ${workerId} with the history inherited from the forked conversation.`,
+            sourceRunId: run.parentRunId && !options.replayTargetMessageId ? run.parentRunId : run.id,
             sourceWorkerIds: replay.sourceWorkerIds,
             targetWorkerId: replay.targetWorkerId,
-            targetMessageId: options.replayTargetMessageId,
+            targetMessageId: replayTargetMessageId,
             sessionId: agent.sessionId ?? null,
             transcriptReplay: true,
           },
@@ -1275,6 +1297,232 @@ async function handleDirectWorkerAskQuotaError(args: {
   };
 }
 
+// What a fork carries over from the source transcript. Pending permission and
+// elicitation requests, plans and session bookkeeping belong to the source's
+// live session; copying them would resurface stale prompts or hand the new
+// worker the source's session identity.
+const FORK_INHERITED_ENTRY_TYPES = new Set<WorkerEntry["type"]>([
+  "user_input",
+  "supervisor_input",
+  "message",
+  "thought",
+  "tool_call",
+  "tool_call_update",
+  "agent_content",
+]);
+
+/**
+ * Start a new direct conversation that branches off `sourceRun`. The source is
+ * left as it was. `historyMessages` are copied with their original timestamps,
+ * `inheritedEntries` are seeded into the new worker's stream so the fork shows
+ * the whole conversation it came from, and `content` becomes the fork's
+ * opening checkpoint.
+ */
+async function forkDirectRun(args: {
+  sourceRun: typeof runs.$inferSelect;
+  recovery: RecoverRunArgs;
+  content: string;
+  historyMessages: Array<typeof messages.$inferSelect>;
+  inheritedEntries: ConversationTranscriptEntry[];
+  checkpointAttachmentsJson: string | null;
+  attachments: ChatAttachment[];
+}) {
+  const { sourceRun: run, recovery, content } = args;
+  const newPlanId = randomUUID();
+  const newRunId = createRunId();
+  const now = new Date();
+  const workspaceResult = recovery.gitWorkspaceLaunch
+    ? await createBranchWorktree({
+      projectPath: recovery.gitWorkspaceLaunch.projectPath,
+      newBranchName: recovery.gitWorkspaceLaunch.newBranchName,
+      checkoutPath: recovery.gitWorkspaceLaunch.checkoutPath,
+      startPoint: recovery.gitWorkspaceLaunch.startPoint,
+      worktreeParent: recovery.gitWorkspaceLaunch.worktreeParent,
+      expectedHeadSha: recovery.gitWorkspaceLaunch.expectedHeadSha,
+      expectedStatusFingerprint: recovery.gitWorkspaceLaunch.expectedStatusFingerprint,
+    })
+    : null;
+  const runWorkspaceSnapshot = workspaceResult
+    ? buildRunWorkspaceSnapshot({
+      target: workspaceResult.target,
+      snapshot: workspaceResult.snapshot,
+    })
+    : null;
+  let forkedRunCreated = false;
+
+  try {
+    const planPath = createAdHocPlan(content);
+
+    await db.insert(plans).values({
+      id: newPlanId,
+      path: planPath,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: newRunId,
+      planId: newPlanId,
+      mode: run.mode,
+      title: run.title,
+      projectPath: workspaceResult?.target.checkoutPath ?? run.projectPath,
+      preferredWorkerType: run.preferredWorkerType,
+      preferredWorkerModel: run.preferredWorkerModel,
+      preferredWorkerEffort: run.preferredWorkerEffort,
+      allowedWorkerTypes: run.allowedWorkerTypes,
+      gitWorkspaceJson: runWorkspaceSnapshot ? JSON.stringify(runWorkspaceSnapshot) : null,
+      parentRunId: recovery.runId,
+      forkedFromMessageId: recovery.targetMessageId,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    forkedRunCreated = true;
+
+    // `messages.id` is global, so copied rows need fresh ids. The seeded
+    // `user_input` entries take the same fresh ids: the transcript matches a
+    // user row to its stream entry by id, and a mismatch renders it twice.
+    const copiedMessageIds = new Map<string, string>();
+    for (const message of args.historyMessages) {
+      const copiedMessageId = randomUUID();
+      copiedMessageIds.set(message.id, copiedMessageId);
+      await db.insert(messages).values({
+        id: copiedMessageId,
+        runId: newRunId,
+        role: message.role,
+        kind: message.kind,
+        content: message.content,
+        attachmentsJson: message.attachmentsJson,
+        createdAt: message.createdAt,
+      });
+    }
+    const checkpointMessageId = randomUUID();
+    await db.insert(messages).values({
+      id: checkpointMessageId,
+      runId: newRunId,
+      role: "user",
+      kind: "checkpoint",
+      content,
+      attachmentsJson: args.checkpointAttachmentsJson,
+      createdAt: now,
+    });
+
+    if (runWorkspaceSnapshot) {
+      await recordExecutionEvent({
+        runId: newRunId,
+        eventType: "git_workspace_forked",
+        details: {
+          parentRunId: recovery.runId,
+          forkedFromMessageId: recovery.targetMessageId,
+          target: runWorkspaceSnapshot.target,
+          headSha: runWorkspaceSnapshot.headSha,
+          branchName: runWorkspaceSnapshot.branchName,
+          detachedLabel: runWorkspaceSnapshot.detachedLabel,
+          dirtyFileCount: runWorkspaceSnapshot.dirtyFileCount,
+          conflictedFileCount: runWorkspaceSnapshot.conflictedFileCount,
+          warnings: runWorkspaceSnapshot.warnings,
+        },
+        createdAt: now,
+      });
+    }
+
+    const newRun = await db.select().from(runs).where(eq(runs.id, newRunId)).get();
+    if (!newRun) {
+      throw new Error("Forked run not found");
+    }
+
+    const seedEntries = args.inheritedEntries
+      .filter((entry) => FORK_INHERITED_ENTRY_TYPES.has(entry.type))
+      .map(({ seq: _seq, workerId: _workerId, ...entry }) => ({
+        ...entry,
+        id: entry.type === "user_input" ? copiedMessageIds.get(entry.id) ?? entry.id : entry.id,
+      }));
+    // The first turn runs in the background, like any direct follow-up: the
+    // ask stream stays open until the turn ends, and holding the response that
+    // long kept the user on the source conversation for the whole turn. Only
+    // wait for the inherited history so the fork opens already showing it.
+    // A failed turn is recorded on the forked run by `startDirectRerun`.
+    let markHistorySeeded!: () => void;
+    const historySeeded = new Promise<void>((resolve) => {
+      markHistorySeeded = resolve;
+    });
+    const firstTurn = startDirectRerun(newRun, content, checkpointMessageId, args.attachments, {
+      seedEntries,
+      onHistorySeeded: () => markHistorySeeded(),
+    });
+    trackConversationBackgroundTask(firstTurn, { runId: newRunId });
+    await Promise.race([historySeeded, firstTurn]);
+    return {
+      runId: newRunId,
+      ...(workspaceResult && runWorkspaceSnapshot
+        ? {
+          target: workspaceResult.target,
+          runLaunchSnapshot: runWorkspaceSnapshot,
+          snapshot: workspaceResult.snapshot,
+        }
+        : {}),
+    };
+  } catch (error) {
+    if (workspaceResult && recovery.gitWorkspaceLaunch && !forkedRunCreated) {
+      throw pendingOrphanWorktreeError({
+        projectPath: recovery.gitWorkspaceLaunch.projectPath,
+        operation: "fork_run_worktree",
+        target: workspaceResult.target,
+        sourceRunId: recovery.runId,
+        targetMessageId: recovery.targetMessageId,
+        error,
+      });
+    }
+    throw error;
+  }
+}
+
+/**
+ * Fork after an assistant reply: the new conversation inherits everything up
+ * to and including that reply, then continues with the prompt the user typed.
+ * Unlike a checkpoint fork this never touches the source conversation, so it
+ * runs outside the source's mutation queue and may fork a conversation that is
+ * still mid-turn.
+ */
+async function forkDirectRunFromAssistantMessage(args: RecoverRunArgs) {
+  await assertRunNotHandoffFenced(args.runId);
+  const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
+  if (!run) {
+    throw new Error("Run not found");
+  }
+  if (run.mode !== "direct" && run.mode !== "commit") {
+    throw new Error("Fork recovery is only available in direct control conversations");
+  }
+  const content = args.content?.trim();
+  if (!content) {
+    throw new Error("A prompt is required to fork from an assistant message");
+  }
+
+  const { entries } = await readVisibleConversationTranscript(run.id);
+  const targetIndex = entries.findIndex((entry) => entry.id === args.targetMessageId && entry.type === "message");
+  const targetEntry = entries[targetIndex];
+  if (!targetEntry) {
+    throw new Error("Fork target message not found in this conversation");
+  }
+  const boundaryMs = Date.parse(targetEntry.timestamp);
+  const historyMessages = (await db.select()
+    .from(messages)
+    .where(eq(messages.runId, run.id))
+    .orderBy(asc(messages.createdAt), asc(messages.id)))
+    .filter((message) => Number.isFinite(boundaryMs) && message.createdAt.getTime() <= boundaryMs);
+
+  return forkDirectRun({
+    sourceRun: run,
+    recovery: args,
+    content,
+    historyMessages,
+    inheritedEntries: entries.slice(0, targetIndex + 1),
+    checkpointAttachmentsJson: null,
+    attachments: [],
+  });
+}
+
 async function recoverRunUnlocked(args: RecoverRunArgs, recoveryEpoch?: number) {
   await assertRunNotHandoffFenced(args.runId);
   const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
@@ -1356,133 +1604,28 @@ async function recoverRunUnlocked(args: RecoverRunArgs, recoveryEpoch?: number) 
 
   if (args.action === "fork") {
     await cancelRunWorkers(args.runId);
-
-    const newPlanId = randomUUID();
-    const newRunId = createRunId();
-    const now = new Date();
-    const workspaceResult = args.gitWorkspaceLaunch
-      ? await createBranchWorktree({
-        projectPath: args.gitWorkspaceLaunch.projectPath,
-        newBranchName: args.gitWorkspaceLaunch.newBranchName,
-        checkoutPath: args.gitWorkspaceLaunch.checkoutPath,
-        startPoint: args.gitWorkspaceLaunch.startPoint,
-        worktreeParent: args.gitWorkspaceLaunch.worktreeParent,
-        expectedHeadSha: args.gitWorkspaceLaunch.expectedHeadSha,
-        expectedStatusFingerprint: args.gitWorkspaceLaunch.expectedStatusFingerprint,
-      })
-      : null;
-    const runWorkspaceSnapshot = workspaceResult
-      ? buildRunWorkspaceSnapshot({
-        target: workspaceResult.target,
-        snapshot: workspaceResult.snapshot,
-      })
-      : null;
-    let forkedRunCreated = false;
-
-    try {
-      const planPath = createAdHocPlan(nextContent);
-
-      await db.insert(plans).values({
-        id: newPlanId,
-        path: planPath,
-        status: "running",
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      await db.insert(runs).values({
-        id: newRunId,
-        planId: newPlanId,
-        mode: run.mode,
-        title: run.title,
-        projectPath: workspaceResult?.target.checkoutPath ?? run.projectPath,
-        preferredWorkerType: run.preferredWorkerType,
-        preferredWorkerModel: run.preferredWorkerModel,
-        preferredWorkerEffort: run.preferredWorkerEffort,
-        allowedWorkerTypes: run.allowedWorkerTypes,
-        gitWorkspaceJson: runWorkspaceSnapshot ? JSON.stringify(runWorkspaceSnapshot) : null,
-        parentRunId: args.runId,
-        forkedFromMessageId: args.targetMessageId,
-        status: "running",
-        createdAt: now,
-        updatedAt: now,
-      });
-      forkedRunCreated = true;
-
-      const messagesToCopy = (await db.select()
-        .from(messages)
-        .where(eq(messages.runId, args.runId))
-        .orderBy(asc(messages.createdAt), asc(messages.id)))
-        .filter((message) => (
-          message.createdAt.getTime() < targetMessage.createdAt.getTime()
-          || (message.createdAt.getTime() === targetMessage.createdAt.getTime() && message.id <= targetMessage.id)
-        ));
-
-      let forkTargetMessageId: string | undefined;
-      for (const message of messagesToCopy) {
-        const copiedMessageId = randomUUID();
-        if (message.id === args.targetMessageId) {
-          forkTargetMessageId = copiedMessageId;
-        }
-        await db.insert(messages).values({
-          id: copiedMessageId,
-          runId: newRunId,
-          role: message.role,
-          kind: message.id === args.targetMessageId ? "checkpoint" : message.kind,
-          content: message.id === args.targetMessageId ? nextContent : message.content,
-          attachmentsJson: message.attachmentsJson,
-          createdAt: now,
-        });
-      }
-
-      if (runWorkspaceSnapshot) {
-        await recordExecutionEvent({
-          runId: newRunId,
-          eventType: "git_workspace_forked",
-          details: {
-            parentRunId: args.runId,
-            forkedFromMessageId: args.targetMessageId,
-            target: runWorkspaceSnapshot.target,
-            headSha: runWorkspaceSnapshot.headSha,
-            branchName: runWorkspaceSnapshot.branchName,
-            detachedLabel: runWorkspaceSnapshot.detachedLabel,
-            dirtyFileCount: runWorkspaceSnapshot.dirtyFileCount,
-            conflictedFileCount: runWorkspaceSnapshot.conflictedFileCount,
-            warnings: runWorkspaceSnapshot.warnings,
-          },
-          createdAt: now,
-        });
-      }
-
-      const newRun = await db.select().from(runs).where(eq(runs.id, newRunId)).get();
-      if (!newRun) {
-        throw new Error("Forked run not found");
-      }
-
-      await startDirectRerun(newRun, nextContent, forkTargetMessageId, targetAttachments);
-      return {
-        runId: newRunId,
-        ...(workspaceResult && runWorkspaceSnapshot
-          ? {
-            target: workspaceResult.target,
-            runLaunchSnapshot: runWorkspaceSnapshot,
-            snapshot: workspaceResult.snapshot,
-          }
-          : {}),
-      };
-    } catch (error) {
-      if (workspaceResult && args.gitWorkspaceLaunch && !forkedRunCreated) {
-        throw pendingOrphanWorktreeError({
-          projectPath: args.gitWorkspaceLaunch.projectPath,
-          operation: "fork_run_worktree",
-          target: workspaceResult.target,
-          sourceRunId: args.runId,
-          targetMessageId: args.targetMessageId,
-          error,
-        });
-      }
-      throw error;
-    }
+    const { entries: transcriptEntries } = await readVisibleConversationTranscript(args.runId);
+    const targetEntryIndex = transcriptEntries.findIndex((entry) => entry.id === targetMessage.id && entry.type === "user_input");
+    const inheritedEntries = targetEntryIndex >= 0
+      ? transcriptEntries.slice(0, targetEntryIndex)
+      : transcriptEntries.filter((entry) => Date.parse(entry.timestamp) < targetMessage.createdAt.getTime());
+    const historyMessages = (await db.select()
+      .from(messages)
+      .where(eq(messages.runId, args.runId))
+      .orderBy(asc(messages.createdAt), asc(messages.id)))
+      .filter((message) => (
+        message.createdAt.getTime() < targetMessage.createdAt.getTime()
+        || (message.createdAt.getTime() === targetMessage.createdAt.getTime() && message.id < targetMessage.id)
+      ));
+    return forkDirectRun({
+      sourceRun: run,
+      recovery: args,
+      content: nextContent,
+      historyMessages,
+      inheritedEntries,
+      checkpointAttachmentsJson: targetMessage.attachmentsJson,
+      attachments: targetAttachments,
+    });
   }
 
   await cancelRunWorkers(args.runId);
@@ -1541,6 +1684,10 @@ export async function recoverRun(args: RecoverRunArgs) {
       .get(),
     db.select({ id: workers.id }).from(workers).where(eq(workers.runId, args.runId)),
   ]);
+  if (args.action === "fork" && !targetMessage) {
+    // Not a user checkpoint, so it can only be an assistant reply.
+    return forkDirectRunFromAssistantMessage(args);
+  }
   let recoveryEpoch: number | undefined;
   if (
     run

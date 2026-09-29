@@ -3095,6 +3095,7 @@ describe("POST /api/runs/[id]", () => {
 
     const response = await POST(request, { params: Promise.resolve({ id: runId }) });
     expect(response.status).toBe(200);
+    await waitForConversationBackgroundTasksForTests();
 
     const payload = await response.json();
     const forkedRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
@@ -3128,6 +3129,140 @@ describe("POST /api/runs/[id]", () => {
       undefined,
       { expectedTurnGeneration: 0 },
     );
+  });
+
+  it("forks a direct conversation after an assistant reply without touching the source", async () => {
+    mockAskAgent.mockClear();
+    mockCancelAgent.mockClear();
+    mockSpawnAgent.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const sourceWorkerId = `worker-${randomUUID()}`;
+    const firstMessageId = randomUUID();
+    const secondMessageId = randomUUID();
+    const firstReplyId = `reply-${randomUUID()}`;
+    const adHocRelativePath = path.join("vibes", "ad-hoc", `${randomUUID()}.md`);
+    const adHocAbsolutePath = getAppDataPath(adHocRelativePath);
+
+    fs.mkdirSync(path.dirname(adHocAbsolutePath), { recursive: true });
+    fs.writeFileSync(adHocAbsolutePath, "# temp\nfirst prompt");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: adHocRelativePath,
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Source run",
+      projectPath: "/workspace/app",
+      preferredWorkerType: "codex",
+      allowedWorkerTypes: JSON.stringify(["codex"]),
+      status: "running",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(workers).values({
+      id: sourceWorkerId,
+      runId,
+      type: "codex",
+      status: "working",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(messages).values([
+      {
+        id: firstMessageId,
+        runId,
+        role: "user",
+        kind: "checkpoint",
+        content: "first prompt",
+        createdAt: new Date("2026-04-21T10:00:00Z"),
+      },
+      {
+        id: secondMessageId,
+        runId,
+        role: "user",
+        kind: "checkpoint",
+        content: "second prompt",
+        createdAt: new Date("2026-04-21T10:02:00Z"),
+      },
+    ]);
+    const { appendWorkerEntryWithResult } = await import("@/server/workers/output-store");
+    const streamEntries = [
+      { id: firstMessageId, type: "user_input", text: "first prompt", timestamp: "2026-04-21T10:00:01.000Z", authorRole: "user", channel: "stdin" },
+      { id: firstReplyId, type: "message", text: "first answer", timestamp: "2026-04-21T10:00:30.000Z" },
+      { id: secondMessageId, type: "user_input", text: "second prompt", timestamp: "2026-04-21T10:02:01.000Z", authorRole: "user", channel: "stdin" },
+      { id: `reply-${randomUUID()}`, type: "message", text: "second answer", timestamp: "2026-04-21T10:02:30.000Z" },
+    ] as const;
+    for (const entry of streamEntries) {
+      await appendWorkerEntryWithResult(runId, sourceWorkerId, entry);
+    }
+
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "fork", targetMessageId: firstReplyId, content: "follow-up prompt" }),
+    }), { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+    await waitForConversationBackgroundTasksForTests();
+
+    const payload = await response.json();
+    const forkedRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+    const forkedMessages = await db.select().from(messages)
+      .where(eq(messages.runId, payload.runId))
+      .orderBy(messages.createdAt);
+    const sourceWorker = await db.select().from(workers).where(eq(workers.id, sourceWorkerId)).get();
+
+    expect(payload.runId).not.toBe(runId);
+    expect(forkedRun?.parentRunId).toBe(runId);
+    expect(forkedRun?.forkedFromMessageId).toBe(firstReplyId);
+    expect(forkedMessages.map((message) => message.content)).toEqual(["first prompt", "follow-up prompt"]);
+    expect(sourceWorker?.status).toBe("working");
+    expect(mockCancelAgent).not.toHaveBeenCalled();
+
+    // The fork shows the whole conversation it came from, not just its own turn.
+    const forkedWorker = await db.select().from(workers).where(eq(workers.runId, payload.runId)).get();
+    const { readWorkerOutputEntries } = await import("@/server/workers/output-store");
+    const forkedEntries = (await readWorkerOutputEntries(payload.runId, forkedWorker!.id))
+      .filter((entry) => entry.type === "user_input" || entry.type === "message")
+      .sort((left, right) => left.seq - right.seq);
+    expect(forkedEntries.slice(0, 3).map((entry) => [entry.type, entry.text])).toEqual([
+      ["user_input", "first prompt"],
+      ["message", "first answer"],
+      ["user_input", "follow-up prompt"],
+    ]);
+    // Seeded user entries share ids with the copied rows so they render once.
+    expect(forkedEntries.filter((entry) => entry.type === "user_input").map((entry) => entry.id))
+      .toEqual(forkedMessages.map((message) => message.id));
+
+    const askedPrompt = mockAskAgent.mock.calls.at(-1)?.[1] as string;
+    expect(askedPrompt).toContain("User: first prompt");
+    expect(askedPrompt).toContain("Assistant: first answer");
+    expect(askedPrompt).not.toContain("second prompt");
+    expect(askedPrompt).not.toContain("second answer");
+    expect(askedPrompt.trimEnd().endsWith("follow-up prompt")).toBe(true);
+  });
+
+  it("rejects an assistant fork without a follow-up prompt", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    await db.insert(plans).values({ id: planId, path: "vibes/ad-hoc/none.md", status: "running", createdAt: new Date(), updatedAt: new Date() });
+    await db.insert(runs).values({ id: runId, planId, mode: "direct", title: "Source run", status: "done", createdAt: new Date(), updatedAt: new Date() });
+
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "fork", targetMessageId: "reply-missing", content: "  " }),
+    }), { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(400);
   });
 
   it("forks a direct conversation into a new branch-backed worktree", async () => {
@@ -3238,6 +3373,7 @@ describe("POST /api/runs/[id]", () => {
     }), { params: Promise.resolve({ id: runId }) });
 
     expect(response.status).toBe(200);
+    await waitForConversationBackgroundTasksForTests();
     const payload = await response.json();
     const forkedRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
     const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, payload.runId));
