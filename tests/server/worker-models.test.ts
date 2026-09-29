@@ -92,10 +92,11 @@ describe("worker model catalog", () => {
     expect(catalog.codex.some((model) => model.value === "codex-auto-review")).toBe(false);
   });
 
-  it("uses GPT-6 Sol as the first Codex fallback when discovery is unavailable", async () => {
+  it("uses GPT-6.1 Sol as the first Codex fallback when discovery is unavailable", async () => {
     const catalog = await buildWorkerModelCatalog({ runCommand: async () => "" });
 
-    expect(catalog.codex.slice(0, 3)).toEqual([
+    expect(catalog.codex.slice(0, 4)).toEqual([
+      { value: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
       { value: "gpt-6-sol", label: "GPT-6 Sol" },
       { value: "gpt-6-luna", label: "GPT-6 Luna" },
       { value: "gpt-6-astra", label: "GPT-6 Astra" },
@@ -137,6 +138,7 @@ describe("worker model catalog", () => {
       { value: "claude-fable-5-1", label: "Fable 5.1" },
       { value: "claude-fable-5", label: "Fable 5" },
       { value: "claude-opus-5", label: "Opus 5" },
+      { value: "claude-sonnet-5-5", label: "Sonnet 5.5" },
       { value: "claude-sonnet-5", label: "Sonnet 5" },
     ]);
   });
@@ -160,6 +162,7 @@ describe("worker model catalog", () => {
       "claude-fable-5-1",
       "claude-fable-5",
       "claude-opus-5",
+      "claude-sonnet-5-5",
       "claude-sonnet-5",
     ]);
   });

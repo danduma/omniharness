@@ -1592,7 +1592,7 @@ function isClaudeDisplayLabel(normalizedLower: string, bareLabel: string) {
 
 // Named-variant OpenAI models are spelled the same on both sides; only the
 // `openai/` prefix differs between the Codex and OpenCode catalogs.
-const OPENAI_NAMED_VARIANT_PATTERN = /^gpt-(?:5\.6-(?:sol|terra|luna)|6-(?:sol|luna))$/;
+const OPENAI_NAMED_VARIANT_PATTERN = /^gpt-(?:5\.6-(?:sol|terra|luna)|6-(?:sol|luna)|6\.1-sol)$/;
 
 export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel: string) {
   const normalized = selectedModel.trim();
@@ -1607,6 +1607,7 @@ export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel
     "gpt-5.6 luna": "gpt-5.6-luna",
     "gpt-6 sol": "gpt-6-sol",
     "gpt-6 luna": "gpt-6-luna",
+    "gpt-6.1 sol": "gpt-6.1-sol",
   };
   const openAiModel = openAiDisplayAliases[normalizedLower]
     ?? normalizedLower.replace(/^openai\//, "");
@@ -1616,6 +1617,7 @@ export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel
     if (selectedModel === "GPT-5.4 Mini" || normalizedLower === "gpt-5.4-mini") return "openai/gpt-5.4-mini";
     if (selectedModel === "GPT-5.3 Codex" || normalizedLower === "gpt-5.3-codex") return "openai/gpt-5.3-codex";
     if (isClaudeDisplayLabel(normalizedLower, "sonnet 4") || normalizedLower === "claude-sonnet-4") return "anthropic/claude-sonnet-4";
+    if (isClaudeDisplayLabel(normalizedLower, "sonnet 5.5") || normalizedLower === "claude-sonnet-5-5") return "anthropic/claude-sonnet-5-5";
     if (isClaudeDisplayLabel(normalizedLower, "sonnet 5") || normalizedLower === "claude-sonnet-5") return "anthropic/claude-sonnet-5";
   }
 
@@ -1625,6 +1627,7 @@ export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel
     if (selectedModel === "GPT-5.4 Mini" || normalizedLower === "openai/gpt-5.4-mini") return "gpt-5.4-mini";
     if (selectedModel === "GPT-5.3 Codex" || normalizedLower === "openai/gpt-5.3-codex") return "gpt-5.3-codex";
     if (isClaudeDisplayLabel(normalizedLower, "sonnet 4") || normalizedLower === "anthropic/claude-sonnet-4") return "claude-sonnet-4";
+    if (isClaudeDisplayLabel(normalizedLower, "sonnet 5.5") || normalizedLower === "anthropic/claude-sonnet-5-5") return "claude-sonnet-5-5";
     if (isClaudeDisplayLabel(normalizedLower, "sonnet 5") || normalizedLower === "anthropic/claude-sonnet-5") return "claude-sonnet-5";
   }
 
@@ -1645,6 +1648,9 @@ export function resolveComposerModelValue(preferredModel: string | null | undefi
   }
   if (normalized === "claude-sonnet-4" || normalized === "anthropic/claude-sonnet-4") {
     return preferredModel.includes("/") ? "anthropic/claude-sonnet-4" : "claude-sonnet-4";
+  }
+  if (normalized === "claude-sonnet-5-5" || normalized === "anthropic/claude-sonnet-5-5") {
+    return preferredModel.includes("/") ? "anthropic/claude-sonnet-5-5" : "claude-sonnet-5-5";
   }
   if (normalized === "claude-sonnet-5" || normalized === "anthropic/claude-sonnet-5") {
     return preferredModel.includes("/") ? "anthropic/claude-sonnet-5" : "claude-sonnet-5";

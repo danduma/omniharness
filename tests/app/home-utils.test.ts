@@ -1641,6 +1641,8 @@ describe("worker model normalization", () => {
     expect(resolveSelectedWorkerModel("opencode", "gpt-6-sol")).toBe("openai/gpt-6-sol");
     expect(resolveSelectedWorkerModel("opencode", "GPT-6 Luna")).toBe("openai/gpt-6-luna");
     expect(resolveSelectedWorkerModel("codex", "openai/gpt-6-sol")).toBe("gpt-6-sol");
+    expect(resolveSelectedWorkerModel("opencode", "GPT-6.1 Sol")).toBe("openai/gpt-6.1-sol");
+    expect(resolveSelectedWorkerModel("codex", "openai/gpt-6.1-sol")).toBe("gpt-6.1-sol");
   });
 
   it("restores GPT-5.6 selections using the provider's id shape", () => {
