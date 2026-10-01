@@ -687,7 +687,6 @@ interface ConversationMainProps {
   handleConfirmForkMessageIntoWorktree: (request: GitWorkspaceLaunchRequest & {
     runId: string;
     targetMessageId: string;
-    content: string;
   }) => void;
   editingMessageId: string | null;
   editingMessageValue: string;
@@ -1203,7 +1202,6 @@ const ConversationMain = memo(function ConversationMain({
       expectedStatusFingerprint: forkWorkspaceSnapshot.statusFingerprint,
       runId: forkWorkspaceDialog.runId,
       targetMessageId: forkWorkspaceDialog.targetMessageId,
-      content: forkWorkspaceDialog.content,
     });
   };
 

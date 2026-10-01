@@ -749,7 +749,7 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
       });
     }
 
-    if (!targetMessageId) {
+    if (!targetMessageId && action !== "fork") {
       return errorResponse("targetMessageId is required", {
         status: 400,
         source: "Runs",

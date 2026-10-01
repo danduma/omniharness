@@ -198,6 +198,22 @@ describe("HomeUiStateManager", () => {
     });
   });
 
+  it("restores the new-session draft after visiting another conversation", () => {
+    const manager = new HomeUiStateManager();
+    manager.setComposerDraft({ command: "pasted prompt", commandCursor: 13 });
+    manager.setComposerSelectionField("conversationMode", "omni");
+
+    manager.selectRun("run-a");
+    expect(manager.getSnapshot().command).toBe("");
+
+    manager.selectRun(null);
+    expect(manager.getSnapshot()).toMatchObject({
+      command: "pasted prompt",
+      commandCursor: 13,
+      selectedConversationMode: "omni",
+    });
+  });
+
   it("leaves an existing conversation draft alone", () => {
     const manager = new HomeUiStateManager();
     manager.selectRun("run-a");

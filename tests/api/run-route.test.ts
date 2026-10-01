@@ -3041,7 +3041,7 @@ describe("POST /api/runs/[id]", () => {
     expect(response.status).toBe(200);
   });
 
-  it("forks a new direct conversation from a direct user checkpoint", async () => {
+  it("clones a direct user checkpoint without running a supplied continuation", async () => {
     mockAskAgent.mockClear();
     mockCancelAgent.mockClear();
     mockGetAgent.mockClear();
@@ -3114,21 +3114,11 @@ describe("POST /api/runs/[id]", () => {
     expect(forkedRun?.allowedWorkerTypes).toBe(JSON.stringify(["codex", "opencode"]));
     // Worker response now lives in the unified worker stream.
     expect(forkedMessages.map((message) => message.role)).toEqual(["user"]);
-    expect(forkedMessages[0]?.content).toBe("forked prompt");
-    expect(fs.readFileSync(getAppDataPath(forkedPlan!.path), "utf-8")).toContain("forked prompt");
+    expect(forkedMessages[0]?.content).toBe("source prompt");
+    expect(fs.readFileSync(getAppDataPath(forkedPlan!.path), "utf-8")).toContain("source prompt");
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
-    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
-      type: "codex",
-      cwd: "/workspace/app",
-      model: "gpt-5.4",
-      effort: "medium",
-    }));
-    expect(mockAskAgent).toHaveBeenCalledWith(
-      expect.any(String),
-      "forked prompt",
-      undefined,
-      { expectedTurnGeneration: 0 },
-    );
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(mockAskAgent).not.toHaveBeenCalled();
   });
 
   it("forks a direct conversation after an assistant reply without touching the source", async () => {
@@ -3225,7 +3215,7 @@ describe("POST /api/runs/[id]", () => {
     expect(payload.runId).not.toBe(runId);
     expect(forkedRun?.parentRunId).toBe(runId);
     expect(forkedRun?.forkedFromMessageId).toBe(firstReplyId);
-    expect(forkedMessages.map((message) => message.content)).toEqual(["first prompt", "follow-up prompt"]);
+    expect(forkedMessages.map((message) => message.content)).toEqual(["first prompt"]);
     expect(sourceWorker?.status).toBe("working");
     expect(mockCancelAgent).not.toHaveBeenCalled();
 
@@ -3235,24 +3225,82 @@ describe("POST /api/runs/[id]", () => {
     const forkedEntries = (await readWorkerOutputEntries(payload.runId, forkedWorker!.id))
       .filter((entry) => entry.type === "user_input" || entry.type === "message")
       .sort((left, right) => left.seq - right.seq);
-    expect(forkedEntries.slice(0, 3).map((entry) => [entry.type, entry.text])).toEqual([
+    expect(forkedEntries.map((entry) => [entry.type, entry.text])).toEqual([
       ["user_input", "first prompt"],
       ["message", "first answer"],
-      ["user_input", "follow-up prompt"],
     ]);
     // Seeded user entries share ids with the copied rows so they render once.
     expect(forkedEntries.filter((entry) => entry.type === "user_input").map((entry) => entry.id))
       .toEqual(forkedMessages.map((message) => message.id));
 
-    const askedPrompt = mockAskAgent.mock.calls.at(-1)?.[1] as string;
-    expect(askedPrompt).toContain("User: first prompt");
-    expect(askedPrompt).toContain("Assistant: first answer");
-    expect(askedPrompt).not.toContain("second prompt");
-    expect(askedPrompt).not.toContain("second answer");
-    expect(askedPrompt.trimEnd().endsWith("follow-up prompt")).toBe(true);
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(mockAskAgent).not.toHaveBeenCalled();
   });
 
-  it("rejects an assistant fork without a follow-up prompt", async () => {
+  it.each([
+    ["assistant reply", "reply"],
+    ["user checkpoint", "checkpoint"],
+    ["whole session", undefined],
+  ])("clones a %s without a continuation or an agent turn", async (_label, boundary) => {
+    mockAskAgent.mockClear();
+    mockCancelAgent.mockClear();
+    mockSpawnAgent.mockClear();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `worker-${randomUUID()}`;
+    const userMessageId = randomUUID();
+    const replyId = randomUUID();
+    const secondUserMessageId = randomUUID();
+    const secondReplyId = randomUUID();
+    const now = new Date();
+    await db.insert(plans).values({ id: planId, path: "vibes/ad-hoc/source.md", status: "running", createdAt: now, updatedAt: now });
+    await db.insert(runs).values({ id: runId, planId, mode: "direct", title: "Source run", status: "running", preferredWorkerType: "codex", preferredWorkerModel: "gpt-5.4", preferredWorkerEffort: "medium", createdAt: now, updatedAt: now });
+    await db.insert(workers).values({ id: workerId, runId, type: "codex", status: "working", cwd: process.env.OMNIHARNESS_ROOT!, turnGeneration: 7, bridgeSessionId: "source-session", createdAt: now, updatedAt: now });
+    await db.insert(messages).values([
+      { id: userMessageId, runId, role: "user", kind: "checkpoint", content: "first prompt", createdAt: new Date("2026-04-21T10:00:00Z") },
+      { id: secondUserMessageId, runId, role: "user", kind: "checkpoint", content: "second prompt", createdAt: new Date("2026-04-21T10:02:00Z") },
+    ]);
+    const { appendWorkerEntryWithResult, readWorkerOutputEntries } = await import("@/server/workers/output-store");
+    const entries = [
+      { id: userMessageId, type: "user_input", text: "first prompt", timestamp: "2026-04-21T10:00:01.000Z", authorRole: "user", channel: "stdin" },
+      { id: replyId, type: "message", text: "first answer", timestamp: "2026-04-21T10:00:30.000Z" },
+      { id: secondUserMessageId, type: "user_input", text: "second prompt", timestamp: "2026-04-21T10:02:01.000Z", authorRole: "user", channel: "stdin" },
+      { id: secondReplyId, type: "message", text: "second answer", timestamp: "2026-04-21T10:02:30.000Z" },
+      { id: randomUUID(), type: "permission", text: "source permission", timestamp: "2026-04-21T10:03:00.000Z" },
+    ] as const;
+    for (const entry of entries) await appendWorkerEntryWithResult(runId, workerId, entry);
+    const sourceWorkerBefore = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const targetMessageId = boundary === "reply" ? replyId : boundary === "checkpoint" ? userMessageId : undefined;
+
+    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "fork", targetMessageId }),
+    }), { params: Promise.resolve({ id: runId }) });
+    expect(response.status).toBe(200);
+    await waitForConversationBackgroundTasksForTests();
+    const payload = await response.json();
+    const forkedRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
+    const forkedWorker = await db.select().from(workers).where(eq(workers.runId, payload.runId)).get();
+    const forkedMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId)).orderBy(messages.createdAt);
+    const forkedEntries = await readWorkerOutputEntries(payload.runId, forkedWorker!.id);
+    const expectedEntries = boundary === "checkpoint" ? entries.slice(0, 1) : boundary === "reply" ? entries.slice(0, 2) : entries.slice(0, 4);
+
+    expect(forkedRun).toMatchObject({ parentRunId: runId, status: "done", title: "Source run", preferredWorkerModel: "gpt-5.4", preferredWorkerEffort: "medium" });
+    expect(forkedWorker).toMatchObject({ status: "idle", bridgeSessionId: null });
+    expect(forkedEntries.map((entry) => [entry.type, entry.text])).toEqual(expectedEntries.map((entry) => [entry.type, entry.text]));
+    expect(forkedEntries.filter((entry) => entry.type === "user_input").map((entry) => entry.id)).toEqual(forkedMessages.map((message) => message.id));
+    expect(forkedMessages.map((message) => message.content)).toEqual(boundary ? ["first prompt"] : ["first prompt", "second prompt"]);
+    expect(await db.select().from(workers).where(eq(workers.id, workerId)).get()).toEqual(sourceWorkerBefore);
+    expect(await readWorkerOutputEntries(runId, workerId)).toHaveLength(entries.length);
+    expect(mockAskAgent).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(mockCancelAgent).not.toHaveBeenCalled();
+    expect(getNamedEventsSince(0, { runId: payload.runId }).events).toContainEqual(expect.objectContaining({
+      event: expect.objectContaining({ kind: "session.created", actorIds: [forkedWorker!.id] }),
+    }));
+  });
+
+  it("rejects a fork whose boundary is absent from the conversation", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
     await db.insert(plans).values({ id: planId, path: "vibes/ad-hoc/none.md", status: "running", createdAt: new Date(), updatedAt: new Date() });
@@ -3262,7 +3310,7 @@ describe("POST /api/runs/[id]", () => {
       method: "POST",
       body: JSON.stringify({ action: "fork", targetMessageId: "reply-missing", content: "  " }),
     }), { params: Promise.resolve({ id: runId }) });
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(404);
   });
 
   it("forks a direct conversation into a new branch-backed worktree", async () => {
@@ -3392,9 +3440,9 @@ describe("POST /api/runs/[id]", () => {
       newBranchName: "feature/forked-worktree",
       checkoutPath: worktreePath,
     }));
-    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
-      cwd: worktreePath,
-    }));
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(mockAskAgent).not.toHaveBeenCalled();
+    expect(forkedRun?.status).toBe("done");
   });
 });
 

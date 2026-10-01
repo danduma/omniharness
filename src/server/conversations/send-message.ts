@@ -25,6 +25,7 @@ import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
 import { readWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
+import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { appendAttachmentContext, normalizeChatAttachments, parseChatAttachmentsJson, resolveImageAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { getAppDataPath } from "@/server/app-root";
@@ -554,7 +555,10 @@ export async function resumeMissingDirectWorker(
       });
     }
   }
-  if (!sessionId) {
+  // Clones have a durable transcript and an idle worker row, but no runtime
+  // session until the user sends their first message.
+  const unstartedFork = !sessionId && Boolean(run.parentRunId);
+  if (!sessionId && !unstartedFork) {
     const message = `Direct worker ${worker.id} is missing persisted ACP session metadata.`;
     emitNamedEvent({
       kind: "error.surfaced",
@@ -571,8 +575,19 @@ export async function resumeMissingDirectWorker(
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
   const { env: envParams } = await readRuntimeEnvFromSettings();
+  const initialSelection = resolveWorkerLaunchSelection(worker, run);
+  const forkAccount = unstartedFork && initialSelection.credentialSource === "account"
+    ? await allocateWorkerAccount({
+      workerType: worker.type,
+      runId: run.id,
+      workerId: worker.id,
+      explicitAccountId: run.preferredWorkerAccountId,
+      strategy: run.preferredWorkerAccountId ? "manual" : "priority",
+      env: envParams,
+    })
+    : null;
   const launchSelection = resolveWorkerLaunchSelection(worker, run, {
-    accountId: await readWorkerAllocatedAccountId(worker.id),
+    accountId: forkAccount?.account?.id ?? await readWorkerAllocatedAccountId(worker.id),
   });
   const spawnParams = {
     type: worker.type,
@@ -586,11 +601,11 @@ export async function resumeMissingDirectWorker(
   };
   let resumedWorker;
   let recreatedFromRejectedEmptySession = false;
-  let transcriptReplayRequired = false;
+  let transcriptReplayRequired = unstartedFork;
   try {
     resumedWorker = await spawnAgent({
       ...spawnParams,
-      resumeSessionId: sessionId,
+      ...(sessionId ? { resumeSessionId: sessionId } : {}),
     });
   } catch (error) {
     if (isConcurrentAgentStartError(error, worker.id)) {
@@ -608,7 +623,8 @@ export async function resumeMissingDirectWorker(
             }),
       });
     } else if (
-      isRejectedSavedSessionErrorMessage(formatErrorMessage(error))
+      sessionId
+      && isRejectedSavedSessionErrorMessage(formatErrorMessage(error))
       && await canRecreateRejectedSavedSession(run.id, worker.id)
     ) {
       await recordExecutionEvent({
@@ -633,7 +649,7 @@ export async function resumeMissingDirectWorker(
       }
       resumedWorker = await spawnAgent(spawnParams);
       recreatedFromRejectedEmptySession = true;
-    } else if (isRejectedSavedSessionErrorMessage(formatErrorMessage(error))) {
+    } else if (sessionId && isRejectedSavedSessionErrorMessage(formatErrorMessage(error))) {
       const materialized = await materializeProviderSessionFromWorkerStream({
         runId: run.id,
         workerId: worker.id,
