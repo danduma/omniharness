@@ -308,6 +308,19 @@ function activityTimestampMs(timestamp: string) {
   return Number.isFinite(value) ? value : 0;
 }
 
+function formatMessageTime(timestamp: string) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
 /**
  * Position the `messages`-table rows the loaded stream window has no entry for.
  *
@@ -2254,6 +2267,9 @@ const ActivityRow = memo(function ActivityRow({
   const modelAttributionLabel = activity.kind === "message"
     ? formatMessageModelAttribution(activity.model, activity.effort)
     : null;
+  const messageTimeLabel = activity.kind === "message"
+    ? formatMessageTime(activity.timestamp)
+    : "";
   // A live fallback bubble has no stream entry behind it to act on.
   const assistantMessageActions = activity.kind === "message" && !activity.live && activity.text.trim()
     ? getAssistantMessageActions?.({ id: activity.id, content: activity.text }) ?? []
@@ -2393,7 +2409,7 @@ const ActivityRow = memo(function ActivityRow({
               <div className="pointer-events-none absolute bottom-0 left-0 z-10 flex items-center text-muted-foreground/70 sm:left-auto sm:right-0">
                 <span className={cn(
                   "pointer-events-none relative inline-flex items-center gap-1 rounded-md bg-background/80 opacity-0 shadow-sm backdrop-blur-[2px] transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-hover/agent-message:pointer-events-auto group-hover/agent-message:opacity-100",
-                  modelAttributionLabel && "pr-1.5",
+                  (modelAttributionLabel || messageTimeLabel) && "pr-1.5",
                 )}>
                   <button
                     type="button"
@@ -2425,6 +2441,11 @@ const ActivityRow = memo(function ActivityRow({
                     <span className="whitespace-nowrap text-[11px] font-medium leading-none">
                       {modelAttributionLabel}
                     </span>
+                  ) : null}
+                  {messageTimeLabel ? (
+                    <time dateTime={activity.timestamp} className="whitespace-nowrap text-[11px] leading-none tabular-nums">
+                      {messageTimeLabel}
+                    </time>
                   ) : null}
                   {copiedIdForThisRow === activity.id ? (
                     <span
