@@ -376,6 +376,9 @@ describe("/api/git", () => {
     expect(events.some((event) => event.eventType === "git_workspace_forked")).toBe(true);
     expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe(snapshot.branchName);
     expect(git(checkoutPath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("feature/api-fork");
-    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({ cwd: checkoutPath }));
+    const forkedWorker = await db.select().from(workers).where(eq(workers.runId, payload.runId)).get();
+    expect(forkedWorker).toMatchObject({ cwd: checkoutPath, status: "idle", bridgeSessionId: null });
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(mockAskAgent).not.toHaveBeenCalled();
   }, GIT_ROUTE_TEST_TIMEOUT_MS);
 });

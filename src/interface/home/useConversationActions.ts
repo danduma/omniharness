@@ -77,19 +77,17 @@ export function useConversationActions({
     setRightSidebarOpen,
     setMobileWorkersOpen,
     setApiKeys,
-    setSelectedConversationMode,
     setDeletingRun,
   } = homeUiSetters;
 
   const autoCommitMilestonesEnabled = parseBooleanSetting(apiKeys[GIT_AUTO_COMMIT_MILESTONES_SETTING], false);
   const pushOnCommitEnabled = parseBooleanSetting(apiKeys[GIT_PUSH_ON_COMMIT_SETTING], false);
 
+  // `selectRun(null)` swaps in the unsent new-conversation draft. Clearing the
+  // composer afterwards would wipe the one thing the user cannot get back.
   const handleStartNewPlan = () => {
     setSelectedRunId(null);
     setDraftProjectPath(currentProjectScope);
-    setCommand("");
-    clearAttachments();
-    setSelectedConversationMode("direct");
     setMobileNavOpen(false);
   };
 
@@ -146,13 +144,11 @@ export function useConversationActions({
   const beginConversationInProject = (projectPath: string) => {
     setSelectedRunId(null);
     setDraftProjectPath(projectPath);
-    setCommand("");
-    clearAttachments();
-    setSelectedConversationMode("direct");
     setMobileNavOpen(false);
+    const { commandCursor } = homeUiStateManager.getSnapshot();
     requestAnimationFrame(() => {
       commandInputRef.current?.focus();
-      commandInputRef.current?.setSelectionRange(0, 0);
+      commandInputRef.current?.setSelectionRange(commandCursor, commandCursor);
     });
   };
 
@@ -274,15 +270,9 @@ export function useConversationActions({
     );
   };
 
-  // Message forks start after an assistant reply, so the prompt is the user's
-  // next message in the new conversation, not a copy of the reply.
-  const promptForForkContinuation = () => window.prompt("Continue the fork with:", "")?.trim() || null;
-
   const handleForkMessage = (message: Pick<MessageRecord, "id" | "content">) => {
     if (!selectedRunId) return;
-    const content = promptForForkContinuation();
-    if (!content) return;
-    mutations.recoverRun.mutate({ runId: selectedRunId, action: "fork", targetMessageId: message.id, content });
+    mutations.recoverRun.mutate({ runId: selectedRunId, action: "fork", targetMessageId: message.id });
   };
 
   const handleForkMessageIntoWorktree = (message: Pick<MessageRecord, "id" | "content">) => {
@@ -290,9 +280,7 @@ export function useConversationActions({
     const selectedRun = runs.find((run) => run.id === selectedRunId);
     const projectPath = selectedRun?.projectPath || currentProjectScope;
     if (!projectPath) return;
-    const content = promptForForkContinuation();
-    if (!content) return;
-    gitWorkspaceManager.requestForkMessageWorktree(projectPath, selectedRunId, message.id, content);
+    gitWorkspaceManager.requestForkMessageWorktree(projectPath, selectedRunId, message.id);
   };
 
   const handleForkSessionIntoWorktree = () => {
@@ -300,7 +288,7 @@ export function useConversationActions({
     const selectedRun = runs.find((run) => run.id === selectedRunId);
     const projectPath = selectedRun?.projectPath || currentProjectScope;
     if (!projectPath) return;
-    gitWorkspaceManager.requestForkSessionWorktree(projectPath, selectedRunId, latestUserCheckpoint.id, latestUserCheckpoint.content);
+    gitWorkspaceManager.requestForkSessionWorktree(projectPath, selectedRunId);
   };
 
   const handleForkSession = () => {
@@ -308,21 +296,18 @@ export function useConversationActions({
     mutations.recoverRun.mutate({
       runId: selectedRunId,
       action: "fork",
-      targetMessageId: latestUserCheckpoint.id,
-      content: latestUserCheckpoint.content,
+      targetMessageId: "",
     });
   };
 
   const handleConfirmForkMessageIntoWorktree = (request: GitWorkspaceLaunchRequest & {
     runId: string;
     targetMessageId: string;
-    content: string;
   }) => {
     mutations.recoverRun.mutate({
       runId: request.runId,
       action: "fork",
       targetMessageId: request.targetMessageId,
-      content: request.content,
       gitWorkspaceLaunch: request,
     });
     gitWorkspaceManager.setKey("activeDialog", null);

@@ -305,6 +305,29 @@ test("selecting a session preserves its restored composer draft", () => {
   expect(block).not.toContain("clearAttachments(");
 });
 
+test("starting a new session restores the unsent new-session draft", () => {
+  const actionsSource = fs.readFileSync(
+    path.resolve(process.cwd(), "src/interface/home/useConversationActions.ts"),
+    "utf8"
+  );
+
+  for (const signature of [
+    "const handleStartNewPlan = () => {",
+    "const beginConversationInProject = (projectPath: string) => {",
+  ]) {
+    const start = actionsSource.indexOf(signature);
+    const end = actionsSource.indexOf("\n  };", start);
+    const block = actionsSource.slice(start, end);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(block).toContain("setSelectedRunId(null);");
+    expect(block).not.toContain("setCommand(");
+    expect(block).not.toContain("setCommandCursor(");
+    expect(block).not.toContain("clearAttachments(");
+    expect(block).not.toContain("setSelectedConversationMode(");
+  }
+});
+
 test("composer submit button sends text, stops live conversations, and disables when idle empty", () => {
   expect(pageSource).toContain("const isSupervisorRunning = Boolean(");
   expect(pageSource).toContain('selectedRunMode === "implementation"');

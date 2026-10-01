@@ -145,6 +145,47 @@ describe("POST /api/conversations/[id]/messages", () => {
     await db.delete(plans);
   });
 
+  it("waits for the user's first message before starting a fork with its inherited context", async () => {
+    const now = new Date();
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const sourceWorkerId = `worker-${randomUUID()}`;
+    const userMessageId = randomUUID();
+    const replyId = randomUUID();
+    await db.insert(plans).values({ id: planId, path: "vibes/ad-hoc/source.md", status: "done", createdAt: now, updatedAt: now });
+    await db.insert(runs).values({ id: runId, planId, mode: "direct", title: "Source", projectPath: process.env.OMNIHARNESS_ROOT!, preferredWorkerType: "claude", status: "done", createdAt: now, updatedAt: now });
+    await db.insert(workers).values({ id: sourceWorkerId, runId, type: "claude", cwd: process.env.OMNIHARNESS_ROOT!, status: "idle", bridgeSessionId: "source-session", createdAt: now, updatedAt: now });
+    await db.insert(messages).values({ id: userMessageId, runId, role: "user", kind: "checkpoint", content: "original question", createdAt: new Date("2026-04-21T10:00:00Z") });
+    const { appendWorkerEntryWithResult } = await import("@/server/workers/output-store");
+    await appendWorkerEntryWithResult(runId, sourceWorkerId, { id: userMessageId, type: "user_input", text: "original question", timestamp: "2026-04-21T10:00:00.000Z", authorRole: "user", channel: "stdin" });
+    await appendWorkerEntryWithResult(runId, sourceWorkerId, { id: replyId, type: "message", text: "original answer", timestamp: "2026-04-21T10:00:30.000Z" });
+
+    const forkResponse = await POST_RUN(new Request(`http://localhost/api/runs/${runId}`, {
+      method: "POST", body: JSON.stringify({ action: "fork", targetMessageId: replyId }),
+    }), { params: Promise.resolve({ id: runId }) });
+    expect(forkResponse.status).toBe(200);
+    const { runId: forkedRunId } = await forkResponse.json();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(mockAskAgent).not.toHaveBeenCalled();
+
+    mockAskAgent.mockRejectedValueOnce(new Error("Agent not found"));
+    const response = await POST(new Request(`http://localhost/api/conversations/${forkedRunId}/messages`, {
+      method: "POST", body: JSON.stringify({ content: "my next question" }),
+    }), { params: Promise.resolve({ id: forkedRunId }) });
+    expect(response.status).toBe(200);
+    await waitForConversationBackgroundTasksForTests();
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    expect(mockSpawnAgent.mock.calls[0]?.[0]).not.toHaveProperty("resumeSessionId");
+    const prompt = mockAskAgent.mock.calls.at(-1)?.[1] as string;
+    expect(prompt).toContain("User: original question");
+    expect(prompt).toContain("Assistant: original answer");
+    expect(prompt.trimEnd().endsWith("my next question")).toBe(true);
+    const forkedWorker = await db.select().from(workers).where(eq(workers.runId, forkedRunId)).get();
+    const inputs = (await readWorkerOutputEntries(forkedRunId, forkedWorker!.id)).filter((entry) => entry.type === "user_input");
+    expect(inputs.map((entry) => entry.text)).toEqual(["original question", "my next question"]);
+    expect(await db.select().from(workers).where(eq(workers.id, sourceWorkerId)).get()).toMatchObject({ status: "idle", bridgeSessionId: "source-session" });
+  });
+
   it("sends a follow-up message to a planning worker and stores the exchange", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
