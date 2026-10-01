@@ -386,9 +386,20 @@ function isCleanLiveAgent(agent: ReturnType<typeof normalizeAgentRecord>) {
   return agent.state !== "error" && !agent.lastError?.trim();
 }
 
+/** Settled outcomes live agent work can disprove. Promotion owns its own transitions. */
+function isReopenableSettledRunStatus(status: string | null | undefined) {
+  const normalized = normalizedStatus(status);
+  return normalized === "done" || normalized === "failed";
+}
+
 function isActiveLiveAgent(agent: ReturnType<typeof normalizeAgentRecord>) {
   const state = normalizedStatus(agent.state);
   return ["starting", "working", "stuck"].includes(state) || Boolean(agent.currentText.trim());
+}
+
+/** Stricter than `isActiveLiveAgent`: leftover text on an errored agent is not work. */
+function isCleanWorkingLiveAgent(agent: ReturnType<typeof normalizeAgentRecord>) {
+  return isCleanLiveAgent(agent) && ["starting", "working", "stuck"].includes(normalizedStatus(agent.state));
 }
 
 function isWorkerQueueDrainableStatus(status: string) {
@@ -870,13 +881,20 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
     }
 
     const agent = agents.find((candidate) => candidate.name === worker.id);
-    const selectedTerminalDirectRunStillStreaming = Boolean(
-      options.selectedRunId === run.id
-      && isDirectRunMode(run.mode)
+    // A settled direct run whose agent is working again has to be synced by
+    // every sweep, not only the one scoped to the conversation on screen: a
+    // Codex /goal keeps running turns after the prompted one settled the run,
+    // and gating this on the selected run left a goal's output unpersisted
+    // for as long as nobody had that conversation open.
+    const terminalDirectRunStillStreaming = Boolean(
+      isDirectRunMode(run.mode)
       && agent
-      && isActiveLiveAgent(agent),
+      && (
+        (options.selectedRunId === run.id && isActiveLiveAgent(agent))
+        || (isReopenableSettledRunStatus(run.status) && isCleanWorkingLiveAgent(agent))
+      ),
     );
-    if (isTerminalRunStatus(run.status) && !staleBusyFailure && !selectedTerminalDirectRunStillStreaming) {
+    if (isTerminalRunStatus(run.status) && !staleBusyFailure && !terminalDirectRunStillStreaming) {
       // A queue row written in the same beat that the run reached a terminal
       // state would otherwise strand forever: this loop skips terminal runs,
       // and the persisted loop below skips them too, so no drain is ever

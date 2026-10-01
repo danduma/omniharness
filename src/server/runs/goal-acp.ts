@@ -66,6 +66,12 @@ function extensionSupports(metadata: ReturnType<typeof normalizeAcpGoalMetadata>
   return metadata.value.capabilities[action];
 }
 
+function advertisesEdit(metadata: Record<string, unknown>) {
+  const capabilities = metadata.capabilities;
+  return (capabilities !== null && typeof capabilities === "object" && "edit" in capabilities && capabilities.edit === true)
+    || (Array.isArray(metadata.actions) && metadata.actions.includes("edit"));
+}
+
 function recordedFallbackSupports(capabilities: GoalSnapshot["capabilities"], action: GoalMutationAction) {
   if (!capabilities.fallbackMethod) return false;
   if (action === "set" || action === "retry") return capabilities.set;
@@ -106,7 +112,7 @@ export class GoalAcpDispatcher {
           sessionId: snapshot.acpSessionId,
           goalId: snapshot.goalId,
           revision: snapshot.revision,
-          action: action === "retry" ? "set" : action,
+          action: action === "retry" || (action === "edit" && !advertisesEdit(goalMetadata)) ? "set" : action,
           ...(action === "set" || action === "edit" || action === "retry"
             ? { objective: snapshot.objective }
             : {}),

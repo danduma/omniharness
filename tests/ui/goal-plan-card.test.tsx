@@ -1,6 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { goalPlanManager } from "@/interface/home/GoalPlanManager";
 import { GoalPlanCard } from "@/components/home/GoalPlanCard";
 import type { GoalSnapshot } from "@/shared/goal-plan";
 
@@ -51,6 +52,24 @@ const goal: GoalSnapshot = {
 };
 
 describe("GoalPlanCard", () => {
+  it("keeps a resume request visible on its own session after navigating away", () => {
+    const serverSnapshot = vi.spyOn(goalPlanManager, "getInitialSnapshot").mockImplementation(() => goalPlanManager.getSnapshot());
+    goalPlanManager.switchRun(goal.runId);
+    goalPlanManager.beginOperation({ runId: goal.runId, goalId: goal.goalId, action: "resume", baseRevision: goal.revision, objective: null, operationId: "resume-navigation" });
+    try {
+      goalPlanManager.switchRun("other-run");
+      const other = renderToStaticMarkup(<GoalPlanCard goal={{ ...goal, runId: "other-run" }} onSnapshot={vi.fn()} />);
+      expect(other).not.toContain("Resuming goal…");
+      goalPlanManager.switchRun(goal.runId);
+      const html = renderToStaticMarkup(<GoalPlanCard goal={goal} onSnapshot={vi.fn()} />);
+      expect(html).toContain("Resuming goal…");
+      expect(html).not.toContain("Updating goal…");
+    } finally {
+      goalPlanManager.completeOperation(goal.runId, "resume-navigation", goal.revision + 1);
+      serverSnapshot.mockRestore();
+    }
+  });
+
   it("renders the real canonical objective and non-submit accessible controls", () => {
     const html = renderToStaticMarkup(<GoalPlanCard goal={goal} onSnapshot={vi.fn()} />);
     expect(html).toContain("Ship a durable goal card");
@@ -61,6 +80,36 @@ describe("GoalPlanCard", () => {
     expect(html).toContain('aria-label="Clear goal"');
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain('type="submit"');
+  });
+
+  it("labels file-derived checkboxes without presenting them as live agent progress", () => {
+    const serverSnapshot = vi.spyOn(goalPlanManager, "getInitialSnapshot").mockImplementation(() => goalPlanManager.getSnapshot());
+    goalPlanManager.toggleExpanded(goal.runId);
+    try {
+      const html = renderToStaticMarkup(<GoalPlanCard goal={{ ...goal, planSource: { kind: "uri", uri: "file:///tmp/plan.md" }, plan: goal.plan.map((item) => ({ ...item, status: item.status === "completed" ? "completed" : "pending" })) }} onSnapshot={vi.fn()} />);
+      expect(html).toContain("Plan checklist");
+      expect(html).toContain("1/2 checked");
+      expect(html).toContain("Checked boxes in the plan file, not live agent progress.");
+      expect(html).toContain("Unchecked");
+      expect(html).not.toContain("Plan progress");
+    } finally {
+      goalPlanManager.toggleExpanded(goal.runId);
+      serverSnapshot.mockRestore();
+    }
+  });
+
+  it("preserves live progress labels for provider-owned plans", () => {
+    const serverSnapshot = vi.spyOn(goalPlanManager, "getInitialSnapshot").mockImplementation(() => goalPlanManager.getSnapshot());
+    goalPlanManager.toggleExpanded(goal.runId);
+    try {
+      const html = renderToStaticMarkup(<GoalPlanCard goal={goal} onSnapshot={vi.fn()} />);
+      expect(html).toContain("Plan progress");
+      expect(html).toContain("In progress");
+      expect(html).not.toContain("not live agent progress");
+    } finally {
+      goalPlanManager.toggleExpanded(goal.runId);
+      serverSnapshot.mockRestore();
+    }
   });
 
   it("keeps mobile actions discoverable through the responsive overflow", () => {

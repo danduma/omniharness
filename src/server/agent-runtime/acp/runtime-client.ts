@@ -98,6 +98,40 @@ function updateContextUsage(record: AgentRecord, patch: Partial<NonNullable<Agen
   };
 }
 
+/** Codex reports `_meta.codex.threadStatus` on every turn boundary, prompted or not. */
+function readProviderThreadStatus(update: unknown): "active" | "idle" | null {
+  const meta = asRecord(asRecord(update)?._meta);
+  const status = asRecord(asRecord(meta?.codex)?.threadStatus)?.type;
+  return status === "active" || status === "idle" ? status : null;
+}
+
+/**
+ * Track turns the provider runs without a prompt from us. A Codex /goal keeps
+ * starting turns after the prompted one ends; without this the agent read as
+ * idle (or working forever) and the runner settled a conversation that was
+ * still producing output.
+ */
+function applyProviderThreadStatus(record: AgentRecord, status: "active" | "idle" | null) {
+  if (!status) return;
+  record.providerTurnActive = status === "active";
+  // `askAgent` settles the turn it started; it reads `providerTurnActive` then.
+  if (record.promptInFlight) return;
+  if (status === "active" && record.state === "idle") {
+    record.state = "working";
+    record.lastText = record.currentText || record.lastText;
+    record.currentText = "";
+    record.activeOutputEntryId = null;
+    record.stopReason = null;
+    emitNamedEvent({ kind: "acp.provider_turn_started", workerId: record.name });
+  } else if (status === "idle" && record.state === "working") {
+    record.lastText = record.currentText || record.lastText;
+    record.currentText = "";
+    record.stopReason = "end_turn";
+    record.state = "idle";
+    emitNamedEvent({ kind: "acp.provider_turn_ended", workerId: record.name });
+  }
+}
+
 function applySessionUsageUpdate(record: AgentRecord, update: Record<string, unknown>) {
   const used = finiteNumber(update.used);
   const size = finiteNumber(update.size);
@@ -490,6 +524,7 @@ export class RuntimeClient implements acp.Client {
     if (goalWorkerId && isAcpGoalNotification(params.update) && !isAcpPlanNotification(params.update)) {
       await handleAcpGoalSessionUpdateForWorker({
         workerId: goalWorkerId,
+        agentCapabilities: record?.agentCapabilities,
         sessionId: params.sessionId,
         update: params.update,
       });
@@ -538,6 +573,8 @@ export class RuntimeClient implements acp.Client {
       }
     } else if (update.sessionUpdate === "current_mode_update") {
       record.sessionMode = update.currentModeId;
+    } else if (update.sessionUpdate === "session_info_update") {
+      applyProviderThreadStatus(record, readProviderThreadStatus(update));
     }
 
     if (update.sessionUpdate === "usage_update") {

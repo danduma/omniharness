@@ -116,6 +116,10 @@ export type AgentRecord = {
   outputEntries: OutputEntry[];
   outputArchive: AgentOutputArchiveHandle;
   stopReason: string | null;
+  /** True while `askAgent` awaits a prompt; that call owns `state` for its turn. */
+  promptInFlight?: boolean;
+  /** Last thread status the provider reported; true while it runs any turn, prompted or not. */
+  providerTurnActive?: boolean;
   pendingPermissions: PendingPermission[];
   pendingElicitations: PendingElicitation[];
   activeTask: { taskId: string; subtaskId: string } | null;
