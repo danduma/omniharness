@@ -83,7 +83,6 @@ export class GoalPlanManager extends StateManager<GoalPlanPresentationState> {
       expandedRunIds: new Set(),
       editingRunId: null,
       editDraft: "",
-      pending: null,
       failedOperation: null,
       actionError: null,
       focusRunId: null,

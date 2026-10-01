@@ -23,6 +23,7 @@ import {
 } from "./acp/plan-stream";
 import { invokeAgentRequest, sendAgentNotification } from "./acp/agent-methods";
 import { initializeWorkerGoalSession } from "./acp/goal-state";
+import { normalizeGoalAgentCapabilities } from "./acp/goal-normalization";
 import { redactGoalErrorMessage } from "@/server/runs/goal-errors";
 import { sanitizeAcpStream } from "./acp-stream-sanitizer";
 import { applyCodexBridgeEnv, buildCodexAcpConfig, buildCodexConfigArgs, resolveCodexSessionMode, shouldSetRequestedMode } from "./codex";
@@ -1972,7 +1973,7 @@ export class AgentRuntimeManager {
       lastError: null,
       stderrBuffer,
       protocolVersion,
-      agentCapabilities: asRecord(initRecord?.agentCapabilities),
+      agentCapabilities: normalizeGoalAgentCapabilities(initRecord),
       authMethods: Array.isArray(initRecord?.authMethods) ? initRecord.authMethods : [],
       requestedModel,
       pendingModel: null,
@@ -2047,7 +2048,7 @@ export class AgentRuntimeManager {
       client.setWorkerPlanStartupContext(null);
     }
     try {
-      await initializeWorkerGoalSession(name, sessionId);
+      await initializeWorkerGoalSession(name, sessionId, { agentCapabilities: record.agentCapabilities });
     } catch (error) {
       const message = redactGoalErrorMessage(error);
       emitNamedEvent({
@@ -2240,6 +2241,7 @@ export class AgentRuntimeManager {
     record.activeOutputEntryId = null;
     record.lastError = null;
     record.stopReason = null;
+    record.promptInFlight = true;
     const unsubscribe = onChunk ? this.subscribeChunks(name, onChunk) : null;
 
     try {
@@ -2285,7 +2287,13 @@ export class AgentRuntimeManager {
       applyPromptUsage(record, responseRecord?.usage);
       record.lastText = record.currentText;
       record.currentText = "";
-      record.state = "idle";
+      // A Codex /goal starts its next turn on its own, often before this
+      // prompt's response arrives. Reporting idle then would let the runner
+      // settle the conversation while the provider keeps working.
+      if (record.providerTurnActive) {
+        record.stopReason = null;
+      }
+      record.state = record.providerTurnActive ? "working" : "idle";
       record.updatedAt = nowIso();
       return {
         name,
@@ -2299,6 +2307,7 @@ export class AgentRuntimeManager {
       record.updatedAt = nowIso();
       throw error;
     } finally {
+      record.promptInFlight = false;
       unsubscribe?.();
     }
   }

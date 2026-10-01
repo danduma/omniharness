@@ -986,6 +986,89 @@ describe("syncConversationSessions", () => {
     expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 
+  it("reopens a settled direct run from the unscoped watchdog sweep when its agent is working again", async () => {
+    // A Codex /goal keeps running turns after the prompted one settled the
+    // run. The 15s watchdog sweep passes no selected run; it used to skip the
+    // settled run, so nothing persisted until someone opened the conversation.
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+
+    await db.insert(plans).values({ id: planId, path: "vibes/ad-hoc/direct.md", status: "running", createdAt: now, updatedAt: now });
+    await db.insert(runs).values({ id: runId, planId, mode: "direct", status: "done", title: "Goal still running", createdAt: now, updatedAt: now });
+    await db.insert(workers).values({
+      id: workerId, runId, type: "codex", status: "idle", cwd: process.cwd(),
+      outputLog: "", outputEntriesJson: "[]", currentText: "", lastText: "Committed the checkpoint.", createdAt: now, updatedAt: now,
+    });
+
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "codex",
+        cwd: process.cwd(),
+        state: "working",
+        sessionId: "session-live",
+        sessionMode: "full-access",
+        lastText: "Committed the checkpoint.",
+        currentText: "",
+        stderrBuffer: [],
+        stopReason: null,
+        outputEntries: [
+          { id: "goal-turn-tool", type: "tool_call", text: "git status", status: "in_progress", timestamp: new Date().toISOString() },
+        ],
+      },
+    ]);
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const entries = await readWorkerOutputEntries(runId, workerId);
+
+    expect(run?.status).toBe("running");
+    expect(worker?.status).toBe("working");
+    expect(entries.map((entry) => entry.id)).toContain("goal-turn-tool");
+  });
+
+  it("leaves a failed direct run alone in the unscoped sweep when its agent errored with leftover text", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date(0);
+
+    await db.insert(plans).values({ id: planId, path: "vibes/ad-hoc/direct.md", status: "running", createdAt: now, updatedAt: now });
+    await db.insert(runs).values({ id: runId, planId, mode: "direct", status: "failed", lastError: "Provider failed", title: "Failed", createdAt: now, updatedAt: now });
+    await db.insert(workers).values({
+      id: workerId, runId, type: "codex", status: "error", cwd: process.cwd(),
+      outputLog: "", outputEntriesJson: "[]", currentText: "", lastText: "", createdAt: now, updatedAt: now,
+    });
+
+    await syncConversationSessions([
+      {
+        name: workerId,
+        type: "codex",
+        cwd: process.cwd(),
+        state: "error",
+        lastError: "Provider failed",
+        sessionId: "session-live",
+        sessionMode: "full-access",
+        lastText: "",
+        currentText: "partial answer",
+        stderrBuffer: [],
+        stopReason: null,
+        outputEntries: [
+          { id: "partial", type: "message", text: "partial answer", timestamp: new Date().toISOString() },
+        ],
+      },
+    ]);
+
+    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+
+    expect(run?.status).toBe("failed");
+    expect(run?.lastError).toBe("Provider failed");
+    expect(worker?.status).toBe("error");
+  });
+
   it("completes a direct run when a live adapter keeps reporting working after a final assistant message", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

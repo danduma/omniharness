@@ -14,6 +14,7 @@ export const DIRECT_WORKER_INSTRUCTION = [
   "Do not make unrelated workspace changes, perform destructive operations, or materially expand the requested scope without explicit authorization.",
   "If the user's latest message asks only for analysis, suggestions, advice, or a plan, or says not to make changes, answer without changing the workspace.",
   "Ask a clarifying question only when the user's intent is genuinely ambiguous or a required choice would materially change the result.",
+  "During authorized implementation of a referenced plan, keep the plan's original checklist current: mark an item complete only when its requirements and required verification are satisfied. Update checkboxes as work completes, not only in a final summary or appended execution notes. Keep partial work and failed gates unchecked, and record their remaining work and evidence in the plan. Respect explicit user overrides of the plan's procedure.",
 ].join("\n");
 
 export const TRANSCRIPT_REPLAY_INSTRUCTION = [

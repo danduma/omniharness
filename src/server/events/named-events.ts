@@ -42,6 +42,7 @@ export type SurfacedErrorCode =
   | "conversation.delete.failed"
   | "conversation.delete.worker_cancel_failed"
   | "conversation.continue.failed"
+  | "conversation.fork.failed"
   | "conversation.delivery_refused"
   | "conversation.delivery_recovery_failed"
   | "conversation.preference_audit_failed"
@@ -108,6 +109,7 @@ export type SurfacedErrorCode =
   | "worker.bridge.fatal_stderr"
   | "worker.environment_mismatch"
   | "worker.idle.empty_output"
+  | "worker.stream.gap_unrecoverable"
   | "worker.idle.missing_output"
   | "worker.initial.empty_output"
   | "worker.initial.turn_failed"
@@ -484,6 +486,22 @@ export type WorkerEvent =
       runId: string;
       workerId: string;
       expectedLatestSeq: number;
+    }
+  // Emitted when the runtime's live window had already rolled past entries the
+  // stream never saved. `backfilled` means they were copied from the runtime
+  // archive ahead of the live window; `unrecoverable` means the archive could
+  // not place them, so the stream keeps a hole.
+  | {
+      kind: "worker.stream_gap_backfilled";
+      runId: string;
+      workerId: string;
+      recoveredEntries: number;
+    }
+  | {
+      kind: "worker.stream_gap_unrecoverable";
+      runId: string;
+      workerId: string;
+      reason: "live_entry_not_archived";
     }
   | {
       kind: "worker.failover_started";
@@ -996,7 +1014,11 @@ export type AcpEvent =
   | { kind: "acp.interaction_requested"; workerId: string; interaction: "permission" | "elicitation"; requestId: number }
   | { kind: "acp.interaction_resolved"; workerId: string; interaction: "permission" | "elicitation"; requestId: number; outcome: string }
   | { kind: "acp.resource_created"; workerId: string; resource: "terminal" | "mcp"; resourceId: string }
-  | { kind: "acp.resource_released"; workerId: string; resource: "terminal" | "mcp"; resourceId: string };
+  | { kind: "acp.resource_released"; workerId: string; resource: "terminal" | "mcp"; resourceId: string }
+  // The provider started or finished a turn nobody prompted (Codex /goal
+  // continuation), so the runtime moved the agent between working and idle.
+  | { kind: "acp.provider_turn_started"; workerId: string }
+  | { kind: "acp.provider_turn_ended"; workerId: string };
 
 export type ClaudeModelGatewayEvent =
   | { kind: "claude_gateway.install_started"; operationId: string }

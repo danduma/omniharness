@@ -54,6 +54,20 @@ describe("goal ACP control dispatch", () => {
     expect(sendSlashCommand).not.toHaveBeenCalled();
   });
 
+  it("edits through native set when the extension advertises set without edit", async () => {
+    const invokeExtension = vi.fn(async () => ({ ok: true }));
+    const sendSlashCommand = vi.fn();
+    const dispatcher = createGoalAcpDispatcher({
+      getAgent: vi.fn(async () => ({ agentCapabilities: {
+        _meta: { goal: { version: 1, actions: ["set", "pause", "resume", "clear"] } },
+      } })),
+      invokeExtension, sendSlashCommand,
+    });
+    expect(await dispatcher.dispatch(snapshot(), "edit")).toMatchObject({ kind: "dispatched", method: "extension" });
+    expect(invokeExtension).toHaveBeenCalledWith("worker-1", "_session/goal", expect.objectContaining({ action: "set", objective: "Ship it" }));
+    expect(sendSlashCommand).not.toHaveBeenCalled();
+  });
+
   it("uses slash fallback only when the extension is absent and the command is advertised", async () => {
     const invokeExtension = vi.fn();
     const sendSlashCommand = vi.fn(async () => ({ ok: true }));

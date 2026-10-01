@@ -50,4 +50,65 @@ describe("ACP runtime client", () => {
 
     expect(record.outputEntries).toEqual([]);
   });
+
+  describe("turns the provider starts on its own", () => {
+    function threadStatus(type: "active" | "idle") {
+      return {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "session_info_update",
+          _meta: { codex: { threadStatus: type === "active" ? { type, activeFlags: [] } : { type } } },
+        },
+      } as never;
+    }
+
+    function liveRecord(state: string, extra: Record<string, unknown> = {}) {
+      let nextId = 0;
+      return {
+        name: `goal-worker-${Date.now()}`,
+        state,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        currentText: "",
+        lastText: "",
+        stopReason: null as string | null,
+        activeOutputEntryId: null,
+        outputEntries: [] as unknown[],
+        outputArchive: {
+          append: (input: Record<string, unknown>) => ({ ...input, id: `entry-${(nextId += 1)}`, timestamp: "2026-01-01T00:00:00.000Z" }),
+          stats: () => ({ totalEntries: nextId, omittedLiveEntries: 0 }),
+        },
+        ...extra,
+      };
+    }
+
+    it("reports a Codex /goal continuation turn as working, then idle when it ends", async () => {
+      const record = liveRecord("idle", { lastText: "Committed the checkpoint." });
+      const client = new RuntimeClient(() => record as never, () => undefined);
+
+      await client.sessionUpdate(threadStatus("active"));
+      expect(record.state).toBe("working");
+      expect(record.stopReason).toBeNull();
+      expect(record.providerTurnActive).toBe(true);
+
+      record.currentText = "Next checkpoint done.";
+      await client.sessionUpdate(threadStatus("idle"));
+      expect(record.state).toBe("idle");
+      expect(record.stopReason).toBe("end_turn");
+      expect(record.lastText).toBe("Next checkpoint done.");
+      expect(record.currentText).toBe("");
+    });
+
+    it("leaves the state of a prompted turn to askAgent", async () => {
+      const record = liveRecord("working", { promptInFlight: true, currentText: "streaming" });
+      const client = new RuntimeClient(() => record as never, () => undefined);
+
+      await client.sessionUpdate(threadStatus("idle"));
+      expect(record.state).toBe("working");
+      expect(record.currentText).toBe("streaming");
+      expect(record.providerTurnActive).toBe(false);
+
+      await client.sessionUpdate(threadStatus("active"));
+      expect(record.providerTurnActive).toBe(true);
+    });
+  });
 });

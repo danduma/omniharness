@@ -110,6 +110,17 @@ function widenWithAdvertisedFallback(
   };
 }
 
+function mergeGoalCapabilities(left: GoalCapabilities, right: GoalCapabilities): GoalCapabilities {
+  return {
+    set: left.set || right.set,
+    edit: left.edit || right.edit,
+    pause: left.pause || right.pause,
+    resume: left.resume || right.resume,
+    clear: left.clear || right.clear,
+    fallbackMethod: left.fallbackMethod ?? right.fallbackMethod,
+  };
+}
+
 async function emitGoalPayloadRejection(args: {
   runId: string;
   goalId: string;
@@ -132,6 +143,7 @@ export async function handleAcpGoalSessionUpdateForWorker(args: {
   workerId: string;
   sessionId: string | null | undefined;
   update: unknown;
+  agentCapabilities?: unknown;
 }): Promise<GoalSessionUpdateResult> {
   if (!isAcpGoalNotification(args.update)) return { kind: "ignored", reason: "not_goal_update" };
   const runId = await resolveRunIdForGoalWorker(args.workerId);
@@ -140,6 +152,11 @@ export async function handleAcpGoalSessionUpdateForWorker(args: {
   const sessionId = typeof args.sessionId === "string" && args.sessionId.trim() ? args.sessionId.trim() : null;
   let current = await goalControl.getGoal(runId);
   const metadata = goalMetadataEnvelope(args.update);
+  const advertised = normalizeAcpGoalMetadata(args.agentCapabilities);
+  const withAdvertisedCapabilities = (capabilities: GoalCapabilities): GoalCapabilities => {
+    const merged = advertised.ok ? mergeGoalCapabilities(capabilities, advertised.value.capabilities) : capabilities;
+    return widenWithAdvertisedFallback(merged, args.workerId);
+  };
   const fallbackCommands = isGoalRecord(args.update)
     && args.update.sessionUpdate === "available_commands_update"
     && Array.isArray(args.update.availableCommands)
@@ -152,7 +169,9 @@ export async function handleAcpGoalSessionUpdateForWorker(args: {
   if (!current && metadata && sessionId) {
     normalizedMetadata = normalizeAcpGoalMetadata(metadata);
     if (!normalizedMetadata.ok || !normalizedMetadata.value.objective) {
-      return { kind: "rejected", reason: normalizedMetadata.ok ? "invalid_objective" : normalizedMetadata.reason };
+      const reason = normalizedMetadata.ok ? "invalid_objective" : normalizedMetadata.reason;
+      await emitGoalPayloadRejection({ runId, goalId: `${runId}:provider`, workerId: args.workerId, reason });
+      return { kind: "rejected", reason };
     }
     const providerGoalId = boundedGoalIdentityToken(normalizedMetadata.value.providerGoalId ?? "provider");
     const operationToken = boundedGoalIdentityToken(`${sessionId}\u0000${providerGoalId}`);
@@ -225,7 +244,7 @@ export async function handleAcpGoalSessionUpdateForWorker(args: {
       acpSessionId: sessionId,
       leaseGeneration: current.leaseGeneration,
       status: normalized.value.status ?? undefined,
-      capabilities: widenWithAdvertisedFallback(normalized.value.capabilities, args.workerId),
+      capabilities: withAdvertisedCapabilities(normalized.value.capabilities),
       validationState: normalized.value.validationState,
     };
   } else if (fallbackCommands) {
@@ -236,7 +255,7 @@ export async function handleAcpGoalSessionUpdateForWorker(args: {
       workerId: args.workerId,
       acpSessionId: sessionId,
       leaseGeneration: current.leaseGeneration,
-      capabilities: normalizeGoalFallbackCapabilities(fallbackCommands),
+      capabilities: withAdvertisedCapabilities(normalizeGoalFallbackCapabilities(fallbackCommands)),
     };
   } else {
     const normalized = normalizeAcpGoalPlanUpdate(args.update, {
@@ -291,6 +310,7 @@ export async function initializeWorkerGoalSession(
   workerId: string,
   sessionId: string,
   options: {
+    agentCapabilities?: unknown;
     dispatch?: (snapshot: import("@/shared/goal-plan").GoalSnapshot) => Promise<
       | { kind: "dispatched"; method: "extension" | "slash" }
       | { kind: "deferred"; reason: "no_active_lease" | "worker_busy" }
@@ -331,7 +351,7 @@ export async function initializeWorkerGoalSession(
     });
     return { kind: "rejected" as const, reason: attached.code };
   }
-  const snapshot = attached.snapshot;
+  let snapshot = attached.snapshot;
   if (!attached.replayed && current.workerId !== workerId) {
     emitNamedEvent({
       kind: "goal.worker_transferred",
@@ -341,6 +361,19 @@ export async function initializeWorkerGoalSession(
       workerId,
       leaseGeneration: snapshot.leaseGeneration,
     });
+  }
+  const advertised = normalizeAcpGoalMetadata(options.agentCapabilities);
+  if (advertised.ok) {
+    const refreshed = await goalControl.applyProviderUpdate({
+      runId, goalId: snapshot.goalId, expectedRevision: snapshot.revision,
+      workerId, acpSessionId: sessionId, leaseGeneration: snapshot.leaseGeneration,
+      capabilities: mergeGoalCapabilities(snapshot.capabilities, advertised.value.capabilities),
+    });
+    if (!refreshed.ok) {
+      emitNamedEvent({ kind: "goal.reconciliation.refused", runId, goalId: snapshot.goalId, workerId, reason: refreshed.code });
+      return { kind: "rejected" as const, reason: refreshed.code };
+    }
+    snapshot = refreshed.snapshot;
   }
   let settledSnapshot = snapshot;
   try {
