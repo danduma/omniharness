@@ -19,7 +19,7 @@
 import { notifyEventStreamSubscribers } from "./live-updates";
 import type { HandoffEvent } from "./handoff-events";
 import type { ClaudeSessionModelReason } from "@/lib/claude-session-model";
-import type { GoalAction, GoalPublishedEventKind, GoalSnapshot } from "@/shared/goal-plan";
+import type { GoalAction, GoalMutationAction, GoalPublishedEventKind, GoalSnapshot } from "@/shared/goal-plan";
 import { randomBytes } from "node:crypto";
 import {
   formatEventStreamId,
@@ -388,6 +388,7 @@ export type WorkerEvent =
   | { kind: "worker.recovery_continuation_started"; runId: string; workerId: string }
   | { kind: "worker.recovery_continuation_completed"; runId: string; workerId: string }
   | { kind: "worker.recovery_continuation_superseded"; runId: string; workerId: string }
+  | { kind: "worker.recovery_redelivery_skipped"; runId: string; workerId: string; reason: "already_answered" }
   | {
       kind: "worker.human_input_reconciled";
       runId: string;
@@ -613,6 +614,15 @@ export type GoalEvent =
   | { kind: "goal.action.completed"; runId: string; goalId: string; operationId: string; action: GoalAction; revision: number }
   | { kind: "goal.action.refused"; runId: string; goalId: string; operationId: string; action: GoalAction; reason: string }
   | { kind: "goal.action.failed"; runId: string; goalId: string; operationId: string; action: GoalAction; reason: string }
+  | {
+      kind: "goal.control.failed_after_acceptance";
+      runId: string;
+      goalId: string;
+      workerId: string;
+      action: GoalMutationAction;
+      method: "extension" | "slash";
+      reason: string;
+    }
   | { kind: "goal.reconciliation.completed"; runId: string; goalId: string; workerId: string; revision: number; leaseGeneration: number }
   | { kind: "goal.reconciliation.refused"; runId: string; goalId: string; workerId: string | null; reason: string }
   | { kind: "goal.reconciliation.failed"; runId: string; goalId: string; workerId: string | null; reason: string }

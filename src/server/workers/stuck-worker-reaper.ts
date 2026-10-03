@@ -15,6 +15,11 @@
  * resume-or-recreate primitive that on-send recovery uses, and
  * re-deliver the last user message that has no follow-up response. The
  * user sees activity resume on its own.
+ *
+ * A message the agent already responded to is never re-delivered. To the
+ * agent a replayed message is a new instruction: in session 3d628f9b568a a
+ * replayed "yes go ahead with plan" read as fresh consent, and the agent
+ * started implementing work the user had not approved.
  */
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
@@ -46,6 +51,15 @@ import {
 const DEFAULT_STUCK_TIMEOUT_MS = 5 * 60_000;
 const DIRECT_MODE_NAMES = ["direct"];
 const STUCK_CANDIDATE_STATUSES = new Set(["working", "starting"]);
+/** Stream entries only the agent writes, i.e. evidence it acted on a prompt. */
+const AGENT_RESPONSE_ENTRY_TYPES = new Set([
+  "message",
+  "thought",
+  "tool_call",
+  "tool_call_update",
+  "permission",
+  "elicitation",
+]);
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -372,6 +386,7 @@ export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<Re
       let lastEntryTs = -1;
       let lastUserInputId: string | null = null;
       let lastUserInputTs = -1;
+      let lastUserInputAnswered = false;
       for (const entry of entries) {
         const ts = entry.timestamp ? new Date(entry.timestamp).getTime() : NaN;
         if (Number.isFinite(ts) && ts > lastEntryTs) lastEntryTs = ts;
@@ -379,6 +394,17 @@ export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<Re
         if (type === "user_input") {
           lastUserInputId = entry.id;
           lastUserInputTs = Number.isFinite(ts) ? ts : lastUserInputTs;
+          lastUserInputAnswered = false;
+        } else if (
+          lastUserInputId
+          && type
+          && AGENT_RESPONSE_ENTRY_TYPES.has(type)
+          // Output a prior turn buffered lands after the user_input in seq
+          // order but keeps its earlier timestamp; it answers nothing.
+          && Number.isFinite(ts)
+          && ts >= lastUserInputTs
+        ) {
+          lastUserInputAnswered = true;
         }
       }
 
@@ -451,7 +477,10 @@ export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<Re
           ? liveAgentUpdatedAtMs > lastEntryTs
           : Boolean((liveAgent?.stopReason ?? "").trim()));
 
-      if (liveAgent && liveAgentFinishedAfterLastEntry) {
+      // A quiesced agent that already answered the last message has nothing
+      // outstanding either: the quiet stretch is just the gap after its last
+      // turn, e.g. one it ran on its own after a background-task notification.
+      if (liveAgent && (liveAgentFinishedAfterLastEntry || (liveAgentQuiesced && lastUserInputAnswered))) {
         process.stderr.write(
           `[stuck-reaper] worker ${worker.id} already finished its turn in the bridge; ` +
           `reconciling the lost completion instead of re-delivering\n`,
@@ -473,12 +502,10 @@ export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<Re
         continue;
       }
 
-      // Always redeliver the last user message if one exists. Trying to infer
-      // "did the worker respond" from stream contents is fragile: entries can
-      // arrive in seq order but with earlier timestamps if the worker buffered
-      // output from a prior turn before the user_input was written. A duplicate
-      // response is recoverable; a lost user prompt is not.
-      const shouldRedeliver = Boolean(lastUserInputId);
+      // Redeliver only a message the agent never responded to — the prompt
+      // was lost on the way. Replaying an answered one is not a harmless
+      // duplicate: the agent reads it as the user asking again.
+      const shouldRedeliver = Boolean(lastUserInputId) && !lastUserInputAnswered;
       process.stderr.write(
         `[stuck-reaper] worker ${worker.id} idle for ${Math.round(idleMs / 1000)}s; recovering` +
         ` (will redeliver: ${shouldRedeliver})\n`,
@@ -487,6 +514,7 @@ export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<Re
       // A live, quiesced agent that never saw the prompt (the ask dropped
       // before reaching it) can be re-asked directly — cancelling and
       // respawning it would only throw away healthy session state.
+      let resumedAgent: AgentRecord | null = null;
       if (!liveAgentQuiesced) {
         try {
           await cancelAgent(worker.id);
@@ -501,7 +529,7 @@ export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<Re
         notifyEventStreamSubscribers();
 
         try {
-          await resumeMissingDirectWorker(run, worker);
+          resumedAgent = await resumeMissingDirectWorker(run, worker) ?? null;
         } catch (error) {
           if (await handleRecoveredQuotaError({ worker, error })) {
             recovered++;
@@ -639,6 +667,52 @@ export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<Re
             continue;
           }
         }
+      }
+
+      if (lastUserInputId && lastUserInputAnswered) {
+        // The hung turn was torn down above; nothing is re-sent in its place.
+        // Settle the rows on the respawned agent so the conversation reads as
+        // stopped instead of sitting at the transient 'stuck'.
+        const settledStatus = resumedAgent?.state ?? "idle";
+        await db.update(workers).set({
+          status: settledStatus,
+          updatedAt: new Date(),
+        }).where(and(
+          eq(workers.id, worker.id),
+          eq(workers.turnGeneration, worker.turnGeneration),
+          eq(workers.status, "stuck"),
+        ));
+        await updateDirectRunStatusFromWorkerOutput({
+          runId: worker.runId,
+          workerId: worker.id,
+          workerStatus: settledStatus,
+          renderedOutput: resumedAgent?.renderedOutput,
+          currentText: resumedAgent?.currentText,
+          lastText: resumedAgent?.lastText,
+          outputEntries: resumedAgent?.outputEntries,
+          pendingPermissions: resumedAgent?.pendingPermissions,
+          pendingElicitations: resumedAgent?.pendingElicitations,
+        });
+        emitNamedEvent({
+          kind: "worker.recovery_redelivery_skipped",
+          runId: worker.runId,
+          workerId: worker.id,
+          reason: "already_answered",
+        });
+        await recordExecutionEvent({
+          runId: worker.runId,
+          workerId: worker.id,
+          planItemId: null,
+          eventType: "recovery_redelivery_skipped",
+          details: {
+            summary: `Stopped ${worker.id} after ${Math.round(idleMs / 1000)}s of silence; its last message was already answered, so nothing was re-sent.`,
+            idleSeconds: Math.round(idleMs / 1000),
+            answeredMessageId: lastUserInputId,
+          },
+        });
+        notifyEventStreamSubscribers();
+        recovered++;
+        continue;
       }
 
       if (liveAgentQuiesced && liveAgent) {
