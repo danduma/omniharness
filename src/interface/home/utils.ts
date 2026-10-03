@@ -547,23 +547,27 @@ export function mergePendingCreatedConversationSnapshots(
   let nextState = incomingState;
 
   for (const snapshot of Array.from(pendingSnapshots.values())) {
-    const incomingHasRun = Boolean(
-      snapshot.run
-      && (incomingState.runs || []).some((existingRun) => existingRun.id === snapshot.run?.id),
-    );
-    if (isCreatedConversationSnapshotServerVisible(incomingState, snapshot)) {
-      // A stale in-flight SSE snapshot can still arrive after the server has
-      // caught up once, so keep the optimistic create snapshot around until an
-      // explicit delete/archive removes it from the pending map.
+    const incomingRun = snapshot.run
+      ? (incomingState.runs || []).find((existingRun) => existingRun.id === snapshot.run?.id)
+      : undefined;
+    if (incomingRun) {
+      // The server owns the run row from the first frame that carries it. A
+      // stale in-flight SSE snapshot can still arrive after the server has
+      // caught up once, so the snapshot stays pending until an explicit
+      // delete/archive removes it — but it carries the newest row the server
+      // sent, never the creation-time one. Frames for another selected run
+      // leave this run out, and re-inserting the creation-time `running` row
+      // kept a finished conversation spinning until the tab reloaded.
       snapshot.serverVisibleAtMs ??= nowMs;
-      continue;
-    }
-
-    if (snapshot.serverVisibleAtMs !== undefined && incomingHasRun) {
-      // Selected-run snapshots intentionally omit messages from other runs.
-      // Preserve any out-of-scope creation records without merging the old
-      // creation-time run over the server's newer lifecycle status.
-      nextState = appendServerVisibleCreatedConversationRecords(nextState, snapshot);
+      snapshot.run = incomingRun;
+      if (snapshot.plan && snapshot.plan.id !== incomingRun.planId) {
+        // Still the placeholder from before the create response returned.
+        snapshot.plan = (incomingState.plans || []).find((plan) => plan.id === incomingRun.planId) ?? null;
+      }
+      if (!isCreatedConversationSnapshotServerVisible(incomingState, snapshot)) {
+        // Selected-run snapshots intentionally omit messages from other runs.
+        nextState = appendServerVisibleCreatedConversationRecords(nextState, snapshot);
+      }
       continue;
     }
 
