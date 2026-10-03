@@ -879,6 +879,7 @@
   "goal.elapsed.minutes": "{count}m",
   "goal.elapsed.hours": "{count}h",
   "goal.elapsed.days": "{count}d",
+  "goal.elapsed.daysHours": "{days}d {hours}h",
   "goal.elapsed.aria": "Active for {duration}",
   "goal.plan.title": "Plan progress",
   "goal.plan.fileTitle": "Plan checklist",

@@ -52,6 +52,19 @@ const goal: GoalSnapshot = {
 };
 
 describe("GoalPlanCard", () => {
+  it.each([
+    [23, "23h"],
+    [24, "1d 0h"],
+    [27, "1d 3h"],
+    [49, "2d 1h"],
+  ])("formats %i elapsed hours as %s", (hours, duration) => {
+    const completedAt = new Date(new Date(goal.startedAt).getTime() + hours * 60 * 60 * 1_000).toISOString();
+    const html = renderToStaticMarkup(
+      <GoalPlanCard goal={{ ...goal, status: "completed", completedAt }} onSnapshot={vi.fn()} />,
+    );
+    expect(html).toContain(`Active for ${duration}`);
+  });
+
   it("keeps a resume request visible on its own session after navigating away", () => {
     const serverSnapshot = vi.spyOn(goalPlanManager, "getInitialSnapshot").mockImplementation(() => goalPlanManager.getSnapshot());
     goalPlanManager.switchRun(goal.runId);

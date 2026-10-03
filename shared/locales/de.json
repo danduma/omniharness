@@ -879,6 +879,7 @@
   "goal.elapsed.minutes": "{count} Min.",
   "goal.elapsed.hours": "{count} Std.",
   "goal.elapsed.days": "{count} T.",
+  "goal.elapsed.daysHours": "{days} T. {hours} Std.",
   "goal.elapsed.aria": "Aktiv seit {duration}",
   "goal.plan.title": "Planfortschritt",
   "goal.plan.fileTitle": "Plan-Checkliste",

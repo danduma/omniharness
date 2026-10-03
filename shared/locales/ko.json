@@ -879,6 +879,7 @@
   "goal.elapsed.minutes": "{count}분",
   "goal.elapsed.hours": "{count}시간",
   "goal.elapsed.days": "{count}일",
+  "goal.elapsed.daysHours": "{days}일 {hours}시간",
   "goal.elapsed.aria": "{duration} 동안 활성",
   "goal.plan.title": "계획 진행 상황",
   "goal.plan.fileTitle": "계획 체크리스트",

@@ -879,6 +879,7 @@
   "goal.elapsed.minutes": "{count} 分钟",
   "goal.elapsed.hours": "{count} 小时",
   "goal.elapsed.days": "{count} 天",
+  "goal.elapsed.daysHours": "{days} 天 {hours} 小时",
   "goal.elapsed.aria": "已运行 {duration}",
   "goal.plan.title": "计划进度",
   "goal.plan.fileTitle": "计划清单",
