@@ -879,6 +879,7 @@
   "goal.elapsed.minutes": "{count}分",
   "goal.elapsed.hours": "{count}時間",
   "goal.elapsed.days": "{count}日",
+  "goal.elapsed.daysHours": "{days}日 {hours}時間",
   "goal.elapsed.aria": "開始から{duration}",
   "goal.plan.title": "プランの進捗",
   "goal.plan.fileTitle": "プランのチェックリスト",

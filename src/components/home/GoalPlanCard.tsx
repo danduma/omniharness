@@ -53,7 +53,7 @@ function elapsedLabel(startedAt: string, endAt: string | null, nowMs: number) {
   if (minutes < 60) return t("goal.elapsed.minutes", { count: minutes });
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return t("goal.elapsed.hours", { count: hours });
-  return t("goal.elapsed.days", { count: Math.floor(hours / 24) });
+  return t("goal.elapsed.daysHours", { days: Math.floor(hours / 24), hours: hours % 24 });
 }
 
 /**
@@ -285,6 +285,7 @@ export function GoalPlanCard({ goal, onSnapshot, onOpenPlanArtifact }: GoalPlanC
             </label>
             <Textarea
               id={`goal-objective-${goal.runId}`}
+              className="max-h-[min(24dvh,12rem)] resize-none overflow-y-auto overscroll-contain"
               autoFocus
               value={presentation.editDraft}
               placeholder={t("goal.edit.placeholder")}

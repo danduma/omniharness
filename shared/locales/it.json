@@ -879,6 +879,7 @@
   "goal.elapsed.minutes": "{count} min",
   "goal.elapsed.hours": "{count} h",
   "goal.elapsed.days": "{count} g",
+  "goal.elapsed.daysHours": "{days} g {hours} h",
   "goal.elapsed.aria": "Attivo da {duration}",
   "goal.plan.title": "Avanzamento del piano",
   "goal.plan.fileTitle": "Lista del piano",
