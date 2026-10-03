@@ -839,21 +839,21 @@ const ConversationSidebar = memo(function ConversationSidebar({
   const scrollSettledRef = useRef(false);
   const programmaticScrollTopRef = useRef<number | null>(null);
   const handleSidebarPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    mobileConversationSwipeManager.start(event, runnerControlsMode === "mobile");
+    mobileConversationSwipeManager.start(event, runnerControlsMode === "mobile", "close");
   }, [runnerControlsMode]);
   const handleSidebarPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (mobileConversationSwipeManager.move(event, "left")) {
-      onCollapse?.();
-    }
-  }, [onCollapse]);
+    mobileConversationSwipeManager.move(event);
+  }, []);
   const handleSidebarPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (mobileConversationSwipeManager.finish(event, "left")) {
+    if (mobileConversationSwipeManager.finish(event) === "close") {
       onCollapse?.();
     }
   }, [onCollapse]);
   const handleSidebarPointerCancel = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    mobileConversationSwipeManager.cancel(event.pointerId);
-  }, []);
+    if (mobileConversationSwipeManager.cancel(event) === "close") {
+      onCollapse?.();
+    }
+  }, [onCollapse]);
   const sidebarContentKey = useMemo(
     () => visibleProjectGroups
       .map((group) => `${group.path}:${group.runs.map((run) => run.id).join(",")}`)

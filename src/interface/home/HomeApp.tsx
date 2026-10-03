@@ -786,9 +786,6 @@ export function HomeApp({
   // Below `lg` the desktop sidebar is display:none, but mounted it still
   // re-rendered every row (each with its own menu) on every live frame.
   const isCompactLayout = useIsCompactLayout();
-  const handleOpenMobileConversationList = useCallback(() => {
-    setMobileNavOpen(true);
-  }, [setMobileNavOpen]);
   const terminalPaneRef = useRef<HTMLDivElement | null>(null);
   useTerminalPanelResize(isResizingTerminalPanel, terminalPaneRef);
 
@@ -1655,7 +1652,7 @@ export function HomeApp({
           projectRoot={currentProjectScope}
           onOpenProjectFile={actions.handleOpenProjectFile}
           onOpenWorkerActivity={handleOpenWorkerActivity}
-          onOpenMobileConversationList={handleOpenMobileConversationList}
+          setMobileConversationListOpen={setMobileNavOpen}
           onRespondElicitation={(input) => respondElicitation.mutateAsync(input)}
           onRespondPermission={(input) => respondPermission.mutate(input)}
           respondingElicitationRequestId={respondElicitation.isPending && respondElicitation.variables?.workerId === vm.primaryConversationAgent?.name ? respondElicitation.variables.requestId : null}

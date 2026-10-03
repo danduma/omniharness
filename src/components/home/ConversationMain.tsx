@@ -707,7 +707,7 @@ interface ConversationMainProps {
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
   onOpenWorkerActivity?: (workerId: string) => void;
-  onOpenMobileConversationList: () => void;
+  setMobileConversationListOpen: (open: boolean) => void;
   onRespondElicitation?: (input: ElicitationResponseInput) => void;
   onRespondPermission?: (input: PermissionResponseInput) => void;
   respondingElicitationRequestId?: number | null;
@@ -869,7 +869,7 @@ const ConversationMain = memo(function ConversationMain({
   projectRoot,
   onOpenProjectFile,
   onOpenWorkerActivity,
-  onOpenMobileConversationList,
+  setMobileConversationListOpen,
   onRespondElicitation,
   onRespondPermission,
   respondingElicitationRequestId = null,
@@ -1174,21 +1174,25 @@ const ConversationMain = memo(function ConversationMain({
     });
   };
   const handleConversationPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    mobileConversationSwipeManager.start(event, isCompactLayout);
+    mobileConversationSwipeManager.start(event, isCompactLayout, "open");
   }, [isCompactLayout]);
   const handleConversationPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (mobileConversationSwipeManager.move(event)) {
-      onOpenMobileConversationList();
+      setMobileConversationListOpen(true);
     }
-  }, [onOpenMobileConversationList]);
+  }, [setMobileConversationListOpen]);
   const handleConversationPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (mobileConversationSwipeManager.finish(event)) {
-      onOpenMobileConversationList();
+    const outcome = mobileConversationSwipeManager.finish(event);
+    if (outcome) {
+      setMobileConversationListOpen(outcome === "open");
     }
-  }, [onOpenMobileConversationList]);
+  }, [setMobileConversationListOpen]);
   const handleConversationPointerCancel = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    mobileConversationSwipeManager.cancel(event.pointerId);
-  }, []);
+    const outcome = mobileConversationSwipeManager.cancel(event);
+    if (outcome) {
+      setMobileConversationListOpen(outcome === "open");
+    }
+  }, [setMobileConversationListOpen]);
   const confirmForkMessageIntoWorktree = () => {
     if (!forkWorkspaceDialog || !forkWorkspaceSnapshot || !forkBranchName.trim() || !forkCheckoutPath.trim()) {
       return;
