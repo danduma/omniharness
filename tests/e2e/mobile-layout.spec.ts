@@ -37,6 +37,24 @@ async function startTouchDrag(
   });
 }
 
+async function moveTouchDrag(
+  client: CDPSession,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  steps = 8,
+) {
+  for (let step = 1; step <= steps; step += 1) {
+    await client.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{
+        x: from.x + ((to.x - from.x) * step) / steps,
+        y: from.y + ((to.y - from.y) * step) / steps,
+        id: 1,
+      }],
+    });
+  }
+}
+
 async function endTouchDrag(client: CDPSession) {
   await client.send("Input.dispatchTouchEvent", {
     type: "touchEnd",
@@ -80,11 +98,26 @@ test("mobile swipes open and close the conversation list", async ({ page }) => {
   await dispatchTouchGesture(client, { x: 180, y: 220 }, { x: 184, y: 320 });
   await expect(page.locator('[data-slot="sheet-content"]:visible')).toHaveCount(0);
 
-  await startTouchDrag(client, { x: 32, y: 320 }, { x: 112, y: 326 });
-
   const mobileConversationList = page.locator('[data-slot="sheet-content"]');
+  const drawerLeft = async () => (await mobileConversationList.boundingBox())?.x ?? Number.NaN;
+
+  // A short drag reveals part of the drawer, then springs back when released.
+  await startTouchDrag(client, { x: 32, y: 320 }, { x: 48, y: 320 });
+  await moveTouchDrag(client, { x: 48, y: 320 }, { x: 108, y: 322 });
   await expect(mobileConversationList).toBeVisible();
+  const partialDrawerWidth = (await mobileConversationList.boundingBox())?.width ?? 0;
+  await expect.poll(drawerLeft).toBeCloseTo(60 - partialDrawerWidth, 0);
+  await page.waitForTimeout(150);
   await endTouchDrag(client);
+  await expect(mobileConversationList).toBeHidden();
+
+  // Dragging past a quarter of the drawer width opens it fully.
+  await startTouchDrag(client, { x: 32, y: 320 }, { x: 48, y: 320 });
+  await moveTouchDrag(client, { x: 48, y: 320 }, { x: 48 + partialDrawerWidth * 0.3, y: 326 });
+  await page.waitForTimeout(150);
+  await endTouchDrag(client);
+  await expect(mobileConversationList).toBeVisible();
+  await expect.poll(drawerLeft).toBe(0);
   await expect(mobileConversationList.getByPlaceholder("Search")).toBeVisible();
   await expect(mobileConversationList.locator('[data-slot="scroll-area-viewport"]')).toHaveCSS("touch-action", "pan-y pinch-zoom");
 
@@ -92,12 +125,22 @@ test("mobile swipes open and close the conversation list", async ({ page }) => {
   const mobileSidebarBox = await mobileSidebar.boundingBox();
   expect(mobileSidebarBox).not.toBeNull();
   if (!mobileSidebarBox) return;
-  await startTouchDrag(
-    client,
-    { x: mobileSidebarBox.x + mobileSidebarBox.width - 32, y: mobileSidebarBox.y + 320 },
-    { x: mobileSidebarBox.x + mobileSidebarBox.width - 112, y: mobileSidebarBox.y + 326 },
-  );
-  await expect(mobileConversationList).toBeHidden();
+  const closeStart = { x: mobileSidebarBox.x + mobileSidebarBox.width - 32, y: mobileSidebarBox.y + 320 };
+  const closeSlop = { x: closeStart.x - 16, y: closeStart.y };
+
+  // A short drag back toward the edge leaves the drawer open.
+  await startTouchDrag(client, closeStart, closeSlop);
+  await moveTouchDrag(client, closeSlop, { x: closeSlop.x - 60, y: closeSlop.y + 4 });
+  await expect.poll(drawerLeft).toBeCloseTo(-60, 0);
+  await page.waitForTimeout(150);
   await endTouchDrag(client);
+  await expect.poll(drawerLeft).toBe(0);
+
+  // Dragging past a quarter of the way closes it.
+  await startTouchDrag(client, closeStart, closeSlop);
+  await moveTouchDrag(client, closeSlop, { x: closeSlop.x - mobileSidebarBox.width * 0.3, y: closeSlop.y + 4 });
+  await page.waitForTimeout(150);
+  await endTouchDrag(client);
+  await expect(mobileConversationList).toBeHidden();
   await expect(page.getByRole("button", { name: "Open navigation" })).toBeVisible();
 });
