@@ -1314,6 +1314,144 @@ describe("home utils", () => {
     expect(merged.messages.map((message) => message.id)).toEqual(["message-a", "message-b"]);
   });
 
+  it("does not restore a stale running status when another run's stream frame leaves the created run out", () => {
+    // Session 74b271da861a: created in this tab, then the user moved to another
+    // conversation. Stream frames for that conversation carry only its own run,
+    // so every frame re-inserted the creation-time row and the finished session
+    // read as running until the tab reloaded.
+    const pendingMessage = {
+      id: "message-b",
+      runId: "run-b",
+      role: "user" as const,
+      kind: "checkpoint",
+      content: "Start session B",
+      createdAt: "2026-04-27T00:01:00.000Z",
+    };
+    const pendingSnapshots = new Map([
+      ["run-b", {
+        plan: { id: "plan-b", path: "vibes/ad-hoc/b.md" },
+        run: buildRun({ id: "run-b", planId: "plan-b", status: "running" }),
+        message: pendingMessage,
+      }],
+    ]);
+    const emptyState: EventStreamState = {
+      messages: [],
+      plans: [],
+      runs: [],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+    };
+
+    mergePendingCreatedConversationSnapshots({
+      ...emptyState,
+      messages: [pendingMessage],
+      plans: [{ id: "plan-b", path: "vibes/ad-hoc/b.md" }],
+      runs: [buildRun({ id: "run-b", planId: "plan-b", status: "running" })],
+    }, pendingSnapshots, 1_000);
+    // The run finishes while another conversation is selected: the frame that
+    // carries the change has the run and its plan, but not its messages.
+    mergePendingCreatedConversationSnapshots({
+      ...emptyState,
+      plans: [{ id: "plan-b", path: "vibes/ad-hoc/b.md" }],
+      runs: [
+        buildRun({ id: "run-a", planId: "plan-a" }),
+        buildRun({ id: "run-b", planId: "plan-b", status: "done", updatedAt: "2026-04-27T00:02:00.000Z" }),
+      ],
+      messageScope: { runIds: ["run-a"], complete: true },
+    }, pendingSnapshots, 2_000);
+
+    const otherRunFrame = mergePendingCreatedConversationSnapshots({
+      ...emptyState,
+      runs: [buildRun({ id: "run-a", planId: "plan-a" })],
+      messageScope: { runIds: ["run-a"], complete: true },
+    }, pendingSnapshots, 3_000);
+
+    expect(otherRunFrame.runs.find((run) => run.id === "run-b")?.status).toBe("done");
+  });
+
+  it("does not restore a stale running status for a run the server listed before its first message", () => {
+    const pendingSnapshots = new Map([
+      ["run-b", {
+        plan: { id: "plan-b", path: "vibes/ad-hoc/b.md" },
+        run: buildRun({ id: "run-b", planId: "plan-b", status: "running" }),
+        message: {
+          id: "message-b",
+          runId: "run-b",
+          role: "user" as const,
+          kind: "checkpoint",
+          content: "Start session B",
+          createdAt: "2026-04-27T00:01:00.000Z",
+        },
+      }],
+    ]);
+    const emptyState: EventStreamState = {
+      messages: [],
+      plans: [],
+      runs: [],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+    };
+
+    const finished = mergePendingCreatedConversationSnapshots({
+      ...emptyState,
+      plans: [{ id: "plan-b", path: "vibes/ad-hoc/b.md" }],
+      runs: [buildRun({ id: "run-b", planId: "plan-b", status: "done" })],
+      messageScope: { runIds: ["run-a"], complete: true },
+    }, pendingSnapshots, 1_000);
+    const otherRunFrame = mergePendingCreatedConversationSnapshots({
+      ...emptyState,
+      runs: [buildRun({ id: "run-a", planId: "plan-a" })],
+      messageScope: { runIds: ["run-a"], complete: true },
+    }, pendingSnapshots, 2_000);
+
+    expect(finished.runs.find((run) => run.id === "run-b")?.status).toBe("done");
+    expect(finished.messages.map((message) => message.id)).toEqual(["message-b"]);
+    expect(otherRunFrame.runs.find((run) => run.id === "run-b")?.status).toBe("done");
+  });
+
+  it("drops the placeholder plan once the server lists the run before the create response returns", () => {
+    const pendingSnapshots = new Map([["run-1", buildOptimisticCreatedConversationSnapshot({
+      runId: "run-1",
+      content: "Start this",
+      projectPath: "/workspace/app",
+      mode: "direct",
+      now: new Date("2026-04-27T00:01:00.000Z"),
+    })]]);
+    const emptyState: EventStreamState = {
+      messages: [],
+      plans: [],
+      runs: [],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+    };
+
+    const listed = mergePendingCreatedConversationSnapshots({
+      ...emptyState,
+      plans: [{ id: "plan-1", path: "vibes/ad-hoc/server.md" }],
+      runs: [buildRun({ id: "run-1", planId: "plan-1", status: "running" })],
+    }, pendingSnapshots, 1_000);
+    const stale = mergePendingCreatedConversationSnapshots(emptyState, pendingSnapshots, 2_000);
+
+    expect(listed.plans.map((plan) => plan.id)).toEqual(["plan-1"]);
+    expect(stale.plans.map((plan) => plan.id)).toEqual(["plan-1"]);
+    expect(stale.runs[0]).toMatchObject({ id: "run-1", planId: "plan-1", status: "running" });
+  });
+
   it("keeps a newly created conversation through stale payloads after a stable server-visible window", () => {
     const pendingSnapshots = new Map([
       ["run-1", {
