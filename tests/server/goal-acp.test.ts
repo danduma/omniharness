@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GoalSnapshot } from "@/shared/goal-plan";
-import { createGoalAcpDispatcher } from "@/server/runs/goal-acp";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
+import { createGoalAcpDispatcher, GOAL_EXTENSION_ACCEPTANCE_WINDOW_MS } from "@/server/runs/goal-acp";
 
 function snapshot(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
   return {
@@ -30,28 +31,152 @@ function snapshot(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
   };
 }
 
+const codexCapabilities = { set: true, edit: true, pause: true, resume: true, clear: true, fallbackMethod: "/goal" };
+
+function codexAgent() {
+  return {
+    agentCapabilities: { _meta: { goal: { version: 1, capabilities: { set: true, pause: true, resume: true, clear: true } } } },
+    outputEntries: [{ type: "available_commands", raw: { availableCommands: [{ name: "goal" }] } }],
+  };
+}
+
+function failedAfterAcceptanceEvents() {
+  return getNamedEventsSince(null).events
+    .map((entry) => entry.event)
+    .filter((event) => event.kind === "goal.control.failed_after_acceptance");
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  __resetNamedEventsForTests();
+});
+
 describe("goal ACP control dispatch", () => {
-  it("prefers the advertised extension and never also sends a slash command", async () => {
+  it("controls a goal that runs no turn over the extension even when /goal is advertised", async () => {
     const invokeExtension = vi.fn(async () => ({ ok: true }));
     const sendSlashCommand = vi.fn();
     const dispatcher = createGoalAcpDispatcher({
-      getAgent: vi.fn(async () => ({
-        agentCapabilities: { _meta: { goal: { version: 1, capabilities: { set: true, clear: true } } } },
-        outputEntries: [{ type: "available_commands", raw: { availableCommands: [{ name: "goal" }] } }],
-      })),
+      getAgent: vi.fn(async () => codexAgent()),
       invokeExtension,
       sendSlashCommand,
     });
 
-    expect(await dispatcher.dispatch(snapshot(), "set")).toMatchObject({ kind: "dispatched", method: "extension" });
+    expect(await dispatcher.dispatch(snapshot({ capabilities: codexCapabilities }), "pause"))
+      .toMatchObject({ kind: "dispatched", method: "extension" });
     expect(invokeExtension).toHaveBeenCalledWith("worker-1", "_session/goal", {
       sessionId: "session-1",
       goalId: "goal-1",
       revision: 3,
-      action: "set",
-      objective: "Ship it",
+      action: "pause",
     });
     expect(sendSlashCommand).not.toHaveBeenCalled();
+  });
+
+  it("resumes through /goal so the runtime tracks the turn the resume starts", async () => {
+    // codex-acp forwards a turn's output only for turns a prompt started. A
+    // resume over `_session/goal` ran with no visible output, the worker read
+    // as idle while Codex worked, and the call answered only when the turn ended.
+    const invokeExtension = vi.fn();
+    const sendSlashCommand = vi.fn(async () => ({ ok: true }));
+    const dispatcher = createGoalAcpDispatcher({
+      getAgent: vi.fn(async () => codexAgent()),
+      invokeExtension,
+      sendSlashCommand,
+    });
+
+    expect(await dispatcher.dispatch(snapshot({ status: "paused", capabilities: codexCapabilities }), "resume"))
+      .toMatchObject({ kind: "dispatched", method: "slash" });
+    expect(sendSlashCommand).toHaveBeenCalledWith("worker-1", "/goal resume", expect.anything());
+    expect(invokeExtension).not.toHaveBeenCalled();
+  });
+
+  it("sets an objective through /goal when the agent offers both channels", async () => {
+    const invokeExtension = vi.fn();
+    const sendSlashCommand = vi.fn(async () => ({ ok: true }));
+    const dispatcher = createGoalAcpDispatcher({
+      getAgent: vi.fn(async () => codexAgent()),
+      invokeExtension,
+      sendSlashCommand,
+    });
+
+    expect(await dispatcher.dispatch(snapshot(), "set")).toMatchObject({ kind: "dispatched", method: "slash" });
+    expect(sendSlashCommand).toHaveBeenCalledWith("worker-1", "/goal Ship it", expect.anything());
+    expect(invokeExtension).not.toHaveBeenCalled();
+  });
+
+  it("sets an objective too long for /goal over the extension", async () => {
+    const invokeExtension = vi.fn(async () => ({ ok: true }));
+    const sendSlashCommand = vi.fn();
+    const dispatcher = createGoalAcpDispatcher({
+      getAgent: vi.fn(async () => codexAgent()),
+      invokeExtension,
+      sendSlashCommand,
+    });
+    const objective = "x".repeat(4_001);
+
+    expect(await dispatcher.dispatch(snapshot({ objective }), "set")).toMatchObject({ kind: "dispatched", method: "extension" });
+    expect(invokeExtension).toHaveBeenCalledWith("worker-1", "_session/goal", expect.objectContaining({ action: "set", objective }));
+    expect(sendSlashCommand).not.toHaveBeenCalled();
+  });
+
+  it("returns once the runtime accepts /goal instead of waiting for the goal's turn to end", async () => {
+    let failTurn: (error: Error) => void = () => {};
+    const sendSlashCommand = vi.fn((_workerId: string, _command: string, options?: { onAccepted?: () => void }) => {
+      options?.onAccepted?.();
+      return new Promise<unknown>((_resolve, reject) => {
+        failTurn = reject;
+      });
+    });
+    const dispatcher = createGoalAcpDispatcher({
+      getAgent: vi.fn(async () => codexAgent()),
+      invokeExtension: vi.fn(),
+      sendSlashCommand,
+    });
+
+    expect(await dispatcher.dispatch(snapshot({ capabilities: codexCapabilities }), "resume"))
+      .toEqual({ kind: "dispatched", method: "slash" });
+
+    failTurn(new Error("Ask failed: stream closed"));
+    await vi.waitFor(() => expect(failedAfterAcceptanceEvents()).toEqual([
+      expect.objectContaining({ runId: "run-1", goalId: "goal-1", workerId: "worker-1", action: "resume", method: "slash" }),
+    ]));
+  });
+
+  it("counts a turn-starting extension call that stays unanswered as accepted", async () => {
+    vi.useFakeTimers();
+    const invokeExtension = vi.fn(() => new Promise<unknown>(() => {}));
+    const dispatcher = createGoalAcpDispatcher({
+      getAgent: vi.fn(async () => ({
+        agentCapabilities: { _meta: { goal: { version: 1, capabilities: { set: true, resume: true } } } },
+      })),
+      invokeExtension,
+      sendSlashCommand: vi.fn(),
+    });
+
+    const dispatched = dispatcher.dispatch(snapshot({ status: "paused" }), "resume");
+    await vi.advanceTimersByTimeAsync(GOAL_EXTENSION_ACCEPTANCE_WINDOW_MS);
+
+    await expect(dispatched).resolves.toEqual({ kind: "dispatched", method: "extension" });
+    expect(failedAfterAcceptanceEvents()).toEqual([]);
+  });
+
+  it("still waits for a pause the extension has not answered", async () => {
+    vi.useFakeTimers();
+    let settled = false;
+    const dispatcher = createGoalAcpDispatcher({
+      getAgent: vi.fn(async () => ({
+        agentCapabilities: { _meta: { goal: { version: 1, capabilities: { pause: true } } } },
+      })),
+      invokeExtension: vi.fn(() => new Promise<unknown>(() => {})),
+      sendSlashCommand: vi.fn(),
+    });
+
+    void dispatcher.dispatch(snapshot(), "pause").then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(GOAL_EXTENSION_ACCEPTANCE_WINDOW_MS * 2);
+
+    expect(settled).toBe(false);
   });
 
   it("edits through native set when the extension advertises set without edit", async () => {
@@ -81,7 +206,7 @@ describe("goal ACP control dispatch", () => {
     });
 
     expect(await dispatcher.dispatch(snapshot(), "edit")).toMatchObject({ kind: "dispatched", method: "slash" });
-    expect(sendSlashCommand).toHaveBeenCalledWith("worker-1", "/goal Ship it");
+    expect(sendSlashCommand).toHaveBeenCalledWith("worker-1", "/goal Ship it", expect.anything());
     expect(invokeExtension).not.toHaveBeenCalled();
   });
 
@@ -116,7 +241,7 @@ describe("goal ACP control dispatch", () => {
 
     expect(await dispatcher.dispatch(snapshot({ status: "blocked" }), "retry"))
       .toMatchObject({ kind: "dispatched", method: "slash" });
-    expect(sendSlashCommand).toHaveBeenCalledWith("worker-1", "/goal Ship it");
+    expect(sendSlashCommand).toHaveBeenCalledWith("worker-1", "/goal Ship it", expect.anything());
     expect(invokeExtension).not.toHaveBeenCalled();
   });
 
@@ -166,7 +291,7 @@ describe("goal ACP control dispatch", () => {
       kind: "deferred",
       reason: "worker_busy",
     });
-    expect(sendSlashCommand).toHaveBeenCalledWith("worker-1", "/goal Ship it");
+    expect(sendSlashCommand).toHaveBeenCalledWith("worker-1", "/goal Ship it", expect.anything());
   });
 
   it("defers an extension dispatch the runtime refuses because the agent is busy", async () => {
@@ -223,7 +348,7 @@ describe("goal ACP control dispatch", () => {
       capabilities: { set: true, edit: true, pause: false, resume: false, clear: true, fallbackMethod: "/goal" },
     });
     expect(await dispatcher.dispatch(resumed, "set")).toMatchObject({ kind: "dispatched", method: "slash" });
-    expect(sendSlashCommand).toHaveBeenCalledWith("worker-1", "/goal Ship it");
+    expect(sendSlashCommand).toHaveBeenCalledWith("worker-1", "/goal Ship it", expect.anything());
   });
 
   it("still refuses an action the recorded fallback capabilities do not cover", async () => {

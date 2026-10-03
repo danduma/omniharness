@@ -144,14 +144,14 @@ describe("lifecycle — goal control against a busy worker", () => {
     expect(body.goal).toMatchObject({ status: "pursuing", lastError: null });
     const stored = await db.select().from(runGoals).where(eq(runGoals.runId, runId)).get();
     expect(stored).toMatchObject({ status: "pursuing", lastError: null, controlMethod: null });
-    expect(mockAskAgent).toHaveBeenCalledWith(WORKER_ID, "/goal Finish the carousel pipeline");
+    expect(mockAskAgent).toHaveBeenCalledWith(WORKER_ID, "/goal Finish the carousel pipeline", undefined, expect.objectContaining({ onAccepted: expect.any(Function) }));
 
     // The turn settles: the same control lands without the user asking again.
     workerBusy = false;
     const replayed = await retryDeferredGoalControl(runId);
 
     expect(replayed).toMatchObject({ kind: "dispatched", method: "slash" });
-    expect(mockAskAgent).toHaveBeenLastCalledWith(WORKER_ID, "/goal Finish the carousel pipeline");
+    expect(mockAskAgent).toHaveBeenLastCalledWith(WORKER_ID, "/goal Finish the carousel pipeline", undefined, expect.objectContaining({ onAccepted: expect.any(Function) }));
     const settled = await db.select().from(runGoals).where(eq(runGoals.runId, runId)).get();
     expect(settled).toMatchObject({ status: "pursuing", lastError: null });
     expect(settled?.controlMethod).toContain("slash");

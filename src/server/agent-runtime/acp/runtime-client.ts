@@ -124,12 +124,42 @@ function applyProviderThreadStatus(record: AgentRecord, status: "active" | "idle
     record.stopReason = null;
     emitNamedEvent({ kind: "acp.provider_turn_started", workerId: record.name });
   } else if (status === "idle" && record.state === "working") {
-    record.lastText = record.currentText || record.lastText;
-    record.currentText = "";
-    record.stopReason = "end_turn";
-    record.state = "idle";
-    emitNamedEvent({ kind: "acp.provider_turn_ended", workerId: record.name });
+    endProviderTurn(record);
   }
+}
+
+function endProviderTurn(record: AgentRecord) {
+  record.lastText = record.currentText || record.lastText;
+  record.currentText = "";
+  record.stopReason = "end_turn";
+  record.state = "idle";
+  emitNamedEvent({ kind: "acp.provider_turn_ended", workerId: record.name });
+}
+
+/**
+ * claude-agent-acp attaches `cost` to a `usage_update` only when the SDK
+ * reports a turn `result` — for prompted turns and for the ones Claude starts
+ * on its own after a background task notification alike.
+ */
+function isTurnResultUsageUpdate(update: Record<string, unknown>) {
+  return finiteNumber(asRecord(update.cost)?.amount) !== null;
+}
+
+/**
+ * Claude has no Codex-style thread status, so a turn it starts on its own
+ * (a background-task notification) reads as working from its first tool call
+ * and, without this, never reads as idle again. The stuck-worker reaper then
+ * took the quiet "working" worker for a hung one and re-sent the user's last,
+ * already-answered message — which the agent read as fresh consent to act.
+ */
+function settleUnpromptedTurnAtResult(record: AgentRecord, update: Record<string, unknown>) {
+  if (!isTurnResultUsageUpdate(update)) return;
+  // `askAgent` settles the turn it started, and a Codex /goal turn ends on
+  // its own thread status.
+  if (record.promptInFlight || record.providerTurnActive) return;
+  if (record.state !== "working") return;
+  if (record.pendingPermissions.length > 0 || record.pendingElicitations.length > 0) return;
+  endProviderTurn(record);
 }
 
 function applySessionUsageUpdate(record: AgentRecord, update: Record<string, unknown>) {
@@ -579,6 +609,7 @@ export class RuntimeClient implements acp.Client {
 
     if (update.sessionUpdate === "usage_update") {
       applySessionUsageUpdate(record, update as unknown as Record<string, unknown>);
+      settleUnpromptedTurnAtResult(record, update as unknown as Record<string, unknown>);
     }
 
     const normalized = normalizeSessionUpdate(update);
