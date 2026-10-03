@@ -1,8 +1,88 @@
 {
   "version": 2,
   "projectRoot": "/Users/masterman/NLP/omniharness",
-  "generatedAt": "2026-09-30T22:00:15.180Z",
+  "generatedAt": "2026-10-03T10:00:22.344Z",
   "conversations": [
+    {
+      "provider": "claude",
+      "id": "366cdbcc-fe00-4acd-b15a-82a55baca68a",
+      "title": "Session d06affd28dec goal update error",
+      "startedAt": "2026-10-03T07:33:46.541Z",
+      "updatedAt": "2026-10-03T07:55:13.968Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "06cdec3173aad97a41f6f762f57c18e613367c952cb970aae968450e2f20160e",
+      "parts": [
+        "conversations/2026/10/2026-10-03-claude-session-d06affd28dec-goal-update-error-366cdbcc-fe00-4acd-b15a-82a55baca68a-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 259,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "8d8b94f7-ff5a-4ea9-894a-7e545f27fb14",
+      "title": "Agent unauthorized execution after model switch",
+      "startedAt": "2026-10-02T21:06:07.236Z",
+      "updatedAt": "2026-10-02T23:46:24.714Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "fd2c5748abae83c29eec610371f5fd80b9a7d1c02f66ff37ada02e75e4c198b3",
+      "parts": [
+        "conversations/2026/10/2026-10-02-claude-agent-unauthorized-execution-after-model-switch-8d8b94f7-ff5a-4ea9-894a-7e545f27fb14-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 368,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "d2b3a30d-cb9c-4174-bd20-0049ec383e90",
+      "title": "Persistent drafts not working",
+      "startedAt": "2026-10-01T15:44:37.369Z",
+      "updatedAt": "2026-10-01T15:47:40.972Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "6a9d3ddbe91d54e25811576db623bec61bd6ce00f6dce875a94c02af2f46127b",
+      "parts": [
+        "conversations/2026/10/2026-10-01-claude-persistent-drafts-not-working-d2b3a30d-cb9c-4174-bd20-0049ec383e90-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 100,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "398fbf66-df19-4909-b985-a25ce40f1bb1",
+      "title": "Decoder-pool reentrant shutdown test passing",
+      "startedAt": "2026-10-01T14:53:36.811Z",
+      "updatedAt": "2026-10-01T15:12:58.758Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "49bbec8bfce35669288d7aa93d8ace7b176bbfbb9e67b49e828a31605855ae5e",
+      "parts": [
+        "conversations/2026/10/2026-10-01-claude-decoder-pool-reentrant-shutdown-test-passing-398fbf66-df19-4909-b985-a25ce40f1bb1-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 786,
+      "malformedLines": 0,
+      "redactions": 4,
+      "warnings": []
+    },
     {
       "provider": "claude",
       "id": "d4451ea2-39bf-422c-a9f3-73c740a5869a",
@@ -631,7 +711,7 @@
       "updatedAt": "2026-09-03T00:18:59.266Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "78d892f40b8e1f1d2fb5f5cb23803c8a43c92380f9ce451ce3b127fb46015aa4",
       "parts": [
@@ -651,7 +731,7 @@
       "updatedAt": "2026-09-02T21:52:46.328Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "df126c03b64d86ec976dca612d5ba6a12245f23817086e82fa1bbf1d3a31ebb1",
       "parts": [
@@ -691,7 +771,7 @@
       "updatedAt": "2026-09-02T13:29:29.816Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "9c78bb11ec70bf37727b90a78487cd9cc47449ca149ee4fc8a07c14d328c6335",
       "parts": [
@@ -711,7 +791,7 @@
       "updatedAt": "2026-09-02T13:21:06.299Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "b3d1ea42749a17439a3eb50e2b3681b2dfbab5fadfe65d8bdb2dee2b00aaa436",
       "parts": [
@@ -731,7 +811,7 @@
       "updatedAt": "2026-09-02T12:48:15.299Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "7a4176b8c307fdb0d30182e1961efe1a518c872e3e8a03b50582dc749132d1de",
       "parts": [
