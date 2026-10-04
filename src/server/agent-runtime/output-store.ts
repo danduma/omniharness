@@ -73,33 +73,6 @@ export function appendBoundedText(existing: string, chunk: string, maxChars = LI
   return next.slice(-Math.max(0, maxChars));
 }
 
-export function appendBoundedThoughts(existing: string, chunk: string, maxChars = LIVE_OUTPUT_ENTRY_TEXT_CHARS) {
-  if (chunk.length === 0) {
-    return existing;
-  }
-  const next = existing + chunk;
-  if (next.length <= maxChars) {
-    return next;
-  }
-
-  // Get the raw end slice
-  const candidate = next.slice(-maxChars);
-
-  // Find the first paragraph break in the sliced text to start cleanly
-  const dblNewlineIdx = candidate.indexOf("\n\n");
-  if (dblNewlineIdx !== -1) {
-    return candidate.slice(dblNewlineIdx + 2);
-  }
-
-  const newlineIdx = candidate.indexOf("\n");
-  if (newlineIdx !== -1) {
-    return candidate.slice(newlineIdx + 1);
-  }
-
-  // Fallback to strict slice if no newlines are present
-  return candidate;
-}
-
 function compactRawValue(
   value: unknown,
   maxStringChars: number,
@@ -160,10 +133,10 @@ function createArchiveEntry(input: OutputEntryInput): OutputEntry {
 function toLiveEntry(entry: OutputEntry): OutputEntry {
   return {
     ...entry,
-    // Assistant messages are conversation content, not disposable runtime
-    // diagnostics. They must remain complete so the unified worker stream can
-    // persist the whole answer instead of a suffix-only live snapshot.
-    text: entry.type === "message"
+    // Assistant messages and thinking are conversation content, not disposable
+    // runtime diagnostics. They must remain complete so the unified worker
+    // stream can persist the whole text instead of a suffix-only live snapshot.
+    text: entry.type === "message" || entry.type === "thought"
       ? entry.text
       : truncateString(entry.text, LIVE_OUTPUT_ENTRY_TEXT_CHARS),
     // Inline image payloads are conversation content for the same reason, and
@@ -425,11 +398,7 @@ export function appendMessageChunk(record: AgentRecord, text: string, type: "mes
     : null;
 
   if (activeEntry && activeEntry.type === type) {
-    if (type === "thought") {
-      activeEntry.text = appendBoundedThoughts(activeEntry.text, text, LIVE_OUTPUT_ENTRY_TEXT_CHARS);
-    } else {
-      activeEntry.text += text;
-    }
+    activeEntry.text += text;
     return;
   }
 
