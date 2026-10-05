@@ -1017,6 +1017,9 @@ export class AgentRuntimeManager {
   private readonly memoryTracer: MemoryTracer;
   private readonly outputRetentionManager = new RuntimeOutputRetentionManager();
   private readonly pendingAgentReaps = new Map<string, NodeJS.Timeout>();
+  /** Idle stamp each goal-protected agent was last reported under, so the skip is logged once per idle period. */
+  private readonly goalProtectedIdleSince = new Map<string, string>();
+  private idleReapInFlight = false;
   private reapSweepTimer: NodeJS.Timeout | null = null;
   private resourcePressureTimer: NodeJS.Timeout | null = null;
   private resourcePressureCheckInFlight = false;
@@ -1034,6 +1037,8 @@ export class AgentRuntimeManager {
       config?: AgentRuntimeConfig;
       env?: EnvLike;
       resourceSnapshotProvider?: SystemResourceSnapshotProvider;
+      /** Which of these agents hold an active goal; defaults to the goal table. */
+      findGoalHoldingAgents?: (names: readonly string[]) => Promise<Set<string>>;
     } = {},
   ) {
     const baseEnv = this.options.env || process.env;
@@ -1183,19 +1188,72 @@ export class AgentRuntimeManager {
       process.stderr.write(`[runtime-sweep] pool sweep failed: ${describeUnknownError(error)}\n`);
     }
     const now = Date.now();
+    const staleIdleAgents: string[] = [];
     for (const [name, record] of this.agents) {
-      if (record.state !== "idle") continue;
-      const updatedAt = Date.parse(record.updatedAt);
-      if (!Number.isFinite(updatedAt)) continue;
-      if (now - updatedAt < this.agentIdleTimeoutMs) continue;
-      void this.stopAgent(name).catch((error) => {
-        process.stderr.write(
-          `[runtime-sweep] failed to reap idle agent ${name}: ${describeUnknownError(error)}\n`,
-        );
-      });
+      if (this.isStaleIdleAgent(record, now)) staleIdleAgents.push(name);
     }
+    if (staleIdleAgents.length > 0) void this.reapStaleIdleAgents(staleIdleAgents);
     this.runIdleCleanupSweep(now);
     this.runOutputRetentionSweep();
+  }
+
+  private isStaleIdleAgent(record: AgentRecord, now: number) {
+    if (record.state !== "idle") return false;
+    const updatedAt = Date.parse(record.updatedAt);
+    return Number.isFinite(updatedAt) && now - updatedAt >= this.agentIdleTimeoutMs;
+  }
+
+  private async findGoalHoldingAgents(names: readonly string[]) {
+    if (this.options.findGoalHoldingAgents) return this.options.findGoalHoldingAgents(names);
+    const { listWorkersHoldingActiveGoals } = await import("@/server/runs/goal-worker-lease");
+    return listWorkersHoldingActiveGoals(names);
+  }
+
+  /**
+   * Stop idle agents, except those pursuing a goal. Such an agent ends its turn
+   * while the work it started runs in the background and is woken by that
+   * work's notification. Reaping it killed the agent and its monitors, so the
+   * notification had nothing to wake and the goal stalled until the user
+   * noticed. When the lookup fails nothing is reaped: a live agent costs memory,
+   * a reaped one costs the user's work.
+   */
+  private async reapStaleIdleAgents(names: string[]) {
+    if (this.idleReapInFlight) return;
+    this.idleReapInFlight = true;
+    try {
+      let goalHolders: Set<string>;
+      try {
+        goalHolders = await this.findGoalHoldingAgents(names);
+      } catch (error) {
+        process.stderr.write(`[runtime-sweep] goal lookup failed; skipping idle reap: ${describeUnknownError(error)}\n`);
+        return;
+      }
+      const now = Date.now();
+      for (const name of names) {
+        const record = this.agents.get(name);
+        if (!record || !this.isStaleIdleAgent(record, now)) continue;
+        if (goalHolders.has(name)) {
+          if (this.goalProtectedIdleSince.get(name) !== record.updatedAt) {
+            this.goalProtectedIdleSince.set(name, record.updatedAt);
+            emitNamedEvent({ kind: "runtime.agent_reap_skipped", workerId: name, reason: "active_goal" });
+          }
+          continue;
+        }
+        this.goalProtectedIdleSince.delete(name);
+        emitNamedEvent({
+          kind: "runtime.agent_reaped",
+          workerId: name,
+          idleMs: now - Date.parse(record.updatedAt),
+        });
+        await this.stopAgent(name).catch((error) => {
+          process.stderr.write(
+            `[runtime-sweep] failed to reap idle agent ${name}: ${describeUnknownError(error)}\n`,
+          );
+        });
+      }
+    } finally {
+      this.idleReapInFlight = false;
+    }
   }
 
   private runOutputRetentionSweep(): void {

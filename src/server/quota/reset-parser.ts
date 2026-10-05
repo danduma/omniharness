@@ -42,6 +42,17 @@ const GENERIC_OVERLOAD_PATTERN = /\b(?:overloaded|busy|temporar(?:y|ily)|service
 const USAGE_PROGRESS_PATTERN = /\b(?:you(?:'|’)ve\s+)?used\s+(\d{1,3}(?:\.\d+)?)%\s+of\s+(?:your\s+)?(?:(?:weekly|session|usage|subscription|billing)\s+)?limit\b/i;
 const CLOCK_SKEW_MS = 60_000;
 
+/** Claude can return this notice in a successful end_turn rather than an
+ * error. Match the provider notice itself, including duplicated chunks, so
+ * quoted diagnostics and ordinary discussion of quota remain successful. */
+export function providerQuotaNoticeText(text: string | null | undefined): string | null {
+  const notice = text?.trim();
+  if (!notice || !/^(?:you(?:'|’)ve hit your (?:(?:session|weekly|usage|subscription) )?limit(?:\s*·\s*resets\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?(?:\s*\([\w/+:-]+\))?)?\s*)+$/i.test(notice)) {
+    return null;
+  }
+  return notice;
+}
+
 function nowDate(value: Date | number | undefined) {
   if (value instanceof Date) {
     return new Date(value.getTime());

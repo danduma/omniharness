@@ -165,6 +165,7 @@ describe("AgentRuntimeManager idle-agent sweep", () => {
         OMNIHARNESS_RUNTIME_SWEEP_INTERVAL_MS: "30",
         OMNIHARNESS_MEMORY_TRACE: "0",
       } as Record<string, string>,
+      findGoalHoldingAgents: async () => new Set<string>(),
     });
     try {
       await startAgent(manager, dir, "reap-idle");
@@ -178,7 +179,82 @@ describe("AgentRuntimeManager idle-agent sweep", () => {
       await sleep(400);
 
       expect(manager.agents.has("reap-idle")).toBe(false);
+      const events = getNamedEventsSince(0).events.map((entry) => entry.event);
+      expect(events).toContainEqual(expect.objectContaining({ kind: "runtime.agent_reaped", workerId: "reap-idle" }));
     } finally {
+      manager.shutdownPools();
+    }
+  });
+
+  // An agent pursuing a goal ends its turn while its background work runs and
+  // is woken by that work's notification. Reaping it stalled the goal.
+  it("keeps idle agents that hold an active goal, and reports the skip once per idle period", async () => {
+    const dir = createTempDir("omni-reaper-goal-");
+    const lookups: string[][] = [];
+    const manager = new AgentRuntimeManager({
+      env: {
+        ...process.env,
+        OMNIHARNESS_AGENT_EXIT_GRACE_MS: "10000",
+        OMNIHARNESS_AGENT_IDLE_TIMEOUT_MS: "50",
+        OMNIHARNESS_RUNTIME_SWEEP_INTERVAL_MS: "30",
+        OMNIHARNESS_MEMORY_TRACE: "0",
+      } as Record<string, string>,
+      findGoalHoldingAgents: async (names) => {
+        lookups.push([...names]);
+        return new Set(names.filter((name) => name === "goal-holder"));
+      },
+    });
+    try {
+      await startAgent(manager, dir, "goal-holder");
+      await startAgent(manager, dir, "no-goal");
+      for (const name of ["goal-holder", "no-goal"]) {
+        const record = manager.agents.get(name)!;
+        record.state = "idle";
+        record.updatedAt = new Date(Date.now() - 5_000).toISOString();
+      }
+
+      await sleep(400);
+
+      expect(manager.agents.has("no-goal")).toBe(false);
+      expect(manager.agents.get("goal-holder")?.state).toBe("idle");
+      const events = getNamedEventsSince(0).events.map((entry) => entry.event);
+      const skips = events.filter((event) => event.kind === "runtime.agent_reap_skipped");
+      expect(skips.length).toBeGreaterThan(0);
+      expect(skips.length).toBeLessThan(lookups.length);
+      for (const skip of skips) {
+        expect(skip).toEqual({ kind: "runtime.agent_reap_skipped", workerId: "goal-holder", reason: "active_goal" });
+      }
+    } finally {
+      await manager.stopAgent("goal-holder");
+      manager.shutdownPools();
+    }
+  });
+
+  it("reaps nothing when the goal lookup fails", async () => {
+    const dir = createTempDir("omni-reaper-goal-fail-");
+    const manager = new AgentRuntimeManager({
+      env: {
+        ...process.env,
+        OMNIHARNESS_AGENT_EXIT_GRACE_MS: "10000",
+        OMNIHARNESS_AGENT_IDLE_TIMEOUT_MS: "50",
+        OMNIHARNESS_RUNTIME_SWEEP_INTERVAL_MS: "30",
+        OMNIHARNESS_MEMORY_TRACE: "0",
+      } as Record<string, string>,
+      findGoalHoldingAgents: async () => {
+        throw new Error("database is locked");
+      },
+    });
+    try {
+      await startAgent(manager, dir, "lookup-fails");
+      const record = manager.agents.get("lookup-fails")!;
+      record.state = "idle";
+      record.updatedAt = new Date(Date.now() - 5_000).toISOString();
+
+      await sleep(200);
+
+      expect(manager.agents.get("lookup-fails")?.state).toBe("idle");
+    } finally {
+      await manager.stopAgent("lookup-fails");
       manager.shutdownPools();
     }
   });

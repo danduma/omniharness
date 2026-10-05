@@ -1,5 +1,6 @@
 import { isRecoverableConnectionSupervisorError, isTransientSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { providerQuotaNoticeText } from "@/server/quota/reset-parser";
 import type { AgentOutputEntry } from "@/lib/agent-output";
 import { prepareClaudeGatewayLaunch, type ClaudeGatewayCredentialSource } from "@/server/integrations/claude-model-gateway/worker-env";
 import {
@@ -746,6 +747,15 @@ export async function askAgent(
       // Some runtimes acknowledge cancellation with a normal terminal frame
       // instead of a connection error. Fence that late success as well.
       await assertTurnIsCurrent();
+      // Claude sometimes finishes normally with only its quota notice. Route
+      // that terminal response through the callers' existing quota recovery
+      // handlers before they persist a healthy completion and mark it done.
+      const quotaNotice = result.state === "idle" || result.state === "error" || result.state === "stopped"
+        ? providerQuotaNoticeText(result.response)
+        : null;
+      if (quotaNotice) {
+        throw Object.assign(new Error(quotaNotice), { retryable: false });
+      }
       return result;
     }, {
       maxDelayMs: BRIDGE_CONNECTION_RESET_MAX_BACKOFF_MS,
