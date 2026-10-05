@@ -9,7 +9,7 @@ import { shouldAutoApprove } from "@/server/permissions";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { isActiveImplementationRun, isPlanningPhaseRun } from "@/server/runs/status";
 import { isTransientSupervisorError } from "@/server/supervisor/retry";
-import { extractQuotaResetInfo, parseQuotaResetText } from "@/server/quota/reset-parser";
+import { extractQuotaResetInfo, parseQuotaResetText, providerQuotaNoticeText } from "@/server/quota/reset-parser";
 import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import { markIncidentForFailover } from "@/server/supervisor/worker-failover";
 import { parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
@@ -402,6 +402,12 @@ function getFatalBridgeStderr(stderrBuffer: string[]) {
 }
 
 function getSnapshotQuotaText(snapshot: WorkerBridgeSnapshot) {
+  // Provider-owned background turns can go idle without a pending ask. Their
+  // terminal quota notice needs the same recovery path as an ask failure.
+  if (normalizeWorkerStatus(snapshot.state) === "idle") {
+    const notice = providerQuotaNoticeText(snapshot.lastText);
+    if (notice) return notice;
+  }
   const diagnosticText = [
     ...snapshot.stderrBuffer.slice(-20),
     snapshot.stopReason ?? "",

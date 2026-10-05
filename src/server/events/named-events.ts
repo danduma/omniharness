@@ -139,6 +139,7 @@ export type SurfacedErrorCode =
   | "goal.lease.stale"
   | "goal.acp.transport_failed"
   | "goal.reconciliation.failed"
+  | "goal.continuation.failed"
   | "goal.validation.failed"
   | "goal.persistence.failed"
   | "goal.outbox.poisoned"
@@ -251,6 +252,16 @@ export type RuntimeEvent =
   | {
       kind: "runtime.agent_start_coalesced";
       workerId: string;
+    }
+  | {
+      kind: "runtime.agent_reaped";
+      workerId: string;
+      idleMs: number;
+    }
+  | {
+      kind: "runtime.agent_reap_skipped";
+      workerId: string;
+      reason: "active_goal";
     }
   | {
       kind: "runtime.idle_cleanup";
@@ -630,6 +641,9 @@ export type GoalEvent =
   | { kind: "goal.worker_revival.started"; runId: string; goalId: string; workerId: string }
   | { kind: "goal.worker_revival.completed"; runId: string; goalId: string; workerId: string }
   | { kind: "goal.worker_revival.skipped"; runId: string; goalId: string; workerId: string | null; reason: string }
+  | { kind: "goal.worker_continuation.started"; runId: string; goalId: string; workerId: string }
+  | { kind: "goal.worker_continuation.completed"; runId: string; goalId: string; workerId: string }
+  | { kind: "goal.worker_continuation.failed"; runId: string; goalId: string; workerId: string; reason: string }
   | { kind: "goal.stale_lease_ignored"; runId: string; goalId: string; workerId: string; leaseGeneration: number; currentLeaseGeneration: number }
   | { kind: "goal.payload_rejected"; runId: string; goalId: string; workerId: string; reason: string }
   | {
