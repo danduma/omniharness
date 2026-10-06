@@ -19,10 +19,16 @@ export const runs = sqliteTable('runs', {
   phase: text('phase'),
   projectPath: text('project_path'),
   title: text('title'),
+  titleOwnership: text('title_ownership').notNull().default('automatic'),
+  titleSource: text('title_source').notNull().default('initial'),
+  titleRevision: integer('title_revision').notNull().default(0),
+  titleOwnerWorkerId: text('title_owner_worker_id'),
   preferredWorkerType: text('preferred_worker_type'),
   preferredWorkerModel: text('preferred_worker_model'),
   preferredWorkerEffort: text('preferred_worker_effort'),
   preferredWorkerAccountId: text('preferred_worker_account_id'),
+  preferredWorkerRevision: integer('preferred_worker_revision').notNull().default(0),
+  preferredWorkerLaunchRevision: integer('preferred_worker_launch_revision').notNull().default(0),
   allowedWorkerTypes: text('allowed_worker_types'),
   specPath: text('spec_path'),
   artifactPlanPath: text('artifact_plan_path'),
@@ -140,6 +146,7 @@ export const workers = sqliteTable('workers', {
   effectiveLaunchModel: text('effective_launch_model'),
   effectiveLaunchEffort: text('effective_launch_effort'),
   launchCredentialSource: text('launch_credential_source'),
+  launchSelectionRevision: integer('launch_selection_revision').notNull().default(0),
   // Monotonic fence advanced every time a turn is interrupted. A delivery
   // captures the generation it started under; stale completions from an
   // interrupted (older) turn compare their captured value and refuse to
@@ -230,6 +237,9 @@ export const messages = sqliteTable('messages', {
   workerId: text('worker_id').references(() => workers.id),
   supersededAt: integer('superseded_at', { mode: 'timestamp' }),
   editedFromMessageId: text('edited_from_message_id'),
+  deliveryStatus: text('delivery_status').notNull().default('delivered'),
+  operationFingerprint: text('operation_fingerprint'),
+  deliveryOptionsJson: text('delivery_options_json'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 
@@ -247,6 +257,7 @@ export const queuedConversationMessages = sqliteTable('queued_conversation_messa
   action: text('action').notNull(),
   content: text('content').notNull(),
   attachmentsJson: text('attachments_json'),
+  operationFingerprint: text('operation_fingerprint'),
   status: text('status').notNull(),
   lastError: text('last_error'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),

@@ -89,4 +89,30 @@ describe("HandoffManager", () => {
     expect(manager.getSnapshot().request?.runId).toBe("source-b");
     expect(manager.getSnapshot().handoff).toBeNull();
   });
+
+  it("does not overwrite fields edited while the active handoff lookup is pending", async () => {
+    let resolveActive!: (value: unknown) => void;
+    const active = new Promise((resolve) => { resolveActive = resolve; });
+    const api = {
+      getActive: vi.fn().mockReturnValue(active),
+      prepare: vi.fn(), revise: vi.fn(), get: vi.fn(), cancel: vi.fn(), launch: vi.fn(),
+    } as unknown as RuntimeAPIs["handoffs"];
+    const manager = new HandoffManager();
+    manager.configure(api);
+    manager.open({ runId: "source", workerId: "worker", sourceWorkerType: "codex", forkedFromMessageId: null, reason: "manual_session" });
+    manager.setModel("user-model");
+    manager.setEffort("Max");
+
+    resolveActive({
+      handoff: {
+        id: "handoff", sourceRunId: "source",
+        target: { workerType: "claude", model: "server-model", effort: "Low", accountId: null },
+        packet: null,
+      },
+    });
+    await active;
+    await Promise.resolve();
+
+    expect(manager.getSnapshot()).toMatchObject({ model: "user-model", effort: "Max" });
+  });
 });

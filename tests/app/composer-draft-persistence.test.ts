@@ -10,6 +10,36 @@ import {
 import { HomeUiStateManager, NEW_CONVERSATION_DRAFT_KEY } from "@/interface/home/HomeUiStateManager";
 
 const NOW = 1_800_000_000_000;
+const SELECTION = {
+  conversationMode: "direct" as const,
+  worker: "auto" as const,
+  accountId: "auto",
+  model: "gpt-5.6-sol",
+  effort: "High",
+};
+
+function composerDraft(command: string, commandCursor: number) {
+  return {
+    command,
+    commandCursor,
+    mentionIndex: 0,
+    attachments: [],
+    selection: SELECTION,
+    dirtySelectionFields: [],
+    serverSelectionVersion: null,
+  };
+}
+
+function persistedDraft(command: string, commandCursor: number, updatedAt = NOW) {
+  return {
+    command,
+    commandCursor,
+    selection: SELECTION,
+    dirtySelectionFields: [],
+    serverSelectionVersion: null,
+    updatedAt,
+  };
+}
 
 function memoryStorage(seed: Record<string, string> = {}) {
   const entries = new Map(Object.entries(seed));
@@ -63,14 +93,19 @@ describe("collectComposerDrafts", () => {
       command: "half-typed prompt",
       commandCursor: 4,
       selectedRunId: null,
+      selectedConversationMode: "direct",
+      selectedCliAgent: "auto",
+      selectedWorkerAccountId: "auto",
+      selectedModel: "gpt-5.6-sol",
+      selectedEffort: "High",
       composerDraftsByRun: {
-        "run-a": { command: "parked", commandCursor: 6, mentionIndex: 0, attachments: [] },
+        "run-a": composerDraft("parked", 6),
       },
     }, NOW);
 
     expect(drafts).toEqual({
-      "run-a": { command: "parked", commandCursor: 6, updatedAt: NOW },
-      [NEW_CONVERSATION_DRAFT_KEY]: { command: "half-typed prompt", commandCursor: 4, updatedAt: NOW },
+      "run-a": persistedDraft("parked", 6),
+      [NEW_CONVERSATION_DRAFT_KEY]: persistedDraft("half-typed prompt", 4),
     });
   });
 
@@ -79,6 +114,11 @@ describe("collectComposerDrafts", () => {
       command: "",
       commandCursor: 0,
       selectedRunId: "run-a",
+      selectedConversationMode: "direct",
+      selectedCliAgent: "auto",
+      selectedWorkerAccountId: "auto",
+      selectedModel: "gpt-5.6-sol",
+      selectedEffort: "High",
       composerDraftsByRun: {},
     }, NOW);
 
@@ -86,13 +126,18 @@ describe("collectComposerDrafts", () => {
   });
 
   it("keeps the original timestamp when a draft is unchanged", () => {
-    const previous = { "run-a": { command: "parked", commandCursor: 6, updatedAt: NOW - 5_000 } };
+    const previous = { "run-a": persistedDraft("parked", 6, NOW - 5_000) };
     const drafts = collectComposerDrafts({
       command: "",
       commandCursor: 0,
       selectedRunId: null,
+      selectedConversationMode: "direct",
+      selectedCliAgent: "auto",
+      selectedWorkerAccountId: "auto",
+      selectedModel: "gpt-5.6-sol",
+      selectedEffort: "High",
       composerDraftsByRun: {
-        "run-a": { command: "parked", commandCursor: 6, mentionIndex: 0, attachments: [] },
+        "run-a": composerDraft("parked", 6),
       },
     }, NOW, previous);
 
@@ -104,20 +149,20 @@ describe("parsePersistedComposerDrafts", () => {
   it("returns nothing for malformed or foreign-version payloads", () => {
     expect(parsePersistedComposerDrafts(null, NOW)).toEqual({});
     expect(parsePersistedComposerDrafts("{not json", NOW)).toEqual({});
-    expect(parsePersistedComposerDrafts(JSON.stringify({ version: 2, drafts: {} }), NOW)).toEqual({});
+    expect(parsePersistedComposerDrafts(JSON.stringify({ version: 1, drafts: {} }), NOW)).toEqual({});
   });
 
   it("drops expired drafts and clamps cursors into the restored text", () => {
     const raw = JSON.stringify({
-      version: 1,
+      version: 2,
       drafts: {
-        stale: { command: "old", commandCursor: 3, updatedAt: NOW - 40 * 24 * 60 * 60 * 1000 },
-        fresh: { command: "kept", commandCursor: 9999, updatedAt: NOW - 1_000 },
+        stale: persistedDraft("old", 3, NOW - 40 * 24 * 60 * 60 * 1000),
+        fresh: persistedDraft("kept", 9999, NOW - 1_000),
       },
     });
 
     expect(parsePersistedComposerDrafts(raw, NOW)).toEqual({
-      fresh: { command: "kept", commandCursor: 4, updatedAt: NOW - 1_000 },
+      fresh: persistedDraft("kept", 4, NOW - 1_000),
     });
   });
 });
@@ -126,9 +171,9 @@ describe("serializeComposerDrafts", () => {
   it("evicts the stalest drafts first and never the active composer", () => {
     const active = "a".repeat(200_000);
     const serialized = serializeComposerDrafts({
-      [NEW_CONVERSATION_DRAFT_KEY]: { command: active, commandCursor: 0, updatedAt: NOW - 60_000 },
-      "run-old": { command: "b".repeat(100_000), commandCursor: 0, updatedAt: NOW - 10_000 },
-      "run-new": { command: "c".repeat(100_000), commandCursor: 0, updatedAt: NOW },
+      [NEW_CONVERSATION_DRAFT_KEY]: persistedDraft(active, 0, NOW - 60_000),
+      "run-old": persistedDraft("b".repeat(100_000), 0, NOW - 10_000),
+      "run-new": persistedDraft("c".repeat(100_000), 0, NOW),
     }, NEW_CONVERSATION_DRAFT_KEY);
 
     const parsed = parsePersistedComposerDrafts(serialized, NOW);
@@ -149,6 +194,9 @@ describe("ComposerDraftPersistence", () => {
     expect(readDrafts(entries)[NEW_CONVERSATION_DRAFT_KEY]).toEqual({
       command: "a very long prompt",
       commandCursor: 18,
+      selection: SELECTION,
+      dirtySelectionFields: [],
+      serverSelectionVersion: null,
       updatedAt: NOW,
     });
 
@@ -208,10 +256,10 @@ describe("ComposerDraftPersistence", () => {
   it("restores per-run drafts without clobbering text already in the composer", () => {
     const { storage } = memoryStorage({
       [COMPOSER_DRAFTS_STORAGE_KEY]: JSON.stringify({
-        version: 1,
+        version: 2,
         drafts: {
-          "run-a": { command: "saved for A", commandCursor: 11, updatedAt: NOW - 1_000 },
-          [NEW_CONVERSATION_DRAFT_KEY]: { command: "saved for new", commandCursor: 13, updatedAt: NOW - 1_000 },
+          "run-a": persistedDraft("saved for A", 11, NOW - 1_000),
+          [NEW_CONVERSATION_DRAFT_KEY]: persistedDraft("saved for new", 13, NOW - 1_000),
         },
       }),
     });

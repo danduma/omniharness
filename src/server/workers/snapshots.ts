@@ -13,8 +13,9 @@ import { appendWorkerSessionMetadata } from "@/server/workers/session-metadata";
 import {
   applyAgentSessionTitle,
   extractAgentSessionTitle,
+  isConversationTitleOwningWorker,
 } from "@/server/conversations/agent-session-title";
-import { readAgentSessionTitleFromTranscript } from "@/server/conversations/agent-transcript-title";
+import { readAgentSessionTitleCandidateFromTranscript } from "@/server/conversations/agent-transcript-title";
 import { readCodexThreadTitle } from "@/server/conversations/agent-thread-title";
 import { claudeConfigDirCandidates } from "@/server/conversations/agent-cli-homes";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -138,7 +139,7 @@ function reportMissingTitleSources(args: {
 async function providerStoreTitle(worker: typeof workers.$inferSelect, sessionId: string, snapshot: PersistableWorkerSnapshot) {
   const workerType = worker.type.trim().toLowerCase();
   if (workerType === "claude") {
-    return readAgentSessionTitleFromTranscript({
+    return readAgentSessionTitleCandidateFromTranscript({
       sessionId,
       cwd: worker.cwd,
       configDir: snapshot.claudeConfigDir ?? undefined,
@@ -149,7 +150,12 @@ async function providerStoreTitle(worker: typeof workers.$inferSelect, sessionId
     // Codex seeds `threads.title` with the prompt and replaces it only on a
     // rename, so the row is always worth reading and rarely worth trusting.
     // `applyAgentSessionTitle` is what tells a name from an echo.
-    return (await readCodexThreadTitle({ sessionId, worker }))?.title ?? null;
+    const candidate = await readCodexThreadTitle({ sessionId, worker });
+    return candidate ? {
+      title: candidate.title,
+      source: "agent_thread_index" as const,
+      knownProviderPrompt: candidate.firstUserMessage,
+    } : null;
   }
   return null;
 }
@@ -159,10 +165,10 @@ async function providerStoreTitle(worker: typeof workers.$inferSelect, sessionId
  * one it was created from.
  *
  * Every source here is something the provider wrote for its own purposes, and
- * none is guaranteed to hold anything. ACP `session_info_update` is checked
- * first because the payload is already in hand; Claude never sends it and what
- * Codex sends is usually the prompt rather than a name, so the provider's own
- * store is read next. When both come up empty the conversation keeps the first
+ * none is guaranteed to hold anything. The provider store is checked first so
+ * an explicit provider-side rename outranks a generated stream title. Claude
+ * rarely sends `session_info_update`, and Codex often puts the prompt there.
+ * When both come up empty the conversation keeps the first
  * line of what the user typed, and the miss is reported once — a source that
  * quietly stops producing (as Claude's transcript title did on 2026-08-16)
  * should show up in the event log rather than only in the sidebar.
@@ -171,38 +177,41 @@ async function adoptAgentGeneratedTitle(
   worker: typeof workers.$inferSelect,
   snapshot: PersistableWorkerSnapshot,
 ) {
+  if (!await isConversationTitleOwningWorker(worker.runId, worker.id)) return;
   const streamTitle = extractAgentSessionTitle(snapshot.outputEntries);
   let streamCandidateStatus: TitleCandidateStatus = "missing";
-  if (streamTitle) {
-    // A rejected stream title (Codex publishes the prompt here when its thread
-    // has no name) is not an answer, so keep looking.
-    const outcome = await applyAgentSessionTitle({ runId: worker.runId, title: streamTitle });
-    if (outcome !== "rejected") {
-      return;
-    }
-    streamCandidateStatus = "rejected";
-  }
 
   const sessionId = (snapshot.sessionId ?? worker.bridgeSessionId)?.trim();
   if (!sessionId || !worker.cwd) {
+    if (streamTitle) {
+      const outcome = await applyAgentSessionTitle({ runId: worker.runId, workerId: worker.id, title: streamTitle });
+      if (outcome !== "rejected") return;
+      streamCandidateStatus = "rejected";
+    }
     reportMissingTitleSources({ worker, streamCandidateStatus, storeCandidateStatus: "not_applicable" });
     return;
   }
 
-  const storeTitle = await providerStoreTitle(worker, sessionId, snapshot);
-  if (!storeTitle) {
-    reportMissingTitleSources({ worker, streamCandidateStatus, storeCandidateStatus: "missing" });
-    return;
+  const storeCandidate = await providerStoreTitle(worker, sessionId, snapshot);
+  let storeCandidateStatus: TitleCandidateStatus = "missing";
+  if (storeCandidate) {
+    const outcome = await applyAgentSessionTitle({
+      runId: worker.runId,
+      workerId: worker.id,
+      title: storeCandidate.title,
+      source: storeCandidate.source,
+      knownProviderPrompt: "knownProviderPrompt" in storeCandidate ? storeCandidate.knownProviderPrompt : null,
+    });
+    if (outcome !== "rejected") return;
+    storeCandidateStatus = "rejected";
   }
 
-  const outcome = await applyAgentSessionTitle({
-    runId: worker.runId,
-    title: storeTitle,
-    source: worker.type.trim().toLowerCase() === "codex" ? "agent_thread_index" : "agent_transcript",
-  });
-  if (outcome === "rejected") {
-    reportMissingTitleSources({ worker, streamCandidateStatus, storeCandidateStatus: "rejected" });
+  if (streamTitle) {
+    const outcome = await applyAgentSessionTitle({ runId: worker.runId, workerId: worker.id, title: streamTitle });
+    if (outcome !== "rejected") return;
+    streamCandidateStatus = "rejected";
   }
+  reportMissingTitleSources({ worker, streamCandidateStatus, storeCandidateStatus });
 }
 
 export async function persistWorkerSnapshot(

@@ -20,11 +20,16 @@ export function resolveProjectScope(args: {
   }
 
   const run = args.runs.find((candidate) => candidate.id === args.selectedRunId);
-  const staleFallbackProject = resolveStaleProjectFallback(
-    args.explicitProjects,
-    args.runs.map((candidate) => candidate.projectPath),
-  );
-  const projectRoot = resolveStoredProjectRoot(run?.projectPath, args.explicitProjects, { staleFallbackProject });
+  // The stale fallback scans every run and is only consulted when the stored
+  // path matches no explicit project, so skip it on the common path; this runs
+  // on every render of the home screen.
+  const projectRoot = resolveStoredProjectRoot(run?.projectPath, args.explicitProjects)
+    ?? resolveStoredProjectRoot(run?.projectPath, args.explicitProjects, {
+      staleFallbackProject: resolveStaleProjectFallback(
+        args.explicitProjects,
+        args.runs.map((candidate) => candidate.projectPath),
+      ),
+    });
   if (projectRoot) {
     return projectRoot;
   }

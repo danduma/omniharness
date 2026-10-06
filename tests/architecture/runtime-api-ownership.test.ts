@@ -10,6 +10,18 @@ const interfaceRoots = [
   "src/ui",
 ];
 
+/**
+ * Comments explain transport decisions, so they name the very routes and APIs
+ * this guard bans — a note about `/api/runner/restart` is documentation, not a
+ * call. Only full-line `//` comments are dropped so that a `://` inside a
+ * string literal still reaches the scan.
+ */
+function stripComments(source: string) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+}
+
 function sourceFiles(relativeRoot: string) {
   const root = path.join(repositoryRoot, relativeRoot);
   return fs.readdirSync(root, { recursive: true, withFileTypes: true })
@@ -22,7 +34,7 @@ describe("RuntimeAPIs network ownership", () => {
     const violations: string[] = [];
     for (const relativeRoot of interfaceRoots) {
       for (const filePath of sourceFiles(relativeRoot)) {
-        const source = fs.readFileSync(filePath, "utf8");
+        const source = stripComments(fs.readFileSync(filePath, "utf8"));
         const reasons = [
           /\bfetch\s*\(/.test(source) ? "fetch" : null,
           /\bnew\s+EventSource\s*\(/.test(source) ? "EventSource" : null,

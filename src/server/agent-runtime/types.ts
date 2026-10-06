@@ -82,9 +82,17 @@ export type AgentRecord = {
   agentCapabilities: Record<string, unknown> | null;
   authMethods: unknown[];
   requestedModel: string | null;
+  pendingModel: string | null;
   effectiveModel: string | null;
+  rejectedModel: string | null;
+  modelStatus: import("./config-state").ProviderSettingStatus;
+  modelConfigRevision: number;
   requestedEffort: string | null;
+  pendingEffort: string | null;
   effectiveEffort: string | null;
+  rejectedEffort: string | null;
+  effortStatus: import("./config-state").ProviderSettingStatus;
+  effortConfigRevision: number;
   credentialProfile: {
     name: string;
     status: "loaded";
@@ -108,6 +116,10 @@ export type AgentRecord = {
   outputEntries: OutputEntry[];
   outputArchive: AgentOutputArchiveHandle;
   stopReason: string | null;
+  /** True while `askAgent` awaits a prompt; that call owns `state` for its turn. */
+  promptInFlight?: boolean;
+  /** Last thread status the provider reported; true while it runs any turn, prompted or not. */
+  providerTurnActive?: boolean;
   pendingPermissions: PendingPermission[];
   pendingElicitations: PendingElicitation[];
   activeTask: { taskId: string; subtaskId: string } | null;

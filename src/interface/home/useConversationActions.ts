@@ -24,12 +24,12 @@ type MutationsRef = {
   deleteRun: { mutate: (vars: { runId: string }) => void };
   archiveRun: { mutate: (vars: { runId: string }) => void };
   recoverRun: {
-    mutate: (vars: { runId: string; action: "retry" | "edit" | "fork"; targetMessageId: string; content?: string; gitWorkspaceLaunch?: GitWorkspaceLaunchRequest; manualRecovery?: boolean }, opts?: { onError?: (err: unknown) => void }) => void;
+    mutate: (vars: { runId: string; action: "retry" | "resume" | "edit" | "fork"; targetMessageId: string; content?: string; gitWorkspaceLaunch?: GitWorkspaceLaunchRequest; manualRecovery?: boolean }, opts?: { onError?: (err: unknown) => void }) => void;
     isPending: boolean;
   };
   resumeRunRecovery: { mutate: (vars: { runId: string }) => void };
   autoCommitChat: { mutate: (vars: { runId: string; action: ManualCommitAction }) => void; isPending: boolean };
-  autoCommitProject: { mutate: (vars: { projectPath: string; action: ManualCommitAction }) => void; isPending: boolean };
+  runPresetCommand: { mutate: (vars: { projectPath: string; presetCommandId: string }) => void; isPending: boolean };
   commitWorkflowSettings: { mutate: (vars: { key: string; value: string }) => void; error: Error | null };
   cancelQueuedMessage: { mutate: (vars: { runId: string; messageId: string }) => void };
 };
@@ -77,19 +77,17 @@ export function useConversationActions({
     setRightSidebarOpen,
     setMobileWorkersOpen,
     setApiKeys,
-    setSelectedConversationMode,
     setDeletingRun,
   } = homeUiSetters;
 
   const autoCommitMilestonesEnabled = parseBooleanSetting(apiKeys[GIT_AUTO_COMMIT_MILESTONES_SETTING], false);
   const pushOnCommitEnabled = parseBooleanSetting(apiKeys[GIT_PUSH_ON_COMMIT_SETTING], false);
 
+  // `selectRun(null)` swaps in the unsent new-conversation draft. Clearing the
+  // composer afterwards would wipe the one thing the user cannot get back.
   const handleStartNewPlan = () => {
     setSelectedRunId(null);
     setDraftProjectPath(currentProjectScope);
-    setCommand("");
-    clearAttachments();
-    setSelectedConversationMode("direct");
     setMobileNavOpen(false);
   };
 
@@ -139,20 +137,18 @@ export function useConversationActions({
     mutations.autoCommitChat.mutate({ runId: selectedRunId, action });
   };
 
-  const handleManualCommitProject = (projectPath: string, action: ManualCommitAction = "commit") => {
-    mutations.autoCommitProject.mutate({ projectPath, action });
+  const handleRunPresetCommand = (projectPath: string, presetCommandId: string) => {
+    mutations.runPresetCommand.mutate({ projectPath, presetCommandId });
   };
 
   const beginConversationInProject = (projectPath: string) => {
     setSelectedRunId(null);
     setDraftProjectPath(projectPath);
-    setCommand("");
-    clearAttachments();
-    setSelectedConversationMode("direct");
     setMobileNavOpen(false);
+    const { commandCursor } = homeUiStateManager.getSnapshot();
     requestAnimationFrame(() => {
       commandInputRef.current?.focus();
-      commandInputRef.current?.setSelectionRange(0, 0);
+      commandInputRef.current?.setSelectionRange(commandCursor, commandCursor);
     });
   };
 
@@ -276,9 +272,7 @@ export function useConversationActions({
 
   const handleForkMessage = (message: Pick<MessageRecord, "id" | "content">) => {
     if (!selectedRunId) return;
-    const content = window.prompt("Fork with this prompt:", message.content)?.trim();
-    if (!content) return;
-    mutations.recoverRun.mutate({ runId: selectedRunId, action: "fork", targetMessageId: message.id, content });
+    mutations.recoverRun.mutate({ runId: selectedRunId, action: "fork", targetMessageId: message.id });
   };
 
   const handleForkMessageIntoWorktree = (message: Pick<MessageRecord, "id" | "content">) => {
@@ -286,7 +280,7 @@ export function useConversationActions({
     const selectedRun = runs.find((run) => run.id === selectedRunId);
     const projectPath = selectedRun?.projectPath || currentProjectScope;
     if (!projectPath) return;
-    gitWorkspaceManager.requestForkMessageWorktree(projectPath, selectedRunId, message.id, message.content);
+    gitWorkspaceManager.requestForkMessageWorktree(projectPath, selectedRunId, message.id);
   };
 
   const handleForkSessionIntoWorktree = () => {
@@ -294,7 +288,7 @@ export function useConversationActions({
     const selectedRun = runs.find((run) => run.id === selectedRunId);
     const projectPath = selectedRun?.projectPath || currentProjectScope;
     if (!projectPath) return;
-    gitWorkspaceManager.requestForkSessionWorktree(projectPath, selectedRunId, latestUserCheckpoint.id, latestUserCheckpoint.content);
+    gitWorkspaceManager.requestForkSessionWorktree(projectPath, selectedRunId);
   };
 
   const handleForkSession = () => {
@@ -302,21 +296,18 @@ export function useConversationActions({
     mutations.recoverRun.mutate({
       runId: selectedRunId,
       action: "fork",
-      targetMessageId: latestUserCheckpoint.id,
-      content: latestUserCheckpoint.content,
+      targetMessageId: "",
     });
   };
 
   const handleConfirmForkMessageIntoWorktree = (request: GitWorkspaceLaunchRequest & {
     runId: string;
     targetMessageId: string;
-    content: string;
   }) => {
     mutations.recoverRun.mutate({
       runId: request.runId,
       action: "fork",
       targetMessageId: request.targetMessageId,
-      content: request.content,
       gitWorkspaceLaunch: request,
     });
     gitWorkspaceManager.setKey("activeDialog", null);
@@ -382,7 +373,7 @@ export function useConversationActions({
     handleReorderProjects,
     updateCommitWorkflowSetting,
     handleManualCommitChat,
-    handleManualCommitProject,
+    handleRunPresetCommand,
     beginConversationInProject,
     handleSelectRun,
     handleStartRenamingRun,

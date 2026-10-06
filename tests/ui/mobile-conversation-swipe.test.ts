@@ -9,7 +9,7 @@ test("the compact conversation surface opens the existing mobile conversation li
   const conversationSidebarSource = readSource("src/components/home/ConversationSidebar.tsx");
   const homeAppSource = readSource("src/interface/home/HomeApp.tsx");
 
-  expect(conversationMainSource).toContain("onOpenMobileConversationList: () => void;");
+  expect(conversationMainSource).toContain("setMobileConversationListOpen: (open: boolean) => void;");
   expect(conversationMainSource).toContain("mobileConversationSwipeManager.start");
   expect(conversationMainSource).toContain("mobileConversationSwipeManager.move");
   expect(conversationMainSource).toContain("onPointerMove={handleConversationPointerMove}");
@@ -17,13 +17,13 @@ test("the compact conversation surface opens the existing mobile conversation li
   expect(conversationMainSource).toContain("onPointerCancel={handleConversationPointerCancel}");
   expect(conversationMainSource).toContain('viewportClassName="touch-pan-y touch-pinch-zoom lg:touch-auto"');
   expect(conversationMainSource).not.toContain("setPointerCapture");
-  expect(homeAppSource).toContain("onOpenMobileConversationList={handleOpenMobileConversationList}");
-  expect(homeAppSource).toContain("setMobileNavOpen(true)");
+  expect(homeAppSource).toContain("setMobileConversationListOpen={setMobileNavOpen}");
 
   expect(conversationSidebarSource).toContain("mobileConversationSwipeManager.start");
-  expect(conversationSidebarSource).toContain('mobileConversationSwipeManager.move(event, "left")');
+  expect(conversationSidebarSource).toContain('mobileConversationSwipeManager.start(event, runnerControlsMode === "mobile", "close")');
+  expect(conversationSidebarSource).toContain("mobileConversationSwipeManager.move(event)");
   expect(conversationSidebarSource).toContain("onPointerMove={handleSidebarPointerMove}");
-  expect(conversationSidebarSource).toContain('mobileConversationSwipeManager.finish(event, "left")');
+  expect(conversationSidebarSource).toContain('mobileConversationSwipeManager.finish(event) === "close"');
   expect(conversationSidebarSource).toContain("onPointerCancel={handleSidebarPointerCancel}");
   expect(conversationSidebarSource).toContain('viewportClassName="touch-pan-y touch-pinch-zoom lg:touch-auto"');
   expect(conversationSidebarSource).not.toContain("setPointerCapture");

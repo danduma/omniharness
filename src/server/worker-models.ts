@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import type { SupportedWorkerType } from "@/server/supervisor/worker-types";
 import { mergeClaudeGatewayModels, type ClaudeGatewayModelInput } from "@/lib/claude-model-gateway";
+import { labelFromModelId, normalizeWorkerModelLabel as normalizeLabel } from "@/shared/model-label";
 import {
   resolveCodexCommand,
   resolveCommand,
@@ -14,6 +15,7 @@ const execFileAsync = promisify(execFile);
 export type WorkerModelOption = {
   value: string;
   label: string;
+  source?: "gateway";
 };
 
 export type WorkerModelCatalog = Record<SupportedWorkerType, WorkerModelOption[]>;
@@ -36,6 +38,10 @@ type WorkerModelCatalogManagerOptions = {
 
 const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
   codex: [
+    { value: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
+    { value: "gpt-6-sol", label: "GPT-6 Sol" },
+    { value: "gpt-6-luna", label: "GPT-6 Luna" },
+    { value: "gpt-6-astra", label: "GPT-6 Astra" },
     { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
@@ -43,26 +49,23 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "gpt-5.4", label: "GPT-5.4" },
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
-    { value: "gpt-6-astra", label: "GPT-6 Astra" },
-    { value: "claude-sonnet-5", label: "Sonnet 5" },
-    { value: "claude-sonnet-4", label: "Sonnet 4" },
   ],
   claude: [
-    { value: "claude-opus-5", label: "Opus 5" },
+    { value: "claude-opus-5-5", label: "Opus 5.5" },
     { value: "claude-fable-5-1", label: "Fable 5.1" },
     { value: "claude-fable-5", label: "Fable 5" },
-    { value: "claude-opus-4-8", label: "Opus 4.8" },
-    { value: "claude-opus-4-7", label: "Opus 4.7" },
-    { value: "claude-opus-4-6", label: "Opus 4.6" },
+    { value: "claude-opus-5", label: "Opus 5" },
+    { value: "claude-sonnet-5-5", label: "Sonnet 5.5" },
     { value: "claude-sonnet-5", label: "Sonnet 5" },
-    { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
-    { value: "claude-sonnet-4", label: "Sonnet 4" },
   ],
   gemini: [
     { value: "gemini-3", label: "Gemini 3" },
     { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
   ],
   opencode: [
+    { value: "openai/gpt-6.1-sol", label: "GPT-6.1 Sol" },
+    { value: "openai/gpt-6-sol", label: "GPT-6 Sol" },
+    { value: "openai/gpt-6-luna", label: "GPT-6 Luna" },
     { value: "openai/gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { value: "openai/gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { value: "openai/gpt-5.6-luna", label: "GPT-5.6 Luna" },
@@ -70,13 +73,22 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "openai/gpt-5.4", label: "GPT-5.4" },
     { value: "openai/gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },
+    { value: "anthropic/claude-sonnet-5-5", label: "Sonnet 5.5" },
     { value: "anthropic/claude-sonnet-5", label: "Sonnet 5" },
-    { value: "anthropic/claude-sonnet-4", label: "Sonnet 4" },
   ],
 };
 
 const DEPRECATED_WORKER_MODELS: Partial<Record<SupportedWorkerType, Set<string>>> = {
   gemini: new Set(["gemini-3.5-flash"]),
+  // Claude models are not discovered from a CLI, so a catalog cache written
+  // before these were retired is the only way they can come back.
+  claude: new Set([
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4",
+  ]),
 };
 
 async function defaultRunCommand(command: string, args: string[], env: EnvLike = process.env) {
@@ -97,65 +109,6 @@ async function defaultRunCommand(command: string, args: string[], env: EnvLike =
   return result.stdout;
 }
 
-// "Claude Opus 5" reads as "Opus 5" in the picker: the vendor prefix is noise
-// next to the worker name. Only dropped when a word follows, so an id like
-// "claude-3" still labels as "Claude 3" rather than a bare "3".
-function dropClaudePrefix(label: string) {
-  return label.replace(/^claude\s+(?=[A-Za-z])/i, "");
-}
-
-// Model ids spell versions with the same hyphen that separates every other
-// segment, so a plain split renders "claude-opus-4-8" as "Opus 4 8". Adjacent
-// numeric segments are one version number: rejoin them with a dot. Bounded to
-// three digits so a dated snapshot like "claude-haiku-4-5-20251001" reads as
-// "Haiku 4.5 20251001" — the date is a separate fact, not a version component.
-function isVersionSegment(part: string) {
-  return /^\d{1,3}$/.test(part);
-}
-
-function titleCaseModelIdPart(part: string) {
-  const lower = part.toLowerCase();
-  if (lower === "gpt") return "GPT";
-  if (lower === "cli") return "CLI";
-  if (/^\d+(?:\.\d+)*$/.test(part)) return part;
-  return part.charAt(0).toUpperCase() + part.slice(1);
-}
-
-function labelFromModelId(id: string) {
-  const bareId = id.includes("/") ? id.split("/").at(-1) ?? id : id;
-  const parts = bareId.split("-");
-  const label = parts.reduce((accumulated, part, index) => {
-    if (index === 0) {
-      return titleCaseModelIdPart(part);
-    }
-    const separator = isVersionSegment(part) && isVersionSegment(parts[index - 1]!) ? "." : " ";
-    return `${accumulated}${separator}${titleCaseModelIdPart(part)}`;
-  }, "");
-  return dropClaudePrefix(label);
-}
-
-function normalizeLabel(id: string, label?: string) {
-  const bareId = id.includes("/") ? id.split("/").at(-1) ?? id : id;
-  const modelLabelOverrides: Record<string, string> = {
-    "gpt-5.6-sol": "GPT-5.6 Sol",
-    "gpt-5.6-terra": "GPT-5.6 Terra",
-    "gpt-5.6-luna": "GPT-5.6 Luna",
-    "gpt-6-astra": "GPT-6 Astra",
-  };
-  if (modelLabelOverrides[bareId]) {
-    return modelLabelOverrides[bareId];
-  }
-
-  if (!label?.trim()) {
-    return labelFromModelId(id);
-  }
-
-  return dropClaudePrefix(label.trim())
-    .replace(/^gpt\b/i, "GPT")
-    .replace(/\bcodex\b/i, "Codex")
-    .replace(/\bcli\b/i, "CLI");
-}
-
 function mergeModelOptions(base: WorkerModelOption[], discovered: WorkerModelOption[]) {
   const seen = new Set<string>();
   const merged: WorkerModelOption[] = [];
@@ -170,6 +123,7 @@ function mergeModelOptions(base: WorkerModelOption[], discovered: WorkerModelOpt
     merged.push({
       value,
       label: normalizeLabel(value, model.label),
+      ...(model.source ? { source: model.source } : {}),
     });
   }
 
@@ -196,6 +150,7 @@ export function mergeClaudeGatewayModelsIntoCatalog(
   const gatewayModels = mergeClaudeGatewayModels(input).map((model) => ({
     value: model.value,
     label: model.label,
+    source: "gateway" as const,
   }));
   return {
     ...catalog,
@@ -224,7 +179,9 @@ function normalizeCachedCatalog(catalog: Partial<WorkerModelCatalog> | null | un
       }
 
       const value = typeof model.value === "string" ? model.value.trim() : "";
-      if (!value || DEPRECATED_WORKER_MODELS[type]?.has(value)) {
+      const isIncompatibleCodexModel = type === "codex"
+        && (value.startsWith("claude-") || value.startsWith("anthropic/"));
+      if (!value || isIncompatibleCodexModel || DEPRECATED_WORKER_MODELS[type]?.has(value)) {
         return [];
       }
 
@@ -370,7 +327,10 @@ export class WorkerModelCatalogManager {
     ]);
 
     if (codexResult.status === "fulfilled") {
-      baseCatalog.codex = mergeModelOptions(codexResult.value, HARDCODED_WORKER_MODELS.codex);
+      baseCatalog.codex = mergeModelOptions(
+        codexResult.value.filter((model) => !model.value.startsWith("claude-") && !model.value.startsWith("anthropic/")),
+        HARDCODED_WORKER_MODELS.codex,
+      );
     }
 
     if (openCodeResult.status === "fulfilled") {

@@ -290,6 +290,7 @@ export const handleAccountDetailRequest: OmniHttpHandler = async (request, conte
     const enabled = optionalBoolean(body.enabled);
     if (enabled !== undefined) {
       patch.enabled = enabled;
+      patch.lifecycleOperationErrorCode = null;
       markChanged("enabled");
     }
     const priority = optionalInteger(body.priority);

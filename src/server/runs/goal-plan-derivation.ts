@@ -5,13 +5,11 @@ import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { runs } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
-import { parsePlan } from "@/server/plans/parser";
 import { goalControl } from "@/server/runs/goal-control";
 import { redactGoalErrorMessage } from "@/server/runs/goal-errors";
 import { goalOutboxDispatcher } from "@/server/runs/goal-outbox";
 import {
   GOAL_PLAN_ITEM_MAX_LENGTH,
-  GOAL_PLAN_MARKDOWN_MAX_LENGTH,
   GOAL_PLAN_MAX_ITEMS,
   createDerivedGoalPlanItemId,
   type GoalPlanItem,
@@ -49,6 +47,9 @@ export type GoalPlanDerivationResult =
   | { kind: "skipped"; reason: GoalPlanDerivationSkipReason }
   | { kind: "refused"; reason: string }
   | { kind: "failed"; reason: string };
+
+// File references send checklist items and a URI, not the full inline Markdown payload.
+const MAX_DERIVED_PLAN_FILE_BYTES = 1024 * 1024;
 
 const MARKDOWN_REFERENCE_PATTERN = /(?:[A-Za-z]:)?[\w./\\~-]*\.md\b/g;
 
@@ -93,17 +94,35 @@ function resolvePlanReference(objective: string, projectPath: string) {
 }
 
 function buildDerivedPlanItems(goalId: string, source: string, markdown: string): GoalPlanItem[] {
-  return parsePlan(markdown).items.slice(0, GOAL_PLAN_MAX_ITEMS).map((item, order) => {
-    const title = Array.from(item.title).slice(0, GOAL_PLAN_ITEM_MAX_LENGTH).join("");
-    return {
-      id: createDerivedGoalPlanItemId({ goalId, source, sourceLine: item.sourceLine, title }),
+  const items: GoalPlanItem[] = [];
+  let phase: string | null = null;
+  let fence: { marker: string; length: number } | null = null;
+  for (const [index, line] of markdown.split("\n").entries()) {
+    const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fenceMatch) {
+      const marker = fenceMatch[1][0];
+      if (!fence) fence = { marker, length: fenceMatch[1].length };
+      else if (fence.marker === marker && fenceMatch[1].length >= fence.length) fence = null;
+      continue;
+    }
+    if (fence) continue;
+    const heading = line.match(/^#{2,6}\s+(.+)$/);
+    if (heading) { phase = heading[1].trim(); continue; }
+    // Numbered decisions and prose are not actionable checklist entries.
+    const checkbox = line.match(/^\s*[-*+] \[( |x|X)\]\s+(.+)$/);
+    if (!checkbox) continue;
+    const title = Array.from(checkbox[2].trim()).slice(0, GOAL_PLAN_ITEM_MAX_LENGTH).join("");
+    items.push({
+      id: createDerivedGoalPlanItemId({ goalId, source, sourceLine: index + 1, title }),
       title,
-      phase: item.phase,
-      status: item.completed ? "completed" : "pending",
-      order,
+      phase,
+      status: checkbox[1].toLowerCase() === "x" ? "completed" : "pending",
+      order: items.length,
       providerId: null,
-    } satisfies GoalPlanItem;
-  });
+    });
+    if (items.length === GOAL_PLAN_MAX_ITEMS) break;
+  }
+  return items;
 }
 
 /**
@@ -141,7 +160,7 @@ export async function refreshDerivedGoalPlan(
         extractPlanReferencesFromObjective(goal.objective).length > 0 ? "reference_missing" : "no_plan_reference",
       );
     }
-    if (reference.size > GOAL_PLAN_MARKDOWN_MAX_LENGTH) return skip(runId, goal.goalId, "reference_too_large");
+    if (reference.size > MAX_DERIVED_PLAN_FILE_BYTES) return skip(runId, goal.goalId, "reference_too_large");
 
     const uri = pathToFileURL(reference.absolute).toString();
     if (!isDerivable(goal, uri)) return skip(runId, goal.goalId, "provider_owns_plan");

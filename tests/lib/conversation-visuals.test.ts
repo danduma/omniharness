@@ -24,4 +24,9 @@ describe("getConversationVisualKind", () => {
       { id: "run-1", mode: "commit", title: "New conversation" },
     )).toBe("commit");
   });
+
+  it("keeps the commit icon for any preset command run, whatever it is titled", () => {
+    expect(getConversationVisualKind({ id: "run-1", mode: "commit", title: "Release notes" })).toBe("commit");
+    expect(getConversationVisualKind({ id: "run-1", mode: "commit", title: "Draft changelog for v2" })).toBe("commit");
+  });
 });

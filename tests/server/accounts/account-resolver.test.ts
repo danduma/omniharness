@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { db } from "@/server/db";
 import { accounts } from "@/server/db/schema";
 import { resolveAccountCredentials } from "@/server/accounts/account-resolver";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 
 async function insertAccount(input: Partial<typeof accounts.$inferInsert> & { cliType: string; authMode: string; authRef: string }) {
   const now = new Date("2026-06-29T13:30:00.000Z");
@@ -21,6 +22,7 @@ async function insertAccount(input: Partial<typeof accounts.$inferInsert> & { cl
     enabled: input.enabled ?? true,
     priority: input.priority ?? 0,
     status: input.status ?? "healthy",
+    lifecycleOperationErrorCode: input.lifecycleOperationErrorCode ?? null,
     createdAt: input.createdAt ?? now,
     updatedAt: input.updatedAt ?? now,
   });
@@ -28,6 +30,56 @@ async function insertAccount(input: Partial<typeof accounts.$inferInsert> & { cl
 }
 
 describe("account resolver", () => {
+  it("allows a disabled Claude system session when only its status probe timed out", async () => {
+    __resetNamedEventsForTests();
+    const accountId = await insertAccount({
+      cliType: "claude",
+      provider: "anthropic",
+      type: "subscription",
+      authMode: "local_session",
+      authRef: "local-session:claude",
+      enabled: false,
+      status: "login_required",
+      lifecycleOperationErrorCode: "account.auth.timeout",
+    });
+
+    const resolved = await resolveAccountCredentials({
+      workerType: "claude",
+      cwd: process.cwd(),
+      env: { HOME: "/Users/tester" },
+      accountId,
+    });
+
+    expect(resolved.account?.id).toBe(accountId);
+    expect(resolved.env).toEqual({ CLAUDE_CONFIG_DIR: join("/Users/tester", ".claude") });
+    expect(getNamedEventsSince(0).events.map((entry) => entry.event)).toContainEqual({
+      kind: "account.auth_timeout_bypassed",
+      accountId,
+      workerType: "claude",
+      reason: "status_probe_timeout",
+    });
+  });
+
+  it("still refuses a manually disabled Claude system session", async () => {
+    const accountId = await insertAccount({
+      cliType: "claude",
+      provider: "anthropic",
+      type: "subscription",
+      authMode: "local_session",
+      authRef: "local-session:claude",
+      enabled: false,
+      status: "unknown",
+      lifecycleOperationErrorCode: null,
+    });
+
+    await expect(resolveAccountCredentials({
+      workerType: "claude",
+      cwd: process.cwd(),
+      env: { HOME: "/Users/tester" },
+      accountId,
+    })).rejects.toThrow(`Account "${accountId}" is disabled.`);
+  });
+
   it("resolves Codex isolated CLI homes without allowing global credential bridging", async () => {
     const accountId = await insertAccount({
       cliType: "codex",

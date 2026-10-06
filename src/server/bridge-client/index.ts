@@ -1,5 +1,6 @@
 import { isRecoverableConnectionSupervisorError, isTransientSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
+import { providerQuotaNoticeText } from "@/server/quota/reset-parser";
 import type { AgentOutputEntry } from "@/lib/agent-output";
 import { prepareClaudeGatewayLaunch, type ClaudeGatewayCredentialSource } from "@/server/integrations/claude-model-gateway/worker-env";
 import {
@@ -25,9 +26,15 @@ export interface AgentRecord {
   agentCapabilities?: Record<string, unknown> | null;
   authMethods?: unknown[];
   requestedModel?: string | null;
+  pendingModel?: string | null;
   effectiveModel?: string | null;
+  rejectedModel?: string | null;
+  modelStatus?: import("@/server/agent-runtime/config-state").ProviderSettingStatus;
   requestedEffort?: string | null;
+  pendingEffort?: string | null;
   effectiveEffort?: string | null;
+  rejectedEffort?: string | null;
+  effortStatus?: import("@/server/agent-runtime/config-state").ProviderSettingStatus;
   credentialProfile?: {
     name: string;
     status: "loaded";
@@ -291,12 +298,14 @@ function normalizeModelForWorkerType(type: string, model?: string) {
   if (normalizedType === "codex") {
     if (normalizedModel.startsWith("openai/gpt-")) return normalizedModel.slice("openai/".length);
     if (normalizedModel === "anthropic/claude-sonnet-4") return "claude-sonnet-4";
+    if (normalizedModel === "anthropic/claude-sonnet-5-5") return "claude-sonnet-5-5";
     if (normalizedModel === "anthropic/claude-sonnet-5") return "claude-sonnet-5";
   }
 
   if (normalizedType === "opencode") {
     if (normalizedModel.startsWith("gpt-")) return `openai/${normalizedModel}`;
     if (normalizedModel === "claude-sonnet-4") return "anthropic/claude-sonnet-4";
+    if (normalizedModel === "claude-sonnet-5-5") return "anthropic/claude-sonnet-5-5";
     if (normalizedModel === "claude-sonnet-5") return "anthropic/claude-sonnet-5";
   }
 
@@ -322,9 +331,13 @@ export function normalizeAgentRecord(value: unknown): AgentRecord {
     state: asString(record.state, "unknown"),
     sessionId: asNullableString(record.sessionId),
     requestedModel: asNullableString(record.requestedModel),
+    pendingModel: asNullableString(record.pendingModel),
     effectiveModel: asNullableString(record.effectiveModel),
+    rejectedModel: asNullableString(record.rejectedModel),
     requestedEffort: asNullableString(record.requestedEffort),
+    pendingEffort: asNullableString(record.pendingEffort),
     effectiveEffort: asNullableString(record.effectiveEffort),
+    rejectedEffort: asNullableString(record.rejectedEffort),
     sessionMode: asNullableString(record.sessionMode),
     lastError: asNullableString(record.lastError),
     contextUsage,
@@ -734,6 +747,15 @@ export async function askAgent(
       // Some runtimes acknowledge cancellation with a normal terminal frame
       // instead of a connection error. Fence that late success as well.
       await assertTurnIsCurrent();
+      // Claude sometimes finishes normally with only its quota notice. Route
+      // that terminal response through the callers' existing quota recovery
+      // handlers before they persist a healthy completion and mark it done.
+      const quotaNotice = result.state === "idle" || result.state === "error" || result.state === "stopped"
+        ? providerQuotaNoticeText(result.response)
+        : null;
+      if (quotaNotice) {
+        throw Object.assign(new Error(quotaNotice), { retryable: false });
+      }
       return result;
     }, {
       maxDelayMs: BRIDGE_CONNECTION_RESET_MAX_BACKOFF_MS,

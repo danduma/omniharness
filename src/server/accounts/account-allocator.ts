@@ -10,6 +10,7 @@ import {
 import { emitNamedEvent } from "@/server/events/named-events";
 import { RuntimeHttpError } from "@/server/agent-runtime/types";
 import { runAccountInventoryMigration } from "@/server/accounts/migration";
+import { canAttemptAccountLaunch } from "@/server/accounts/account-launch-policy";
 
 type AccountRow = typeof accounts.$inferSelect;
 type AccountUsageSnapshotRow = typeof accountUsageSnapshots.$inferSelect;
@@ -45,12 +46,23 @@ function normalizeWorkerType(value: string) {
   return value.trim().toLowerCase();
 }
 
-function normalizeStrategy(value: AccountAllocationStrategy | null | undefined): AccountAllocationStrategy {
-  return value || "priority";
+export function normalizeAccountAllocationStrategy(value: string | null | undefined): AccountAllocationStrategy {
+  switch (value) {
+    case "manual":
+    case "priority":
+    case "round_robin":
+    case "quota_balanced":
+    case "subscription_then_api":
+    case "wait_for_reset":
+      return value;
+    default:
+      return "priority";
+  }
 }
 
 function isUsable(account: AccountRow) {
-  if (!account.enabled) return false;
+  if (!canAttemptAccountLaunch(account)) return false;
+  if (!account.enabled) return true;
   const status = account.status?.trim().toLowerCase();
   return !new Set([
     "quota_exhausted",
@@ -192,6 +204,34 @@ async function latestSnapshotsByAccount(workerType: string) {
 async function persistAllocation(input: AccountAllocationInput, allocation: AccountAllocation) {
   if (!allocation.account || !input.runId || !input.workerId) return;
   const now = input.now ?? new Date();
+  const existing = await db.select()
+    .from(workerCredentialAllocations)
+    .where(eq(workerCredentialAllocations.workerId, input.workerId));
+  if (existing.length > 0) {
+    await db.update(workerCredentialAllocations).set({
+      runId: input.runId,
+      workerType: normalizeWorkerType(input.workerType),
+      accountId: allocation.account.id,
+      strategy: allocation.strategy,
+      selectionReason: allocation.reason,
+      explicit: allocation.explicit,
+      updatedAt: now,
+    }).where(eq(workerCredentialAllocations.workerId, input.workerId));
+    const previousAccountId = existing[0]?.accountId;
+    if (previousAccountId && previousAccountId !== allocation.account.id) {
+      emitNamedEvent({
+        kind: "account.switch_decision",
+        runId: input.runId,
+        workerId: input.workerId,
+        workerType: normalizeWorkerType(input.workerType),
+        fromAccountId: previousAccountId,
+        toAccountId: allocation.account.id,
+        strategy: allocation.strategy,
+        reason: allocation.reason,
+      });
+    }
+    return;
+  }
   await db.insert(workerCredentialAllocations).values({
     id: randomUUID(),
     runId: input.runId,
@@ -301,7 +341,7 @@ export async function validateExplicitWorkerAccount(input: {
 
 export async function allocateWorkerAccount(input: AccountAllocationInput): Promise<AccountAllocation> {
   const workerType = normalizeWorkerType(input.workerType);
-  const strategy = normalizeStrategy(input.strategy);
+  const strategy = normalizeAccountAllocationStrategy(input.strategy);
   await runAccountInventoryMigration();
   const candidates = await listCandidateAccounts(workerType);
 

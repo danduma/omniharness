@@ -13,6 +13,7 @@ import path from "node:path";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { runs } from "@/server/db/schema";
+import { resolveAgentRuntimeDataDir } from "@/server/agent-runtime/output-store";
 import { resolveArtifactRoot, legacyGlobalArtifactRoot } from "./project-root";
 
 export interface CleanupReport {
@@ -83,9 +84,12 @@ export async function cleanupRunArtifacts(runId: string): Promise<CleanupReport>
   // Remove the agent runtime's per-worker output archive (a separate
   // store from the worker conversation stream). Files are named
   // `<runId>-worker-*.jsonl` under `.omniharness/agent-runtime-output/`.
-  // The directory is resolved relative to process.cwd() to match
-  // `openAgentOutputArchive` in src/server/agent-runtime/output-store.ts.
-  const runtimeOutputDir = path.join(process.cwd(), ".omniharness", "agent-runtime-output");
+  // Resolve it exactly as the agent runtime does so configured app roots and
+  // test roots cannot make creation and cleanup point at different folders.
+  const runtimeOutputDir = path.join(resolveAgentRuntimeDataDir({
+    dataDir: process.env.OMNIHARNESS_RUNTIME_DATA_DIR,
+    rootDir: process.env.OMNIHARNESS_ROOT,
+  }), "agent-runtime-output");
   try {
     const entries = await fs.readdir(runtimeOutputDir);
     const prefix = `${runId}-`;

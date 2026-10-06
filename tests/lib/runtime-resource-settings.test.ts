@@ -18,12 +18,14 @@ describe("runtime resource settings", () => {
       [RUNTIME_RESOURCE_SETTING_KEYS.estimatedWorkerMemoryMb]: "2048",
       [RUNTIME_RESOURCE_SETTING_KEYS.idleCleanupEnabled]: "false",
       [RUNTIME_RESOURCE_SETTING_KEYS.idleCleanupAfterMs]: "120000",
+      [RUNTIME_RESOURCE_SETTING_KEYS.outputLogMaxMb]: "4096",
     })).toEqual({
       minMemoryFreePercent: 25,
       minDiskFreeMb: 16384,
       estimatedWorkerMemoryMb: 2048,
       idleCleanupEnabled: false,
       idleCleanupAfterMs: 120000,
+      outputLogMaxMb: 4096,
     });
   });
 
@@ -34,12 +36,14 @@ describe("runtime resource settings", () => {
       estimatedWorkerMemoryMb: 1024,
       idleCleanupEnabled: true,
       idleCleanupAfterMs: 300000,
+      outputLogMaxMb: 3072,
     })).toMatchObject({
       OMNIHARNESS_MIN_MEMORY_FREE_PERCENT: "18",
       OMNIHARNESS_MIN_DISK_FREE_MB: "4096",
       OMNIHARNESS_ESTIMATED_WORKER_MEMORY_MB: "1024",
       OMNIHARNESS_RUNTIME_IDLE_CLEANUP_ENABLED: "true",
       OMNIHARNESS_RUNTIME_IDLE_CLEANUP_AFTER_MS: "300000",
+      OMNIHARNESS_RUNTIME_OUTPUT_MAX_MB: "3072",
     });
   });
 });

@@ -25,7 +25,14 @@ let planPath: string;
 
 const PLAN_MARKDOWN = `# Caption Font Sizing Contract Implementation Plan
 
-## Task 1: Defaults table
+## Decisions
+
+1. No GSAP. Use our timeline runtime.
+2. Mobile has full parity.
+
+## Phase 0: Base
+
+### Task 1: Defaults table
 
 - [ ] Write the failing test.
   - Verify: the test fails for the stated reason.
@@ -103,13 +110,14 @@ describe("lifecycle — goal plan derived from the plan file the objective names
 
     await client.waitFor("goal.plan.updated", { timeoutMs: 10_000 });
     const loaded = await client.getJson<{
-      goal: { plan: Array<{ title: string; status: string }>; planSource: { kind: string; uri?: string } };
+      goal: { plan: Array<{ title: string; status: string; phase: string | null }>; planSource: { kind: string; uri?: string } };
     }>(`/api/runs/${runId}/goal`);
     expect(loaded.body.goal.planSource).toMatchObject({ kind: "uri" });
     expect(loaded.body.goal.plan.map((item) => item.title)).toEqual([
       "Write the failing test.",
       "Create the defaults module.",
     ]);
+    expect(loaded.body.goal.plan.every((item) => item.phase === "Task 1: Defaults table")).toBe(true);
     expect(loaded.body.goal.plan.every((item) => item.status === "pending")).toBe(true);
 
     const bootstrap = await client.bootstrapSnapshot(runId);

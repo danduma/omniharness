@@ -36,18 +36,28 @@ export function useManagerSelector<TState, TSelected>(
 ) {
   const selectionRef = useRef<{
     state: TState;
+    manager: StateManager<TState>;
+    selector: (state: TState) => TSelected;
+    isEqual: (left: TSelected, right: TSelected) => boolean;
     selection: TSelected;
   } | null>(null);
   const serverSelectionRef = useRef<{
     state: TState;
+    manager: StateManager<TState>;
     selector: (state: TState) => TSelected;
+    isEqual: (left: TSelected, right: TSelected) => boolean;
     selection: TSelected;
   } | null>(null);
 
   const getSelectedSnapshot = useCallback(() => {
     const state = manager.getSnapshot();
     const previous = selectionRef.current;
-    if (previous?.state === state) {
+    if (
+      previous?.state === state
+      && previous.manager === manager
+      && previous.selector === selector
+      && previous.isEqual === isEqual
+    ) {
       return previous.selection;
     }
 
@@ -55,6 +65,9 @@ export function useManagerSelector<TState, TSelected>(
     if (previous && isEqual(previous.selection, nextSelection)) {
       selectionRef.current = {
         state,
+        manager,
+        selector,
+        isEqual,
         selection: previous.selection,
       };
       return previous.selection;
@@ -62,6 +75,9 @@ export function useManagerSelector<TState, TSelected>(
 
     selectionRef.current = {
       state,
+      manager,
+      selector,
+      isEqual,
       selection: nextSelection,
     };
     return nextSelection;
@@ -69,13 +85,18 @@ export function useManagerSelector<TState, TSelected>(
   const getServerSelectedSnapshot = useCallback(() => {
     const state = manager.getInitialSnapshot();
     const previous = serverSelectionRef.current;
-    if (previous?.state === state && previous.selector === selector) {
+    if (
+      previous?.state === state
+      && previous.manager === manager
+      && previous.selector === selector
+      && previous.isEqual === isEqual
+    ) {
       return previous.selection;
     }
     const selection = selector(state);
-    serverSelectionRef.current = { state, selector, selection };
+    serverSelectionRef.current = { state, manager, selector, isEqual, selection };
     return selection;
-  }, [manager, selector]);
+  }, [isEqual, manager, selector]);
 
   return useSyncExternalStore(
     useCallback((listener) => manager.subscribe(listener), [manager]),

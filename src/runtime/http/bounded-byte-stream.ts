@@ -1,5 +1,14 @@
 export const DEFAULT_MAX_QUEUED_FRAMES = 256;
-export const DEFAULT_MAX_QUEUED_BYTES = 1024 * 1024;
+/**
+ * How much may be waiting on a subscriber before it counts as slow. The budget
+ * bounds the *backlog*: a frame is only refused when the bytes already waiting
+ * exceed it, never because of its own size. A catalog snapshot for a few
+ * hundred conversations is over 1 MiB, and refusing frames by their own size
+ * meant every such snapshot was replaced with a resync instruction, the client
+ * re-bootstrapped, the next snapshot was refused again, and the UI reported the
+ * connection as degraded for as long as the catalog stayed large.
+ */
+export const DEFAULT_MAX_QUEUED_BYTES = 8 * 1024 * 1024;
 
 export interface BoundedByteStreamWriter {
   enqueue(chunk: Uint8Array): boolean;
@@ -47,9 +56,16 @@ export function createBoundedByteStream(
         return true;
       }
 
+      // The budget bounds a *backlog*, not one frame: a subscriber is slow when
+      // what is already waiting on it has outgrown the budget, not when the next
+      // frame happens to be large. Judging the frame by its own size made the
+      // outcome depend on timing — the same snapshot went through when the
+      // consumer was parked in `pull()` and was refused when a heartbeat had
+      // landed a moment earlier — and a refused snapshot can never be delivered
+      // by retrying, only by shrinking the catalog.
       if (
         queued.length >= maxQueuedFrames
-        || queuedBytes + chunk.byteLength > maxQueuedBytes
+        || queuedBytes > maxQueuedBytes
       ) {
         options.onOverflow?.({
           queuedFrames: queued.length,

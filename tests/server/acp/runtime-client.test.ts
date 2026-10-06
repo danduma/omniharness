@@ -50,4 +50,144 @@ describe("ACP runtime client", () => {
 
     expect(record.outputEntries).toEqual([]);
   });
+
+  describe("turns the provider starts on its own", () => {
+    function threadStatus(type: "active" | "idle") {
+      return {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "session_info_update",
+          _meta: { codex: { threadStatus: type === "active" ? { type, activeFlags: [] } : { type } } },
+        },
+      } as never;
+    }
+
+    function liveRecord(state: string, extra: Record<string, unknown> = {}) {
+      let nextId = 0;
+      return {
+        name: `goal-worker-${Date.now()}`,
+        state,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        currentText: "",
+        lastText: "",
+        stopReason: null as string | null,
+        activeOutputEntryId: null,
+        outputEntries: [] as unknown[],
+        outputArchive: {
+          append: (input: Record<string, unknown>) => ({ ...input, id: `entry-${(nextId += 1)}`, timestamp: "2026-01-01T00:00:00.000Z" }),
+          stats: () => ({ totalEntries: nextId, omittedLiveEntries: 0 }),
+        },
+        ...extra,
+      };
+    }
+
+    it("reports a Codex /goal continuation turn as working, then idle when it ends", async () => {
+      const record = liveRecord("idle", { lastText: "Committed the checkpoint." });
+      const client = new RuntimeClient(() => record as never, () => undefined);
+
+      await client.sessionUpdate(threadStatus("active"));
+      expect(record.state).toBe("working");
+      expect(record.stopReason).toBeNull();
+      expect(record.providerTurnActive).toBe(true);
+
+      record.currentText = "Next checkpoint done.";
+      await client.sessionUpdate(threadStatus("idle"));
+      expect(record.state).toBe("idle");
+      expect(record.stopReason).toBe("end_turn");
+      expect(record.lastText).toBe("Next checkpoint done.");
+      expect(record.currentText).toBe("");
+    });
+
+    it("leaves the state of a prompted turn to askAgent", async () => {
+      const record = liveRecord("working", { promptInFlight: true, currentText: "streaming" });
+      const client = new RuntimeClient(() => record as never, () => undefined);
+
+      await client.sessionUpdate(threadStatus("idle"));
+      expect(record.state).toBe("working");
+      expect(record.currentText).toBe("streaming");
+      expect(record.providerTurnActive).toBe(false);
+
+      await client.sessionUpdate(threadStatus("active"));
+      expect(record.providerTurnActive).toBe(true);
+    });
+
+    function claudeToolCall() {
+      return {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "toolu_1",
+          title: "Edit",
+          kind: "edit",
+          status: "pending",
+        },
+      } as never;
+    }
+
+    function claudeTurnResult(origin: "task-notification" | "human") {
+      return {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "usage_update",
+          used: 218441,
+          size: 1000000,
+          cost: { amount: 11.05, currency: "USD" },
+          _meta: { "_claude/origin": { kind: origin } },
+        },
+      } as never;
+    }
+
+    // Session 3d628f9b568a: a turn Claude started after a background-task
+    // notification ran tools, then ended. The runtime kept reporting it as
+    // working, so five minutes later the stuck-worker reaper re-sent the
+    // user's already-answered message and the agent started implementing.
+    it("reports a Claude task-notification turn as idle once its result arrives", async () => {
+      const record = liveRecord("idle", { pendingPermissions: [], pendingElicitations: [] });
+      const client = new RuntimeClient(() => record as never, () => undefined);
+
+      await client.sessionUpdate(claudeToolCall());
+      expect(record.state).toBe("working");
+
+      record.currentText = "Say the word and I'll start on Task 0.";
+      await client.sessionUpdate(claudeTurnResult("task-notification"));
+      expect(record.state).toBe("idle");
+      expect(record.stopReason).toBe("end_turn");
+      expect(record.lastText).toBe("Say the word and I'll start on Task 0.");
+    });
+
+    it("ignores usage updates that carry no turn result", async () => {
+      const record = liveRecord("idle", { pendingPermissions: [], pendingElicitations: [] });
+      const client = new RuntimeClient(() => record as never, () => undefined);
+
+      await client.sessionUpdate(claudeToolCall());
+      await client.sessionUpdate({
+        sessionId: "session-1",
+        update: { sessionUpdate: "usage_update", used: 1000, size: 1000000 },
+      } as never);
+      expect(record.state).toBe("working");
+    });
+
+    it("leaves a prompted Claude turn's result to askAgent", async () => {
+      const record = liveRecord("working", {
+        promptInFlight: true,
+        pendingPermissions: [],
+        pendingElicitations: [],
+      });
+      const client = new RuntimeClient(() => record as never, () => undefined);
+
+      await client.sessionUpdate(claudeTurnResult("human"));
+      expect(record.state).toBe("working");
+    });
+
+    it("keeps an unprompted turn working while it waits on the user", async () => {
+      const record = liveRecord("working", {
+        pendingPermissions: [{ requestId: 1 }],
+        pendingElicitations: [],
+      });
+      const client = new RuntimeClient(() => record as never, () => undefined);
+
+      await client.sessionUpdate(claudeTurnResult("task-notification"));
+      expect(record.state).toBe("working");
+    });
+  });
 });

@@ -14,8 +14,8 @@ const supervisorIndexSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/server/supervisor/index.ts"),
   "utf8",
 );
-const handoffRequestSource = fs.readFileSync(
-  path.resolve(process.cwd(), "src/server/handoff/request.ts"),
+const handoffCandidatesSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src/server/handoff/candidates.ts"),
   "utf8",
 );
 const queuedMessagesSource = fs.readFileSync(
@@ -93,7 +93,11 @@ describe("supervisor deterministic ordering guards", () => {
     // `listExecutionEventsForSnapshot` queries in execution-event-store.
     expect(executionEventStoreSource).toContain("orderBy(desc(executionEvents.createdAt), desc(executionEvents.id))");
     expect(executionEventStoreSource).toContain("orderBy(asc(executionEvents.createdAt), asc(executionEvents.id))");
-    expect(handoffRequestSource).toContain("orderBy(desc(messages.createdAt), desc(messages.id))");
+    // The handoff message reads moved out of `request.ts` and into the
+    // `candidates` gatherer when the handoff module was split. Assert the
+    // deterministic ordering still lives where the query now is.
+    expect(handoffCandidatesSource).toContain("orderBy(desc(messages.createdAt), desc(messages.id))");
+    expect(handoffCandidatesSource).toContain("orderBy(asc(messages.createdAt), asc(messages.id))");
     expect(queuedMessagesSource).toContain("orderBy(desc(workers.createdAt), desc(workers.id))");
     expect(queuedMessagesSource).toContain("orderBy(asc(queuedConversationMessages.createdAt), asc(queuedConversationMessages.id))");
     expect(sendMessageSource).toContain("orderBy(asc(messages.createdAt), asc(messages.id))");

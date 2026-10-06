@@ -4,6 +4,7 @@ import { withSqliteBusyRetry } from "@/server/db/retry";
 import { messages, queuedConversationMessages, recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { refreshDerivedGoalPlan } from "@/server/runs/goal-plan-derivation";
+import { retryDeferredGoalControl } from "@/server/runs/goal-control-dispatch";
 import { listAgents, normalizeAgentRecord, type AgentRecord } from "@/server/bridge-client";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { listExecutionEventsForWorker, recordExecutionEvent } from "@/server/events/execution-event-store";
@@ -18,7 +19,7 @@ import {
   withWorkerOutputWriteFence,
   writeWorkerOutputEntries,
 } from "@/server/workers/output-store";
-import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
+import { isRunReconciliationStandDown, reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
 import {
   isUnsettledRecoveryIncidentStatus,
   resolveRecoveryIncidentsDisprovedByActiveWork,
@@ -385,9 +386,20 @@ function isCleanLiveAgent(agent: ReturnType<typeof normalizeAgentRecord>) {
   return agent.state !== "error" && !agent.lastError?.trim();
 }
 
+/** Settled outcomes live agent work can disprove. Promotion owns its own transitions. */
+function isReopenableSettledRunStatus(status: string | null | undefined) {
+  const normalized = normalizedStatus(status);
+  return normalized === "done" || normalized === "failed";
+}
+
 function isActiveLiveAgent(agent: ReturnType<typeof normalizeAgentRecord>) {
   const state = normalizedStatus(agent.state);
   return ["starting", "working", "stuck"].includes(state) || Boolean(agent.currentText.trim());
+}
+
+/** Stricter than `isActiveLiveAgent`: leftover text on an errored agent is not work. */
+function isCleanWorkingLiveAgent(agent: ReturnType<typeof normalizeAgentRecord>) {
+  return isCleanLiveAgent(agent) && ["starting", "working", "stuck"].includes(normalizedStatus(agent.state));
 }
 
 function isWorkerQueueDrainableStatus(status: string) {
@@ -511,6 +523,45 @@ export async function drainQueuedWorkerMessagesWithObservation(args: {
     console.error(`Queued message drain failed for ${args.workerId}:`, error);
   });
   return 0;
+}
+
+/**
+ * Reconcile one run's recovery state without letting it sink the whole pass.
+ *
+ * This loop walks every non-terminal run, and it runs inside the request that
+ * builds the live event payload. An unhandled throw here therefore escaped all
+ * the way to the transport, where the events route attributed it to the bridge
+ * fetch and showed the user "Stream live agent state / Run not found" — for a
+ * run they were not even looking at, about a row that had simply been deleted
+ * mid-pass. Worse, the throw abandoned every remaining run in the catalog.
+ *
+ * Returns null when the run could not be reconciled now. Recovery is derived
+ * from persisted state on every pass, so skipping is the retry.
+ */
+async function reconcileRunRecoveryInPass(
+  runId: string,
+  agents: ReturnType<typeof normalizeAgentRecord>[],
+) {
+  try {
+    return await reconcileRunRecovery({ runId, liveAgents: agents, source: "conversation-sync" });
+  } catch (error) {
+    if (isRunReconciliationStandDown(error)) {
+      emitNamedEvent({
+        kind: "recovery.reconcile_stood_down",
+        runId,
+        code: (error as { code?: string }).code ?? "unknown",
+        source: "conversation-sync",
+      });
+      return null;
+    }
+    emitNamedEvent({
+      kind: "recovery.reconcile_failed",
+      runId,
+      reason: error instanceof Error ? error.message : String(error),
+      source: "conversation-sync",
+    });
+    return null;
+  }
 }
 
 function isRecoverableMissingDirectWorkerStatus(status: string) {
@@ -830,13 +881,20 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
     }
 
     const agent = agents.find((candidate) => candidate.name === worker.id);
-    const selectedTerminalDirectRunStillStreaming = Boolean(
-      options.selectedRunId === run.id
-      && isDirectRunMode(run.mode)
+    // A settled direct run whose agent is working again has to be synced by
+    // every sweep, not only the one scoped to the conversation on screen: a
+    // Codex /goal keeps running turns after the prompted one settled the run,
+    // and gating this on the selected run left a goal's output unpersisted
+    // for as long as nobody had that conversation open.
+    const terminalDirectRunStillStreaming = Boolean(
+      isDirectRunMode(run.mode)
       && agent
-      && isActiveLiveAgent(agent),
+      && (
+        (options.selectedRunId === run.id && isActiveLiveAgent(agent))
+        || (isReopenableSettledRunStatus(run.status) && isCleanWorkingLiveAgent(agent))
+      ),
     );
-    if (isTerminalRunStatus(run.status) && !staleBusyFailure && !selectedTerminalDirectRunStillStreaming) {
+    if (isTerminalRunStatus(run.status) && !staleBusyFailure && !terminalDirectRunStillStreaming) {
       // A queue row written in the same beat that the run reached a terminal
       // state would otherwise strand forever: this loop skips terminal runs,
       // and the persisted loop below skips them too, so no drain is ever
@@ -1001,6 +1059,9 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
       // moving. Re-derive it here to pick up checklist items the turn ticked
       // off; the call is a no-op when the goal has no derivable plan.
       await refreshDerivedGoalPlan(run.id, "turn_settled");
+      // A goal control the agent refused mid-turn ("Agent is busy") can land
+      // now. No-op unless this run has one parked.
+      await retryDeferredGoalControl(run.id);
     } else {
       await withWorkerOutputWriteFence(run.id, worker.id, async () => {
         const current = await db.select({ turnGeneration: workers.turnGeneration })
@@ -1051,11 +1112,14 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
         || normalizedStatus(worker.status) === "lost"
       )
     ) {
-      const recoveryResult = await reconcileRunRecovery({
-        runId: run.id,
-        liveAgents: agents,
-        source: "conversation-sync",
-      });
+      const recoveryResult = await reconcileRunRecoveryInPass(run.id, agents);
+      // `null` means this run could not be reconciled on this pass — it was
+      // deleted underneath us, a handoff owns it, or recovery itself failed.
+      // Leave the rest of the run untouched and let the next pass re-derive it;
+      // a whole-catalog sweep must not be decided by one unlucky row.
+      if (!recoveryResult) {
+        continue;
+      }
       if (recoveryResult.action !== "none" && recoveryResult.action !== "wait_for_backoff") {
         continue;
       }

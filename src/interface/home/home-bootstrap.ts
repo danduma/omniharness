@@ -36,7 +36,7 @@ export function applyHomeBootstrap(
   appliedRunnerInstanceId = bootstrap.runner.runnerInstanceId;
 
   if (bootstrap.initialQueries.settings || runnerChanged) {
-    settingsDraftManager.hydrate(settingsValues, notify);
+    settingsDraftManager.hydrate(settingsValues, notify, runnerChanged ? "replace" : "refresh");
     planningReviewPreferencesManager.hydrate(settingsValues);
   }
 

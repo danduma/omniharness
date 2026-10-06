@@ -2,8 +2,7 @@ import { memo, useLayoutEffect, useRef } from "react";
 import type React from "react";
 import { ArrowUp, FileText, LoaderCircle, Plus, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ComposerModelPicker } from "@/components/composer/ComposerModelPicker";
-import { ComposerSelect } from "@/components/composer/ComposerSelect";
+import { WorkerLaunchControls } from "@/components/composer/WorkerLaunchControls";
 import { MobileComposerSettings } from "@/components/composer/MobileComposerSettings";
 import type { ComposerMode } from "@/interface/home/types";
 import { QueuedMessageDrawer } from "./QueuedMessageDrawer";
@@ -91,6 +90,7 @@ class ComposerUiManager extends StateManager<{ fileDragDepth: number; mobileSett
 }
 
 const composerUiManager = new ComposerUiManager();
+const COMPOSER_EFFORT_OPTIONS = EFFORT_OPTIONS.map((effort) => ({ value: effort, label: effort }));
 
 function ConversationComposerInner({
   className,
@@ -557,51 +557,18 @@ function ConversationComposerInner({
 
           {/* Desktop selectors — hidden on mobile */}
           <div data-composer-settings="true" className="ml-auto hidden min-w-0 flex-1 flex-wrap items-center justify-end gap-x-1 gap-y-1 sm:flex sm:gap-x-2">
-            {shouldLockDirectWorker ? (
-              <div className={cn(
-                "w-max shrink-0 whitespace-nowrap rounded-full border px-2 py-1 text-xs font-semibold sm:px-3",
-                themeMode === "night"
-                  ? "border-border/60 bg-background/50 text-muted-foreground"
-                  : "border-[#d8d8d8] bg-white/90 text-[#6a6a6a] dark:border-border/60 dark:bg-background/50 dark:text-muted-foreground",
-              )}>
-                {lockedDirectWorkerLabel}
-              </div>
-            ) : (
-              <ComposerSelect
-                ariaLabel={t("conversation.composer.settings.agent")}
-                value={selectedCliAgent}
-                options={composerWorkerOptions}
-                onChange={setSelectedCliAgent}
-                themeMode={themeMode}
-              />
-            )}
-
-            {composerAccountOptions.length > 1 ? (
-              <ComposerSelect
-                ariaLabel={t("conversation.composer.account.ariaLabel")}
-                value={selectedWorkerAccountId}
-                options={composerAccountOptions}
-                onChange={setSelectedWorkerAccountId}
-                themeMode={themeMode}
-              />
-            ) : null}
-
-            <>
-              <ComposerModelPicker
-              value={selectedModel}
-              options={activeWorkerModelOptions}
-              onChange={setSelectedModel}
+            <WorkerLaunchControls
               themeMode={themeMode}
+              lockedWorkerLabel={shouldLockDirectWorker ? lockedDirectWorkerLabel : null}
+              worker={{
+                value: selectedCliAgent,
+                options: composerWorkerOptions,
+                onChange: (value) => setSelectedCliAgent(value as ComposerWorkerOption),
+              }}
+              account={{ value: selectedWorkerAccountId, options: composerAccountOptions, onChange: setSelectedWorkerAccountId }}
+              model={{ value: selectedModel, options: activeWorkerModelOptions, onChange: setSelectedModel }}
+              effort={{ value: selectedEffort, options: COMPOSER_EFFORT_OPTIONS, onChange: setSelectedEffort }}
             />
-
-              <ComposerSelect
-                ariaLabel={t("conversation.composer.settings.effort")}
-                value={selectedEffort}
-                options={EFFORT_OPTIONS.map((effort) => ({ value: effort, label: effort }))}
-                onChange={setSelectedEffort}
-                themeMode={themeMode}
-              />
-            </>
           </div>
 
           {showSeparateStopButton && (

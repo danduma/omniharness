@@ -78,9 +78,10 @@ export function buildConversationGroups(args: {
     args.explicitProjects,
     args.runs.map((run) => run.projectPath),
   );
+  const plansById = new Map(args.plans.map((plan) => [plan.id, plan]));
   const mappedRuns = args.runs
     .map((run) => {
-      const plan = args.plans.find((candidate) => candidate.id === run.planId);
+      const plan = plansById.get(run.planId);
       const planPath = plan?.path ?? run.projectPath ?? run.id;
 
       const projectPath = resolveStoredProjectRoot(run.projectPath, args.explicitProjects, { staleFallbackProject })
@@ -132,10 +133,19 @@ export function buildConversationGroups(args: {
     });
   }
 
+  const mappedRunsByGroup = new Map<string, typeof mappedRuns>();
+  for (const run of mappedRuns) {
+    const groupRuns = mappedRunsByGroup.get(run.groupPath);
+    if (groupRuns) {
+      groupRuns.push(run);
+    } else {
+      mappedRunsByGroup.set(run.groupPath, [run]);
+    }
+  }
+
   const explicitGroups = Array.from(groups.values()).map((group) => ({
     ...group,
-    runs: mappedRuns
-      .filter((run) => run.groupPath === group.path)
+    runs: (mappedRunsByGroup.get(group.path) ?? [])
       .map((run) => ({
         id: run.id,
         title: run.title,
@@ -149,8 +159,7 @@ export function buildConversationGroups(args: {
       })),
   }));
 
-  const otherRuns = mappedRuns
-    .filter((run) => run.groupPath === "other")
+  const otherRuns = (mappedRunsByGroup.get("other") ?? [])
     .map((run) => ({
       id: run.id,
       title: run.title,

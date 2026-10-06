@@ -10,6 +10,7 @@ import { pairDeviceManager, type PairingState } from "@/components/component-sta
 import { createLocalPairingDraft } from "@/lib/local-pairing-token";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
+import { runtimeErrorMessage } from "@/runtime-api/request";
 
 type PairCreateResponse = {
   pairingId: string;
@@ -153,7 +154,7 @@ export function PairDeviceDialog({
           : {};
       });
     } catch (pairError) {
-      const message = pairError instanceof Error ? pairError.message : String(pairError);
+      const message = runtimeErrorMessage(pairError);
       pairDeviceManager.patchIfCurrentPairing(draft.pairingId, {
         error: message,
         isLoading: false,
@@ -206,7 +207,7 @@ export function PairDeviceDialog({
         });
       } catch (pollError) {
         pairDeviceManager.patchIfCurrentStatusPoll(pairing.pairingId, pollRequestId, {
-          error: pollError instanceof Error ? pollError.message : String(pollError),
+          error: runtimeErrorMessage(pollError),
         });
       }
     }, 2000);

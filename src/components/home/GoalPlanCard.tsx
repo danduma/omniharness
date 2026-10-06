@@ -53,7 +53,7 @@ function elapsedLabel(startedAt: string, endAt: string | null, nowMs: number) {
   if (minutes < 60) return t("goal.elapsed.minutes", { count: minutes });
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return t("goal.elapsed.hours", { count: hours });
-  return t("goal.elapsed.days", { count: Math.floor(hours / 24) });
+  return t("goal.elapsed.daysHours", { days: Math.floor(hours / 24), hours: hours % 24 });
 }
 
 /**
@@ -254,7 +254,7 @@ export function GoalPlanCard({ goal, onSnapshot, onOpenPlanArtifact }: GoalPlanC
         {pending ? (
           <div className="flex items-center gap-2 border-t border-border/60 px-4 py-2 text-xs text-muted-foreground" role="status">
             <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />
-            {t("goal.action.pending")}
+            {t(pending.action === "resume" || pending.action === "retry" ? "goal.action.pendingResume" : "goal.action.pending")}
           </div>
         ) : null}
 
@@ -285,6 +285,7 @@ export function GoalPlanCard({ goal, onSnapshot, onOpenPlanArtifact }: GoalPlanC
             </label>
             <Textarea
               id={`goal-objective-${goal.runId}`}
+              className="max-h-[min(24dvh,12rem)] resize-none overflow-y-auto overscroll-contain"
               autoFocus
               value={presentation.editDraft}
               placeholder={t("goal.edit.placeholder")}
@@ -302,7 +303,7 @@ export function GoalPlanCard({ goal, onSnapshot, onOpenPlanArtifact }: GoalPlanC
           <div className={cn("space-y-3 border-t border-border/60 p-3 sm:p-4", editing && "border-t-0 pt-0")}>
             {goal.planSource.kind === "markdown" ? (
               <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-xl bg-muted/40 p-3 text-sm text-foreground">{goal.planSource.markdown}</pre>
-            ) : <PlanProgress items={goal.plan} />}
+            ) : <PlanProgress items={goal.plan} source={goal.planSource.kind === "uri" && goal.plan.every((item) => item.providerId === null) ? "file" : "agent"} />}
             {goal.planSource.kind === "uri" && onOpenPlanArtifact ? (
               <Button type="button" size="sm" variant="outline" onClick={() => onOpenPlanArtifact(goal.planSource.kind === "uri" ? goal.planSource.uri : "")}>
                 {t("goal.plan.openArtifact")}

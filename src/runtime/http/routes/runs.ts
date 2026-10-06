@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import fs from "fs";
-import { eq, lt } from "drizzle-orm";
+import { eq, lt, sql, type SQL } from "drizzle-orm";
 import { db } from "@/server/db";
 import { cancelAgent, cancelAgentTerminalProcess } from "@/server/bridge-client";
 import { errorResponse } from "@/server/api-errors";
@@ -414,12 +414,23 @@ export const handleRunPatchRequest: OmniHttpHandler = async (request, context) =
       });
     }
 
-    const updates: { title?: string; projectPath?: string } = {};
+    const updates: {
+      title?: string;
+      titleOwnership?: "manual";
+      titleSource?: "manual";
+      titleRevision?: SQL;
+      titleOwnerWorkerId?: null;
+      projectPath?: string;
+    } = {};
     const responsePayload: Record<string, unknown> = { ok: true, runId };
 
     if (hasTitlePatch && patchedTitle) {
       patchActionLabel = "Rename";
       updates.title = patchedTitle;
+      updates.titleOwnership = "manual";
+      updates.titleSource = "manual";
+      updates.titleRevision = sql`${runs.titleRevision} + 1`;
+      updates.titleOwnerWorkerId = null;
       responsePayload.title = patchedTitle;
     }
 
@@ -455,10 +466,22 @@ export const handleRunPatchRequest: OmniHttpHandler = async (request, context) =
     }
 
     const updatedAt = new Date();
-    await db
+    const [updatedRun] = await db
       .update(runs)
       .set({ ...updates, updatedAt })
-      .where(eq(runs.id, runId));
+      .where(eq(runs.id, runId))
+      .returning({ titleRevision: runs.titleRevision });
+
+    if (hasTitlePatch && patchedTitle && updatedRun) {
+      responsePayload.titleRevision = updatedRun.titleRevision;
+      emitNamedEvent({
+        kind: "conversation.title_updated",
+        runId,
+        source: "manual",
+        title: patchedTitle,
+        revision: updatedRun.titleRevision,
+      });
+    }
 
     if (typeof updates.projectPath === "string") {
       emitNamedEvent({
@@ -718,7 +741,7 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
     const content = typeof body?.content === "string" ? body.content : undefined;
     const manualRecovery = body?.manualRecovery === true;
 
-    if (action !== "retry" && action !== "edit" && action !== "fork") {
+    if (action !== "retry" && action !== "resume" && action !== "edit" && action !== "fork") {
       return errorResponse("Unsupported recovery action", {
         status: 400,
         source: "Runs",
@@ -726,7 +749,7 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
       });
     }
 
-    if (!targetMessageId) {
+    if (!targetMessageId && action !== "fork") {
       return errorResponse("targetMessageId is required", {
         status: 400,
         source: "Runs",
@@ -734,7 +757,12 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
       });
     }
 
-    if (action === "retry" && !manualRecovery && actionRun.status === "failed" && isPermanentAccountFailure(actionRun.lastError)) {
+    if (
+      (action === "retry" || action === "resume")
+      && !manualRecovery
+      && actionRun.status === "failed"
+      && isPermanentAccountFailure(actionRun.lastError)
+    ) {
       return errorResponse("This run cannot be auto-retried while the saved failure is an account, billing, or quota error.", {
         status: 409,
         source: "Runs",

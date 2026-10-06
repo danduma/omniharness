@@ -611,13 +611,66 @@ describe("queued conversation message interrupt", () => {
     await db.update(queuedConversationMessages)
       .set({ status: "delivering" })
       .where(eq(queuedConversationMessages.id, queued.id));
+    const messageId = randomUUID();
+    await db.insert(messages).values({
+      id: messageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "Accepted before the runner stopped",
+      deliveryStatus: "delivering",
+      createdAt: new Date(),
+    });
     expect(await listPendingQueuedConversationMessages(runId)).toHaveLength(0);
 
     const reclaimed = await reclaimOrphanedDeliveringMessages();
 
-    expect(reclaimed).toBe(1);
+    expect(reclaimed).toBe(2);
     const stored = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queued.id)).get();
     expect(stored?.status).toBe("pending");
     expect(await listPendingQueuedConversationMessages(runId)).toHaveLength(1);
+    const reclaimedMessage = await db.select().from(messages).where(eq(messages.id, messageId)).get();
+    expect(reclaimedMessage?.deliveryStatus).toBe("accepted");
+    expect(getNamedEventsSince(0, { runId }).events).toContainEqual(expect.objectContaining({
+      event: expect.objectContaining({ kind: "conversation.message_delivery_reclaimed", messageId }),
+    }));
+  });
+
+  it("does not replay an orphaned queue delivery after provider output has started", async () => {
+    const runId = await createRun("direct");
+    const workerId = await createBusyWorker(runId);
+    const queued = await createQueuedConversationMessage({
+      runId,
+      targetWorkerId: workerId,
+      action: "queue",
+      content: "Already reached the provider",
+      attachments: [],
+      operationFingerprint: "progressed-operation",
+    });
+    const now = new Date().toISOString();
+    await writeWorkerOutputEntries(runId, workerId, [
+      { id: queued.id, type: "user_input", text: queued.content, timestamp: now },
+      { id: randomUUID(), type: "message", text: "Provider started answering", timestamp: now },
+    ]);
+    await db.update(queuedConversationMessages)
+      .set({ status: "delivering" })
+      .where(eq(queuedConversationMessages.id, queued.id));
+
+    await expect(reclaimOrphanedDeliveringMessages()).resolves.toBe(1);
+
+    const storedQueue = await db.select().from(queuedConversationMessages)
+      .where(eq(queuedConversationMessages.id, queued.id)).get();
+    const storedMessage = await db.select().from(messages).where(eq(messages.id, queued.id)).get();
+    expect(storedQueue?.status).toBe("delivered");
+    expect(storedMessage).toMatchObject({
+      role: "user",
+      content: "Already reached the provider",
+      deliveryStatus: "delivered",
+      operationFingerprint: "progressed-operation",
+    });
+    expect(mockAskAgent).not.toHaveBeenCalled();
+    expect(getNamedEventsSince(0, { runId }).events).toContainEqual(expect.objectContaining({
+      event: expect.objectContaining({ kind: "conversation.queued_delivery_recovered", messageId: queued.id }),
+    }));
   });
 });

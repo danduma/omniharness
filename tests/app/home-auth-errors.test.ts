@@ -8,6 +8,11 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
   ...await importOriginal<typeof import("@tanstack/react-query")>(),
   useMutation: (options: unknown) => options,
 }));
+vi.mock("react", async (importOriginal) => ({
+  ...await importOriginal<typeof import("react")>(),
+  useMemo: (factory: () => unknown) => factory(),
+  useCallback: (callback: unknown) => callback,
+}));
 vi.mock("@/runtime-api/provider", () => ({ useRuntimeAPIs: () => ({}) }));
 
 describe("home authentication failures", () => {

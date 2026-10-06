@@ -57,6 +57,14 @@ export type AgentActivityItem =
       text: string;
       timestamp: string;
       live?: boolean;
+      /**
+       * Model and reasoning effort the session was running under when this
+       * message was produced, as reported by the session's own config. Absent
+       * whenever the loaded window holds no evidence — the transcript never
+       * guesses an attribution.
+       */
+      model?: string | null;
+      effort?: string | null;
     }
   | {
       id: string;

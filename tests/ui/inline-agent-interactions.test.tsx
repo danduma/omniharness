@@ -132,6 +132,50 @@ describe("inline Claude interactions", () => {
     expect(html).toContain("Other");
   });
 
+  it("shows only the active question's schema-native custom answer", () => {
+    const html = renderToStaticMarkup(<InlineElicitation
+      workerId="cleanup-worker"
+      elicitation={{
+        requestId: 6,
+        requestedAt: "2026-09-22T16:49:34.415Z",
+        sessionId: "cleanup-session",
+        toolCallId: "cleanup-tool",
+        message: "Please answer the following questions.",
+        requestedSchema: {
+          type: "object",
+          properties: {
+            question_0: {
+              type: "array",
+              title: "Cleanup",
+              items: { anyOf: [{ const: "Add log rotation", title: "Add log rotation" }] },
+            },
+            question_0_custom: {
+              type: "string",
+              title: "Other",
+              description: "Type your own answer instead of choosing an option above (optional).",
+            },
+            question_1: {
+              type: "string",
+              title: "Archives",
+              oneOf: [{ const: "Keep both", title: "Keep both" }],
+            },
+            question_1_custom: {
+              type: "string",
+              title: "Other",
+              description: "Type your own answer instead of choosing an option above (optional).",
+            },
+          },
+        },
+      }}
+      onRespond={() => undefined}
+    />);
+
+    expect(html.match(/<textarea/g)).toHaveLength(1);
+    expect(html.match(/Type your own answer instead of choosing an option above/g)).toHaveLength(1);
+    expect(html).toContain("Cleanup");
+    expect(html).toContain("Archives");
+  });
+
   it("keeps the single global Other box when there is only one question", () => {
     const html = renderToStaticMarkup(<InlineElicitation
       workerId="single-worker"

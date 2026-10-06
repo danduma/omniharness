@@ -73,4 +73,156 @@ describe("HomeUiStateManager", () => {
     expect(manager.getSnapshot().command).toBe("draft for A");
     expect(manager.getSnapshot().commandCursor).toBe(11);
   });
+
+  it("restores each session's unsent worker selection atomically with its draft", () => {
+    const manager = new HomeUiStateManager();
+
+    manager.selectRun("run-a");
+    manager.setComposerSelectionField("model", "model-a");
+    manager.setComposerSelectionField("effort", "Max");
+    manager.selectRun("run-b");
+    manager.setComposerSelectionField("model", "model-b");
+    manager.setComposerSelectionField("effort", "Low");
+    manager.selectRun("run-a");
+
+    expect(manager.getSnapshot()).toMatchObject({ selectedModel: "model-a", selectedEffort: "Max" });
+  });
+
+  it("hydrates newer server preferences without overwriting unacknowledged user fields", () => {
+    const manager = new HomeUiStateManager();
+    manager.selectRun("run-a");
+    manager.hydrateComposerSelection({
+      runId: "run-a",
+      selection: { conversationMode: "direct", worker: "codex", accountId: "auto", model: "old", effort: "High" },
+      serverVersion: "1",
+    });
+    manager.setComposerSelectionField("effort", "Max");
+    manager.hydrateComposerSelection({
+      runId: "run-a",
+      selection: { conversationMode: "direct", worker: "claude", accountId: "auto", model: "new", effort: "Low" },
+      serverVersion: "2",
+    });
+
+    expect(manager.getSnapshot()).toMatchObject({
+      selectedCliAgent: "claude",
+      selectedModel: "new",
+      selectedEffort: "Max",
+    });
+  });
+
+  it("restores clean server-hydrated selections immediately when switching sessions", () => {
+    const manager = new HomeUiStateManager();
+    manager.selectRun("run-a");
+    manager.hydrateComposerSelection({
+      runId: "run-a",
+      selection: { conversationMode: "direct", worker: "codex", accountId: "auto", model: "model-a", effort: "High" },
+      serverVersion: "1",
+    });
+    manager.selectRun("run-b");
+    manager.hydrateComposerSelection({
+      runId: "run-b",
+      selection: { conversationMode: "direct", worker: "claude", accountId: "account-b", model: "model-b", effort: "Low" },
+      serverVersion: "1",
+    });
+
+    manager.selectRun("run-a");
+
+    expect(manager.getSnapshot()).toMatchObject({
+      selectedCliAgent: "codex",
+      selectedWorkerAccountId: "auto",
+      selectedModel: "model-a",
+      selectedEffort: "High",
+      hydratedRunSelectionId: "run-a",
+    });
+  });
+
+  it("clears a dirty selection that returns to the unchanged server value", () => {
+    const manager = new HomeUiStateManager();
+    const baseline = { conversationMode: "direct", worker: "codex", accountId: "auto", model: "model-a", effort: "High" } as const;
+    manager.selectRun("run-a");
+    manager.hydrateComposerSelection({ runId: "run-a", selection: baseline, serverVersion: "1" });
+    manager.setComposerSelectionField("model", "model-b");
+    manager.setComposerSelectionField("model", "model-a");
+
+    expect(manager.getSnapshot().composerDraftsByRun["run-a"]?.dirtySelectionFields).not.toContain("model");
+  });
+
+  it("changes worker and its compatible model atomically", () => {
+    const manager = new HomeUiStateManager();
+    manager.setComposerSelectionField("worker", "codex");
+    manager.setComposerSelectionField("model", "gpt-5.6-sol");
+    let notifications = 0;
+    manager.subscribe(() => {
+      notifications += 1;
+    });
+
+    manager.setComposerWorkerSelection("claude", "claude-opus-5");
+
+    expect(manager.getSnapshot()).toMatchObject({
+      selectedCliAgent: "claude",
+      selectedModel: "claude-opus-5",
+    });
+    expect(manager.getSnapshot().composerDraftsByRun.__new__?.selection).toMatchObject({
+      worker: "claude",
+      model: "claude-opus-5",
+    });
+    expect(manager.getSnapshot().composerDraftsByRun.__new__?.dirtySelectionFields).toEqual(
+      expect.arrayContaining(["worker", "model"]),
+    );
+    expect(notifications).toBe(1);
+  });
+
+  it("clears the dirty markers a reconciled worker change invalidated", () => {
+    const manager = new HomeUiStateManager();
+    manager.setComposerWorkerSelection("claude", "claude-opus-5");
+
+    manager.setComposerWorkerSelection("codex", "gpt-5.6-sol", { userEdited: false });
+
+    expect(manager.getSnapshot()).toMatchObject({
+      selectedCliAgent: "codex",
+      selectedModel: "gpt-5.6-sol",
+    });
+    expect(manager.getSnapshot().composerDraftsByRun.__new__?.dirtySelectionFields ?? []).toEqual([]);
+  });
+
+  it("keeps the launch selection on the conversation it just created", () => {
+    const manager = new HomeUiStateManager();
+    manager.setComposerWorkerSelection("claude", "claude-fable-5-1");
+
+    manager.adoptSelectionForCreatedRun("run-new");
+    manager.selectRun("run-new");
+
+    expect(manager.getSnapshot()).toMatchObject({
+      selectedCliAgent: "claude",
+      selectedModel: "claude-fable-5-1",
+    });
+  });
+
+  it("restores the new-session draft after visiting another conversation", () => {
+    const manager = new HomeUiStateManager();
+    manager.setComposerDraft({ command: "pasted prompt", commandCursor: 13 });
+    manager.setComposerSelectionField("conversationMode", "omni");
+
+    manager.selectRun("run-a");
+    expect(manager.getSnapshot().command).toBe("");
+
+    manager.selectRun(null);
+    expect(manager.getSnapshot()).toMatchObject({
+      command: "pasted prompt",
+      commandCursor: 13,
+      selectedConversationMode: "omni",
+    });
+  });
+
+  it("leaves an existing conversation draft alone", () => {
+    const manager = new HomeUiStateManager();
+    manager.selectRun("run-a");
+    manager.setComposerSelectionField("model", "claude-fable-5-1");
+    manager.selectRun(null);
+    manager.setComposerSelectionField("model", "claude-opus-5");
+
+    manager.adoptSelectionForCreatedRun("run-a");
+
+    expect(manager.getSnapshot().composerDraftsByRun["run-a"]?.selection.model).toBe("claude-fable-5-1");
+  });
 });

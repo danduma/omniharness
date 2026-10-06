@@ -89,6 +89,37 @@ export function removeRunFromHomeState(current: EventStreamState, runId: string)
   };
 }
 
+/** Restore only the catalog slice hidden by an optimistic removal. */
+export function restoreRunSlice(
+  current: EventStreamState,
+  captured: EventStreamState,
+  runId: string,
+): EventStreamState {
+  const capturedRun = captured.runs.find((run) => run.id === runId);
+  if (!capturedRun || current.runs.some((run) => run.id === runId)) return current;
+  const workerIds = new Set(captured.workers.filter((worker) => worker.runId === runId).map((worker) => worker.id));
+  const planId = capturedRun.planId;
+  const addUnique = <T>(base: T[], additions: T[], id: (item: T) => string) => {
+    const seen = new Set(base.map(id));
+    return [...base, ...additions.filter((item) => !seen.has(id(item)))];
+  };
+  return {
+    ...current,
+    runs: addUnique(current.runs, [capturedRun], (run) => run.id),
+    plans: addUnique(current.plans, captured.plans.filter((plan) => plan.id === planId), (plan) => plan.id),
+    planItems: addUnique(current.planItems, captured.planItems.filter((item) => item.planId === planId), (item) => item.id),
+    messages: addUnique(current.messages, captured.messages.filter((message) => message.runId === runId), (message) => message.id),
+    workers: addUnique(current.workers, captured.workers.filter((worker) => worker.runId === runId), (worker) => worker.id),
+    clarifications: addUnique(current.clarifications, captured.clarifications.filter((item) => item.runId === runId), (item) => item.id),
+    executionEvents: addUnique(current.executionEvents, captured.executionEvents.filter((item) => item.runId === runId || Boolean(item.workerId && workerIds.has(item.workerId))), (item) => item.id),
+    supervisorInterventions: addUnique(current.supervisorInterventions, captured.supervisorInterventions.filter((item) => item.runId === runId || Boolean(item.workerId && workerIds.has(item.workerId))), (item) => item.id),
+    queuedMessages: addUnique(current.queuedMessages ?? [], (captured.queuedMessages ?? []).filter((item) => item.runId === runId), (item) => item.id),
+    readMarkers: captured.readMarkers?.[runId]
+      ? { ...(current.readMarkers ?? {}), [runId]: captured.readMarkers[runId] }
+      : current.readMarkers,
+  };
+}
+
 export function getConversationTranscriptRunIds({
   selectedRunId,
   selectedRun,
@@ -378,6 +409,8 @@ export function buildOptimisticCreatedConversationSnapshot(args: {
   projectPath: string | null;
   mode: ConversationModeOption;
   preferredWorkerType?: string | null;
+  preferredWorkerModel?: string | null;
+  preferredWorkerEffort?: string | null;
   preferredWorkerAccountId?: string | null;
   createdAt?: string;
   now?: Date;
@@ -404,6 +437,11 @@ export function buildOptimisticCreatedConversationSnapshot(args: {
       projectPath: args.projectPath,
       title: buildInitialConversationTitle(args.content ?? ""),
       preferredWorkerType: args.preferredWorkerType ?? null,
+      // Carried so the composer that hydrates from this placeholder resolves
+      // the model the conversation was launched with, rather than falling
+      // through to the first entry in the worker's catalogue.
+      preferredWorkerModel: args.preferredWorkerModel ?? null,
+      preferredWorkerEffort: args.preferredWorkerEffort ?? null,
       preferredWorkerAccountId: args.preferredWorkerAccountId ?? null,
     },
   };
@@ -509,23 +547,27 @@ export function mergePendingCreatedConversationSnapshots(
   let nextState = incomingState;
 
   for (const snapshot of Array.from(pendingSnapshots.values())) {
-    const incomingHasRun = Boolean(
-      snapshot.run
-      && (incomingState.runs || []).some((existingRun) => existingRun.id === snapshot.run?.id),
-    );
-    if (isCreatedConversationSnapshotServerVisible(incomingState, snapshot)) {
-      // A stale in-flight SSE snapshot can still arrive after the server has
-      // caught up once, so keep the optimistic create snapshot around until an
-      // explicit delete/archive removes it from the pending map.
+    const incomingRun = snapshot.run
+      ? (incomingState.runs || []).find((existingRun) => existingRun.id === snapshot.run?.id)
+      : undefined;
+    if (incomingRun) {
+      // The server owns the run row from the first frame that carries it. A
+      // stale in-flight SSE snapshot can still arrive after the server has
+      // caught up once, so the snapshot stays pending until an explicit
+      // delete/archive removes it — but it carries the newest row the server
+      // sent, never the creation-time one. Frames for another selected run
+      // leave this run out, and re-inserting the creation-time `running` row
+      // kept a finished conversation spinning until the tab reloaded.
       snapshot.serverVisibleAtMs ??= nowMs;
-      continue;
-    }
-
-    if (snapshot.serverVisibleAtMs !== undefined && incomingHasRun) {
-      // Selected-run snapshots intentionally omit messages from other runs.
-      // Preserve any out-of-scope creation records without merging the old
-      // creation-time run over the server's newer lifecycle status.
-      nextState = appendServerVisibleCreatedConversationRecords(nextState, snapshot);
+      snapshot.run = incomingRun;
+      if (snapshot.plan && snapshot.plan.id !== incomingRun.planId) {
+        // Still the placeholder from before the create response returned.
+        snapshot.plan = (incomingState.plans || []).find((plan) => plan.id === incomingRun.planId) ?? null;
+      }
+      if (!isCreatedConversationSnapshotServerVisible(incomingState, snapshot)) {
+        // Selected-run snapshots intentionally omit messages from other runs.
+        nextState = appendServerVisibleCreatedConversationRecords(nextState, snapshot);
+      }
       continue;
     }
 
@@ -1552,6 +1594,10 @@ function isClaudeDisplayLabel(normalizedLower: string, bareLabel: string) {
   return normalizedLower === bareLabel || normalizedLower === `claude ${bareLabel}`;
 }
 
+// Named-variant OpenAI models are spelled the same on both sides; only the
+// `openai/` prefix differs between the Codex and OpenCode catalogs.
+const OPENAI_NAMED_VARIANT_PATTERN = /^gpt-(?:5\.6-(?:sol|terra|luna)|6-(?:sol|luna)|6\.1-sol)$/;
+
 export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel: string) {
   const normalized = selectedModel.trim();
   if (!normalized) {
@@ -1563,24 +1609,29 @@ export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel
     "gpt-5.6 sol": "gpt-5.6-sol",
     "gpt-5.6 terra": "gpt-5.6-terra",
     "gpt-5.6 luna": "gpt-5.6-luna",
+    "gpt-6 sol": "gpt-6-sol",
+    "gpt-6 luna": "gpt-6-luna",
+    "gpt-6.1 sol": "gpt-6.1-sol",
   };
   const openAiModel = openAiDisplayAliases[normalizedLower]
     ?? normalizedLower.replace(/^openai\//, "");
   if (workerType === "opencode") {
-    if (/^gpt-5\.6-(sol|terra|luna)$/.test(openAiModel)) return `openai/${openAiModel}`;
+    if (OPENAI_NAMED_VARIANT_PATTERN.test(openAiModel)) return `openai/${openAiModel}`;
     if (selectedModel === "GPT-5.4" || normalizedLower === "gpt-5.4") return "openai/gpt-5.4";
     if (selectedModel === "GPT-5.4 Mini" || normalizedLower === "gpt-5.4-mini") return "openai/gpt-5.4-mini";
     if (selectedModel === "GPT-5.3 Codex" || normalizedLower === "gpt-5.3-codex") return "openai/gpt-5.3-codex";
     if (isClaudeDisplayLabel(normalizedLower, "sonnet 4") || normalizedLower === "claude-sonnet-4") return "anthropic/claude-sonnet-4";
+    if (isClaudeDisplayLabel(normalizedLower, "sonnet 5.5") || normalizedLower === "claude-sonnet-5-5") return "anthropic/claude-sonnet-5-5";
     if (isClaudeDisplayLabel(normalizedLower, "sonnet 5") || normalizedLower === "claude-sonnet-5") return "anthropic/claude-sonnet-5";
   }
 
   if (workerType === "codex") {
-    if (/^gpt-5\.6-(sol|terra|luna)$/.test(openAiModel)) return openAiModel;
+    if (OPENAI_NAMED_VARIANT_PATTERN.test(openAiModel)) return openAiModel;
     if (selectedModel === "GPT-5.4" || normalizedLower === "openai/gpt-5.4") return "gpt-5.4";
     if (selectedModel === "GPT-5.4 Mini" || normalizedLower === "openai/gpt-5.4-mini") return "gpt-5.4-mini";
     if (selectedModel === "GPT-5.3 Codex" || normalizedLower === "openai/gpt-5.3-codex") return "gpt-5.3-codex";
     if (isClaudeDisplayLabel(normalizedLower, "sonnet 4") || normalizedLower === "anthropic/claude-sonnet-4") return "claude-sonnet-4";
+    if (isClaudeDisplayLabel(normalizedLower, "sonnet 5.5") || normalizedLower === "anthropic/claude-sonnet-5-5") return "claude-sonnet-5-5";
     if (isClaudeDisplayLabel(normalizedLower, "sonnet 5") || normalizedLower === "anthropic/claude-sonnet-5") return "claude-sonnet-5";
   }
 
@@ -1602,6 +1653,9 @@ export function resolveComposerModelValue(preferredModel: string | null | undefi
   if (normalized === "claude-sonnet-4" || normalized === "anthropic/claude-sonnet-4") {
     return preferredModel.includes("/") ? "anthropic/claude-sonnet-4" : "claude-sonnet-4";
   }
+  if (normalized === "claude-sonnet-5-5" || normalized === "anthropic/claude-sonnet-5-5") {
+    return preferredModel.includes("/") ? "anthropic/claude-sonnet-5-5" : "claude-sonnet-5-5";
+  }
   if (normalized === "claude-sonnet-5" || normalized === "anthropic/claude-sonnet-5") {
     return preferredModel.includes("/") ? "anthropic/claude-sonnet-5" : "claude-sonnet-5";
   }
@@ -1610,8 +1664,7 @@ export function resolveComposerModelValue(preferredModel: string | null | undefi
 }
 
 export function resolveSavedComposerModel(savedModel: string | null | undefined) {
-  const normalized = savedModel?.trim() || "";
-  return normalized === "claude-opus-5" ? "gpt-5.6-sol" : normalized;
+  return savedModel?.trim() || "";
 }
 
 export function resolveComposerEffortForPair(savedEffort: string | null | undefined) {
@@ -1626,6 +1679,25 @@ export function resolveComposerEffortValue(selectedEffort: string) {
 export function getWorkerModelOptions(catalog: Partial<WorkerModelCatalog> | undefined, workerType: WorkerType) {
   const discoveredModels = catalog?.[workerType];
   return discoveredModels?.length ? discoveredModels : FALLBACK_WORKER_MODEL_OPTIONS[workerType];
+}
+
+/**
+ * An explicit worker change transfers ownership of the model picker to the
+ * newly selected worker. Preserve the current choice only when that worker
+ * can actually use its normalized id; otherwise initialize from that
+ * worker's catalog. Catalog refreshes do not call this function, so they
+ * still cannot silently replace a saved session model.
+ */
+export function resolveComposerModelAfterWorkerChange(args: {
+  catalog: Partial<WorkerModelCatalog> | undefined;
+  workerType: WorkerType;
+  selectedModel: string;
+}) {
+  const options = getWorkerModelOptions(args.catalog, args.workerType);
+  const resolved = resolveSelectedWorkerModel(args.workerType, args.selectedModel);
+  return options.some((option) => option.value === resolved)
+    ? resolved
+    : options[0]?.value ?? "";
 }
 
 export function resolveComposerEffortLabel(preferredEffort: string | null | undefined) {

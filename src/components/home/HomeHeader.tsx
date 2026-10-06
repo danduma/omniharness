@@ -1,4 +1,4 @@
-import { lazy, memo, useCallback, type Dispatch, type KeyboardEvent, type SetStateAction } from "react";
+import { lazy, memo, useCallback, useSyncExternalStore, type CSSProperties, type Dispatch, type KeyboardEvent, type ReactNode, type SetStateAction } from "react";
 import { ArrowLeftRight, Bug, ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, Menu, MoreHorizontal, PanelLeft, PanelRight, Pencil, RotateCw, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
@@ -22,17 +22,70 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { requestBugDropOpen } from "@/components/BugDropBootstrap";
 import { PRODUCT_NAME } from "@/interface/home/constants";
+import { mobileConversationSwipeManager, type MobileDrawerDragSnapshot } from "@/interface/home/MobileConversationSwipeManager";
 import type { ProjectDropPlacement } from "@/interface/home/utils";
 import type { AgentSnapshot, ConversationSidebarTab, MessageRecord, RunRecord, SidebarGroup, SidebarRun, SupervisorInterventionRecord } from "@/interface/home/types";
-import type { ManualCommitAction } from "@/lib/commit-workflow";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { useIsCompactLayout } from "@/hooks/use-mobile";
 import { getVisualViewportDialogStyle, useVisualViewportSnapshot } from "@/hooks/use-visual-viewport";
-import { ConversationSidebar } from "./ConversationSidebar";
+import { ConversationSidebar, type ProjectPresetCommandMenuItem } from "./ConversationSidebar";
 import { RunWorkspaceBadge, resolveRunWorkspace } from "./RunWorkspaceBadge";
 import { ThemeModeToggle } from "./ThemeModeToggle";
+
+const handleMobileDrawerRef = (node: HTMLDivElement | null) => {
+  mobileConversationSwipeManager.setDrawerWidth(node?.offsetWidth ?? null);
+};
+
+const handleMobileDrawerOpenChangeComplete = (open: boolean) => {
+  mobileConversationSwipeManager.handleDrawerOpenChangeComplete(open);
+};
+
+function getMobileDrawerStyles(drag: MobileDrawerDragSnapshot, open: boolean): { drawer?: CSSProperties; overlay?: CSSProperties } {
+  if (drag.phase === "dragging" && open) {
+    return {
+      drawer: {
+        transform: `translateX(min(0px, calc(${drag.offsetPx}px - 100%)))`,
+        transition: "none",
+        opacity: 1,
+      },
+      overlay: { opacity: drag.progress, transition: "none" },
+    };
+  }
+  if (drag.phase === "closing" && !open) {
+    return {
+      drawer: { transform: "translateX(-100%)", opacity: 1 },
+      overlay: { opacity: 0 },
+    };
+  }
+  return {};
+}
+
+const subscribeMobileDrawerDrag = mobileConversationSwipeManager.subscribe;
+const getMobileDrawerDragSnapshot = mobileConversationSwipeManager.getSnapshot;
+
+// Owns the drag subscription so finger-tracking frames re-render only the
+// sheet shell; `children` keeps its identity, so the sidebar list bails out.
+function MobileNavSheetContent({ open, children }: { open: boolean; children: ReactNode }) {
+  const drag = useSyncExternalStore(subscribeMobileDrawerDrag, getMobileDrawerDragSnapshot, getMobileDrawerDragSnapshot);
+  if (!open && drag.phase !== "closing") {
+    return null;
+  }
+  const styles = getMobileDrawerStyles(drag, open);
+  return (
+    <SheetContent
+      ref={handleMobileDrawerRef}
+      side="left"
+      className="!w-[min(var(--omni-mobile-sidebar-width),calc(100vw-1rem))] p-0 lg:hidden"
+      style={styles.drawer}
+      overlayStyle={styles.overlay}
+      showCloseButton={false}
+    >
+      {children}
+    </SheetContent>
+  );
+}
 
 const SideWindow = lazy(
   () => import("./SideWindow").then((m) => ({ default: m.SideWindow })),
@@ -68,8 +121,9 @@ interface HomeHeaderProps {
   openFolderPicker: () => void;
   startNewPlan: () => void;
   beginConversationInProject: (projectPath: string) => void;
-  autoCommitProject: (projectPath: string, action?: ManualCommitAction) => void;
-  isAutoCommitProjectPending: boolean;
+  presetCommands: ProjectPresetCommandMenuItem[];
+  runPresetCommand: (projectPath: string, presetCommandId: string) => void;
+  isPresetCommandPending: boolean;
   handleRemoveProject: (pathToRemove: string) => void;
   selectRun: (runId: string) => void;
   renamingRunId: string | null;
@@ -175,8 +229,9 @@ const HomeHeader = memo(function HomeHeader({
   openFolderPicker,
   startNewPlan,
   beginConversationInProject,
-  autoCommitProject,
-  isAutoCommitProjectPending,
+  presetCommands,
+  runPresetCommand,
+  isPresetCommandPending,
   handleRemoveProject,
   selectRun,
   renamingRunId,
@@ -340,67 +395,66 @@ const HomeHeader = memo(function HomeHeader({
           <PanelLeft className="h-4 w-4" />
         </Button>
       ) : null}
-      <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+      <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen} onOpenChangeComplete={handleMobileDrawerOpenChangeComplete}>
         <Button variant="ghost" size="icon" className="h-8 w-8 lg:hidden" aria-label="Open navigation" onClick={() => setMobileNavOpen(true)}>
           <Menu className="h-4 w-4" />
         </Button>
-        {mobileNavOpen ? (
-          <SheetContent side="left" className="!w-[min(var(--omni-mobile-sidebar-width),calc(100vw-1rem))] p-0 lg:hidden" showCloseButton={false}>
-            <SheetTitle className="sr-only">{PRODUCT_NAME}</SheetTitle>
-            <ConversationSidebar
-              runnerControlsMode="mobile"
-              filteredProjects={filteredProjects as SidebarGroup[]}
-              activeProjects={activeProjects as SidebarGroup[]}
-              conversationSidebarTab={conversationSidebarTab}
-              setConversationSidebarTab={setConversationSidebarTab}
-              isHydratingConversations={isHydratingConversations}
-              searchQuery={searchQuery}
-              setSearchQuery={setSearchQuery}
-              selectedRunId={selectedRunId}
-              messages={messages}
-              readMarkers={readMarkers}
-              collapsedProjectPaths={collapsedProjectPaths}
-              visibleProjectSessionCounts={visibleProjectSessionCounts}
-              onProjectOpenChange={onProjectOpenChange}
-              onReorderProjects={onReorderProjects}
-              onCollapseAllProjects={onCollapseAllProjects}
-              onShowMoreProjectSessions={onShowMoreProjectSessions}
-              setShowSettings={setShowSettings}
-              openOnboarding={openOnboarding}
-              openFolderPicker={openFolderPicker}
-              startNewPlan={startNewPlan}
-              beginConversationInProject={beginConversationInProject}
-              autoCommitProject={autoCommitProject}
-              isAutoCommitProjectPending={isAutoCommitProjectPending}
-              handleRemoveProject={handleRemoveProject}
-              selectRun={selectRun}
-              renamingRunId={renamingRunId}
-              renameValue={renameValue}
-              renameSource={renameSource}
-              setRenameValue={setRenameValue}
-              movingRunId={movingRunId}
-              moveRunProjectPath={moveRunProjectPath}
-              moveRunToProjectOptions={moveRunToProjectOptions}
-              setMoveRunProjectPath={setMoveRunProjectPath}
-              startMovingRun={startMovingRun}
-              confirmMoveRunToProject={confirmMoveRunToProject}
-              cancelMovingRun={cancelMovingRun}
-              isMoveRunToProjectPending={isMoveRunToProjectPending}
-              startRenamingRun={startRenamingRun}
-              commitRenamingRun={commitRenamingRun}
-              cancelRenamingRun={cancelRenamingRun}
-              archiveRun={archiveRun}
-              deleteRun={deleteRun}
-              authEnabled={authEnabled}
-              openPairDeviceDialog={openPairDeviceDialog}
-              logout={logout}
-              themeMode={themeMode}
-              setThemeMode={setThemeMode}
-              onCollapse={() => setMobileNavOpen(false)}
-              onOpenExternalSessions={onOpenExternalSessions}
-            />
-          </SheetContent>
-        ) : null}
+        <MobileNavSheetContent open={mobileNavOpen}>
+          <SheetTitle className="sr-only">{PRODUCT_NAME}</SheetTitle>
+          <ConversationSidebar
+            runnerControlsMode="mobile"
+            filteredProjects={filteredProjects as SidebarGroup[]}
+            activeProjects={activeProjects as SidebarGroup[]}
+            conversationSidebarTab={conversationSidebarTab}
+            setConversationSidebarTab={setConversationSidebarTab}
+            isHydratingConversations={isHydratingConversations}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            selectedRunId={selectedRunId}
+            messages={messages}
+            readMarkers={readMarkers}
+            collapsedProjectPaths={collapsedProjectPaths}
+            visibleProjectSessionCounts={visibleProjectSessionCounts}
+            onProjectOpenChange={onProjectOpenChange}
+            onReorderProjects={onReorderProjects}
+            onCollapseAllProjects={onCollapseAllProjects}
+            onShowMoreProjectSessions={onShowMoreProjectSessions}
+            setShowSettings={setShowSettings}
+            openOnboarding={openOnboarding}
+            openFolderPicker={openFolderPicker}
+            startNewPlan={startNewPlan}
+            beginConversationInProject={beginConversationInProject}
+            presetCommands={presetCommands}
+            runPresetCommand={runPresetCommand}
+            isPresetCommandPending={isPresetCommandPending}
+            handleRemoveProject={handleRemoveProject}
+            selectRun={selectRun}
+            renamingRunId={renamingRunId}
+            renameValue={renameValue}
+            renameSource={renameSource}
+            setRenameValue={setRenameValue}
+            movingRunId={movingRunId}
+            moveRunProjectPath={moveRunProjectPath}
+            moveRunToProjectOptions={moveRunToProjectOptions}
+            setMoveRunProjectPath={setMoveRunProjectPath}
+            startMovingRun={startMovingRun}
+            confirmMoveRunToProject={confirmMoveRunToProject}
+            cancelMovingRun={cancelMovingRun}
+            isMoveRunToProjectPending={isMoveRunToProjectPending}
+            startRenamingRun={startRenamingRun}
+            commitRenamingRun={commitRenamingRun}
+            cancelRenamingRun={cancelRenamingRun}
+            archiveRun={archiveRun}
+            deleteRun={deleteRun}
+            authEnabled={authEnabled}
+            openPairDeviceDialog={openPairDeviceDialog}
+            logout={logout}
+            themeMode={themeMode}
+            setThemeMode={setThemeMode}
+            onCollapse={() => setMobileNavOpen(false)}
+            onOpenExternalSessions={onOpenExternalSessions}
+          />
+        </MobileNavSheetContent>
       </Sheet>
 
       <div className="flex min-w-0 items-center gap-2">

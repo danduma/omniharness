@@ -39,13 +39,13 @@ describe("createBoundedByteStream", () => {
     expect(onCancel).toHaveBeenCalledWith("client left");
   });
 
-  it("closes and reports an overflow before exceeding either queue bound", async () => {
+  it("closes and reports an overflow once the frame bound is reached", async () => {
     const encoder = new TextEncoder();
     const onOverflow = vi.fn();
     let accepted = true;
     const stream = createBoundedByteStream({
       maxQueuedFrames: 2,
-      maxQueuedBytes: 8,
+      maxQueuedBytes: 1024,
       onOverflow,
       start(writer) {
         accepted = writer.enqueue(encoder.encode("333"));
@@ -65,5 +65,78 @@ describe("createBoundedByteStream", () => {
       done: true,
       value: undefined,
     });
+  });
+
+  it("closes and reports an overflow once the waiting bytes exceed the budget", async () => {
+    const encoder = new TextEncoder();
+    const onOverflow = vi.fn();
+    const accepted: boolean[] = [];
+    const stream = createBoundedByteStream({
+      maxQueuedBytes: 8,
+      onOverflow,
+      start(writer) {
+        accepted.push(writer.enqueue(encoder.encode("1234")));
+        accepted.push(writer.enqueue(encoder.encode("5678")));
+        // Exactly at the budget is not yet a backlog that has outgrown it.
+        accepted.push(writer.enqueue(encoder.encode("9")));
+        accepted.push(writer.enqueue(encoder.encode("0")));
+      },
+    });
+
+    expect(accepted).toEqual([true, true, true, false]);
+    expect(onOverflow).toHaveBeenCalledWith({ queuedFrames: 3, queuedBytes: 9, rejectedBytes: 1 });
+    const reader = stream.getReader();
+    await expect(reader.read()).resolves.toEqual({ done: true, value: undefined });
+  });
+
+  it("queues a frame larger than the byte budget instead of refusing it", async () => {
+    // Reported regression: the catalog snapshot grew past the byte budget, so
+    // it was refused whenever a heartbeat happened to be waiting ahead of it,
+    // the client was told to resync, reconnected, received the same snapshot,
+    // and was told to resync again — which the UI showed as a degraded
+    // connection for as long as the catalog stayed large. The budget bounds a
+    // backlog; the size of the next frame says nothing about whether the
+    // subscriber has fallen behind.
+    const encoder = new TextEncoder();
+    const onOverflow = vi.fn();
+    const accepted: boolean[] = [];
+    const stream = createBoundedByteStream({
+      maxQueuedBytes: 8,
+      onOverflow,
+      start(writer) {
+        accepted.push(writer.enqueue(encoder.encode("123")));
+        accepted.push(writer.enqueue(encoder.encode("far too long to ever fit")));
+        writer.close();
+      },
+    });
+
+    expect(accepted).toEqual([true, true]);
+    expect(onOverflow).not.toHaveBeenCalled();
+    const reader = stream.getReader();
+    await expect(reader.read()).resolves.toMatchObject({ done: false, value: encoder.encode("123") });
+    await expect(reader.read()).resolves.toMatchObject({
+      done: false,
+      value: encoder.encode("far too long to ever fit"),
+    });
+    await expect(reader.read()).resolves.toEqual({ done: true, value: undefined });
+  });
+
+  it("overflows only once a large frame is still waiting when the next one arrives", async () => {
+    const encoder = new TextEncoder();
+    const onOverflow = vi.fn();
+    const accepted: boolean[] = [];
+    const stream = createBoundedByteStream({
+      maxQueuedBytes: 8,
+      onOverflow,
+      start(writer) {
+        accepted.push(writer.enqueue(encoder.encode("far too long to ever fit")));
+        accepted.push(writer.enqueue(encoder.encode("9")));
+      },
+    });
+
+    expect(accepted).toEqual([true, false]);
+    expect(onOverflow).toHaveBeenCalledWith({ queuedFrames: 1, queuedBytes: 24, rejectedBytes: 1 });
+    const reader = stream.getReader();
+    await expect(reader.read()).resolves.toEqual({ done: true, value: undefined });
   });
 });

@@ -123,9 +123,12 @@ export const handleRunnerRestartRequest: OmniHttpHandler = async (request) => {
   if (request.method !== "POST") {
     return methodNotAllowed("POST");
   }
-  // Same-origin only, like rekey: restarting kills every in-flight worker turn
-  // on this machine, so it is not something a bearer token from elsewhere gets
-  // to trigger.
+  // CSRF guard, like rekey. It rejects a *cookie* session driven from another
+  // site; a bearer session is exempt by construction (see `requireApiSession`),
+  // and that exemption is what lets a client restart a server it is connected
+  // to but was not served from. Those tokens are origin-bound and issued by an
+  // explicit authorization against this runner, so holding one is already
+  // permission to act on this machine.
   const auth = await requireApiSession(request, {
     source: "Server",
     action: "Restart server",

@@ -4,6 +4,7 @@ export const RUNTIME_RESOURCE_SETTING_KEYS = {
   estimatedWorkerMemoryMb: "OMNIHARNESS_ESTIMATED_WORKER_MEMORY_MB",
   idleCleanupEnabled: "OMNIHARNESS_RUNTIME_IDLE_CLEANUP_ENABLED",
   idleCleanupAfterMs: "OMNIHARNESS_RUNTIME_IDLE_CLEANUP_AFTER_MS",
+  outputLogMaxMb: "OMNIHARNESS_RUNTIME_OUTPUT_MAX_MB",
 } as const;
 
 export type RuntimeResourceSettings = {
@@ -12,6 +13,7 @@ export type RuntimeResourceSettings = {
   estimatedWorkerMemoryMb: number;
   idleCleanupEnabled: boolean;
   idleCleanupAfterMs: number;
+  outputLogMaxMb: number;
 };
 
 export const DEFAULT_RUNTIME_RESOURCE_SETTINGS: RuntimeResourceSettings = {
@@ -20,6 +22,7 @@ export const DEFAULT_RUNTIME_RESOURCE_SETTINGS: RuntimeResourceSettings = {
   estimatedWorkerMemoryMb: 1536,
   idleCleanupEnabled: true,
   idleCleanupAfterMs: 15 * 60_000,
+  outputLogMaxMb: 3 * 1024,
 };
 
 type EnvLike = Record<string, string | undefined>;
@@ -78,6 +81,13 @@ export function resolveRuntimeResourceSettings(env: EnvLike): RuntimeResourceSet
       60_000,
       24 * 60 * 60_000,
     ),
+    outputLogMaxMb: readInteger(
+      env,
+      RUNTIME_RESOURCE_SETTING_KEYS.outputLogMaxMb,
+      DEFAULT_RUNTIME_RESOURCE_SETTINGS.outputLogMaxMb,
+      1024,
+      1024 * 1024,
+    ),
   };
 }
 
@@ -88,5 +98,6 @@ export function runtimeResourceSettingsToEnv(settings: RuntimeResourceSettings):
     [RUNTIME_RESOURCE_SETTING_KEYS.estimatedWorkerMemoryMb]: String(settings.estimatedWorkerMemoryMb),
     [RUNTIME_RESOURCE_SETTING_KEYS.idleCleanupEnabled]: String(settings.idleCleanupEnabled),
     [RUNTIME_RESOURCE_SETTING_KEYS.idleCleanupAfterMs]: String(settings.idleCleanupAfterMs),
+    [RUNTIME_RESOURCE_SETTING_KEYS.outputLogMaxMb]: String(settings.outputLogMaxMb),
   };
 }

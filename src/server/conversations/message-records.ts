@@ -8,6 +8,8 @@ type SerializableMessageRecord = {
   content: string;
   workerId?: string | null;
   attachmentsJson?: string | null;
+  operationFingerprint?: string | null;
+  deliveryOptionsJson?: string | null;
   createdAt: Date;
 };
 
@@ -16,8 +18,13 @@ export function serializeMessageRecord(message: SerializableMessageRecord | null
     return message;
   }
 
+  const {
+    operationFingerprint: _operationFingerprint,
+    deliveryOptionsJson: _deliveryOptionsJson,
+    ...publicMessage
+  } = message;
   return {
-    ...message,
+    ...publicMessage,
     createdAt: message.createdAt.toISOString(),
     attachments: parseChatAttachmentsJson(message.attachmentsJson),
   };

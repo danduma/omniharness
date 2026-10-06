@@ -34,11 +34,31 @@ export function recoveryAction(snapshot: GoalSnapshot): GoalMutationAction {
 
 export class GoalControlDispatchCoordinator {
   private readonly tails = new Map<string, Promise<void>>();
+  /**
+   * Controls the agent refused because it was mid-turn, keyed by run.
+   *
+   * A busy agent is the one dispatch failure that resolves on its own, so the
+   * request is parked here instead of being recorded as a failure, and replayed
+   * once the turn settles. Losing the map on restart is safe: a deferred
+   * control leaves `control_method` NULL, which is exactly what
+   * `recoverPendingGoalControlsAtStartup` re-dispatches.
+   */
+  private readonly deferredByRun = new Map<string, { snapshot: GoalSnapshot; action: GoalMutationAction }>();
 
   constructor(private readonly dependencies: DispatchDependencies) {}
 
   dispatch(snapshot: GoalSnapshot, action: GoalMutationAction): Promise<GoalControlDispatchOutcome> {
     return this.enqueue(snapshot.runId, () => this.converge(snapshot, action));
+  }
+
+  hasDeferredControl(runId: string) {
+    return this.deferredByRun.has(runId);
+  }
+
+  retryDeferredControl(runId: string): Promise<GoalControlDispatchOutcome> | null {
+    const deferred = this.deferredByRun.get(runId);
+    if (!deferred) return null;
+    return this.dispatch(deferred.snapshot, deferred.action);
   }
 
   private async enqueue<T>(runId: string, operation: () => Promise<T>): Promise<T> {
@@ -58,6 +78,9 @@ export class GoalControlDispatchCoordinator {
     requestedAction: GoalMutationAction,
   ): Promise<GoalControlDispatchOutcome> {
     let latest: GoalSnapshot | null = null;
+    // This pass supersedes whatever was parked for the run; it re-parks below
+    // only if the agent is still mid-turn.
+    this.deferredByRun.delete(requestedSnapshot.runId);
     for (let attempt = 0; attempt < 8; attempt += 1) {
       latest = await this.dependencies.getGoal(requestedSnapshot.runId);
       if (!latest) {
@@ -69,6 +92,9 @@ export class GoalControlDispatchCoordinator {
       }
       const dispatched = await this.dependencies.dispatch(latest, action);
       const outcome = { ...dispatched, snapshot: latest, action } as GoalControlDispatchOutcome;
+      if (dispatched.kind === "deferred" && dispatched.reason === "worker_busy") {
+        this.deferredByRun.set(latest.runId, { snapshot: latest, action });
+      }
       if (dispatched.kind !== "dispatched") return outcome;
       if (await this.dependencies.markControlApplied(latest, dispatched.method, action)) return outcome;
       // The canonical row changed while the provider call was in flight. Loop
@@ -91,6 +117,71 @@ export function createGoalControlDispatchCoordinator(
 }
 
 export const goalControlDispatchCoordinator = createGoalControlDispatchCoordinator();
+
+/**
+ * Replay a goal control the agent refused because it was mid-turn.
+ *
+ * Called when a turn settles, which is the moment the refusal stops being true.
+ * A no-op for every run that has nothing parked, so it is safe on the live-sync
+ * path that walks the whole catalog.
+ */
+export async function retryDeferredGoalControl(
+  runId: string,
+  coordinator: GoalControlDispatchCoordinator = goalControlDispatchCoordinator,
+) {
+  const pending = coordinator.retryDeferredControl(runId);
+  if (!pending) return null;
+  let outcome: GoalControlDispatchOutcome;
+  try {
+    outcome = await pending;
+  } catch (error) {
+    const reason = redactGoalErrorMessage(error);
+    const snapshot = await goalControl.getGoal(runId);
+    if (snapshot) await goalControl.recordControlFailure(snapshot, "transport", reason);
+    emitNamedEvent({
+      kind: "goal.reconciliation.failed",
+      runId,
+      goalId: snapshot?.goalId ?? runId,
+      workerId: snapshot?.workerId ?? null,
+      reason,
+    });
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "goal.reconciliation.failed",
+      message: reason,
+      surface: "banner",
+      runId,
+      ...(snapshot?.workerId ? { workerId: snapshot.workerId } : {}),
+    });
+    await goalOutboxDispatcher.drainPending();
+    return null;
+  }
+
+  if (outcome.kind === "dispatched") {
+    emitNamedEvent({
+      kind: "goal.reconciliation.completed",
+      runId,
+      goalId: outcome.snapshot.goalId,
+      // A dispatched control always holds a lease; `goal-acp` defers otherwise.
+      workerId: outcome.snapshot.workerId ?? "",
+      revision: outcome.snapshot.revision,
+      leaseGeneration: outcome.snapshot.leaseGeneration,
+    });
+  } else if (outcome.kind !== "already_applied") {
+    if (outcome.kind === "unsupported" && outcome.snapshot.status !== "cleared") {
+      await goalControl.recordControlFailure(outcome.snapshot, "unsupported", outcome.reason);
+    }
+    emitNamedEvent({
+      kind: "goal.reconciliation.refused",
+      runId,
+      goalId: outcome.snapshot?.goalId ?? runId,
+      workerId: outcome.snapshot?.workerId ?? null,
+      reason: outcome.reason,
+    });
+  }
+  await goalOutboxDispatcher.drainPending();
+  return outcome;
+}
 
 export async function recoverPendingGoalControlsAtStartup() {
   const pending = await dbClient.execute(

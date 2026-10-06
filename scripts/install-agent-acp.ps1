@@ -146,6 +146,45 @@ function Install-CodexAcpNpm {
   Write-Host "  -> installed official codex-acp $(Get-InstalledNpmVersion '@agentclientprotocol\codex-acp') with Codex $(Get-InstalledNpmVersion '@openai\codex')"
 }
 
+function Get-GlobalNpmPackageVersion {
+  param([string]$PackageName)
+  if (-not (Test-Command "npm")) {
+    return $null
+  }
+  $npmRoot = (npm root -g 2>$null).Trim()
+  if (-not $npmRoot) {
+    return $null
+  }
+  $packageJson = Join-Path $npmRoot "$PackageName\package.json"
+  if (-not (Test-Path -LiteralPath $packageJson -PathType Leaf)) {
+    return $null
+  }
+  return (Get-Content -Raw -LiteralPath $packageJson | ConvertFrom-Json).version
+}
+
+function Test-GlobalNpmPackageOutdated {
+  param([string]$PackageName)
+  $installed = Get-GlobalNpmPackageVersion $PackageName
+  if (-not $installed) {
+    return $false
+  }
+  try {
+    $latest = (npm view $PackageName version --silent).Trim()
+    return [bool]$latest -and $installed -ne $latest
+  } catch {
+    return $false
+  }
+}
+
+function Install-ClaudeAcp {
+  if ($DryRun) {
+    Write-Host "  -> would install the latest official `@agentclientprotocol/claude-agent-acp` with `npm install -g`"
+    return
+  }
+  npm install -g "@agentclientprotocol/claude-agent-acp@latest"
+  Write-Host "  -> installed `@agentclientprotocol/claude-agent-acp`"
+}
+
 function Add-InstallDirToUserPath {
   $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
   $parts = @()
@@ -208,6 +247,22 @@ if ((Test-Command "codex-acp") -or (Test-Command "codex-acp.exe")) {
       }
     }
   }
+}
+
+if (Test-Command "claude") {
+  Write-Host "claude: detected"
+  if (Test-Command "claude-agent-acp") {
+    if (Test-GlobalNpmPackageOutdated "@agentclientprotocol/claude-agent-acp") {
+      Write-Host "  -> managed `@agentclientprotocol/claude-agent-acp` is outdated; refreshing it"
+      Install-ClaudeAcp
+    } else {
+      Write-Host "  -> `claude-agent-acp` already installed and current"
+    }
+  } else {
+    Install-ClaudeAcp
+  }
+} else {
+  Write-Host "claude: not detected"
 }
 
 if ($AddToPath) {

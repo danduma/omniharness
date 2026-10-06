@@ -10,6 +10,7 @@ import { compactStaleArtifactStreams } from "@/server/artifacts/compaction";
 import { reapStuckDirectWorkers } from "@/server/workers/stuck-worker-reaper";
 import { syncConversationSessionsFromBridge } from "@/server/conversations/sync";
 import { resumeElapsedQuotaWaits } from "@/server/quota/worker-resume";
+import { continueStalledGoals } from "@/server/runs/goal-worker-continuation";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { reconcileExpiredHandoffs } from "@/server/handoff/reconciler";
 
@@ -90,6 +91,12 @@ export async function syncRunningSupervision() {
   // only sweep that can recover them.
   await resumeElapsedQuotaWaits().catch((error) => {
     process.stderr.write(`[quota-sweep] sweep failed: ${error instanceof Error ? error.message : String(error)}\n`);
+  });
+  // A goal outlives the agent process pursuing it. After a restart or crash
+  // nothing else starts that agent's next turn, so the goal would sit stalled
+  // until the user noticed.
+  await continueStalledGoals().catch((error) => {
+    process.stderr.write(`[goal-continuation] sweep failed: ${error instanceof Error ? error.message : String(error)}\n`);
   });
 
   const activeRuns = await db.select().from(runs).where(and(

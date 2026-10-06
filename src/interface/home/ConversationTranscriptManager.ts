@@ -23,6 +23,7 @@ import {
 } from "@/shared/conversation-transcript-token";
 import type { RuntimeAPIs } from "@/runtime-api/types";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
+import { runtimeErrorMessage } from "@/runtime-api/request";
 
 export interface ConversationTranscriptEntry extends WorkerEntry {
   workerId: string;
@@ -284,7 +285,7 @@ export class ConversationTranscriptManager {
         this.updateState(runId, next);
       },
       (error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = runtimeErrorMessage(error);
         const failing = this.getState(runId);
         this.updateState(runId, { ...failing, status: "error", lastError: message });
       },
@@ -338,7 +339,7 @@ export class ConversationTranscriptManager {
         this.updateState(runId, next);
       },
       (error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = runtimeErrorMessage(error);
         const failing = this.getState(runId);
         this.updateState(runId, { ...failing, status: "error", lastError: message });
       },
@@ -369,7 +370,7 @@ export class ConversationTranscriptManager {
         this.updateState(runId, next);
       },
       (error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = runtimeErrorMessage(error);
         const failing = this.getState(runId);
         this.updateState(runId, { ...failing, status: "error", lastError: message });
       },

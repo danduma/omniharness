@@ -15,7 +15,6 @@ import {
   shouldIndex,
 } from "@/server/artifacts/stream-index";
 import { emitNamedEvent } from "@/server/events/named-events";
-import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import type {
   WorkerEntry,
 } from "@/server/workers/entries-types";
@@ -592,6 +591,10 @@ async function recordStaleWorkerOutputIgnored(args: {
   source: "entry_append" | "snapshot_batch";
 }) {
   emitNamedEvent({ kind: "worker.stale_output_ignored", ...args });
+  // Loaded on demand like the turn-generation lookup above: reading a worker
+  // stream is a hot path that must not pull the database in with it, and
+  // ignoring stale output is rare enough that the import costs nothing here.
+  const { recordExecutionEvent } = await import("@/server/events/execution-event-store");
   await recordExecutionEvent({
     runId: args.runId,
     workerId: args.workerId,
@@ -1030,6 +1033,149 @@ export async function readFromRuntimeOutputArchive(workerId: string): Promise<Wo
 }
 
 /**
+ * Recover entries that rolled out of the runtime's live window unsaved.
+ *
+ * The runtime keeps only the newest ~80 entries live and marks the batch with
+ * `output-archive-marker` once older ones were pruned. Normally the oldest live
+ * entry was persisted long ago. When it was not, every sync that would have
+ * saved the entries in between was skipped (a Codex /goal ran turns for hours
+ * on a conversation the runner had settled), and appending only the live window
+ * leaves a silent hole in the transcript. The runtime archive still holds the
+ * missing stretch, under the same ids.
+ *
+ * Returns the archived entries after the last one this stream already holds
+ * and before the live window. Must be called with the worker file lock held.
+ */
+async function readArchivedEntriesMissingBeforeLiveWindow(
+  runId: string,
+  workerId: string,
+  liveEntries: NonNullable<AgentRecord["outputEntries"]>,
+  persistedFingerprints: Map<string, string>,
+): Promise<AgentOutputEntry[]> {
+  if (!liveEntries.some((entry) => entry?.id === "output-archive-marker")) {
+    return [];
+  }
+  const firstLiveId = liveEntries.find((entry) => entry?.id && entry.id !== "output-archive-marker")?.id;
+  if (!firstLiveId || persistedFingerprints.has(firstLiveId)) {
+    return [];
+  }
+
+  const archived = await readFromRuntimeOutputArchive(workerId);
+  const liveStart = archived.findIndex((entry) => entry.id === firstLiveId);
+  if (liveStart < 0) {
+    emitNamedEvent({
+      kind: "worker.stream_gap_unrecoverable",
+      runId,
+      workerId,
+      reason: "live_entry_not_archived",
+    });
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "worker.stream.gap_unrecoverable",
+      message: "Some worker activity was never saved to this conversation and could not be recovered from the runtime archive.",
+      surface: "log",
+      runId,
+      workerId,
+      cause: null,
+    });
+    return [];
+  }
+  // Start after the newest archived entry the stream already has, so anything
+  // the stream deliberately skipped before it stays skipped.
+  let anchor = -1;
+  for (let index = liveStart - 1; index >= 0; index -= 1) {
+    const id = archived[index]?.id;
+    if (id && persistedFingerprints.has(id)) {
+      anchor = index;
+      break;
+    }
+  }
+  const missing = archived
+    .slice(anchor + 1, liveStart)
+    .filter((entry) => !entry.id || !persistedFingerprints.has(entry.id)) as unknown as AgentOutputEntry[];
+  if (missing.length > 0) {
+    emitNamedEvent({
+      kind: "worker.stream_gap_backfilled",
+      runId,
+      workerId,
+      recoveredEntries: missing.length,
+    });
+  }
+  return missing;
+}
+
+/**
+ * Repair a hole that already landed in the middle of a worker stream.
+ *
+ * `readArchivedEntriesMissingBeforeLiveWindow` keeps new holes from forming;
+ * this fills one written before that guard existed. Archived entries that sit
+ * between the entry at `afterSeq` and the one after it, and that the stream
+ * does not hold, are inserted there. Entries up to `afterSeq` keep their seq;
+ * later ones shift up by the number inserted, so open clients must reload.
+ */
+export async function backfillWorkerStreamGapFromArchive(
+  runId: string,
+  workerId: string,
+  afterSeq: number,
+  options: { dryRun?: boolean } = {},
+): Promise<{ inserted: number; latestSeq: number }> {
+  return runOnChain(runId, workerId, async () => {
+    return withWorkerFileLock(runId, workerId, async (paths) => {
+      await expandWorkerOutputFileInternal(paths);
+      const persisted = parseWorkerEntryLines(await fs.readFile(paths.filePath, "utf8"));
+      const beforeIndex = persisted.findIndex((entry) => entry.seq === afterSeq);
+      const before = persisted[beforeIndex];
+      const after = persisted[beforeIndex + 1];
+      if (!before?.id || !after?.id) {
+        throw new Error(`No persisted entry pair at seq ${afterSeq} for ${workerId}`);
+      }
+      const archived = await readFromRuntimeOutputArchive(workerId);
+      const from = archived.findIndex((entry) => entry.id === before.id);
+      const to = archived.findIndex((entry) => entry.id === after.id);
+      if (from < 0 || to <= from) {
+        throw new Error(`The runtime archive cannot place the gap after seq ${afterSeq} for ${workerId}`);
+      }
+      const persistedIds = new Set(persisted.map((entry) => entry.id).filter(Boolean));
+      const missing = archived
+        .slice(from + 1, to)
+        .filter((entry) => !entry.id || !persistedIds.has(entry.id));
+      const latestBefore = persisted.reduce((max, entry) => Math.max(max, entry.seq ?? 0), 0);
+      if (options.dryRun || missing.length === 0) {
+        return { inserted: missing.length, latestSeq: latestBefore };
+      }
+
+      const shift = missing.length;
+      const repaired = [
+        ...persisted.slice(0, beforeIndex + 1),
+        ...missing.map((entry, index) => ({ ...entry, seq: afterSeq + 1 + index })),
+        ...persisted.slice(beforeIndex + 1).map((entry) => ({ ...entry, seq: (entry.seq ?? 0) + shift })),
+      ].map((entry) => compactEntryForHistory(entry as unknown as CompactableEntry) as unknown as WorkerEntry);
+
+      const tmpPath = `${paths.filePath}.gap-${process.pid}-${(tmpCounter += 1)}.tmp`;
+      const handle = await fs.open(tmpPath, "w");
+      try {
+        await handle.writeFile(repaired.map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf8");
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await fs.rename(tmpPath, paths.filePath);
+
+      const last = repaired.at(-1);
+      const latestSeq = last?.seq ?? 0;
+      await setStreamCursor(runId, workerId, latestSeq, last?.id ?? `seq-${latestSeq}`);
+      emitNamedEvent({
+        kind: "worker.stream_gap_backfilled",
+        runId,
+        workerId,
+        recoveredEntries: shift,
+      });
+      return { inserted: shift, latestSeq };
+    });
+  });
+}
+
+/**
  * Force `artifact_streams.latest_seq` to match what is actually on disk.
  *
  * `commitArtifactAppend` deliberately never moves a cursor backward, which is
@@ -1232,9 +1378,10 @@ export async function writeWorkerOutputEntries(
       await healStrandedStreamHead(runId, workerId, paths);
 
       const { fingerprints } = await refreshChainCaches(runId, workerId);
+      const gapEntries = await readArchivedEntriesMissingBeforeLiveWindow(runId, workerId, entries, fingerprints);
       const newEntries: AgentOutputEntry[] = [];
       const acceptedFingerprintsById = new Map<string, string>();
-      for (const entry of entries) {
+      for (const entry of gapEntries.length > 0 ? [...gapEntries, ...entries] : entries) {
         if (!entry) continue;
         // The agent-runtime live view prepends a synthetic archive marker
         // ("X older raw worker activity records are only in archived

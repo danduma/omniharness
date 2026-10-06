@@ -76,4 +76,47 @@ describe("SettingsDraftManager", () => {
     expect(manager.getSavePayload()).not.toHaveProperty("CONVERSATION_TEXT_SIZE_STORAGE_KEY");
     expect(manager.getSavePayload()).not.toHaveProperty("TERMINAL_TEXT_SIZE_STORAGE_KEY");
   });
+
+  it("refreshes the baseline without erasing dirty fields", () => {
+    const manager = new SettingsDraftManager();
+    manager.hydrate({ SUPERVISOR_LLM_MODEL: "saved", WORKER_DEFAULT_TYPE: "codex" });
+    manager.setField("SUPERVISOR_LLM_MODEL", "typing");
+
+    manager.hydrate({ SUPERVISOR_LLM_MODEL: "saved", WORKER_DEFAULT_TYPE: "claude" });
+
+    expect(manager.getSnapshot().draft).toMatchObject({
+      SUPERVISOR_LLM_MODEL: "typing",
+      WORKER_DEFAULT_TYPE: "claude",
+    });
+    expect(manager.getSnapshot().dirtyKeys).toContain("SUPERVISOR_LLM_MODEL");
+  });
+
+  it("acknowledges only the values and revisions captured by a save", () => {
+    const manager = new SettingsDraftManager();
+    manager.hydrate({ SUPERVISOR_LLM_MODEL: "saved" });
+    manager.setField("SUPERVISOR_LLM_MODEL", "submitted");
+    const operation = manager.beginSave();
+    manager.setField("SUPERVISOR_LLM_MODEL", "typed while saving");
+
+    manager.acknowledgeSave(operation);
+
+    expect(manager.getSnapshot().baseline.SUPERVISOR_LLM_MODEL).toBe("submitted");
+    expect(manager.getSnapshot().draft.SUPERVISOR_LLM_MODEL).toBe("typed while saving");
+    expect(manager.getSnapshot().dirtyKeys).toContain("SUPERVISOR_LLM_MODEL");
+  });
+
+  it("clears dirtiness when a later edit equals the value an older save acknowledges", () => {
+    const manager = new SettingsDraftManager({ VALUE: "one" });
+    manager.hydrate({ VALUE: "one" });
+    manager.setField("VALUE", "two");
+    const operation = manager.beginSave();
+    manager.setField("VALUE", "three");
+    manager.setField("VALUE", "two");
+
+    manager.acknowledgeSave(operation);
+
+    expect(manager.getSnapshot().baseline.VALUE).toBe("two");
+    expect(manager.getSnapshot().draft.VALUE).toBe("two");
+    expect(manager.getSnapshot().dirtyKeys.has("VALUE")).toBe(false);
+  });
 });

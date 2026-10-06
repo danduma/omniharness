@@ -14,7 +14,7 @@ import {
   normalizeClaudeGatewayBaseUrl,
   validateClaudeGatewayModel,
 } from "@/lib/claude-model-gateway";
-import { validateCommitWorkerSettings } from "@/lib/commit-workflow";
+import { validatePresetCommandsSetting } from "@/lib/preset-commands";
 import { readClaudeModelGatewaySettings } from "@/server/integrations/claude-model-gateway/settings";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 
@@ -116,9 +116,9 @@ async function postSettings(request: Request) {
 
   const body = await request.json() as Record<string, unknown>;
   try {
-    validateCommitWorkerSettings(body);
+    validatePresetCommandsSetting(body);
   } catch (error) {
-    return Response.json({ error: { code: "invalid_commit_worker_settings", message: describeError(error) } }, { status: 400 });
+    return Response.json({ error: { code: "invalid_preset_commands", message: describeError(error) } }, { status: 400 });
   }
   try {
     await validateClaudeGatewayDraft(body);

@@ -1,5 +1,5 @@
 import type React from "react";
-import { lazy, memo, useCallback, useEffect, useMemo } from "react";
+import { lazy, memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { ArrowDown, ArrowLeftRight, Blocks, Check, ChevronDown, CirclePlay, CircleStop, Copy, FolderGit2, GitBranch, MoreHorizontal, Pencil, RotateCcw, Route } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -466,7 +466,7 @@ function SupervisorActivityMessage({ item }: { item: Extract<ConversationTimelin
         {icon}
       </div>
       <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
-        <p className="omni-activity-text min-w-0 whitespace-pre-wrap break-words text-[13px] leading-[1.45]">
+        <p className="omni-activity-text min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[13px] leading-[1.45]">
           {renderSupervisorActivityText(item.text)}
         </p>
         <span className="shrink-0 pt-[0.18em] text-[10px] text-muted-foreground/50">
@@ -687,7 +687,6 @@ interface ConversationMainProps {
   handleConfirmForkMessageIntoWorktree: (request: GitWorkspaceLaunchRequest & {
     runId: string;
     targetMessageId: string;
-    content: string;
   }) => void;
   editingMessageId: string | null;
   editingMessageValue: string;
@@ -708,7 +707,7 @@ interface ConversationMainProps {
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
   onOpenWorkerActivity?: (workerId: string) => void;
-  onOpenMobileConversationList: () => void;
+  setMobileConversationListOpen: (open: boolean) => void;
   onRespondElicitation?: (input: ElicitationResponseInput) => void;
   onRespondPermission?: (input: PermissionResponseInput) => void;
   respondingElicitationRequestId?: number | null;
@@ -870,7 +869,7 @@ const ConversationMain = memo(function ConversationMain({
   projectRoot,
   onOpenProjectFile,
   onOpenWorkerActivity,
-  onOpenMobileConversationList,
+  setMobileConversationListOpen,
   onRespondElicitation,
   onRespondPermission,
   respondingElicitationRequestId = null,
@@ -1108,31 +1107,6 @@ const ConversationMain = memo(function ConversationMain({
         disabled: recoverRun.isPending,
         onClick: () => handleStartEditingMessage(message),
       },
-      {
-        label: t("conversation.message.action.forkFromHere"),
-        icon: <GitBranch className="h-3.5 w-3.5" />,
-        disabled: recoverRun.isPending,
-        menuItems: [
-          {
-            label: t("conversation.message.action.forkFromHere"),
-            icon: <GitBranch className="h-3.5 w-3.5" />,
-            disabled: recoverRun.isPending,
-            onClick: () => handleForkMessage(message),
-          },
-          {
-            label: t("git.workspace.action.forkMessageWorktree"),
-            icon: <FolderGit2 className="h-3.5 w-3.5" />,
-            disabled: recoverRun.isPending,
-            onClick: () => handleForkMessageIntoWorktree(message),
-          },
-          {
-            label: t("conversation.message.action.forkDifferentCli"),
-            icon: <ArrowLeftRight className="h-3.5 w-3.5" />,
-            disabled: recoverRun.isPending,
-            onClick: () => handleForkMessageToDifferentCli(message),
-          },
-        ],
-      },
     ];
   }, [
     canRecoverUserMessage,
@@ -1142,11 +1116,54 @@ const ConversationMain = memo(function ConversationMain({
     handleCopyDirectMessage,
     handleRetryMessage,
     handleStartEditingMessage,
-    handleForkMessage,
-    handleForkMessageIntoWorktree,
-    handleForkMessageToDifferentCli,
     // Action labels come from `t()`, so they must be rebuilt when the language
     // changes rather than captured once.
+    i18nSnapshot,
+  ]);
+  // Forking belongs on the reply: the new conversation keeps everything up to
+  // and including it, and the user continues from there. This is handed to
+  // every transcript row, so it must stay stable; the fork handlers arrive as
+  // fresh closures each render and are only needed on click, so read them
+  // through a ref instead of listing them as dependencies.
+  const forkHandlersRef = useRef({ handleForkMessage, handleForkMessageIntoWorktree, handleForkMessageToDifferentCli });
+  useEffect(() => {
+    forkHandlersRef.current = { handleForkMessage, handleForkMessageIntoWorktree, handleForkMessageToDifferentCli };
+  });
+  const getAssistantMessageActions = useCallback((message: Pick<MessageRecord, "id" | "content">): UserInputMessageAction[] => {
+    if (!isDirectConversation) {
+      return [];
+    }
+
+    return [
+      {
+        label: t("conversation.message.action.forkFromHere"),
+        icon: <GitBranch className="h-4 w-4" />,
+        disabled: recoverRun.isPending,
+        menuItems: [
+          {
+            label: t("conversation.message.action.forkFromHere"),
+            icon: <GitBranch className="h-3.5 w-3.5" />,
+            disabled: recoverRun.isPending,
+            onClick: () => forkHandlersRef.current.handleForkMessage(message),
+          },
+          {
+            label: t("git.workspace.action.forkMessageWorktree"),
+            icon: <FolderGit2 className="h-3.5 w-3.5" />,
+            disabled: recoverRun.isPending,
+            onClick: () => forkHandlersRef.current.handleForkMessageIntoWorktree(message),
+          },
+          {
+            label: t("conversation.message.action.forkDifferentCli"),
+            icon: <ArrowLeftRight className="h-3.5 w-3.5" />,
+            disabled: recoverRun.isPending,
+            onClick: () => forkHandlersRef.current.handleForkMessageToDifferentCli(message),
+          },
+        ],
+      },
+    ];
+  }, [
+    isDirectConversation,
+    recoverRun.isPending,
     i18nSnapshot,
   ]);
   const handleScrollToLatestOutput = () => {
@@ -1157,21 +1174,25 @@ const ConversationMain = memo(function ConversationMain({
     });
   };
   const handleConversationPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    mobileConversationSwipeManager.start(event, isCompactLayout);
+    mobileConversationSwipeManager.start(event, isCompactLayout, "open");
   }, [isCompactLayout]);
   const handleConversationPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (mobileConversationSwipeManager.move(event)) {
-      onOpenMobileConversationList();
+      setMobileConversationListOpen(true);
     }
-  }, [onOpenMobileConversationList]);
+  }, [setMobileConversationListOpen]);
   const handleConversationPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (mobileConversationSwipeManager.finish(event)) {
-      onOpenMobileConversationList();
+    const outcome = mobileConversationSwipeManager.finish(event);
+    if (outcome) {
+      setMobileConversationListOpen(outcome === "open");
     }
-  }, [onOpenMobileConversationList]);
+  }, [setMobileConversationListOpen]);
   const handleConversationPointerCancel = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    mobileConversationSwipeManager.cancel(event.pointerId);
-  }, []);
+    const outcome = mobileConversationSwipeManager.cancel(event);
+    if (outcome) {
+      setMobileConversationListOpen(outcome === "open");
+    }
+  }, [setMobileConversationListOpen]);
   const confirmForkMessageIntoWorktree = () => {
     if (!forkWorkspaceDialog || !forkWorkspaceSnapshot || !forkBranchName.trim() || !forkCheckoutPath.trim()) {
       return;
@@ -1185,7 +1206,6 @@ const ConversationMain = memo(function ConversationMain({
       expectedStatusFingerprint: forkWorkspaceSnapshot.statusFingerprint,
       runId: forkWorkspaceDialog.runId,
       targetMessageId: forkWorkspaceDialog.targetMessageId,
-      content: forkWorkspaceDialog.content,
     });
   };
 
@@ -1232,6 +1252,7 @@ const ConversationMain = memo(function ConversationMain({
                 ungatedUserMessageIds={locallySentUserMessageIds}
                 sendingUserMessageIds={sendingUserMessageIds}
                 getUserMessageActions={getUserMessageActions}
+                getAssistantMessageActions={getAssistantMessageActions}
                 editingUserMessageId={editingMessageId}
                 editingUserMessageValue={editingMessageValue}
                 isEditingUserMessageSaving={recoverRun.isPending}

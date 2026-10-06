@@ -72,6 +72,7 @@ vi.mock("@/server/supervisor/start", () => ({
 }));
 
 import { gitRoute as POST } from "@/../tests/helpers/runtime-routes";
+import { waitForConversationBackgroundTasksForTests } from "@/server/conversations/worker-turn-gate";
 
 function git(cwd: string, args: string[]) {
   return execFileSync("git", args, {
@@ -358,6 +359,7 @@ describe("/api/git", () => {
     }));
 
     expect(response.status).toBe(200);
+    await waitForConversationBackgroundTasksForTests();
     const payload = await response.json();
     const forkedRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
     const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, payload.runId));
@@ -374,6 +376,9 @@ describe("/api/git", () => {
     expect(events.some((event) => event.eventType === "git_workspace_forked")).toBe(true);
     expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe(snapshot.branchName);
     expect(git(checkoutPath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("feature/api-fork");
-    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({ cwd: checkoutPath }));
+    const forkedWorker = await db.select().from(workers).where(eq(workers.runId, payload.runId)).get();
+    expect(forkedWorker).toMatchObject({ cwd: checkoutPath, status: "idle", bridgeSessionId: null });
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(mockAskAgent).not.toHaveBeenCalled();
   }, GIT_ROUTE_TEST_TIMEOUT_MS);
 });

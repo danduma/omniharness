@@ -446,8 +446,13 @@ export function AgentsSettingsPanel({
                       {modelOptions.length > 0 ? (
                         <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto pr-1">
                           {modelOptions.map((model) => (
-                            <span key={model.value} className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] text-foreground/80">
+                            <span key={model.value} className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] text-foreground/80">
                               {model.label}
+                              {model.source === "gateway" ? (
+                                <span className="rounded bg-background/70 px-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                  {t("settings.agents.modelSource.gateway")}
+                                </span>
+                              ) : null}
                             </span>
                           ))}
                         </div>

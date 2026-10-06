@@ -30,11 +30,28 @@ export type NormalizeQuotaResumeOptions = {
   allowQuotaWaitWithoutParsedReset?: boolean;
 };
 
-const QUOTA_LANGUAGE_PATTERN = /\b(?:quota|credit|credits|usage limit|subscription limit|billing limit|resource exhausted|insufficient quota|rate limit(?:ed)?|too many requests)\b/i;
+// "session limit" is how Claude words an exhausted window. It used to be
+// classified only when the text also carried a parseable reset time, via the
+// `hasResetSignal` fallback in `looksLikeQuota` — so the wording alone, with no
+// clock attached, read as an ordinary error. The partial-usage guard
+// (USAGE_PROGRESS_PATTERN) runs first, so "used 85% of your session limit" is
+// still not treated as exhaustion.
+const QUOTA_LANGUAGE_PATTERN = /\b(?:quota|credit|credits|usage limit|session limit|subscription limit|billing limit|resource exhausted|insufficient quota|rate limit(?:ed)?|too many requests)\b/i;
 const RESET_LANGUAGE_PATTERN = /\b(?:retry-after|retry after|try again|reset|resets|available|until|after)\b/i;
 const GENERIC_OVERLOAD_PATTERN = /\b(?:overloaded|busy|temporar(?:y|ily)|service unavailable|server error|capacity|traffic)\b/i;
 const USAGE_PROGRESS_PATTERN = /\b(?:you(?:'|’)ve\s+)?used\s+(\d{1,3}(?:\.\d+)?)%\s+of\s+(?:your\s+)?(?:(?:weekly|session|usage|subscription|billing)\s+)?limit\b/i;
 const CLOCK_SKEW_MS = 60_000;
+
+/** Claude can return this notice in a successful end_turn rather than an
+ * error. Match the provider notice itself, including duplicated chunks, so
+ * quoted diagnostics and ordinary discussion of quota remain successful. */
+export function providerQuotaNoticeText(text: string | null | undefined): string | null {
+  const notice = text?.trim();
+  if (!notice || !/^(?:you(?:'|’)ve hit your (?:(?:session|weekly|usage|subscription) )?limit(?:\s*·\s*resets\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?(?:\s*\([\w/+:-]+\))?)?\s*)+$/i.test(notice)) {
+    return null;
+  }
+  return notice;
+}
 
 function nowDate(value: Date | number | undefined) {
   if (value instanceof Date) {

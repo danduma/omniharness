@@ -93,7 +93,7 @@ describe("GoalPlanManager", () => {
     expect(manager.getSnapshot()).toMatchObject({
       editingRunId: null,
       editDraft: "",
-      pending: null,
+      pending: { runId: "run-1", operationId: "op-1" },
       failedOperation: null,
       actionError: null,
       focusRunId: null,
@@ -101,5 +101,9 @@ describe("GoalPlanManager", () => {
     });
     expect(manager.getSnapshot().expandedRunIds.size).toBe(0);
     expect(manager.switchRun("run-2")).toBe(false);
+    manager.switchRun("run-1");
+    expect(manager.getSnapshot().pending?.operationId).toBe("op-1");
+    expect(manager.completeOperation("run-1", "op-1", 3)).toBe(true);
+    expect(manager.getSnapshot().pending).toBeNull();
   });
 });

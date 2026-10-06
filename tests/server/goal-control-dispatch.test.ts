@@ -90,4 +90,56 @@ describe("GoalControlDispatchCoordinator", () => {
     expect(dispatchedObjectives).toEqual(["First objective", "Second objective"]);
     expect(settledRevision).toBe(2);
   });
+
+  it("parks a control the agent refused mid-turn and replays it when the turn settles", async () => {
+    const current = snapshot(1, "Ship it");
+    let busy = true;
+    const dispatch = vi.fn(async () => (busy
+      ? { kind: "deferred" as const, reason: "worker_busy" as const }
+      : { kind: "dispatched" as const, method: "slash" as const }));
+    const coordinator = createGoalControlDispatchCoordinator({
+      getGoal: vi.fn(async () => current),
+      isControlSettled: vi.fn(async () => false),
+      dispatch,
+      markControlApplied: vi.fn(async () => true),
+    });
+
+    expect(await coordinator.dispatch(current, "retry")).toMatchObject({ kind: "deferred", reason: "worker_busy" });
+    expect(coordinator.hasDeferredControl("run-1")).toBe(true);
+
+    busy = false;
+    expect(await coordinator.retryDeferredControl("run-1")).toMatchObject({ kind: "dispatched", method: "slash" });
+    expect(dispatch).toHaveBeenNthCalledWith(2, expect.objectContaining({ revision: 1 }), "retry");
+    expect(coordinator.hasDeferredControl("run-1")).toBe(false);
+    expect(coordinator.retryDeferredControl("run-1")).toBeNull();
+  });
+
+  it("keeps a run parked while the agent stays busy", async () => {
+    const current = snapshot(1, "Ship it");
+    const coordinator = createGoalControlDispatchCoordinator({
+      getGoal: vi.fn(async () => current),
+      isControlSettled: vi.fn(async () => false),
+      dispatch: vi.fn(async () => ({ kind: "deferred" as const, reason: "worker_busy" as const })),
+      markControlApplied: vi.fn(async () => true),
+    });
+
+    await coordinator.dispatch(current, "pause");
+    await coordinator.retryDeferredControl("run-1");
+
+    expect(coordinator.hasDeferredControl("run-1")).toBe(true);
+  });
+
+  it("does not park a deferral that only means the goal holds no lease", async () => {
+    const current = snapshot(1, "Ship it");
+    const coordinator = createGoalControlDispatchCoordinator({
+      getGoal: vi.fn(async () => current),
+      isControlSettled: vi.fn(async () => false),
+      dispatch: vi.fn(async () => ({ kind: "deferred" as const, reason: "no_active_lease" as const })),
+      markControlApplied: vi.fn(async () => true),
+    });
+
+    await coordinator.dispatch(current, "set");
+
+    expect(coordinator.hasDeferredControl("run-1")).toBe(false);
+  });
 });

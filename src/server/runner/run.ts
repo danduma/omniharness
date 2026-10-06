@@ -6,6 +6,7 @@ import {
   getClaudeModelGatewayService,
 } from "@/server/integrations/claude-model-gateway";
 import { reclaimOrphanedDeliveringMessages } from "@/server/conversations/queued-messages";
+import { resumeAcceptedDirectMessageDeliveries } from "@/server/conversations/send-message";
 import { repairLeakedConversationTitles } from "@/server/conversations/agent-session-title";
 import { compactGoalControlHistory, recoverGoalOutboxAtStartup, stopGoalOutboxDelivery } from "@/server/runs/goal-outbox";
 import { recoverPendingGoalControlsAtStartup } from "@/server/runs/goal-control-dispatch";
@@ -110,8 +111,22 @@ export async function startRunnerProcess(
     await compactGoalControlHistory();
     // Deliveries do not survive a restart; reclaim any row their death orphaned.
     await reclaimOrphanedDeliveringMessages().catch((error) => {
+      const reason = error instanceof Error ? error.message : String(error);
+      emitNamedEvent({
+        kind: "conversation.delivery_reclaim_failed",
+        runId: null,
+        messageId: null,
+        reason,
+      });
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "conversation.delivery_recovery_failed",
+        message: `Could not inspect interrupted message deliveries: ${reason}`,
+        surface: "log",
+        cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+      });
       process.stderr.write(
-        `[runner] failed to reclaim orphaned queued messages: ${error instanceof Error ? error.message : String(error)}\n`,
+        `[runner] failed to reclaim orphaned queued messages: ${reason}\n`,
       );
     });
     // Titles poisoned before the guard existed cannot repair themselves: the
@@ -131,6 +146,7 @@ export async function startRunnerProcess(
     await ensureSupervisorRuntimeStarted();
     await ensureClaudeModelGatewayStartedAtBoot();
     await bridge.start();
+    await resumeAcceptedDirectMessageDeliveries();
     bridgeEventForwarder.start();
     const claudeAccountAuthService = await getClaudeAccountAuthService({ instanceRoot: config.instanceRoot });
     await claudeAccountAuthService.reconcileAtStartup();

@@ -7,6 +7,14 @@ import { interfaceCspManifestPlugin } from "./vite-csp-manifest";
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 export default defineConfig(({ command, mode }) => {
+  // Vite honours an inherited NODE_ENV, so a build launched from a shell or
+  // agent that exports NODE_ENV=development (or vitest's "test") silently ships
+  // React's development runtime, which makes every keystroke several times
+  // slower. The served interface is always a production bundle; development
+  // goes through the dev server. This runs before Vite derives isProduction.
+  if (command === "build") {
+    process.env.NODE_ENV = "production";
+  }
   const packaged = mode === "packaged";
   return {
     root: path.join(repositoryRoot, "apps/interface"),

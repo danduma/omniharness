@@ -1,12 +1,12 @@
 "use client";
 
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
-import { ALargeSmall, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, ExternalLink, LoaderCircle } from "lucide-react";
+import { ALargeSmall, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, ExternalLink, LoaderCircle, Menu } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { ProjectFileContextMenu } from "@/components/ProjectFileContextMenu";
 import { conversationCopyNoticeManager, terminalUiManager } from "@/components/component-state-managers";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   appearancePreferencesManager,
   getConversationTerminalTextSizeStyle,
@@ -35,6 +35,10 @@ import {
   type GeneratedImageItem,
   type GeneratedImagesActivity,
 } from "@/components/terminal/generated-image-activity";
+import {
+  buildMessageModelAttribution,
+  formatMessageModelAttribution,
+} from "@/components/terminal/model-attribution";
 
 export {
   resolveTerminalPrependedScrollTop,
@@ -75,6 +79,8 @@ interface TerminalProps {
   /** Ids of user messages whose send request is still in flight. */
   sendingUserMessageIds?: ReadonlySet<string>;
   getUserMessageActions?: (message: TerminalUserMessage) => TerminalUserMessageAction[];
+  /** Extra hover actions for an assistant reply, shown beside Copy. */
+  getAssistantMessageActions?: (message: TerminalAssistantMessage) => TerminalUserMessageAction[];
   editingUserMessageId?: string | null;
   editingUserMessageValue?: string;
   isEditingUserMessageSaving?: boolean;
@@ -109,6 +115,11 @@ export interface TerminalUserMessage {
   attachments?: ChatAttachment[];
 }
 
+export interface TerminalAssistantMessage {
+  id: string;
+  content: string;
+}
+
 export interface TerminalUserMessageAction {
   label: string;
   title?: string;
@@ -133,6 +144,9 @@ export interface AgentTerminalPayload {
   currentText?: string;
   lastText?: string;
   displayText?: string;
+  /** Live session selections, used to attribute messages older than the loaded window. */
+  effectiveModel?: string | null;
+  effectiveEffort?: string | null;
 }
 
 export type TerminalActivityItem = AgentActivityItem | {
@@ -180,6 +194,7 @@ export function getTerminalActivityVersion(activity: TerminalActivityItem[]) {
       case "permission":
         return `${item.id}:${item.kind}:${item.timestamp}:${item.status}:${item.title.length}:${item.text.length}:${item.detail?.length ?? 0}`;
       case "message":
+        return `${item.id}:${item.kind}:${item.timestamp}:${item.text.length}:${item.model ?? ""}:${item.effort ?? ""}`;
       case "user_message":
         return `${item.id}:${item.kind}:${item.timestamp}:${item.text.length}`;
       case "generated_images":
@@ -291,6 +306,19 @@ export function shouldTerminalScrollToLatest({
 function activityTimestampMs(timestamp: string) {
   const value = new Date(timestamp).getTime();
   return Number.isFinite(value) ? value : 0;
+}
+
+function formatMessageTime(timestamp: string) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
 }
 
 /**
@@ -824,7 +852,7 @@ function ActivityPane({
           {label}
         </div>
         <pre className={cn(
-          "min-w-0 flex-1 overflow-auto px-2.5 py-2 font-mono whitespace-pre-wrap break-words",
+          "min-w-0 flex-1 overflow-auto px-2.5 py-2 font-mono whitespace-pre-wrap break-words [overflow-wrap:anywhere]",
           "text-[length:var(--terminal-pane-size)]",
           variant === "native" ? "leading-[1.5]" : "leading-[1.55]",
           clipped && "line-clamp-[3]",
@@ -1354,7 +1382,13 @@ function ToolActivity({
         ) : null}
         <span
           className={cn(
-            "font-mono leading-[1.45]",
+            // `min-w-0` + `anywhere` together, not `break-words`. A tool title is
+            // usually a file path, and a path has no soft wrap opportunity a
+            // browser will take on its own. `overflow-wrap: break-word` does not
+            // feed into min-content sizing, so as a flex item in this wrapping
+            // row the span kept its full max-content width and ran straight off
+            // the viewport — nothing to scroll to on touch, text simply lost.
+            "min-w-0 [overflow-wrap:anywhere] font-mono leading-[1.45]",
             showToolLabel ? "text-[length:var(--terminal-tool-title-size)]" : "text-[length:var(--terminal-tool-label-size)]",
             variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-300/95",
           )}
@@ -1749,22 +1783,22 @@ function WorkSummaryNestedItem({
                 ? "border-amber-500/35 bg-amber-500/10"
                 : "border-amber-500/25 bg-amber-500/10 dark:border-amber-400/20 dark:bg-[rgba(96,67,22,0.34)]",
             )}>
-              <div className={cn("text-[length:var(--terminal-permission-title-size)] font-semibold tracking-tight", variant === "native" ? "text-amber-800 dark:text-amber-300" : "text-amber-800 dark:text-amber-100")}>{item.title}</div>
+              <div className={cn("break-words [overflow-wrap:anywhere] text-[length:var(--terminal-permission-title-size)] font-semibold tracking-tight", variant === "native" ? "text-amber-800 dark:text-amber-300" : "text-amber-800 dark:text-amber-100")}>{item.title}</div>
               {item.detail ? (
-                <p className={cn("mt-0.5 break-words font-mono text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/85 dark:text-amber-100/85" : "text-amber-900/85 dark:text-amber-50/85")}>{item.detail}</p>
+                <p className={cn("mt-0.5 break-words [overflow-wrap:anywhere] font-mono text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/85 dark:text-amber-100/85" : "text-amber-900/85 dark:text-amber-50/85")}>{item.detail}</p>
               ) : null}
               {item.text ? (
-                <p className={cn("mt-0.5 whitespace-pre-wrap text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/75 dark:text-amber-100/75" : "text-amber-900/75 dark:text-amber-50/75")}>{item.text}</p>
+                <p className={cn("mt-0.5 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/75 dark:text-amber-100/75" : "text-amber-900/75 dark:text-amber-50/75")}>{item.text}</p>
               ) : null}
             </div>
           ) : (
             <div className="py-0.5">
-              <div className={cn("text-[length:var(--terminal-permission-title-size)] font-medium", variant === "native" ? "text-foreground/80 dark:text-zinc-300" : "text-foreground/80 dark:text-zinc-300")}>{item.title}</div>
+              <div className={cn("break-words [overflow-wrap:anywhere] text-[length:var(--terminal-permission-title-size)] font-medium", variant === "native" ? "text-foreground/80 dark:text-zinc-300" : "text-foreground/80 dark:text-zinc-300")}>{item.title}</div>
               {item.detail ? (
-                <p className={cn("mt-0.5 break-words font-mono text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-500")}>{item.detail}</p>
+                <p className={cn("mt-0.5 break-words [overflow-wrap:anywhere] font-mono text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-500")}>{item.detail}</p>
               ) : null}
               {item.text ? (
-                <p className={cn("mt-0.5 whitespace-pre-wrap text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-500")}>{item.text}</p>
+                <p className={cn("mt-0.5 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-500")}>{item.text}</p>
               ) : null}
             </div>
           )
@@ -1906,7 +1940,7 @@ function ProtocolActivityContent({
   }
   if (activity.protocolType === "content" && content?.type === "terminal") {
     const output = typeof content.output === "string" ? content.output : activity.text;
-    return <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-background p-3 font-mono text-xs">{output}</pre>;
+    return <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-lg border border-border bg-background p-3 font-mono text-xs">{output}</pre>;
   }
   if (activity.protocolType === "content" && content?.type === "resource_link") {
     const uri = typeof content.uri === "string" ? content.uri : activity.text;
@@ -1920,7 +1954,7 @@ function ProtocolActivityContent({
       ? content.resource as Record<string, unknown>
       : null;
     const resourceText = typeof resource?.text === "string" ? resource.text : activity.text;
-    return <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted/30 p-3 text-xs">{resourceText}</pre>;
+    return <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-lg border border-border bg-muted/30 p-3 text-xs">{resourceText}</pre>;
   }
   if (activity.protocolType === "plan" || activity.protocolType === "plan_update") {
     return (
@@ -1932,7 +1966,7 @@ function ProtocolActivityContent({
       />
     );
   }
-  return activity.text ? <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{activity.text}</p> : null;
+  return activity.text ? <p className="mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6 text-muted-foreground">{activity.text}</p> : null;
 }
 
 function WorkerEntryContentImage({
@@ -2123,6 +2157,92 @@ function GeneratedImagesCarousel({ activity }: { activity: GeneratedImagesActivi
 }
 
 /**
+ * Touch-only stand-in for the hover toolbar on assistant messages. Phones never
+ * hover, so the overlay stayed invisible and untappable there; this puts copy,
+ * the message actions, and the model/time behind one button overlaid on the
+ * message's bottom-right corner, so it costs no row of its own.
+ *
+ * Deliberately not an ellipsis: a "…" under the last line of an agent message
+ * reads as "the model is still typing" or "the reply was cut off".
+ */
+function AssistantMessageTouchMenu({
+  actions,
+  metaLabel,
+  copied,
+  onCopy,
+}: {
+  actions: TerminalUserMessageAction[];
+  metaLabel: string;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  return (
+    <div className="pointer-events-none absolute bottom-0 right-0 z-10 hidden items-center gap-1 text-muted-foreground/70 touch:flex">
+      {copied ? (
+        <span
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none whitespace-nowrap rounded-md border border-border/70 bg-popover px-2 py-1 text-[11px] font-medium leading-none text-popover-foreground shadow-sm"
+        >
+          {t("conversation.message.copiedNotice")}
+        </span>
+      ) : null}
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          aria-label={t("conversation.message.actionsAria")}
+          title={t("conversation.message.actionsAria")}
+          className="pointer-events-auto inline-flex h-8 w-8 items-center justify-center rounded-md bg-background/80 shadow-sm backdrop-blur-[2px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-muted data-popup-open:text-foreground"
+        >
+          <Menu className="h-4 w-4" aria-hidden="true" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" side="top">
+          {metaLabel ? (
+            <DropdownMenuLabel className="whitespace-nowrap font-normal tabular-nums">{metaLabel}</DropdownMenuLabel>
+          ) : null}
+          <DropdownMenuItem className="min-h-10 cursor-pointer" onClick={onCopy}>
+            <Copy className="h-4 w-4" aria-hidden="true" />
+            {t("conversation.message.copyAria")}
+          </DropdownMenuItem>
+          {actions.map((action) => (
+            action.menuItems?.length ? (
+              <DropdownMenuSub key={action.label}>
+                <DropdownMenuSubTrigger className="min-h-10 cursor-pointer" disabled={action.disabled}>
+                  <span className="inline-flex h-4 w-4 items-center justify-center">{action.icon}</span>
+                  {action.label}
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  {action.menuItems.map((item) => (
+                    <DropdownMenuItem
+                      key={item.label}
+                      className="min-h-10 cursor-pointer whitespace-nowrap"
+                      disabled={item.disabled}
+                      onClick={item.onClick}
+                    >
+                      <span className="inline-flex h-4 w-4 items-center justify-center">{item.icon}</span>
+                      {item.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            ) : (
+              <DropdownMenuItem
+                key={action.label}
+                className="min-h-10 cursor-pointer"
+                disabled={action.disabled}
+                onClick={action.onClick}
+              >
+                <span className="inline-flex h-4 w-4 items-center justify-center">{action.icon}</span>
+                {action.label}
+              </DropdownMenuItem>
+            )
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
+/**
  * Memoized: this is the per-entry component, rendered once for every item in
  * the transcript. Combined with the per-id `terminalUiManager` selectors above
  * and the memoized `MarkdownContent`, a single streamed entry now re-renders
@@ -2132,6 +2252,42 @@ function GeneratedImagesCarousel({ activity }: { activity: GeneratedImagesActivi
  * The props are all scalars, stable callbacks, or entries from Terminal's
  * memoized `activity` array, so the shallow comparison is meaningful.
  */
+function MessageActionMenu({
+  action,
+  menuItems,
+  align = "end",
+}: {
+  action: TerminalUserMessageAction;
+  menuItems: TerminalUserMessageActionItem[];
+  align?: "start" | "end";
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label={action.label}
+        title={action.title ?? action.label}
+        disabled={action.disabled}
+        className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {action.icon}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align={align}>
+        {menuItems.map((item) => (
+          <DropdownMenuItem
+            key={item.label}
+            className="cursor-pointer whitespace-nowrap"
+            disabled={item.disabled}
+            onClick={item.onClick}
+          >
+            <span className="mr-2 inline-flex h-4 w-4 items-center justify-center">{item.icon}</span>
+            {item.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 const ActivityRow = memo(function ActivityRow({
   activity,
   connectorExtendsAfter = false,
@@ -2144,6 +2300,7 @@ const ActivityRow = memo(function ActivityRow({
   onEditingUserMessageValueChange,
   onCancelEditingUserMessage,
   onSaveEditedUserMessage,
+  getAssistantMessageActions,
   thoughtsDefaultOpen,
   toolGroupsDefaultOpen,
   projectRoot,
@@ -2160,6 +2317,7 @@ const ActivityRow = memo(function ActivityRow({
   onEditingUserMessageValueChange?: (value: string) => void;
   onCancelEditingUserMessage?: () => void;
   onSaveEditedUserMessage?: (messageId: string) => void;
+  getAssistantMessageActions?: (message: TerminalAssistantMessage) => TerminalUserMessageAction[];
   thoughtsDefaultOpen: boolean;
   toolGroupsDefaultOpen: boolean;
   projectRoot?: string | null;
@@ -2192,6 +2350,17 @@ const ActivityRow = memo(function ActivityRow({
     }
   };
 
+  const modelAttributionLabel = activity.kind === "message"
+    ? formatMessageModelAttribution(activity.model, activity.effort)
+    : null;
+  const messageTimeLabel = activity.kind === "message"
+    ? formatMessageTime(activity.timestamp)
+    : "";
+  // A live fallback bubble has no stream entry behind it to act on.
+  const assistantMessageActions = activity.kind === "message" && !activity.live && activity.text.trim()
+    ? getAssistantMessageActions?.({ id: activity.id, content: activity.text }) ?? []
+    : [];
+
   if (activity.kind === "user_message") {
     const isEditing = activity.messageId === editingUserMessageId
       && onEditingUserMessageValueChange
@@ -2218,7 +2387,7 @@ const ActivityRow = memo(function ActivityRow({
               : "text-[length:var(--terminal-message-size)] leading-[1.55]",
             activity.sending && "opacity-70",
           )}>
-            {activity.text ? <p className="max-w-none whitespace-pre-wrap break-words">{activity.text}</p> : null}
+            {activity.text ? <p className="max-w-none whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{activity.text}</p> : null}
             {activity.attachments.length > 0 ? <UserMessageAttachments attachments={activity.attachments} /> : null}
           </div>
         )}
@@ -2228,29 +2397,7 @@ const ActivityRow = memo(function ActivityRow({
               const showCopiedNotice = action.feedback === "copy-message" && copiedIdForThisRow === activity.messageId;
 
               return action.menuItems?.length ? (
-                <DropdownMenu key={action.label}>
-                  <DropdownMenuTrigger
-                    aria-label={action.label}
-                    title={action.title ?? action.label}
-                    disabled={action.disabled}
-                    className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {action.icon}
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    {action.menuItems.map((item) => (
-                      <DropdownMenuItem
-                        key={item.label}
-                        className="cursor-pointer whitespace-nowrap"
-                        disabled={item.disabled}
-                        onClick={item.onClick}
-                      >
-                        <span className="mr-2 inline-flex h-4 w-4 items-center justify-center">{item.icon}</span>
-                        {item.label}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <MessageActionMenu key={action.label} action={action} menuItems={action.menuItems} />
               ) : (
                 <span key={action.label} className="relative inline-flex flex-col items-center">
                   <button
@@ -2340,8 +2487,19 @@ const ActivityRow = memo(function ActivityRow({
               // button exactly where it was on hover while costing no height,
               // and `pointer-events` stay off until it is actually revealed so
               // the corner never eats a click or a text selection.
-              <div className="pointer-events-none absolute bottom-0 right-0 z-10 flex items-center text-muted-foreground/70">
-                <span className="pointer-events-none relative inline-flex flex-col items-center rounded-md bg-background/80 opacity-0 shadow-sm backdrop-blur-[2px] transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-hover/agent-message:pointer-events-auto group-hover/agent-message:opacity-100">
+              //
+              // Narrow viewports pin it to the left instead: the right corner
+              // is where a thumb rests and where the composer's own controls
+              // sit, so the bottom-right overlay was the hardest thing on the
+              // screen to hit deliberately.
+              //
+              // Touch screens never fire `group-hover`, so there the overlay
+              // is dropped for the always-visible touch menu below.
+              <div className="pointer-events-none absolute bottom-0 left-0 z-10 flex items-center text-muted-foreground/70 touch:hidden sm:left-auto sm:right-0">
+                <span className={cn(
+                  "pointer-events-none relative inline-flex items-center gap-1 rounded-md bg-background/80 opacity-0 shadow-sm backdrop-blur-[2px] transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-hover/agent-message:pointer-events-auto group-hover/agent-message:opacity-100",
+                  (modelAttributionLabel || messageTimeLabel) && "pr-1.5",
+                )}>
                   <button
                     type="button"
                     aria-label={t("conversation.message.copyAria")}
@@ -2351,17 +2509,52 @@ const ActivityRow = memo(function ActivityRow({
                   >
                     <Copy className="h-4 w-4" />
                   </button>
+                  {assistantMessageActions.map((action) => (
+                    action.menuItems?.length ? (
+                      <MessageActionMenu key={action.label} action={action} menuItems={action.menuItems} align="start" />
+                    ) : (
+                      <button
+                        key={action.label}
+                        type="button"
+                        aria-label={action.label}
+                        title={action.title ?? action.label}
+                        disabled={action.disabled}
+                        onClick={action.onClick}
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {action.icon}
+                      </button>
+                    )
+                  ))}
+                  {modelAttributionLabel ? (
+                    <span className="whitespace-nowrap text-[11px] font-medium leading-none">
+                      {modelAttributionLabel}
+                    </span>
+                  ) : null}
+                  {messageTimeLabel ? (
+                    <time dateTime={activity.timestamp} className="whitespace-nowrap text-[11px] leading-none tabular-nums">
+                      {messageTimeLabel}
+                    </time>
+                  ) : null}
                   {copiedIdForThisRow === activity.id ? (
                     <span
                       role="status"
                       aria-live="polite"
-                      className="pointer-events-none absolute top-full z-20 mt-1 whitespace-nowrap rounded-md border border-border/70 bg-popover px-2 py-1 text-[11px] font-medium leading-none text-popover-foreground shadow-sm"
+                      className="pointer-events-none absolute left-0 top-full z-20 mt-1 whitespace-nowrap rounded-md border border-border/70 bg-popover px-2 py-1 text-[11px] font-medium leading-none text-popover-foreground shadow-sm"
                     >
                       {t("conversation.message.copiedNotice")}
                     </span>
                   ) : null}
                 </span>
               </div>
+            ) : null}
+            {activity.text.trim() ? (
+              <AssistantMessageTouchMenu
+                actions={assistantMessageActions}
+                metaLabel={[modelAttributionLabel, messageTimeLabel].filter(Boolean).join(" · ")}
+                copied={copiedIdForThisRow === activity.id}
+                onCopy={() => void copyAgentMessage(activity.text, activity.id)}
+              />
             ) : null}
           </div>
         ) : null}
@@ -2412,22 +2605,22 @@ const ActivityRow = memo(function ActivityRow({
                 ? "border-amber-500/25 bg-amber-500/8"
                 : "border-amber-500/25 bg-amber-500/10 dark:border-amber-400/20 dark:bg-[rgba(96,67,22,0.34)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]",
             )}>
-              <div className={cn("text-[length:var(--terminal-permission-title-size)] font-semibold tracking-tight", variant === "native" ? "text-amber-800 dark:text-amber-300" : "text-amber-800 dark:text-amber-100")}>{t(activity.title)}</div>
+              <div className={cn("break-words [overflow-wrap:anywhere] text-[length:var(--terminal-permission-title-size)] font-semibold tracking-tight", variant === "native" ? "text-amber-800 dark:text-amber-300" : "text-amber-800 dark:text-amber-100")}>{t(activity.title)}</div>
               {activity.detail ? (
-                <p className={cn("mt-0.5 break-words font-mono text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/85 dark:text-amber-100/85" : "text-amber-900/85 dark:text-amber-50/85")}>{t("terminal.permission.for", { detail: activity.detail })}</p>
+                <p className={cn("mt-0.5 break-words [overflow-wrap:anywhere] font-mono text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/85 dark:text-amber-100/85" : "text-amber-900/85 dark:text-amber-50/85")}>{t("terminal.permission.for", { detail: activity.detail })}</p>
               ) : null}
               {activity.text ? (
-                <p className={cn("mt-0.5 whitespace-pre-wrap text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/75 dark:text-amber-100/75" : "text-amber-900/75 dark:text-amber-50/75")}>{activity.text}</p>
+                <p className={cn("mt-0.5 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-amber-900/75 dark:text-amber-100/75" : "text-amber-900/75 dark:text-amber-50/75")}>{activity.text}</p>
               ) : null}
             </div>
           ) : (
             <div className="py-0.5">
-              <div className={cn("text-[length:var(--terminal-permission-title-size)] font-medium", variant === "native" ? "text-foreground/80 dark:text-zinc-300" : "text-foreground/80 dark:text-zinc-300")}>{t(activity.title)}</div>
+              <div className={cn("break-words [overflow-wrap:anywhere] text-[length:var(--terminal-permission-title-size)] font-medium", variant === "native" ? "text-foreground/80 dark:text-zinc-300" : "text-foreground/80 dark:text-zinc-300")}>{t(activity.title)}</div>
               {activity.detail ? (
-                <p className={cn("mt-0.5 break-words font-mono text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-500")}>{t("terminal.permission.for", { detail: activity.detail })}</p>
+                <p className={cn("mt-0.5 break-words [overflow-wrap:anywhere] font-mono text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-500")}>{t("terminal.permission.for", { detail: activity.detail })}</p>
               ) : null}
               {activity.text ? (
-                <p className={cn("mt-0.5 whitespace-pre-wrap text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-500")}>{activity.text}</p>
+                <p className={cn("mt-0.5 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[length:var(--terminal-permission-text-size)] leading-[1.45]", variant === "native" ? "text-muted-foreground" : "text-muted-foreground dark:text-zinc-500")}>{activity.text}</p>
               ) : null}
             </div>
           )
@@ -2457,6 +2650,7 @@ export function Terminal({
   ungatedUserMessageIds,
   sendingUserMessageIds,
   getUserMessageActions,
+  getAssistantMessageActions,
   editingUserMessageId = null,
   editingUserMessageValue = "",
   isEditingUserMessageSaving = false,
@@ -2564,17 +2758,33 @@ export function Terminal({
         }
       }
     }
+    // `config_option` rows never reach `buildAgentOutputActivity` on the
+    // unified path — they are protocol metadata, not conversation — so the
+    // attribution is read off the entries themselves and stamped onto the
+    // message items afterwards.
+    const modelAttributionByEntryId = buildMessageModelAttribution(
+      usingUnifiedStream ? visibleEntries ?? [] : agent?.outputEntries ?? [],
+      {
+        workerId: workerId ?? null,
+        model: agent?.effectiveModel ?? null,
+        effort: agent?.effectiveEffort ?? null,
+      },
+    );
     const agentActivity: TerminalActivityItemWithOrder[] = buildAgentOutputActivity({
       outputEntries: bridgeEntries,
       state: usingUnifiedStream ? "idle" : agent?.state,
       currentText: usingUnifiedStream ? "" : agent?.currentText,
       lastText: usingUnifiedStream ? "" : agent?.lastText,
       displayText: usingUnifiedStream ? "" : agent?.displayText,
-    }).map((item) => (
-      usingUnifiedStream
-        ? { ...item, streamSeq: activityStreamSeq(item, seqByActivityId) ?? undefined }
-        : item
-    ));
+    }).map((item): TerminalActivityItemWithOrder => {
+      const attribution = item.kind === "message" ? modelAttributionByEntryId.get(item.id) : undefined;
+      const attributed: TerminalActivityItem = item.kind === "message" && attribution
+        ? { ...item, model: attribution.model, effort: attribution.effort }
+        : item;
+      return usingUnifiedStream
+        ? { ...attributed, streamSeq: activityStreamSeq(item, seqByActivityId) ?? undefined }
+        : attributed;
+    });
     const generatedImagesActivity: TerminalActivityItemWithOrder[] = usingUnifiedStream
       ? buildGeneratedImagesActivity(visibleEntries ?? [], workerId)
       : [];
@@ -2991,6 +3201,7 @@ export function Terminal({
                   onEditingUserMessageValueChange={onEditingUserMessageValueChange}
                   onCancelEditingUserMessage={onCancelEditingUserMessage}
                   onSaveEditedUserMessage={onSaveEditedUserMessage}
+                  getAssistantMessageActions={getAssistantMessageActions}
                   thoughtsDefaultOpen={thoughtsDefaultOpen}
                   toolGroupsDefaultOpen={effectiveToolGroupsDefaultOpen}
                   projectRoot={projectRoot}

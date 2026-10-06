@@ -227,6 +227,43 @@ describe("Claude account authentication service", () => {
     expect(await db.select().from(accounts).where(eq(accounts.id, "local-session-claude"))).toHaveLength(1);
   });
 
+  it("opens the sign-in terminal without running nonessential CLI preflight commands", async () => {
+    const commandCalls: string[] = [];
+    const { service, terminals } = createService({
+      assertCapability: undefined,
+      runCommand: async (args) => {
+        const command = args.join(" ");
+        commandCalls.push(command);
+        throw new Error(`nonessential preflight command ran: ${command}`);
+      },
+    });
+
+    await expect(service.signInLocal("session-a")).resolves.toMatchObject({
+      operation: { phase: "authenticating", terminal: { id: "term-1" } },
+    });
+    expect(commandCalls).toEqual([]);
+    expect(terminals.created).toHaveLength(1);
+  });
+
+  it("keeps subscription OAuth in the managed terminal instead of opening a browser on the runner host", async () => {
+    const home = mkdtempSync(join(tmpdir(), "omni-claude-auth-browser-"));
+    const { service, terminals } = createService({
+      env: {
+        HOME: home,
+        PATH: "/usr/bin:/bin",
+        BROWSER: "/Applications/Google Chrome.app",
+      },
+    });
+
+    await service.signInLocal("session-a");
+
+    expect(terminals.created[0]).toMatchObject({
+      env: {
+        BROWSER: "/usr/bin/false",
+      },
+    });
+  });
+
   it("parses valid unauthenticated status JSON even when Claude exits nonzero", async () => {
     const statusError = Object.assign(new Error("Command failed: claude auth status --json"), {
       stdout: JSON.stringify({ loggedIn: false }),
@@ -250,6 +287,56 @@ describe("Claude account authentication service", () => {
       phase: "failed",
       error: { code: "account.login_required" },
     });
+  });
+
+  it("re-enables an account after a fresh status probe confirms external sign-in", async () => {
+    const { service } = createService();
+    const accountId = "claude-managed-external-login";
+    await db.insert(accounts).values({
+      id: accountId,
+      cliType: "claude",
+      provider: "anthropic",
+      type: "subscription",
+      label: "External login",
+      authMode: "local_session",
+      authRef: "local-session:claude",
+      enabled: false,
+      status: "unknown",
+      lifecycleOperationErrorCode: "account.auth.timeout",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const result = await service.refreshStatus(accountId);
+
+    expect(result).toMatchObject({ enabled: true, status: "available" });
+    expect(await db.select().from(accounts).where(eq(accounts.id, accountId)).get()).toMatchObject({
+      enabled: true,
+      status: "available",
+      lifecycleOperationErrorCode: null,
+    });
+  });
+
+  it("keeps an available account disabled when it was manually disabled", async () => {
+    const { service } = createService();
+    const accountId = "claude-managed-manually-disabled";
+    await db.insert(accounts).values({
+      id: accountId,
+      cliType: "claude",
+      provider: "anthropic",
+      type: "subscription",
+      label: "Manually disabled",
+      authMode: "local_session",
+      authRef: "local-session:claude",
+      enabled: false,
+      status: "available",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const result = await service.refreshStatus(accountId);
+
+    expect(result).toMatchObject({ enabled: false, status: "available" });
   });
 
   it("cancels explicitly and leaves the account disabled and login-required", async () => {
