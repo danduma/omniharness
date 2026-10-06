@@ -92,6 +92,63 @@ describe("MarkdownContent - List rendering", () => {
     expect(nestedLists).toHaveLength(1);
     expect(React.Children.count(nestedLists[0].props.children)).toBe(2);
   });
+
+  it("renders an indented table inside a bullet as a table, with the following text as its own paragraph", () => {
+    const content = [
+      "Reordered and duplicated clips now play on the editor's normal video path (`9dcf487f5`).",
+      "",
+      "- **Evidence:** the end-to-end playback journey passed twice in a row.",
+      "",
+      "  | Project | Run 1 | Run 2 |",
+      "  |---|---|---|",
+      "  | Reordered | 95.25% | 96.21% |",
+      "  | Duplicated | 97.07% | 95.81% |",
+      "",
+      "  Figures are playback speed against real time; the pass range is 95–105%.",
+      "- **Cause:** a repeated copy's caption lives under an ID that isn't in the original caption list.",
+    ].join("\n");
+
+    const tree = renderMarkdownContent({ content });
+    const topLevelChildren = React.Children.toArray(tree.props.children) as InspectableReactElement[];
+    const lists = topLevelChildren.filter((node) => node.type === "ul");
+    expect(lists).toHaveLength(1);
+
+    const items = React.Children.toArray(lists[0].props.children) as InspectableReactElement[];
+    expect(items).toHaveLength(2);
+
+    expect(findReactNodes(items[0], (n) => n.type === "table")).toHaveLength(1);
+    expect(findReactNodes(items[0], (n) => n.type === "th")).toHaveLength(3);
+    expect(findReactNodes(items[0], (n) => n.type === "td")).toHaveLength(6);
+
+    const itemParagraphs = findReactNodes(items[0], (n) => n.type === "p");
+    expect(itemParagraphs).toHaveLength(1);
+    expect(itemParagraphs[0].props.children).toEqual([
+      "Figures are playback speed against real time; the pass range is 95–105%.",
+    ]);
+    expect(findReactNodes(items[1], (n) => n.type === "table")).toHaveLength(0);
+  });
+
+  it("renders an indented fenced code block inside a bullet as a code block", () => {
+    const content = [
+      "- Run this:",
+      "",
+      "  ```sh",
+      "  pnpm test",
+      "",
+      "  pnpm build",
+      "  ```",
+      "- Done",
+    ].join("\n");
+
+    const tree = renderMarkdownContent({ content });
+    const preNodes = findReactNodes(tree, (n) => n.type === "pre");
+    expect(preNodes).toHaveLength(1);
+    expect(findReactNodes(preNodes[0], (n) => n.type === "code")[0].props.children).toBe("pnpm test\n\npnpm build");
+
+    const lists = findReactNodes(tree, (n) => n.type === "ul");
+    expect(lists).toHaveLength(1);
+    expect(React.Children.count(lists[0].props.children)).toBe(2);
+  });
 });
 
 describe("MarkdownContent - Project file links", () => {
