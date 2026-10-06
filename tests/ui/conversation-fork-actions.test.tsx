@@ -13,7 +13,7 @@ function renderActions() {
     mutations: {
       renameRun: mutation, moveRunToProject: mutation, deleteRun: mutation,
       archiveRun: mutation, recoverRun: mutation, resumeRunRecovery: mutation,
-      autoCommitChat: mutation, autoCommitProject: mutation,
+      autoCommitChat: mutation, runPresetCommand: mutation,
       commitWorkflowSettings: mutation, cancelQueuedMessage: mutation,
     },
     selectedRunId: "source-run",

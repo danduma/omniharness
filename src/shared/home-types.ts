@@ -449,7 +449,7 @@ export type ClaudeAccountAuthResponse = {
 };
 export type AccountRemovalResponse = { ok: true; accountId: string; profileDataPreserved: true };
 export type AccountPurgeResponse = { ok: true; accountId: string; profileDataPurged: true };
-export type SettingsTab = "general" | "models" | "credentials" | "agents" | "runtime" | "memory";
+export type SettingsTab = "general" | "presets" | "models" | "credentials" | "agents" | "runtime" | "memory";
 
 export type ConversationSidebarTab = "projects" | "recent";
 

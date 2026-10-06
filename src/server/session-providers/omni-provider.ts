@@ -30,6 +30,7 @@ export const omniSessionProvider: SessionProvider = {
       requestedRunId: input.requestedRunId,
       attachments: input.attachments,
       externalClaudeSessionId: input.externalClaudeSessionId,
+      presetCommandId: input.presetCommandId,
     });
   },
 

@@ -46,6 +46,7 @@ export type SurfacedErrorCode =
   | "conversation.delivery_refused"
   | "conversation.delivery_recovery_failed"
   | "conversation.preference_audit_failed"
+  | "conversation.preset_command_missing"
   | "conversation.title_generation_failed"
   | "external_session.import_failed"
   | "process.spawn.failed"
@@ -758,11 +759,13 @@ export type AccountEvent =
 
 export type ConversationEvent =
   | {
-      kind: "conversation.commit_agent_selected";
+      kind: "conversation.preset_command_selected";
       runId: string;
+      presetCommandId: string;
       workerType: string;
       model: string;
       effort: string;
+      accountId: string | null;
     }
   | { kind: "conversation.awaiting_user"; runId: string; workerId?: string; reason: "worker_requested_input" }
   | { kind: "conversation.read"; runId: string; lastReadAt: string }
@@ -925,6 +928,7 @@ export type ErrorSurfacedEvent = {
   workerId?: string;
   conversationId?: string;
   accountId?: string;
+  presetCommandId?: string;
   path?: string;
   cause?: { name: string; message: string } | null;
 };

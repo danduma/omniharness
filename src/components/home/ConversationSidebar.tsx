@@ -1,13 +1,13 @@
 import type React from "react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { Archive, Bug, ChevronDown, Folder, FolderInput, FolderPlus, GitCommitHorizontal, GripVertical, ListChevronsDownUp, LoaderCircle, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Smartphone, SquareTerminal, Sun, Trash2, TriangleAlert, Wand2, X } from "lucide-react";
+import { Archive, Bug, ChevronDown, Folder, FolderInput, FolderPlus, GitCommitHorizontal, GripVertical, ListChevronsDownUp, LoaderCircle, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pencil, Play, Plus, Search, Settings, Smartphone, SquareTerminal, Sun, Trash2, TriangleAlert, Wand2, X } from "lucide-react";
 import type { ConversationSidebarTab } from "@/interface/home/types";
 import type { ProjectDropPlacement } from "@/interface/home/utils";
 import { Button } from "@/components/ui/button";
 import { requestBugDropOpen } from "@/components/BugDropBootstrap";
 import { Collapsible, CollapsibleTrigger, COLLAPSIBLE_PANEL_CLOSED_CLASS, COLLAPSIBLE_PANEL_OPEN_CLASS, COLLAPSIBLE_PANEL_TRANSITION_CLASS } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -19,13 +19,14 @@ import { mobileConversationSwipeManager } from "@/interface/home/MobileConversat
 import { RunnerControls } from "@/interface/runners/RunnerControls";
 import { isRunUnread, resolveRunLatestUnreadTimestamp } from "@/lib/conversation-state";
 import { getConversationVisualKind, type ConversationVisualKind } from "@/lib/conversation-visuals";
-import type { ManualCommitAction } from "@/lib/commit-workflow";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { isArchivableRunStatus, isTerminalRunStatus, normalizeRunStatus } from "@/lib/run-status";
 import { cn } from "@/lib/utils";
 import { StateManager } from "@/lib/state-manager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { SidebarGroup, SidebarRun } from "@/interface/home/types";
+
+export type ProjectPresetCommandMenuItem = { id: string; name: string };
 
 class ConversationSidebarHydrationManager extends StateManager<boolean> {
   constructor() {
@@ -188,8 +189,9 @@ interface ConversationProjectGroupListProps {
   onReorderProjects: (draggedPath: string, targetPath: string, placement: ProjectDropPlacement) => void;
   onShowMoreProjectSessions: (projectPath: string) => void;
   beginConversationInProject: (projectPath: string) => void;
-  autoCommitProject: (projectPath: string, action?: import("@/lib/commit-workflow").ManualCommitAction) => void;
-  isAutoCommitProjectPending: boolean;
+  presetCommands: ProjectPresetCommandMenuItem[];
+  runPresetCommand: (projectPath: string, presetCommandId: string) => void;
+  isPresetCommandPending: boolean;
   handleRemoveProject: (pathToRemove: string) => void;
   selectRun: (runId: string) => void;
   renamingRunId: string | null;
@@ -218,8 +220,9 @@ function ConversationProjectGroupList({
   onReorderProjects,
   onShowMoreProjectSessions,
   beginConversationInProject,
-  autoCommitProject,
-  isAutoCommitProjectPending,
+  presetCommands,
+  runPresetCommand,
+  isPresetCommandPending,
   handleRemoveProject,
   selectRun,
   renamingRunId,
@@ -387,21 +390,20 @@ function ConversationProjectGroupList({
                     <DropdownMenuTrigger className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-sm font-medium text-muted-foreground opacity-100 transition-colors ring-offset-background hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 lg:opacity-0 lg:group-hover:opacity-100">
                       <MoreHorizontal className="h-3.5 w-3.5" />
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start">
-                      <DropdownMenuItem
-                        className="cursor-pointer whitespace-nowrap"
-                        disabled={isAutoCommitProjectPending}
-                        onClick={() => autoCommitProject(group.path)}
-                      >
-                        <GitCommitHorizontal className="mr-2 h-4 w-4" /> {t("commit.menu.commitProjectNow")}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="cursor-pointer whitespace-nowrap"
-                        disabled={isAutoCommitProjectPending}
-                        onClick={() => autoCommitProject(group.path, "commit-push")}
-                      >
-                        <GitCommitHorizontal className="mr-2 h-4 w-4" /> {t("commit.menu.commitAndPushProject")}
-                      </DropdownMenuItem>
+                    <DropdownMenuContent align="start" className="max-w-[min(20rem,calc(100vw-2rem))]">
+                      {presetCommands.map((preset) => (
+                        <DropdownMenuItem
+                          key={preset.id}
+                          data-preset-command-item={preset.id}
+                          className="cursor-pointer"
+                          disabled={isPresetCommandPending}
+                          onClick={() => runPresetCommand(group.path, preset.id)}
+                        >
+                          <Play className="mr-2 h-4 w-4 shrink-0" />
+                          <span className="min-w-0 [overflow-wrap:anywhere]">{preset.name}</span>
+                        </DropdownMenuItem>
+                      ))}
+                      {presetCommands.length > 0 ? <DropdownMenuSeparator /> : null}
                       <DropdownMenuItem className="cursor-pointer whitespace-nowrap text-destructive focus:bg-destructive/10 focus:text-destructive" onClick={() => handleRemoveProject(group.path)}>
                         <Trash2 className="mr-2 h-4 w-4" /> {t("conversation.sidebar.removeProject")}
                       </DropdownMenuItem>
@@ -737,8 +739,9 @@ export interface ConversationSidebarProps {
   openFolderPicker: () => void;
   startNewPlan: () => void;
   beginConversationInProject: (projectPath: string) => void;
-  autoCommitProject: (projectPath: string, action?: ManualCommitAction) => void;
-  isAutoCommitProjectPending: boolean;
+  presetCommands: ProjectPresetCommandMenuItem[];
+  runPresetCommand: (projectPath: string, presetCommandId: string) => void;
+  isPresetCommandPending: boolean;
   handleRemoveProject: (pathToRemove: string) => void;
   selectRun: (runId: string) => void;
   renamingRunId: string | null;
@@ -796,8 +799,9 @@ const ConversationSidebar = memo(function ConversationSidebar({
   openFolderPicker,
   startNewPlan,
   beginConversationInProject,
-  autoCommitProject,
-  isAutoCommitProjectPending,
+  presetCommands,
+  runPresetCommand,
+  isPresetCommandPending,
   handleRemoveProject,
   selectRun,
   renamingRunId,
@@ -1130,8 +1134,9 @@ const ConversationSidebar = memo(function ConversationSidebar({
               onReorderProjects={onReorderProjects}
               onShowMoreProjectSessions={onShowMoreProjectSessions}
               beginConversationInProject={beginConversationInProject}
-              autoCommitProject={autoCommitProject}
-              isAutoCommitProjectPending={isAutoCommitProjectPending}
+              presetCommands={presetCommands}
+              runPresetCommand={runPresetCommand}
+              isPresetCommandPending={isPresetCommandPending}
               handleRemoveProject={handleRemoveProject}
               selectRun={selectRun}
               renamingRunId={renamingRunId}
@@ -1160,8 +1165,9 @@ const ConversationSidebar = memo(function ConversationSidebar({
               onReorderProjects={onReorderProjects}
               onShowMoreProjectSessions={onShowMoreProjectSessions}
               beginConversationInProject={beginConversationInProject}
-              autoCommitProject={autoCommitProject}
-              isAutoCommitProjectPending={isAutoCommitProjectPending}
+              presetCommands={presetCommands}
+              runPresetCommand={runPresetCommand}
+              isPresetCommandPending={isPresetCommandPending}
               handleRemoveProject={handleRemoveProject}
               selectRun={selectRun}
               renamingRunId={renamingRunId}

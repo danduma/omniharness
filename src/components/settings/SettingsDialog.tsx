@@ -14,6 +14,7 @@ import { buildInlineError } from "@/interface/home/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
+import { PresetCommandsSettings } from "./PresetCommandsSettings";
 import { ModelsSettingsPanel } from "./ModelsSettingsPanel";
 import { CredentialsSettingsPanel } from "./CredentialsSettingsPanel";
 import { AgentsSettingsPanel } from "./AgentsSettingsPanel";
@@ -24,6 +25,7 @@ import type { ClaudeAccountAuthManager } from "@/interface/home/ClaudeAccountAut
 
 const SETTINGS_TABS: Array<{ value: SettingsTab; labelKey: string }> = [
   { value: "general", labelKey: "settings.tabs.general" },
+  { value: "presets", labelKey: "settings.tabs.presets" },
   { value: "models", labelKey: "settings.tabs.models" },
   { value: "credentials", labelKey: "settings.tabs.credentials" },
   { value: "agents", labelKey: "settings.tabs.agents" },
@@ -63,6 +65,7 @@ interface SettingsDialogProps {
   };
   activeProjectPath: string | null;
   claudeAccountAuthManager: ClaudeAccountAuthManager;
+  themeMode: "day" | "night";
 }
 
 export function SettingsDialog({
@@ -88,6 +91,7 @@ export function SettingsDialog({
   saveSettings,
   activeProjectPath,
   claudeAccountAuthManager,
+  themeMode,
 }: SettingsDialogProps) {
   const appearancePreferences = useManagerSnapshot(appearancePreferencesManager);
   useI18nSnapshot();
@@ -143,11 +147,18 @@ export function SettingsDialog({
             </div>
 
             {activeSettingsTab === "general" ? (
-              <GeneralSettingsPanel
-                settings={settingsDraft.draft}
-                setSetting={setSetting}
-                workerModels={workerCatalogQuery.data?.workerModels}
-              />
+              <GeneralSettingsPanel />
+            ) : null}
+            {activeSettingsTab === "presets" ? (
+              <div className="rounded-xl border border-border/60 bg-muted/20 p-4">
+                <PresetCommandsSettings
+                  settings={settingsDraft.draft}
+                  setSetting={setSetting}
+                  workerModels={workerCatalogQuery.data?.workerModels}
+                  accounts={accounts}
+                  themeMode={themeMode}
+                />
+              </div>
             ) : null}
             {activeSettingsTab === "models" ? (
               <ModelsSettingsPanel

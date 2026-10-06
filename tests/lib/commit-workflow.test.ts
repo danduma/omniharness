@@ -1,59 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_COMMIT_WORKER_EFFORT,
-  DEFAULT_COMMIT_WORKER_MODEL,
-  DEFAULT_COMMIT_WORKER_TYPE,
-  GIT_COMMIT_WORKER_EFFORT_SETTING,
-  GIT_COMMIT_WORKER_MODEL_SETTING,
-  GIT_COMMIT_WORKER_TYPE_SETTING,
-  normalizeCommitWorkerSettings,
-  validateCommitWorkerSettings,
+  MANUAL_COMMIT_CHAT_PROMPT,
+  MANUAL_COMMIT_CHAT_PUSH_PROMPT,
+  getManualCommitPrompt,
+  parseBooleanSetting,
+  serializeBooleanSetting,
 } from "@/lib/commit-workflow";
 
-describe("commit worker settings", () => {
-  it("uses deterministic defaults when settings are missing or invalid", () => {
-    expect(normalizeCommitWorkerSettings({})).toEqual({
-      workerType: DEFAULT_COMMIT_WORKER_TYPE,
-      model: DEFAULT_COMMIT_WORKER_MODEL,
-      effort: DEFAULT_COMMIT_WORKER_EFFORT,
-    });
-
-    expect(normalizeCommitWorkerSettings({
-      [GIT_COMMIT_WORKER_TYPE_SETTING]: "not-a-worker",
-      [GIT_COMMIT_WORKER_MODEL_SETTING]: "",
-      [GIT_COMMIT_WORKER_EFFORT_SETTING]: "not-an-effort",
-    })).toEqual({
-      workerType: DEFAULT_COMMIT_WORKER_TYPE,
-      model: DEFAULT_COMMIT_WORKER_MODEL,
-      effort: DEFAULT_COMMIT_WORKER_EFFORT,
-    });
+describe("commit workflow settings", () => {
+  it("parses boolean settings with a fallback for missing or unknown values", () => {
+    expect(parseBooleanSetting("yes")).toBe(true);
+    expect(parseBooleanSetting(" OFF ", true)).toBe(false);
+    expect(parseBooleanSetting(undefined, true)).toBe(true);
+    expect(parseBooleanSetting("maybe", false)).toBe(false);
+    expect(serializeBooleanSetting(true)).toBe("true");
   });
 
-  it("preserves an explicitly configured raw model id and normalized effort", () => {
-    expect(normalizeCommitWorkerSettings({
-      [GIT_COMMIT_WORKER_TYPE_SETTING]: "claude",
-      [GIT_COMMIT_WORKER_MODEL_SETTING]: "custom-model-id",
-      [GIT_COMMIT_WORKER_EFFORT_SETTING]: "Extra High",
-    })).toEqual({
-      workerType: "claude",
-      model: "custom-model-id",
-      effort: "extra high",
-    });
-  });
-
-  it("rejects invalid settings writes without validating model catalog membership", () => {
-    expect(() => validateCommitWorkerSettings({
-      [GIT_COMMIT_WORKER_TYPE_SETTING]: "gemini",
-      [GIT_COMMIT_WORKER_MODEL_SETTING]: "retired-model-id",
-      [GIT_COMMIT_WORKER_EFFORT_SETTING]: "max",
-    })).not.toThrow();
-
-    expect(() => validateCommitWorkerSettings({
-      [GIT_COMMIT_WORKER_TYPE_SETTING]: "not-a-worker",
-    })).toThrow(/worker/i);
-
-    expect(() => validateCommitWorkerSettings({
-      [GIT_COMMIT_WORKER_EFFORT_SETTING]: "not-an-effort",
-    })).toThrow(/effort/i);
+  it("picks the chat commit prompt for the requested action", () => {
+    expect(getManualCommitPrompt("commit")).toBe(MANUAL_COMMIT_CHAT_PROMPT);
+    expect(getManualCommitPrompt("commit-push")).toBe(MANUAL_COMMIT_CHAT_PUSH_PROMPT);
   });
 });
