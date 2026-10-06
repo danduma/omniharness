@@ -1,8 +1,108 @@
 {
   "version": 2,
   "projectRoot": "/Users/masterman/NLP/omniharness",
-  "generatedAt": "2026-10-05T22:05:33.649Z",
+  "generatedAt": "2026-10-06T10:11:45.109Z",
   "conversations": [
+    {
+      "provider": "claude",
+      "id": "4966abb0-e719-47aa-b50c-4860bb6c3d82",
+      "title": "Markdown tables inside bullet points not rendering",
+      "startedAt": "2026-10-06T09:24:22.476Z",
+      "updatedAt": "2026-10-06T09:26:02.789Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "7892e5ca26f464d722678634ebc6895447b97f52b8dba892380f8aad6abdd129",
+      "parts": [
+        "conversations/2026/10/2026-10-06-claude-markdown-tables-inside-bullet-points-not-rendering-4966abb0-e719-47aa-b50c-4860bb6c3d82-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 89,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "1ade1ae9-fef8-4474-91cb-2836d37d8b34",
+      "title": "Configurable preset commands",
+      "startedAt": "2026-10-06T07:44:51.924Z",
+      "updatedAt": "2026-10-06T09:17:50.354Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "67ace4e128fc54bbbdf43aa3134c74995e3e1e8be8d20f11f54bee5b7f2eec60",
+      "parts": [
+        "conversations/2026/10/2026-10-06-claude-configurable-preset-commands-1ade1ae9-fef8-4474-91cb-2836d37d8b34-part-001.md"
+      ],
+      "attachmentCount": 1,
+      "eventCount": 586,
+      "malformedLines": 0,
+      "redactions": 1,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "11201fd6-83ad-47c9-b059-0e731d229e5c",
+      "title": "Session fc8d9cb681ef cancellation issue",
+      "startedAt": "2026-10-06T09:10:08.061Z",
+      "updatedAt": "2026-10-06T09:13:32.823Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "fd413210a7ab6e96449358f2d7d1a4316e0c5dd37636cd3da854dd86b7021853",
+      "parts": [
+        "conversations/2026/10/2026-10-06-claude-session-fc8d9cb681ef-cancellation-issue-11201fd6-83ad-47c9-b059-0e731d229e5c-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 122,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "ac8d589b-0731-41c7-a9d7-19f4383dd7b1",
+      "title": "Agent turns hover content on mobile",
+      "startedAt": "2026-10-06T06:43:36.107Z",
+      "updatedAt": "2026-10-06T06:51:59.994Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "f5b70f1c29e564c086dc36904187b0a6c572ce2803b2e4f79068a2a1c51c4176",
+      "parts": [
+        "conversations/2026/10/2026-10-06-claude-agent-turns-hover-content-on-mobile-ac8d589b-0731-41c7-a9d7-19f4383dd7b1-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 220,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "6176ef95-a636-486c-afcb-bbcf6d83f649",
+      "title": "omniharness PR #19 review",
+      "startedAt": "2026-10-05T22:46:04.296Z",
+      "updatedAt": "2026-10-05T22:47:34.007Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "63f68039f87030eb2f4b994e3b9cb762c489bb0bae71438aad548896d379ac42",
+      "parts": [
+        "conversations/2026/10/2026-10-05-claude-omniharness-pr-19-review-6176ef95-a636-486c-afcb-bbcf6d83f649-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 78,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
     {
       "provider": "claude",
       "id": "ac643c52-9b73-4fe6-8f7f-3fec21c78dc0",
