@@ -250,6 +250,11 @@ type MarkdownListTextBlock = {
 type MarkdownListBlock = MarkdownListTextBlock | {
   type: "list";
   list: MarkdownList;
+} | {
+  // Indented block content (a table or fenced code) rendered by the
+  // top-level block parser.
+  type: "blocks";
+  lines: string[];
 };
 
 type MarkdownList = {
@@ -278,9 +283,9 @@ function parseListMarker(line: string): MarkdownListMarker | null {
   };
 }
 
-function appendListText(blocks: MarkdownListBlock[], text: string) {
+function appendListText(blocks: MarkdownListBlock[], text: string, newParagraph = false) {
   const lastBlock = blocks.at(-1);
-  if (lastBlock?.type === "text") {
+  if (lastBlock?.type === "text" && !newParagraph) {
     lastBlock.lines.push(text);
     return;
   }
@@ -291,6 +296,57 @@ function nextNonBlankLine(lines: string[], start: number): number {
   let index = start;
   while (index < lines.length && !lines[index].trim()) index += 1;
   return index;
+}
+
+function leadingWhitespace(line: string): string {
+  return line.match(/^[ \t]*/)?.[0] ?? "";
+}
+
+/**
+ * Reads a table or fenced code block that continues a list item, returning its
+ * lines with the item's indentation removed, or null when `startIndex` does
+ * not begin one.
+ */
+function readListItemBlock(
+  lines: string[],
+  startIndex: number,
+  baseIndent: number,
+): { lines: string[]; nextIndex: number } | null {
+  const firstLine = lines[startIndex];
+  const prefix = leadingWhitespace(firstLine);
+  const dedent = (line: string) => (line.startsWith(prefix) ? line.slice(prefix.length) : line.trimStart());
+  let index = startIndex;
+
+  if (/^```/.test(firstLine.trim())) {
+    const blockLines = [firstLine.trim()];
+    index += 1;
+    while (index < lines.length && !/^```/.test(lines[index].trim())) {
+      blockLines.push(dedent(lines[index]));
+      index += 1;
+    }
+    if (index < lines.length) {
+      blockLines.push(lines[index].trim());
+      index += 1;
+    }
+    return { lines: blockLines, nextIndex: index };
+  }
+
+  if (firstLine.includes("|") && index + 1 < lines.length && isTableDelimiter(lines[index + 1])) {
+    const blockLines = [firstLine.trim(), lines[index + 1].trim()];
+    index += 2;
+    while (
+      index < lines.length
+      && lines[index].includes("|")
+      && indentationWidth(leadingWhitespace(lines[index])) > baseIndent
+      && !parseListMarker(lines[index])
+    ) {
+      blockLines.push(lines[index].trim());
+      index += 1;
+    }
+    return { lines: blockLines, nextIndex: index };
+  }
+
+  return null;
 }
 
 function parseMarkdownList(
@@ -314,9 +370,11 @@ function parseMarkdownList(
     const blocks: MarkdownListBlock[] = [];
     appendListText(blocks, marker.content);
     index += 1;
+    let afterBlankLine = false;
 
     while (index < lines.length) {
       if (!lines[index].trim()) {
+        afterBlankLine = true;
         const nextIndex = nextNonBlankLine(lines, index + 1);
         if (nextIndex >= lines.length) {
           index = nextIndex;
@@ -350,9 +408,19 @@ function parseMarkdownList(
         break;
       }
 
-      const lineIndent = indentationWidth(lines[index].match(/^[ \t]*/)?.[0] ?? "");
+      const lineIndent = indentationWidth(leadingWhitespace(lines[index]));
       if (lineIndent <= baseIndent) break;
-      appendListText(blocks, lines[index].trim());
+
+      const itemBlock = readListItemBlock(lines, index, baseIndent);
+      if (itemBlock) {
+        blocks.push({ type: "blocks", lines: itemBlock.lines });
+        index = itemBlock.nextIndex;
+        afterBlankLine = false;
+        continue;
+      }
+
+      appendListText(blocks, lines[index].trim(), afterBlankLine);
+      afterBlankLine = false;
       index += 1;
     }
 
@@ -383,28 +451,43 @@ function renderMarkdownList(
     >
       {list.items.map((blocks, itemIndex) => (
         <li key={`${keyPrefix}-item-${itemIndex}`} className="pl-1">
-          {blocks.map((block, blockIndex) => (
-            block.type === "text"
-              ? (
-                  <React.Fragment key={`${keyPrefix}-text-${itemIndex}-${blockIndex}`}>
-                    {renderInlineMarkdown(
-                      block.lines.join(" "),
-                      `${keyPrefix}-text-${itemIndex}-${blockIndex}`,
-                      inheritTextColor,
-                      projectRoot,
-                      onOpenProjectFile,
-                    )}
-                  </React.Fragment>
-                )
-              : renderMarkdownList(
-                  block.list,
-                  `${keyPrefix}-nested-${itemIndex}-${blockIndex}`,
-                  inheritTextColor,
-                  projectRoot,
-                  onOpenProjectFile,
-                  true,
-                )
-          ))}
+          {blocks.map((block, blockIndex) => {
+            if (block.type === "text") {
+              const textKey = `${keyPrefix}-text-${itemIndex}-${blockIndex}`;
+              const text = renderInlineMarkdown(
+                block.lines.join(" "),
+                textKey,
+                inheritTextColor,
+                projectRoot,
+                onOpenProjectFile,
+              );
+              // The first text block sits beside the list marker; later ones
+              // are separate paragraphs within the item.
+              return blockIndex === 0
+                ? <React.Fragment key={textKey}>{text}</React.Fragment>
+                : <p key={textKey} className="mt-2">{text}</p>;
+            }
+            if (block.type === "blocks") {
+              return (
+                <div key={`${keyPrefix}-blocks-${itemIndex}-${blockIndex}`} className="mt-2 space-y-2">
+                  {parseMarkdownBlocks({
+                    content: block.lines.join("\n"),
+                    inheritTextColor,
+                    projectRoot,
+                    onOpenProjectFile,
+                  })}
+                </div>
+              );
+            }
+            return renderMarkdownList(
+              block.list,
+              `${keyPrefix}-nested-${itemIndex}-${blockIndex}`,
+              inheritTextColor,
+              projectRoot,
+              onOpenProjectFile,
+              true,
+            );
+          })}
         </li>
       ))}
     </ListTag>
