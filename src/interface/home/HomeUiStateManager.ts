@@ -187,6 +187,28 @@ const initialHomeUiState: HomeUiState = {
   deletingRun: null,
 };
 
+export function pendingChatAttachmentFromFile(file: File, id?: string): PendingChatAttachment {
+  const mimeType = file.type || "application/octet-stream";
+  const kind = chatAttachmentKindFromMimeType(mimeType);
+  const previewUrl = kind === "image" && typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
+    ? URL.createObjectURL(file)
+    : undefined;
+
+  const randomId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2);
+
+  return {
+    id: id ?? `${Date.now()}-${randomId}`,
+    kind,
+    name: file.name || "attachment",
+    mimeType,
+    size: file.size,
+    file,
+    ...(previewUrl ? { previewUrl } : {}),
+  };
+}
+
 export class HomeUiStateManager extends StateManager<HomeUiState> {
   private readonly acknowledgedSelectionsByRun = new Map<string, ComposerSelection>();
 
@@ -207,27 +229,7 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
 
     this.setKey("attachments", (current) => [
       ...current,
-      ...files.map((file) => {
-        const mimeType = file.type || "application/octet-stream";
-        const kind = chatAttachmentKindFromMimeType(mimeType);
-        const previewUrl = kind === "image" && typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
-          ? URL.createObjectURL(file)
-          : undefined;
-
-        const randomId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-          ? crypto.randomUUID()
-          : Math.random().toString(36).slice(2);
-
-        return {
-          id: `${Date.now()}-${randomId}`,
-          kind,
-          name: file.name || "attachment",
-          mimeType,
-          size: file.size,
-          file,
-          ...(previewUrl ? { previewUrl } : {}),
-        };
-      }),
+      ...files.map((file) => pendingChatAttachmentFromFile(file)),
     ]);
   }
 

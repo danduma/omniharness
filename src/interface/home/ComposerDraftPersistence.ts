@@ -3,14 +3,28 @@ import {
   safeSetBrowserStorageItem,
   type BrowserStorage,
 } from "@/lib/browser-storage";
-import { NEW_CONVERSATION_DRAFT_KEY, type ComposerSelection, type ComposerSelectionField, type HomeUiState, type HomeUiStateManager } from "./HomeUiStateManager";
+import type { PendingChatAttachment } from "@/lib/chat-attachments";
+import {
+  getBrowserComposerAttachmentDraftStore,
+  type ComposerAttachmentDraftStore,
+  type StoredComposerAttachment,
+} from "./ComposerAttachmentDraftStore";
+import {
+  NEW_CONVERSATION_DRAFT_KEY,
+  pendingChatAttachmentFromFile,
+  type ComposerSelection,
+  type ComposerSelectionField,
+  type HomeUiState,
+  type HomeUiStateManager,
+} from "./HomeUiStateManager";
 
 export const COMPOSER_DRAFTS_STORAGE_KEY = "omni-composer-drafts:v2";
 
 /**
- * Unsent composer text is the one piece of client state a user cannot get back
- * from the server, so it outlives the document. Attachments are `File` handles
- * that cannot be revived from storage, so they stay in memory only.
+ * Unsent composer text and attachments are the client state a user cannot get
+ * back from the server, so they outlive the document. Attachments are `File`
+ * handles that localStorage cannot hold: the draft records their ids, and the
+ * bytes live in the IndexedDB `ComposerAttachmentDraftStore`.
  */
 export type PersistedComposerDraft = {
   command: string;
@@ -18,6 +32,7 @@ export type PersistedComposerDraft = {
   selection: ComposerSelection;
   dirtySelectionFields: ComposerSelectionField[];
   serverSelectionVersion: string | null;
+  attachmentIds?: string[];
   updatedAt: number;
 };
 
@@ -30,6 +45,7 @@ export type ComposerDraftSource = Pick<
   HomeUiState,
   | "command"
   | "commandCursor"
+  | "attachments"
   | "selectedRunId"
   | "composerDraftsByRun"
   | "selectedConversationMode"
@@ -86,7 +102,10 @@ function readPersistedDraft(value: unknown, now: number): PersistedComposerDraft
         field === "conversationMode" || field === "worker" || field === "accountId" || field === "model" || field === "effort"
       ))
     : [];
-  if (record.command.length === 0 && dirtySelectionFields.length === 0) return null;
+  const attachmentIds = Array.isArray(record.attachmentIds)
+    ? record.attachmentIds.filter((id): id is string => typeof id === "string")
+    : [];
+  if (record.command.length === 0 && dirtySelectionFields.length === 0 && attachmentIds.length === 0) return null;
 
   return {
     command: record.command,
@@ -94,6 +113,7 @@ function readPersistedDraft(value: unknown, now: number): PersistedComposerDraft
     selection: selection as ComposerSelection,
     dirtySelectionFields,
     serverSelectionVersion: typeof record.serverSelectionVersion === "string" ? record.serverSelectionVersion : null,
+    ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
     updatedAt: record.updatedAt,
   };
 }
@@ -149,8 +169,13 @@ export function collectComposerDrafts(
     selection: ComposerSelection,
     dirtySelectionFields: ComposerSelectionField[],
     serverSelectionVersion: string | null,
+    attachments: PendingChatAttachment[],
   ) => {
-    if (command.length === 0 && dirtySelectionFields.length === 0) {
+    // The active composer is recorded last and replaces whatever its parked
+    // copy held, including clearing it once the message has been sent.
+    delete drafts[key];
+    const attachmentIds = attachments.map((attachment) => attachment.id);
+    if (command.length === 0 && dirtySelectionFields.length === 0 && attachmentIds.length === 0) {
       return;
     }
     const prior = previous[key];
@@ -159,14 +184,31 @@ export function collectComposerDrafts(
       && prior.commandCursor === commandCursor
       && JSON.stringify(prior.selection) === JSON.stringify(selection)
       && JSON.stringify(prior.dirtySelectionFields) === JSON.stringify(dirtySelectionFields)
-      && prior.serverSelectionVersion === serverSelectionVersion;
+      && prior.serverSelectionVersion === serverSelectionVersion
+      && JSON.stringify(prior.attachmentIds ?? []) === JSON.stringify(attachmentIds);
     drafts[key] = unchanged
       ? prior
-      : { command, commandCursor, selection, dirtySelectionFields, serverSelectionVersion, updatedAt: now };
+      : {
+          command,
+          commandCursor,
+          selection,
+          dirtySelectionFields,
+          serverSelectionVersion,
+          ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+          updatedAt: now,
+        };
   };
 
   for (const [key, draft] of Object.entries(state.composerDraftsByRun)) {
-    record(key, draft.command, draft.commandCursor, draft.selection, draft.dirtySelectionFields, draft.serverSelectionVersion);
+    record(
+      key,
+      draft.command,
+      draft.commandCursor,
+      draft.selection,
+      draft.dirtySelectionFields,
+      draft.serverSelectionVersion,
+      draft.attachments,
+    );
   }
   const activeStored = state.composerDraftsByRun[composerDraftKey(state.selectedRunId)];
   record(
@@ -182,9 +224,31 @@ export function collectComposerDrafts(
     },
     activeStored?.dirtySelectionFields ?? [],
     activeStored?.serverSelectionVersion ?? null,
+    state.attachments,
   );
 
   return drafts;
+}
+
+/** Live attachments per draft key, using the same active-wins rule as the text. */
+export function collectComposerAttachments(state: Pick<HomeUiState, "selectedRunId" | "attachments" | "composerDraftsByRun">) {
+  const attachments = new Map<string, PendingChatAttachment[]>();
+  for (const [key, draft] of Object.entries(state.composerDraftsByRun)) {
+    if (draft.attachments.length > 0) {
+      attachments.set(key, draft.attachments);
+    }
+  }
+  const activeKey = composerDraftKey(state.selectedRunId);
+  if (state.attachments.length > 0) {
+    attachments.set(activeKey, state.attachments);
+  } else {
+    attachments.delete(activeKey);
+  }
+  return attachments;
+}
+
+function attachmentSignature(attachments: Array<{ id: string }>) {
+  return attachments.map((attachment) => attachment.id).join("\n");
 }
 
 export function serializeComposerDrafts(
@@ -215,6 +279,7 @@ export function serializeComposerDrafts(
 
 export type ComposerDraftPersistenceOptions = {
   storage?: BrowserStorage | null;
+  attachmentStore?: ComposerAttachmentDraftStore | null;
   now?: () => number;
   debounceMs?: number;
 };
@@ -232,15 +297,23 @@ export type ComposerDraftAttachOptions = {
 
 export class ComposerDraftPersistence {
   private readonly explicitStorage: BrowserStorage | null | undefined;
+  private explicitAttachmentStore: ComposerAttachmentDraftStore | null | undefined;
   private readonly now: () => number;
   private readonly debounceMs: number;
   private manager: HomeUiStateManager | null = null;
   private lastWritten: Record<string, PersistedComposerDraft> = {};
   private lastSerialized: string | null = null;
   private writeTimer: ReturnType<typeof setTimeout> | null = null;
+  // What the attachment store holds per draft key, as ordered attachment ids.
+  private storedAttachmentSignatures = new Map<string, string>();
+  // Until stored attachments are back in the composer, a write would see empty
+  // attachment lists and erase the very drafts being restored.
+  private pendingAttachmentHydrations = 0;
+  private writeDeferredByHydration = false;
 
   constructor(options: ComposerDraftPersistenceOptions = {}) {
     this.explicitStorage = options.storage;
+    this.explicitAttachmentStore = options.attachmentStore;
     this.now = options.now ?? Date.now;
     this.debounceMs = options.debounceMs ?? WRITE_DEBOUNCE_MS;
   }
@@ -249,6 +322,14 @@ export class ComposerDraftPersistence {
   // handle is resolved per call rather than captured at construction.
   private get storage() {
     return this.explicitStorage === undefined ? getBrowserLocalStorage() : this.explicitStorage;
+  }
+
+  // Resolved once in the browser because the store owns a database connection.
+  private get attachmentStore() {
+    if (this.explicitAttachmentStore === undefined && typeof window !== "undefined") {
+      this.explicitAttachmentStore = getBrowserComposerAttachmentDraftStore();
+    }
+    return this.explicitAttachmentStore ?? null;
   }
 
   read() {
@@ -271,10 +352,16 @@ export class ComposerDraftPersistence {
 
   /**
    * Restores saved text without clobbering anything already in the composer:
-   * live state is newer than storage by definition, so it wins.
+   * live state is newer than storage by definition, so it wins. Text lands
+   * synchronously; attachments follow once IndexedDB answers.
    */
-  hydrate(manager: HomeUiStateManager) {
+  hydrate(manager: HomeUiStateManager): Promise<void> {
     const persisted = this.read();
+    this.restoreText(manager, persisted);
+    return this.restoreAttachments(manager, persisted);
+  }
+
+  private restoreText(manager: HomeUiStateManager, persisted: Record<string, PersistedComposerDraft>) {
     if (Object.keys(persisted).length === 0) {
       return;
     }
@@ -319,6 +406,63 @@ export class ComposerDraftPersistence {
               selectedEffort: activeDraft.selection.effort,
             }
           : {}),
+      };
+    });
+  }
+
+  private async restoreAttachments(manager: HomeUiStateManager, persisted: Record<string, PersistedComposerDraft>) {
+    const store = this.attachmentStore;
+    if (!store) {
+      return;
+    }
+
+    this.pendingAttachmentHydrations += 1;
+    try {
+      const stored = await store.readAll();
+      for (const [key, attachments] of Object.entries(stored)) {
+        // Entries the draft index no longer references are pruned by the next
+        // write, which compares live attachments against these signatures.
+        this.storedAttachmentSignatures.set(key, attachmentSignature(attachments));
+        const draft = persisted[key];
+        if (!draft?.attachmentIds) continue;
+        const byId = new Map(attachments.map((attachment) => [attachment.id, attachment]));
+        const restored = draft.attachmentIds
+          .map((id) => byId.get(id))
+          .filter((attachment): attachment is StoredComposerAttachment => Boolean(attachment));
+        if (restored.length > 0) {
+          this.restoreDraftAttachments(manager, key, draft.command, restored);
+        }
+      }
+    } catch {
+      // Unreadable attachment storage leaves the restored text in place.
+    } finally {
+      this.pendingAttachmentHydrations -= 1;
+      if (this.pendingAttachmentHydrations === 0 && this.writeDeferredByHydration) {
+        this.writeDeferredByHydration = false;
+        this.write();
+      }
+    }
+  }
+
+  // Only fills a draft that still holds the text it was saved with and has no
+  // attachments of its own; anything else means the user moved on meanwhile.
+  private restoreDraftAttachments(
+    manager: HomeUiStateManager,
+    key: string,
+    command: string,
+    stored: StoredComposerAttachment[],
+  ) {
+    const toPending = () => stored.map((attachment) => pendingChatAttachmentFromFile(attachment.file, attachment.id));
+    manager.update((current) => {
+      if (key === composerDraftKey(current.selectedRunId)) {
+        if (current.attachments.length > 0 || current.command !== command) return current;
+        return { ...current, attachments: toPending() };
+      }
+      const draft = current.composerDraftsByRun[key];
+      if (!draft || draft.attachments.length > 0 || draft.command !== command) return current;
+      return {
+        ...current,
+        composerDraftsByRun: { ...current.composerDraftsByRun, [key]: { ...draft, attachments: toPending() } },
       };
     });
   }
@@ -402,8 +546,13 @@ export class ComposerDraftPersistence {
     if (!manager || !storage) {
       return;
     }
+    if (this.pendingAttachmentHydrations > 0) {
+      this.writeDeferredByHydration = true;
+      return;
+    }
 
     const snapshot = manager.getSnapshot();
+    this.writeAttachments(snapshot);
     const drafts = collectComposerDrafts(snapshot, this.now(), this.lastWritten);
     const serialized = Object.keys(drafts).length === 0
       ? null
@@ -429,6 +578,26 @@ export class ComposerDraftPersistence {
     }
     this.lastWritten = drafts;
     this.lastSerialized = serialized;
+  }
+
+  private writeAttachments(snapshot: HomeUiState) {
+    const store = this.attachmentStore;
+    if (!store) {
+      return;
+    }
+
+    const live = collectComposerAttachments(snapshot);
+    for (const [key, attachments] of live) {
+      const signature = attachmentSignature(attachments);
+      if (this.storedAttachmentSignatures.get(key) === signature) continue;
+      store.put(key, attachments.map(({ id, kind, name, mimeType, size, file }) => ({ id, kind, name, mimeType, size, file })));
+      this.storedAttachmentSignatures.set(key, signature);
+    }
+    for (const key of [...this.storedAttachmentSignatures.keys()]) {
+      if (live.has(key)) continue;
+      store.delete(key);
+      this.storedAttachmentSignatures.delete(key);
+    }
   }
 }
 
