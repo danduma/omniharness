@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BrowserStorage } from "@/lib/browser-storage";
+import type { ComposerAttachmentDraftStore, StoredComposerAttachment } from "@/interface/home/ComposerAttachmentDraftStore";
 import {
   COMPOSER_DRAFTS_STORAGE_KEY,
   ComposerDraftPersistence,
@@ -83,6 +84,39 @@ function flushTarget(visibilityState = "visible") {
   };
 }
 
+function memoryAttachmentStore(seed: Record<string, StoredComposerAttachment[]> = {}) {
+  const entries = new Map(Object.entries(seed));
+  let release: (() => void) | null = null;
+  const store: ComposerAttachmentDraftStore & { hold(): void; release(): void } = {
+    readAll: async () => {
+      if (release === null) {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      }
+      return Object.fromEntries(entries);
+    },
+    put: (key, attachments) => {
+      entries.set(key, attachments);
+    },
+    delete: (key) => {
+      entries.delete(key);
+    },
+    // Reads resolve immediately unless the test holds them to inspect the
+    // window while IndexedDB has not answered yet.
+    hold: () => {
+      release = null;
+    },
+    release: () => {
+      const pending = release;
+      release = () => {};
+      pending?.();
+    },
+  };
+  store.release();
+  return { entries, store };
+}
+
 function readDrafts(entries: Map<string, string>) {
   return parsePersistedComposerDrafts(entries.get(COMPOSER_DRAFTS_STORAGE_KEY) ?? null, NOW);
 }
@@ -98,6 +132,7 @@ describe("collectComposerDrafts", () => {
       selectedWorkerAccountId: "auto",
       selectedModel: "gpt-5.6-sol",
       selectedEffort: "High",
+      attachments: [],
       composerDraftsByRun: {
         "run-a": composerDraft("parked", 6),
       },
@@ -119,6 +154,7 @@ describe("collectComposerDrafts", () => {
       selectedWorkerAccountId: "auto",
       selectedModel: "gpt-5.6-sol",
       selectedEffort: "High",
+      attachments: [],
       composerDraftsByRun: {},
     }, NOW);
 
@@ -136,6 +172,7 @@ describe("collectComposerDrafts", () => {
       selectedWorkerAccountId: "auto",
       selectedModel: "gpt-5.6-sol",
       selectedEffort: "High",
+      attachments: [],
       composerDraftsByRun: {
         "run-a": composerDraft("parked", 6),
       },
@@ -305,5 +342,129 @@ describe("ComposerDraftPersistence", () => {
     manager.setComposerDraft({ command: "still typeable", commandCursor: 14 });
     expect(() => detach()).not.toThrow();
     expect(manager.getSnapshot().command).toBe("still typeable");
+  });
+
+  describe("attachments", () => {
+    const imageFile = () => new File(["png-bytes"], "screenshot.png", { type: "image/png" });
+    const textFile = () => new File(["notes"], "notes.txt", { type: "text/plain" });
+
+    function attachedPersistence(storage: BrowserStorage, attachmentStore: ComposerAttachmentDraftStore) {
+      return new ComposerDraftPersistence({ storage, attachmentStore, now: () => NOW, debounceMs: 0 });
+    }
+
+    it("persists attachments with the draft and restores them into a fresh manager", async () => {
+      const { entries, storage } = memoryStorage();
+      const attachments = memoryAttachmentStore();
+      const manager = new HomeUiStateManager();
+      const detach = attachedPersistence(storage, attachments.store).attach(manager);
+
+      manager.setComposerDraft({ command: "see attached", commandCursor: 12 });
+      manager.addAttachmentFiles([imageFile(), textFile()]);
+      const ids = manager.getSnapshot().attachments.map((attachment) => attachment.id);
+      detach();
+
+      expect(readDrafts(entries)[NEW_CONVERSATION_DRAFT_KEY]?.attachmentIds).toEqual(ids);
+      expect(attachments.entries.get(NEW_CONVERSATION_DRAFT_KEY)?.map((attachment) => attachment.id)).toEqual(ids);
+
+      const restored = new HomeUiStateManager();
+      await attachedPersistence(storage, attachments.store).hydrate(restored);
+      const snapshot = restored.getSnapshot();
+      expect(snapshot.command).toBe("see attached");
+      expect(snapshot.attachments.map((attachment) => attachment.id)).toEqual(ids);
+      expect(snapshot.attachments.map((attachment) => attachment.name)).toEqual(["screenshot.png", "notes.txt"]);
+      expect(await snapshot.attachments[1].file.text()).toBe("notes");
+    });
+
+    it("keeps a draft that holds only attachments", async () => {
+      const { entries, storage } = memoryStorage();
+      const attachments = memoryAttachmentStore();
+      const manager = new HomeUiStateManager();
+      const detach = attachedPersistence(storage, attachments.store).attach(manager);
+
+      manager.addAttachmentFiles([imageFile()]);
+      manager.selectRun("run-a");
+      detach();
+
+      expect(readDrafts(entries)[NEW_CONVERSATION_DRAFT_KEY]?.command).toBe("");
+
+      const restored = new HomeUiStateManager();
+      restored.selectRun("run-a");
+      await attachedPersistence(storage, attachments.store).hydrate(restored);
+      restored.selectRun(null);
+      expect(restored.getSnapshot().attachments.map((attachment) => attachment.name)).toEqual(["screenshot.png"]);
+    });
+
+    it("drops stored files once the attachments are removed or sent", () => {
+      const { entries, storage } = memoryStorage();
+      const attachments = memoryAttachmentStore();
+      const manager = new HomeUiStateManager();
+      const persistence = attachedPersistence(storage, attachments.store);
+      const detach = persistence.attach(manager);
+
+      manager.addAttachmentFiles([imageFile()]);
+      persistence.flush();
+      expect(attachments.entries.has(NEW_CONVERSATION_DRAFT_KEY)).toBe(true);
+      manager.clearAttachments();
+      detach();
+
+      expect(attachments.entries.size).toBe(0);
+      expect(entries.has(COMPOSER_DRAFTS_STORAGE_KEY)).toBe(false);
+    });
+
+    it("does not erase stored attachments while they are still loading", async () => {
+      const { entries, storage } = memoryStorage();
+      const attachments = memoryAttachmentStore();
+      const first = new HomeUiStateManager();
+      const detachFirst = attachedPersistence(storage, attachments.store).attach(first);
+      first.setComposerDraft({ command: "with a file", commandCursor: 11 });
+      first.addAttachmentFiles([textFile()]);
+      detachFirst();
+
+      attachments.store.hold();
+      const manager = new HomeUiStateManager();
+      const persistence = attachedPersistence(storage, attachments.store);
+      const hydrated = persistence.hydrate(manager);
+      persistence.attach(manager);
+      persistence.flush();
+
+      expect(readDrafts(entries)[NEW_CONVERSATION_DRAFT_KEY]?.attachmentIds).toHaveLength(1);
+      expect(attachments.entries.has(NEW_CONVERSATION_DRAFT_KEY)).toBe(true);
+
+      attachments.store.release();
+      await hydrated;
+      expect(manager.getSnapshot().attachments.map((attachment) => attachment.name)).toEqual(["notes.txt"]);
+      expect(attachments.entries.has(NEW_CONVERSATION_DRAFT_KEY)).toBe(true);
+    });
+
+    it("leaves attachments added since mount alone and prunes the stale stored ones", async () => {
+      const staleFile = textFile();
+      const { storage } = memoryStorage({
+        [COMPOSER_DRAFTS_STORAGE_KEY]: JSON.stringify({
+          version: 2,
+          drafts: {
+            [NEW_CONVERSATION_DRAFT_KEY]: { ...persistedDraft("", 0), attachmentIds: ["stale"] },
+          },
+        }),
+      });
+      const attachments = memoryAttachmentStore({
+        [NEW_CONVERSATION_DRAFT_KEY]: [
+          { id: "stale", kind: "file", name: "notes.txt", mimeType: "text/plain", size: staleFile.size, file: staleFile },
+        ],
+        orphaned: [
+          { id: "orphan", kind: "file", name: "notes.txt", mimeType: "text/plain", size: staleFile.size, file: staleFile },
+        ],
+      });
+
+      const manager = new HomeUiStateManager();
+      manager.addAttachmentFiles([imageFile()]);
+      const persistence = attachedPersistence(storage, attachments.store);
+      await persistence.hydrate(manager);
+      persistence.attach(manager);
+      persistence.flush();
+
+      expect(manager.getSnapshot().attachments.map((attachment) => attachment.name)).toEqual(["screenshot.png"]);
+      expect(attachments.entries.get(NEW_CONVERSATION_DRAFT_KEY)?.map((attachment) => attachment.name)).toEqual(["screenshot.png"]);
+      expect(attachments.entries.has("orphaned")).toBe(false);
+    });
   });
 });
