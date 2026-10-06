@@ -30,8 +30,8 @@ test("assistant messages render both the hover toolbar and the touch-only action
     getAssistantMessageActions: () => [{ label: "Fork", icon: null, onClick: () => {} }],
   }));
 
-  // Hover overlay is hidden on touch; the ⋯ menu only shows on touch.
+  // Hover overlay is hidden on touch; the actions menu only shows on touch.
   expect(html).toContain("touch:hidden");
-  expect(html).toContain("hidden items-center text-muted-foreground/70 touch:flex");
+  expect(html).toContain("absolute bottom-0 right-0 z-10 hidden items-center gap-1 text-muted-foreground/70 touch:flex");
   expect(html).toContain('aria-label="Message actions"');
 });

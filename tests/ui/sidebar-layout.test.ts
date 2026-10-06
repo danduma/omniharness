@@ -779,7 +779,7 @@ test("assistant message actions fall back to a tappable menu on touch devices", 
   expect(globalsCssSource).toContain("@custom-variant touch (@media (hover: none));");
   expect(terminalSource).toContain("function AssistantMessageTouchMenu");
   expect(terminalSource).toContain("<AssistantMessageTouchMenu");
-  expect(terminalSource).toContain("hidden items-center text-muted-foreground/70 touch:flex");
+  expect(terminalSource).toContain("absolute bottom-0 right-0 z-10 hidden items-center gap-1 text-muted-foreground/70 touch:flex");
   expect(terminalSource).toContain("z-10 flex items-center text-muted-foreground/70 touch:hidden");
   expect(terminalSource).toContain('aria-label={t("conversation.message.actionsAria")}');
   expect(terminalSource).toContain("<DropdownMenuSub key={action.label}>");
