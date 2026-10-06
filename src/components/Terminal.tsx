@@ -1,12 +1,12 @@
 "use client";
 
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
-import { ALargeSmall, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, ExternalLink, LoaderCircle } from "lucide-react";
+import { ALargeSmall, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, ExternalLink, LoaderCircle, MoreHorizontal } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { ProjectFileContextMenu } from "@/components/ProjectFileContextMenu";
 import { conversationCopyNoticeManager, terminalUiManager } from "@/components/component-state-managers";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   appearancePreferencesManager,
   getConversationTerminalTextSizeStyle,
@@ -2157,6 +2157,89 @@ function GeneratedImagesCarousel({ activity }: { activity: GeneratedImagesActivi
 }
 
 /**
+ * Touch-only stand-in for the hover toolbar on assistant messages. Phones never
+ * hover, so the overlay stayed invisible and untappable there; this puts copy,
+ * the message actions, and the model/time behind one in-flow ⋯ button instead
+ * of showing the whole toolbar under every message.
+ */
+function AssistantMessageTouchMenu({
+  actions,
+  metaLabel,
+  copied,
+  onCopy,
+}: {
+  actions: TerminalUserMessageAction[];
+  metaLabel: string;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  return (
+    <div className="relative hidden items-center text-muted-foreground/70 touch:flex">
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          aria-label={t("conversation.message.actionsAria")}
+          title={t("conversation.message.actionsAria")}
+          className="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-muted data-popup-open:text-foreground"
+        >
+          <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" side="top">
+          {metaLabel ? (
+            <DropdownMenuLabel className="whitespace-nowrap font-normal tabular-nums">{metaLabel}</DropdownMenuLabel>
+          ) : null}
+          <DropdownMenuItem className="min-h-10 cursor-pointer" onClick={onCopy}>
+            <Copy className="h-4 w-4" aria-hidden="true" />
+            {t("conversation.message.copyAria")}
+          </DropdownMenuItem>
+          {actions.map((action) => (
+            action.menuItems?.length ? (
+              <DropdownMenuSub key={action.label}>
+                <DropdownMenuSubTrigger className="min-h-10 cursor-pointer" disabled={action.disabled}>
+                  <span className="inline-flex h-4 w-4 items-center justify-center">{action.icon}</span>
+                  {action.label}
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  {action.menuItems.map((item) => (
+                    <DropdownMenuItem
+                      key={item.label}
+                      className="min-h-10 cursor-pointer whitespace-nowrap"
+                      disabled={item.disabled}
+                      onClick={item.onClick}
+                    >
+                      <span className="inline-flex h-4 w-4 items-center justify-center">{item.icon}</span>
+                      {item.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            ) : (
+              <DropdownMenuItem
+                key={action.label}
+                className="min-h-10 cursor-pointer"
+                disabled={action.disabled}
+                onClick={action.onClick}
+              >
+                <span className="inline-flex h-4 w-4 items-center justify-center">{action.icon}</span>
+                {action.label}
+              </DropdownMenuItem>
+            )
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {copied ? (
+        <span
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none whitespace-nowrap rounded-md border border-border/70 bg-popover px-2 py-1 text-[11px] font-medium leading-none text-popover-foreground shadow-sm"
+        >
+          {t("conversation.message.copiedNotice")}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * Memoized: this is the per-entry component, rendered once for every item in
  * the transcript. Combined with the per-id `terminalUiManager` selectors above
  * and the memoized `MarkdownContent`, a single streamed entry now re-renders
@@ -2406,7 +2489,10 @@ const ActivityRow = memo(function ActivityRow({
               // is where a thumb rests and where the composer's own controls
               // sit, so the bottom-right overlay was the hardest thing on the
               // screen to hit deliberately.
-              <div className="pointer-events-none absolute bottom-0 left-0 z-10 flex items-center text-muted-foreground/70 sm:left-auto sm:right-0">
+              //
+              // Touch screens never fire `group-hover`, so there the overlay
+              // is dropped for the in-flow menu below.
+              <div className="pointer-events-none absolute bottom-0 left-0 z-10 flex items-center text-muted-foreground/70 touch:hidden sm:left-auto sm:right-0">
                 <span className={cn(
                   "pointer-events-none relative inline-flex items-center gap-1 rounded-md bg-background/80 opacity-0 shadow-sm backdrop-blur-[2px] transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-hover/agent-message:pointer-events-auto group-hover/agent-message:opacity-100",
                   (modelAttributionLabel || messageTimeLabel) && "pr-1.5",
@@ -2458,6 +2544,14 @@ const ActivityRow = memo(function ActivityRow({
                   ) : null}
                 </span>
               </div>
+            ) : null}
+            {activity.text.trim() ? (
+              <AssistantMessageTouchMenu
+                actions={assistantMessageActions}
+                metaLabel={[modelAttributionLabel, messageTimeLabel].filter(Boolean).join(" · ")}
+                copied={copiedIdForThisRow === activity.id}
+                onCopy={() => void copyAgentMessage(activity.text, activity.id)}
+              />
             ) : null}
           </div>
         ) : null}
