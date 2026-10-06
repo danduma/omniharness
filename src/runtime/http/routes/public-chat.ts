@@ -1,7 +1,8 @@
 import crypto from "crypto";
-import { and, desc, eq, inArray } from "drizzle-orm";
-import { db } from "@/server/db";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { db, dbClient } from "@/server/db";
 import { runs, settings, workers } from "@/server/db/schema";
+import { withSqliteBusyRetry } from "@/server/db/retry";
 import { createConversation } from "@/server/conversations/create";
 import { sendConversationMessage } from "@/server/conversations/send-message";
 import { readWorkerEntriesTail } from "@/server/workers/output-store";
@@ -11,6 +12,7 @@ import { decryptSettingValue } from "@/server/settings/crypto";
 import { emitNamedEvent } from "@/server/events/named-events";
 import {
   notifyEventStreamSubscribers,
+  getEventStreamNotificationVersion,
   waitForEventStreamNotification,
 } from "@/server/events/live-updates";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
@@ -21,9 +23,6 @@ const MAX_TITLE_LENGTH = 200;
 const PROJECT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 const CREATE_CHAT_LIMIT = 10;
 const CREATE_CHAT_WINDOW_MS = 60_000;
-
-type CreateChatLimitRecord = { count: number; windowStartedAt: number };
-const createChatRateLimits = new Map<string, CreateChatLimitRecord>();
 
 type PublicProject = { id: string; path: string };
 type PublicApiConfig = { key: string; projects: PublicProject[] };
@@ -93,21 +92,31 @@ function hasValidApiKey(request: Request, expected: string) {
   return crypto.timingSafeEqual(actual, configured);
 }
 
-function checkCreateChatRateLimit(projectId: string) {
+async function checkPublicWorkRateLimit(projectId: string) {
   const now = Date.now();
-  const current = createChatRateLimits.get(projectId);
-  const record = !current || now - current.windowStartedAt >= CREATE_CHAT_WINDOW_MS
-    ? { count: 0, windowStartedAt: now }
-    : current;
-  record.count += 1;
-  createChatRateLimits.set(projectId, record);
-  return record.count <= CREATE_CHAT_LIMIT
+  const result = await withSqliteBusyRetry(() => dbClient.execute({
+    sql: `INSERT INTO public_api_rate_limits (project_id, window_started_at, request_count, updated_at)
+          VALUES (?, ?, 1, ?)
+          ON CONFLICT(project_id) DO UPDATE SET
+            request_count = CASE
+              WHEN excluded.window_started_at - public_api_rate_limits.window_started_at >= ? THEN 1
+              ELSE public_api_rate_limits.request_count + 1
+            END,
+            window_started_at = CASE
+              WHEN excluded.window_started_at - public_api_rate_limits.window_started_at >= ? THEN excluded.window_started_at
+              ELSE public_api_rate_limits.window_started_at
+            END,
+            updated_at = excluded.updated_at
+          RETURNING request_count, window_started_at`,
+    args: [projectId, now, now, CREATE_CHAT_WINDOW_MS, CREATE_CHAT_WINDOW_MS],
+  }));
+  const row = result.rows[0] as { request_count: number; window_started_at: number } | undefined;
+  if (!row) {
+    throw new Error("Public API rate-limit update did not return a record.");
+  }
+  return row.request_count <= CREATE_CHAT_LIMIT
     ? { allowed: true as const }
-    : { allowed: false as const, retryAfterMs: CREATE_CHAT_WINDOW_MS - (now - record.windowStartedAt) };
-}
-
-export function resetPublicChatRateLimitsForTests() {
-  createChatRateLimits.clear();
+    : { allowed: false as const, retryAfterMs: Math.max(0, CREATE_CHAT_WINDOW_MS - (now - row.window_started_at)) };
 }
 
 function apiError(status: number, code: string, message: string) {
@@ -232,9 +241,10 @@ async function streamChat(request: Request, project: PublicProject, runId: strin
       const pump = async () => {
         try {
           while (!closed) {
+            const notificationVersion = getEventStreamNotificationVersion();
             await send();
             if (!closed) {
-              await waitForEventStreamNotification(30_000, undefined, request.signal);
+              await waitForEventStreamNotification(30_000, notificationVersion, request.signal);
             }
           }
         } catch (error) {
@@ -290,7 +300,7 @@ export const handlePublicProjectChatsRequest: OmniHttpHandler = async (request, 
     if (!message) {
       return apiError(400, "public_api.invalid_message", `message must contain 1 to ${MAX_MESSAGE_LENGTH} characters.`);
     }
-    const rateLimit = checkCreateChatRateLimit(project.id);
+    const rateLimit = await checkPublicWorkRateLimit(project.id);
     if (!rateLimit.allowed) {
       return Response.json({ error: { code: "public_api.rate_limited", message: "Too many chats were created. Try again shortly." } }, {
         status: 429,
@@ -338,8 +348,21 @@ export const handlePublicProjectChatRequest: OmniHttpHandler = async (request, c
     if (!title) return apiError(400, "public_api.invalid_title", `title must contain 1 to ${MAX_TITLE_LENGTH} characters.`);
     const run = await getPublicRun(chatId, project.path);
     if (!run) return apiError(404, "public_api.conversation_not_found", "Conversation not found for the selected project.");
-    await db.update(runs).set({ title, updatedAt: new Date() }).where(eq(runs.id, run.id));
-    emitNamedEvent({ kind: "conversation.title_updated", runId: run.id, source: "public_api", title });
+    const [updatedRun] = await db.update(runs).set({
+      title,
+      titleOwnership: "manual",
+      titleSource: "manual",
+      titleRevision: sql`${runs.titleRevision} + 1`,
+      titleOwnerWorkerId: null,
+      updatedAt: new Date(),
+    }).where(eq(runs.id, run.id)).returning({ titleRevision: runs.titleRevision });
+    emitNamedEvent({
+      kind: "conversation.title_updated",
+      runId: run.id,
+      source: "public_api",
+      title,
+      revision: updatedRun.titleRevision,
+    });
     notifyEventStreamSubscribers();
     return Response.json({ ok: true, conversationId: run.id, title });
   }
@@ -371,9 +394,15 @@ export const handlePublicProjectChatMessageRequest: OmniHttpHandler = async (req
   const project = projectForRequest(auth.config, context.params?.projectId);
   if (!project) return apiError(404, "public_api.project_not_found", "Project is not available through the public API.");
   const message = messageFromBody(await request.json().catch(() => null));
-  return message
-    ? sendChatMessage(request, project, context.params?.chatId ?? "", message)
-    : apiError(400, "public_api.invalid_message", `message must contain 1 to ${MAX_MESSAGE_LENGTH} characters.`);
+  if (!message) return apiError(400, "public_api.invalid_message", `message must contain 1 to ${MAX_MESSAGE_LENGTH} characters.`);
+  const rateLimit = await checkPublicWorkRateLimit(project.id);
+  if (!rateLimit.allowed) {
+    return Response.json({ error: { code: "public_api.rate_limited", message: "Too many requests started work. Try again shortly." } }, {
+      status: 429,
+      headers: { "retry-after": String(Math.max(1, Math.ceil(rateLimit.retryAfterMs / 1_000))) },
+    });
+  }
+  return sendChatMessage(request, project, context.params?.chatId ?? "", message);
 };
 
 export const handlePublicProjectChatStreamRequest: OmniHttpHandler = async (request, context) => {
@@ -396,6 +425,13 @@ export const handlePublicChatRequest: OmniHttpHandler = async (request) => {
   const message = messageFromBody(body);
   if (!message) return apiError(400, "public_api.invalid_message", `message must contain 1 to ${MAX_MESSAGE_LENGTH} characters.`);
   const conversationId = typeof body?.conversationId === "string" ? body.conversationId.trim() : "";
+  const rateLimit = await checkPublicWorkRateLimit(project.id);
+  if (!rateLimit.allowed) {
+    return Response.json({ error: { code: "public_api.rate_limited", message: "Too many requests started work. Try again shortly." } }, {
+      status: 429,
+      headers: { "retry-after": String(Math.max(1, Math.ceil(rateLimit.retryAfterMs / 1_000))) },
+    });
+  }
   return conversationId ? sendChatMessage(request, project, conversationId, message) : createChat(request, project, message);
 };
 
