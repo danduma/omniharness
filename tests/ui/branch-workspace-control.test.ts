@@ -65,7 +65,7 @@ describe("branch workspace control", () => {
   });
 
   it("adds a translated fork-into-worktree action for message checkpoints", () => {
-    expect(sources).toContain("requestForkMessageWorktree(projectPath: string, runId: string, targetMessageId: string, content: string)");
+    expect(sources).toContain("requestForkMessageWorktree(projectPath: string, runId: string, targetMessageId: string)");
     expect(sources).toContain("handleForkMessageIntoWorktree");
     expect(sources).toContain("handleConfirmForkMessageIntoWorktree");
     expect(sources).toContain("menuItems: [");
@@ -78,7 +78,7 @@ describe("branch workspace control", () => {
   it("does not render a duplicate selected-session worktree fork button", () => {
     expect(sources).toContain("menuItems?: UserInputMessageActionItem[]");
     expect(sources).toContain("menuItems?: TerminalUserMessageActionItem[]");
-    expect(sources).toContain("requestForkSessionWorktree(projectPath: string, runId: string, targetMessageId: string, content: string)");
+    expect(sources).toContain("requestForkSessionWorktree(projectPath: string, runId: string)");
     expect(sources).toContain("handleForkSessionIntoWorktree");
     expect(sources).not.toContain("SessionWorkspaceAction");
   });

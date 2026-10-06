@@ -6,6 +6,7 @@ import {
   handleAcpGoalSessionUpdateForWorker,
   initializeWorkerGoalSession,
 } from "@/server/agent-runtime/acp/goal-state";
+import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 import { goalControl } from "@/server/runs/goal-control";
 import { recoverPendingGoalControlsAtStartup } from "@/server/runs/goal-control-dispatch";
 
@@ -54,6 +55,17 @@ describe("goal worker reconciliation", () => {
     expect(first).toMatchObject({ kind: "accepted", snapshot: { revision: 2, leaseGeneration: 1 } });
     expect(second).toMatchObject({ kind: "accepted", snapshot: { revision: 2, leaseGeneration: 1 } });
     expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores advertised controls when reattaching before a new goal frame", async () => {
+    const dispatch = vi.fn(async () => ({ kind: "dispatched" as const, method: "extension" as const }));
+    await initializeWorkerGoalSession("goal-worker", "session-reattach", {
+      dispatch,
+      agentCapabilities: { _meta: { goal: { version: 1, actions: ["set", "pause", "resume", "clear"] } } },
+    });
+    expect(await goalControl.getGoal("goal-worker-run")).toMatchObject({
+      capabilities: { set: true, edit: true, pause: true, resume: true, clear: true },
+    });
   });
 
   it("replays a committed but undispatched control during startup recovery", async () => {
@@ -160,6 +172,51 @@ describe("goal worker reconciliation", () => {
       leaseGeneration: 1,
     });
   });
+  it("surfaces an invalid first announcement instead of silently losing the goal", async () => {
+    await db.delete(runGoalOutbox);
+    await db.delete(runGoalOperations);
+    await db.delete(runGoals);
+    __resetNamedEventsForTests();
+    const result = await handleAcpGoalSessionUpdateForWorker({
+      workerId: "goal-worker", sessionId: "session-invalid",
+      update: { sessionUpdate: "session_info_update", _meta: { goal: {
+        objective: "Ship it", status: "unknown-provider-status",
+      } } },
+    });
+    expect(result).toEqual({ kind: "rejected", reason: "invalid_status" });
+    expect(getNamedEventsSince(null).events.map((entry) => entry.event)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "goal.payload_rejected", reason: "invalid_status" }),
+      expect.objectContaining({ kind: "error.surfaced", code: "goal.payload.invalid", runId: "goal-worker-run" }),
+    ]));
+  });
+
+  it("projects the native Codex announcement and retains initialization controls", async () => {
+    await db.delete(runGoalOutbox);
+    await db.delete(runGoalOperations);
+    await db.delete(runGoals);
+    const result = await handleAcpGoalSessionUpdateForWorker({
+      workerId: "goal-worker",
+      sessionId: "session-codex",
+      agentCapabilities: { _meta: { goal: {
+        version: 1, controlMethod: "_session/goal", actions: ["set", "pause", "resume", "clear"],
+      } } },
+      update: {
+        sessionUpdate: "session_info_update",
+        _meta: { goal: {
+          objective: "Fully implement the editor plan", status: "active",
+          tokenBudget: null, tokensUsed: 0, timeUsedSeconds: 0,
+          createdAt: 1790789254000, updatedAt: 1790789254000,
+          controlMethod: "_session/goal",
+        } },
+      },
+    });
+    expect(result).toMatchObject({ kind: "accepted" });
+    expect(await goalControl.getGoal("goal-worker-run")).toMatchObject({
+      visible: true, status: "pursuing", objective: "Fully implement the editor plan",
+      capabilities: { set: true, edit: true, pause: true, resume: true, clear: true },
+    });
+  });
+
   it("records the agent's advertised /goal fallback on a goal the agent announces itself", async () => {
     // `available_commands_update` lands before any goal exists, so the branch
     // that records fallback capabilities used to discard it. The goal was then

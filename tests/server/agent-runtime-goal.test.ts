@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { normalizeGoalAgentCapabilities } from "@/server/agent-runtime/acp/goal-normalization";
 import {
   MAX_ACP_GOAL_NESTING_DEPTH,
   normalizeAcpGoalMetadata,
@@ -29,6 +30,31 @@ describe("ACP goal normalization", () => {
         },
       },
     });
+  });
+
+  it("retains goal controls advertised on the initialization envelope", () => {
+    expect(normalizeGoalAgentCapabilities({
+      agentCapabilities: { loadSession: true, _meta: { other: "preserved" } },
+      _meta: { goal: { version: 1, actions: ["set", "pause", "resume", "clear"] } },
+    })).toEqual({ loadSession: true, _meta: {
+      other: "preserved", goal: { version: 1, actions: ["set", "pause", "resume", "clear"] },
+    } });
+  });
+
+  it("accepts the native Codex active status without optional metadata fields", () => {
+    expect(normalizeAcpGoalMetadata({
+      sessionUpdate: "session_info_update",
+      _meta: { goal: {
+        objective: "Fully implement the editor plan",
+        status: "active",
+        tokenBudget: null,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        createdAt: 1790789254000,
+        updatedAt: 1790789254000,
+        controlMethod: "_session/goal",
+      } },
+    })).toMatchObject({ ok: true, value: { status: "pursuing" } });
   });
 
   it("rejects unsupported metadata versions and excessive nesting", () => {

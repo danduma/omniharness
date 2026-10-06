@@ -20,8 +20,8 @@ export type GitWorkspaceDialog =
   | { kind: "start_new_worktree"; projectPath: string }
   | { kind: "create_worktree"; projectPath: string; branchName?: string }
   | { kind: "remove_worktree"; projectPath: string; checkoutPath: string }
-  | { kind: "fork_session_worktree"; projectPath: string; runId: string; targetMessageId: string; content: string }
-  | { kind: "fork_message_worktree"; projectPath: string; runId: string; targetMessageId: string; content: string };
+  | { kind: "fork_session_worktree"; projectPath: string; runId: string; targetMessageId: string }
+  | { kind: "fork_message_worktree"; projectPath: string; runId: string; targetMessageId: string };
 
 export type GitWorkspaceErrorState = {
   message: string;
@@ -397,12 +397,12 @@ export class GitWorkspaceManager extends StateManager<GitWorkspaceManagerState> 
     }));
   }
 
-  requestForkMessageWorktree(projectPath: string, runId: string, targetMessageId: string, content: string) {
-    this.setKey("activeDialog", { kind: "fork_message_worktree", projectPath, runId, targetMessageId, content });
+  requestForkMessageWorktree(projectPath: string, runId: string, targetMessageId: string) {
+    this.setKey("activeDialog", { kind: "fork_message_worktree", projectPath, runId, targetMessageId });
   }
 
-  requestForkSessionWorktree(projectPath: string, runId: string, targetMessageId: string, content: string) {
-    this.setKey("activeDialog", { kind: "fork_session_worktree", projectPath, runId, targetMessageId, content });
+  requestForkSessionWorktree(projectPath: string, runId: string) {
+    this.setKey("activeDialog", { kind: "fork_session_worktree", projectPath, runId, targetMessageId: "" });
   }
 
   private async runOperation(

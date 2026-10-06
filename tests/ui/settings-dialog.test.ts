@@ -27,6 +27,8 @@ const generalSettingsSource = [
   "src/components/settings/GeneralSettingsPanel.tsx",
   "src/components/settings/AppearanceSettingsPanel.tsx",
 ].map(readSource).join("\n");
+const presetCommandsSource = readSource("src/components/settings/PresetCommandsSettings.tsx");
+const workerLaunchControlsSource = readSource("src/components/composer/WorkerLaunchControls.tsx");
 
 test("settings dialog exposes General, Models, Agents, and Runtime tabs in order", () => {
   expect(settingsSource).toContain('const SETTINGS_TABS: Array<{ value: SettingsTab; labelKey: string }> = [');
@@ -38,7 +40,9 @@ test("settings dialog exposes General, Models, Agents, and Runtime tabs in order
   expect(settingsSource.indexOf('{ value: "general", labelKey: "settings.tabs.general" }')).toBeLessThan(settingsSource.indexOf('{ value: "models", labelKey: "settings.tabs.models" }'));
   expect(settingsSource.indexOf('{ value: "models", labelKey: "settings.tabs.models" }')).toBeLessThan(settingsSource.indexOf('{ value: "agents", labelKey: "settings.tabs.agents" }'));
   expect(settingsSource.indexOf('{ value: "agents", labelKey: "settings.tabs.agents" }')).toBeLessThan(settingsSource.indexOf('{ value: "runtime", labelKey: "settings.tabs.runtime" }'));
-  expect(settingsSource).toContain('export type SettingsTab = "general" | "models" | "credentials" | "agents" | "runtime" | "memory"');
+  expect(settingsSource).toContain('export type SettingsTab = "general" | "presets" | "models" | "credentials" | "agents" | "runtime" | "memory"');
+  expect(settingsSource.indexOf('{ value: "general", labelKey: "settings.tabs.general" }')).toBeLessThan(settingsSource.indexOf('{ value: "presets", labelKey: "settings.tabs.presets" }'));
+  expect(settingsSource.indexOf('{ value: "presets", labelKey: "settings.tabs.presets" }')).toBeLessThan(settingsSource.indexOf('{ value: "models", labelKey: "settings.tabs.models" }'));
   expect(settingsSource).not.toContain('activeSettingsTab === "llm"');
   expect(settingsSource).not.toContain('activeSettingsTab === "workers"');
 });
@@ -71,24 +75,27 @@ test("general settings owns language and local text-size preferences without the
   expect(generalSettingsSource).not.toContain("setThemeMode");
 });
 
-test("general settings exposes a dedicated project commit agent", () => {
-  expect(generalSettingsSource).toContain('t("settings.commitAgent.title")');
-  expect(generalSettingsSource).toContain('t("settings.commitAgent.description")');
-  expect(generalSettingsSource).toContain("GIT_COMMIT_WORKER_TYPE_SETTING");
-  expect(generalSettingsSource).toContain("GIT_COMMIT_WORKER_MODEL_SETTING");
-  expect(generalSettingsSource).toContain("GIT_COMMIT_WORKER_EFFORT_SETTING");
-  expect(generalSettingsSource).toContain("workerModels");
-  expect(generalSettingsSource).toContain("getWorkerModelOptions");
+test("preset commands have their own settings tab instead of a commit agent in General", () => {
+  expect(settingsSource).toContain('{activeSettingsTab === "presets" ? (');
+  expect(settingsSource).toContain("<PresetCommandsSettings");
+  expect(generalSettingsSource).not.toContain("PresetCommandsSettings");
+  expect(presetCommandsSource).toContain('t("settings.presetCommands.title")');
+  expect(presetCommandsSource).toContain('t("settings.presetCommands.add")');
+  expect(presetCommandsSource).toContain("addPresetCommand(presets)");
+  expect(presetCommandsSource).toContain("duplicatePresetCommand(presets, preset.id)");
+  expect(presetCommandsSource).toContain("removePresetCommand(presets, preset.id)");
+  expect(presetCommandsSource).toContain("setSetting(PRESET_COMMANDS_SETTING, serializePresetCommands(next))");
+  expect(presetCommandsSource).toContain("getWorkerModelOptions");
+  expect(generalSettingsSource).not.toContain("settings.commitAgent");
   expect(settingsSource).toContain("workerModels={workerCatalogQuery.data?.workerModels}");
 });
 
-test("project commit model picker uses the native select path", () => {
-  const modelControl = generalSettingsSource.match(
-    /<Select\s+id=\{GIT_COMMIT_WORKER_MODEL_SETTING\}[\s\S]*?\n\s*\/>/,
-  )?.[0];
-
-  expect(modelControl).toBeTruthy();
-  expect(modelControl).toContain("native");
+test("preset commands pick their worker with the composer's CLI, account, model, and effort row", () => {
+  expect(presetCommandsSource).toContain("<WorkerLaunchControls");
+  expect(presetCommandsSource).toContain("formatAccountOptionLabel");
+  expect(workerLaunchControlsSource).toContain("<ComposerModelPicker");
+  expect(workerLaunchControlsSource).toContain('ariaLabel={t("conversation.composer.account.ariaLabel")}');
+  expect(workerLaunchControlsSource).toContain('ariaLabel={t("conversation.composer.settings.effort")}');
   expect(settingsSource).toContain("native?: boolean");
   expect(settingsSource).toContain("<select");
 });
@@ -150,6 +157,9 @@ test("models, agents, and runtime panels preserve server-backed settings", () =>
   expect(settingsSource).toContain('["steer", t("settings.runtime.steer")]');
   expect(settingsSource).toContain('["queue", t("settings.runtime.queue")]');
   expect(settingsSource).toContain("BUSY_MESSAGE_ACTION");
+  expect(settingsSource).toContain("RUNTIME_RESOURCE_SETTING_KEYS.outputLogMaxMb");
+  expect(settingsSource).toContain('t("settings.runtime.outputLogMaxGb")');
+  expect(settingsSource).toContain('t("settings.runtime.outputLogMaxHelp")');
   expect(settingsSource).toContain('type="radio"');
   expect(settingsSource).not.toContain("Busy-message behavior");
   expect(settingsSource).not.toContain("Send behaviour");
@@ -169,8 +179,8 @@ test("settings save and cancel use draft semantics for server-backed values", ()
   expect(settingsSource).toContain("dirtyKeys");
   expect(settingsSource).toContain("discardDraft()");
   expect(settingsSource).toContain("getSavePayload()");
-  expect(settingsSource).toContain("settingsDraftManager.getSavePayload()");
-  expect(settingsSource).toContain("settingsDraftManager.markSaved(savedSettings)");
+  expect(settingsSource).toContain("settingsDraftManager.beginSave()");
+  expect(settingsSource).toContain("settingsDraftManager.acknowledgeSave(operation)");
   expect(settingsSource).not.toContain("Local preferences are saved in this browser. Save persists workspace and runtime settings.");
   expect(settingsSource).toContain('disabled={saveSettings.isPending || !isDirty}');
 });

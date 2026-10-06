@@ -84,6 +84,7 @@ export function RuntimeSettingsPanel({ settings, setSetting, resourceSnapshot }:
   const busyMessageAction = settings.BUSY_MESSAGE_ACTION === "steer" ? "steer" : "queue";
   const resourceSettings = resolveRuntimeResourceSettings(settings);
   const idleCleanupMinutes = Math.max(1, Math.round(resourceSettings.idleCleanupAfterMs / 60_000));
+  const outputLogMaxGb = Math.max(1, Math.round(resourceSettings.outputLogMaxMb / 1024));
   const totalMemoryMb = resourceSnapshot?.totalMemoryMb ?? null;
   const memoryFreePercent = resourceSnapshot?.memoryFreePercent ?? null;
   const currentFreeMemoryMb = totalMemoryMb && memoryFreePercent != null
@@ -207,6 +208,26 @@ export function RuntimeSettingsPanel({ settings, setSetting, resourceSnapshot }:
         </div>
 
         <p className="text-xs leading-5 text-muted-foreground">{t("settings.runtime.resourceGuardHelp")}</p>
+
+        <label className="grid grid-cols-[minmax(0,1fr)_8rem] items-start gap-2 text-xs">
+          <span className="space-y-1">
+            <span className="block font-medium text-muted-foreground">{t("settings.runtime.outputLogMaxGb")}</span>
+            <span className="block leading-5 text-muted-foreground/80">{t("settings.runtime.outputLogMaxHelp")}</span>
+          </span>
+          <input
+            type="number"
+            min={1}
+            max={1024}
+            step={1}
+            className="h-8 w-full rounded border bg-muted/50 px-2 text-right text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+            value={outputLogMaxGb}
+            onChange={(event) => setResourceSetting(
+              setSetting,
+              RUNTIME_RESOURCE_SETTING_KEYS.outputLogMaxMb,
+              Math.max(1, Number(event.target.value) || 1) * 1024,
+            )}
+          />
+        </label>
 
         <label className="flex items-center gap-3 text-xs">
           <Switch

@@ -31,6 +31,7 @@ import type {
   ElicitationCreateParams,
   ElicitationResponse,
 } from "../types";
+import { applyProviderConfigOptions } from "../config-state";
 
 const MAX_TEXT_FIELD_CHARS = 100_000;
 const ELICITATION_CREATE_METHOD = "elicitation/create";
@@ -95,6 +96,70 @@ function updateContextUsage(record: AgentRecord, patch: Partial<NonNullable<Agen
     maxTokens,
     fullnessPercent,
   };
+}
+
+/** Codex reports `_meta.codex.threadStatus` on every turn boundary, prompted or not. */
+function readProviderThreadStatus(update: unknown): "active" | "idle" | null {
+  const meta = asRecord(asRecord(update)?._meta);
+  const status = asRecord(asRecord(meta?.codex)?.threadStatus)?.type;
+  return status === "active" || status === "idle" ? status : null;
+}
+
+/**
+ * Track turns the provider runs without a prompt from us. A Codex /goal keeps
+ * starting turns after the prompted one ends; without this the agent read as
+ * idle (or working forever) and the runner settled a conversation that was
+ * still producing output.
+ */
+function applyProviderThreadStatus(record: AgentRecord, status: "active" | "idle" | null) {
+  if (!status) return;
+  record.providerTurnActive = status === "active";
+  // `askAgent` settles the turn it started; it reads `providerTurnActive` then.
+  if (record.promptInFlight) return;
+  if (status === "active" && record.state === "idle") {
+    record.state = "working";
+    record.lastText = record.currentText || record.lastText;
+    record.currentText = "";
+    record.activeOutputEntryId = null;
+    record.stopReason = null;
+    emitNamedEvent({ kind: "acp.provider_turn_started", workerId: record.name });
+  } else if (status === "idle" && record.state === "working") {
+    endProviderTurn(record);
+  }
+}
+
+function endProviderTurn(record: AgentRecord) {
+  record.lastText = record.currentText || record.lastText;
+  record.currentText = "";
+  record.stopReason = "end_turn";
+  record.state = "idle";
+  emitNamedEvent({ kind: "acp.provider_turn_ended", workerId: record.name });
+}
+
+/**
+ * claude-agent-acp attaches `cost` to a `usage_update` only when the SDK
+ * reports a turn `result` — for prompted turns and for the ones Claude starts
+ * on its own after a background task notification alike.
+ */
+function isTurnResultUsageUpdate(update: Record<string, unknown>) {
+  return finiteNumber(asRecord(update.cost)?.amount) !== null;
+}
+
+/**
+ * Claude has no Codex-style thread status, so a turn it starts on its own
+ * (a background-task notification) reads as working from its first tool call
+ * and, without this, never reads as idle again. The stuck-worker reaper then
+ * took the quiet "working" worker for a hung one and re-sent the user's last,
+ * already-answered message — which the agent read as fresh consent to act.
+ */
+function settleUnpromptedTurnAtResult(record: AgentRecord, update: Record<string, unknown>) {
+  if (!isTurnResultUsageUpdate(update)) return;
+  // `askAgent` settles the turn it started, and a Codex /goal turn ends on
+  // its own thread status.
+  if (record.promptInFlight || record.providerTurnActive) return;
+  if (record.state !== "working") return;
+  if (record.pendingPermissions.length > 0 || record.pendingElicitations.length > 0) return;
+  endProviderTurn(record);
 }
 
 function applySessionUsageUpdate(record: AgentRecord, update: Record<string, unknown>) {
@@ -489,6 +554,7 @@ export class RuntimeClient implements acp.Client {
     if (goalWorkerId && isAcpGoalNotification(params.update) && !isAcpPlanNotification(params.update)) {
       await handleAcpGoalSessionUpdateForWorker({
         workerId: goalWorkerId,
+        agentCapabilities: record?.agentCapabilities,
         sessionId: params.sessionId,
         update: params.update,
       });
@@ -518,8 +584,32 @@ export class RuntimeClient implements acp.Client {
     const update = params.update;
     record.updatedAt = nowIso();
 
+    if (update.sessionUpdate === "config_option_update") {
+      const previousModelStatus = record.modelStatus;
+      const previousEffortStatus = record.effortStatus;
+      applyProviderConfigOptions(record, update.configOptions);
+      if (
+        (record.modelStatus === "rejected" && previousModelStatus !== "rejected")
+        || (record.effortStatus === "rejected" && previousEffortStatus !== "rejected")
+      ) {
+        emitNamedEvent({
+          kind: "error.surfaced",
+          code: "worker.configuration.rejected",
+          message: "The provider reported a different runtime configuration than the requested value.",
+          surface: "toast",
+          workerId: record.name,
+          cause: null,
+        });
+      }
+    } else if (update.sessionUpdate === "current_mode_update") {
+      record.sessionMode = update.currentModeId;
+    } else if (update.sessionUpdate === "session_info_update") {
+      applyProviderThreadStatus(record, readProviderThreadStatus(update));
+    }
+
     if (update.sessionUpdate === "usage_update") {
       applySessionUsageUpdate(record, update as unknown as Record<string, unknown>);
+      settleUnpromptedTurnAtResult(record, update as unknown as Record<string, unknown>);
     }
 
     const normalized = normalizeSessionUpdate(update);

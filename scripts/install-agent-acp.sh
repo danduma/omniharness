@@ -146,6 +146,29 @@ latest_npm_package_version() {
   npm view "$package_name" version --silent 2>/dev/null
 }
 
+global_npm_package_version() {
+  local package_name="$1"
+  local npm_root
+  local package_json
+  have_command npm || return 1
+  have_command node || return 1
+  npm_root="$(npm root -g 2>/dev/null || true)"
+  [ -n "$npm_root" ] || return 1
+  package_json="$npm_root/$package_name/package.json"
+  [ -f "$package_json" ] || return 1
+  node -e 'process.stdout.write(require(process.argv[1]).version)' "$package_json" 2>/dev/null
+}
+
+managed_npm_package_is_outdated() {
+  local package_name="$1"
+  local installed
+  local latest
+  installed="$(global_npm_package_version "$package_name" || true)"
+  latest="$(latest_npm_package_version "$package_name" || true)"
+  [ -n "$installed" ] && [ -n "$latest" ] || return 1
+  [ "$installed" != "$latest" ]
+}
+
 managed_codex_acp_npm_is_outdated() {
   local installed_acp
   local installed_codex
@@ -651,7 +674,7 @@ try_install() {
   fi
 }
 
-if have_command codex; then
+if have_command codex || have_codex_acp; then
   echo "codex: detected"
   if have_codex_acp; then
     if [ "$CODEX_ACP_INSTALL_MODE" = "docker" ]; then
@@ -699,10 +722,17 @@ else
   fi
 fi
 
-if have_command claude; then
+if have_command claude \
+  || have_command claude-agent-acp \
+  || [ -n "$(global_npm_package_version \"@agentclientprotocol/claude-agent-acp\" || true)" ]; then
   echo "claude: detected"
   if have_command claude-agent-acp; then
-    echo "  -> \`claude-agent-acp\` already installed"
+    if managed_npm_package_is_outdated "@agentclientprotocol/claude-agent-acp"; then
+      echo "  -> managed \`@agentclientprotocol/claude-agent-acp\` is outdated; refreshing it"
+      try_install run_install_npm "@agentclientprotocol/claude-agent-acp@latest"
+    else
+      echo "  -> \`claude-agent-acp\` already installed and current"
+    fi
   else
     try_install run_install_npm "@agentclientprotocol/claude-agent-acp"
   fi

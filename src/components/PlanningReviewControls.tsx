@@ -27,7 +27,7 @@ export function PlanningReviewControls({
   onStartReview,
 }: PlanningReviewControlsProps) {
   useI18nSnapshot();
-  const { agentSelection, rounds, isExpanded, isSaving, isStarting } = useManagerSnapshot(planningReviewPreferencesManager);
+  const { agentSelection, rounds, isExpanded, isSaving, isStarting, saveError } = useManagerSnapshot(planningReviewPreferencesManager);
 
   const agents: PlanningReviewAgentSelection[] = ["auto", "same", "codex", "claude", "gemini", "opencode"];
 
@@ -166,6 +166,9 @@ export function PlanningReviewControls({
               )}
             </Button>
           </div>
+          {saveError ? (
+            <p className="text-xs text-destructive" role="alert">{saveError}</p>
+          ) : null}
         </div>
       )}
 

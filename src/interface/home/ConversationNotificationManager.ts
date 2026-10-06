@@ -4,6 +4,7 @@ import { t } from "@/lib/i18n";
 import { registerServiceWorker } from "@/lib/pwa";
 import type { AgentSnapshot, EventStreamState, RunRecord } from "./types";
 import type { RuntimeAPIs } from "@/runtime-api/types";
+import { runtimeErrorMessage } from "@/runtime-api/request";
 
 export const CONVERSATION_NOTIFICATIONS_STORAGE_KEY = "omni-notifications-enabled";
 
@@ -253,12 +254,34 @@ function agentBelongsToRun(agent: AgentSnapshot, run: RunRecord, workerRunIds: M
   return mappedRunId === run.id || agent.name.startsWith(`${run.id}-`);
 }
 
-function buildPermissionKeys(run: RunRecord, state: EventStreamState) {
-  const workerRunIds = new Map((state.workers ?? []).map((worker) => [worker.id, worker.runId]));
+// Built once per stream state. Deriving these per run made every live frame
+// cost runs × (workers + agents), which on a long conversation history kept the
+// main thread busy enough to delay keystrokes and drop touch gestures.
+interface RunNotificationIndex {
+  completedRunIds: Set<string>;
+  workerRunIds: Map<string, string>;
+  agentsWithPendingPermissions: AgentSnapshot[];
+  pendingClarificationRunIds: Set<string>;
+}
+
+function buildRunNotificationIndex(state: EventStreamState): RunNotificationIndex {
+  return {
+    completedRunIds: new Set((state.executionEvents ?? [])
+      .filter((event) => event.eventType === "run_completed")
+      .map((event) => event.runId)),
+    workerRunIds: new Map((state.workers ?? []).map((worker) => [worker.id, worker.runId])),
+    agentsWithPendingPermissions: (state.agents ?? []).filter((agent) => (agent.pendingPermissions?.length ?? 0) > 0),
+    pendingClarificationRunIds: new Set((state.clarifications ?? [])
+      .filter((clarification) => normalizeStatus(clarification.status) === "pending")
+      .map((clarification) => clarification.runId)),
+  };
+}
+
+function buildPermissionKeys(run: RunRecord, index: RunNotificationIndex) {
   const keys = new Set<string>();
 
-  for (const agent of state.agents ?? []) {
-    if (!agentBelongsToRun(agent, run, workerRunIds)) {
+  for (const agent of index.agentsWithPendingPermissions) {
+    if (!agentBelongsToRun(agent, run, index.workerRunIds)) {
       continue;
     }
 
@@ -268,12 +291,6 @@ function buildPermissionKeys(run: RunRecord, state: EventStreamState) {
   }
 
   return keys;
-}
-
-function hasPendingClarification(run: RunRecord, state: EventStreamState) {
-  return (state.clarifications ?? []).some((clarification) => (
-    clarification.runId === run.id && normalizeStatus(clarification.status) === "pending"
-  ));
 }
 
 function hasNewPermission(previous: ObservedRunState | undefined, permissionKeys: Set<string>) {
@@ -290,12 +307,12 @@ function hasNewPermission(previous: ObservedRunState | undefined, permissionKeys
   return null;
 }
 
-function buildObservedRunState(run: RunRecord, state: EventStreamState, completedRunIds: Set<string>): ObservedRunState {
+function buildObservedRunState(run: RunRecord, index: RunNotificationIndex): ObservedRunState {
   return {
     status: normalizeStatus(run.status),
-    inputNeeded: normalizeStatus(run.status) === "awaiting_user" || hasPendingClarification(run, state),
-    completed: isCompletedRun(run, completedRunIds),
-    permissionKeys: buildPermissionKeys(run, state),
+    inputNeeded: normalizeStatus(run.status) === "awaiting_user" || index.pendingClarificationRunIds.has(run.id),
+    completed: isCompletedRun(run, index.completedRunIds),
+    permissionKeys: buildPermissionKeys(run, index),
   };
 }
 
@@ -381,7 +398,7 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
         this.patch({
           enabled: false,
           permission,
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: runtimeErrorMessage(error),
         });
         return;
       }
@@ -405,7 +422,7 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
         return undefined;
       }).catch((error: unknown) => {
         this.patch({
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: runtimeErrorMessage(error),
         });
       });
     }
@@ -447,9 +464,7 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
     },
     state: EventStreamState,
   ) {
-    const completedRunIds = new Set((state.executionEvents ?? [])
-      .filter((event) => event.eventType === "run_completed")
-      .map((event) => event.runId));
+    const index = buildRunNotificationIndex(state);
     const nextObservedRuns = new Map<string, ObservedRunState>();
     const notifications: ConversationNotificationRequest[] = [];
 
@@ -457,7 +472,7 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
       const tagScope = runner.runnerProfileId ? `${runner.scope}-` : "";
       const scopedRunId = `${runner.scope}:${run.id}`;
       const previous = this.observedRuns.get(scopedRunId);
-      const observed = buildObservedRunState(run, state, completedRunIds);
+      const observed = buildObservedRunState(run, index);
       nextObservedRuns.set(scopedRunId, observed);
 
       if (!this.observedScopes.has(runner.scope) || !previous) {
@@ -518,7 +533,7 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
     for (const notification of notifications) {
       void this.notifier.notify(notification).catch((error: unknown) => {
         this.patch({
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: runtimeErrorMessage(error),
         });
       });
     }

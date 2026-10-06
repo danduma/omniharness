@@ -313,9 +313,10 @@ adapter. The setup script also checks common agent tools.
 
 ### Codex ACP Updates
 
-Normal `./omniharness` startup checks the managed Codex ACP and Codex CLI package
-versions and rolls both forward when npm publishes an update. Force an immediate
-refresh with:
+Every production start, including restarts through the restart controller, checks
+the managed Codex ACP and Codex CLI package versions and rolls them forward when
+npm publishes an update. It also refreshes an existing npm-installed Claude ACP
+adapter when a newer version is available. Force an immediate refresh with:
 
 ```bash
 scripts/install-agent-acp.sh --codex-acp=npm

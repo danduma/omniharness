@@ -9,6 +9,7 @@ import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { startSupervisorRun } from "@/server/supervisor/start";
 import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
+import { isAgentBusyError } from "@/server/supervisor/retry";
 import { appendAttachmentContext, normalizeChatAttachments, resolveImageAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { getAppDataPath } from "@/server/app-root";
 import { serializeMessageRecord } from "./message-records";
@@ -36,6 +37,7 @@ import {
   type BusyMessageAction,
 } from "./queued-message-records";
 export type { BusyMessageAction, QueuedConversationMessageStatus } from "./queued-message-records";
+export { isAgentBusyError };
 
 export type WorkerAskResponse = Awaited<ReturnType<typeof askAgent>>;
 type WorkerSnapshot = Awaited<ReturnType<typeof getAgent>>;
@@ -69,11 +71,6 @@ const lastQueuedMessageCreatedAtByRun = new Map<string, number>();
 
 export function parseBusyMessageAction(value: unknown): BusyMessageAction | null {
   return value === "queue" || value === "steer" ? value : null;
-}
-
-export function isAgentBusyError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  return /\bagent is busy\b/i.test(message);
 }
 
 export function errorMessage(error: unknown) {
@@ -155,7 +152,7 @@ export function isEmptyQueuedWorkerOutputError(error: unknown): error is EmptyQu
   return error instanceof EmptyQueuedWorkerOutputError;
 }
 
-function workerStreamHasOutputAfterInput(
+export function workerStreamHasOutputAfterInput(
   entries: Awaited<ReturnType<typeof readWorkerOutputEntries>>,
   userInputEntryId: string,
 ) {
@@ -531,49 +528,117 @@ export async function listPendingQueuedConversationMessages(runId: string) {
  */
 export async function reclaimOrphanedDeliveringMessages() {
   const orphaned = await db
-    .select({ id: queuedConversationMessages.id, runId: queuedConversationMessages.runId })
+    .select()
     .from(queuedConversationMessages)
     .where(eq(queuedConversationMessages.status, "delivering"));
-  if (orphaned.length === 0) {
-    return 0;
-  }
-
-  const now = new Date();
-  await db.update(queuedConversationMessages).set({
-    status: "pending",
-    lastError: null,
-    updatedAt: now,
-    deliveredAt: null,
-  }).where(inArray(queuedConversationMessages.id, orphaned.map((record) => record.id)));
+  const orphanedMessages = await db
+    .select({ id: messages.id, runId: messages.runId })
+    .from(messages)
+    .where(eq(messages.deliveryStatus, "delivering"));
+  if (orphaned.length === 0 && orphanedMessages.length === 0) return 0;
 
   for (const record of orphaned) {
-    await insertQueueExecutionEvent(record.runId, "queued_message_reclaimed", {
-      summary: "Requeued a message whose delivery was interrupted by a restart.",
-      queuedMessageId: record.id,
-    });
+    try {
+      const hasProviderProgress = record.targetWorkerId
+        ? workerStreamHasOutputAfterInput(
+            await readWorkerOutputEntries(record.runId, record.targetWorkerId),
+            record.id,
+          )
+        : false;
+      const now = new Date();
+      if (hasProviderProgress && record.targetWorkerId) {
+        await db.insert(messages).values({
+          id: record.id,
+          runId: record.runId,
+          role: "user",
+          kind: "checkpoint",
+          content: record.content,
+          attachmentsJson: record.attachmentsJson,
+          deliveryStatus: "delivered",
+          operationFingerprint: record.operationFingerprint,
+          createdAt: record.createdAt,
+        }).onConflictDoNothing();
+        const persisted = await db.select().from(messages).where(eq(messages.id, record.id)).get();
+        if (
+          !persisted
+          || persisted.role !== "user"
+          || persisted.runId !== record.runId
+          || persisted.content !== record.content
+          || (persisted.attachmentsJson ?? null) !== (record.attachmentsJson ?? null)
+        ) {
+          throw new Error("Recovered queue message id is owned by a different message.");
+        }
+        await db.update(queuedConversationMessages).set({
+          status: "delivered",
+          lastError: null,
+          updatedAt: now,
+          deliveredAt: now,
+        }).where(and(
+          eq(queuedConversationMessages.id, record.id),
+          eq(queuedConversationMessages.status, "delivering"),
+        ));
+        await insertQueueExecutionEvent(record.runId, "queued_message_delivery_recovered", {
+          summary: "Marked an interrupted queued delivery complete because provider output already followed its input.",
+          queuedMessageId: record.id,
+        }, record.targetWorkerId);
+        emitNamedEvent({
+          kind: "conversation.queued_delivery_recovered",
+          runId: record.runId,
+          messageId: record.id,
+          workerId: record.targetWorkerId,
+        });
+      } else {
+        await db.update(queuedConversationMessages).set({
+          status: "pending",
+          lastError: null,
+          updatedAt: now,
+          deliveredAt: null,
+        }).where(and(
+          eq(queuedConversationMessages.id, record.id),
+          eq(queuedConversationMessages.status, "delivering"),
+        ));
+        await insertQueueExecutionEvent(record.runId, "queued_message_reclaimed", {
+          summary: "Requeued a message whose delivery was interrupted by a restart.",
+          queuedMessageId: record.id,
+        });
+      }
+    } catch (error) {
+      const reason = errorMessage(error);
+      emitNamedEvent({
+        kind: "conversation.delivery_reclaim_failed",
+        runId: record.runId,
+        messageId: record.id,
+        reason,
+      });
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "conversation.delivery_recovery_failed",
+        message: `Could not recover message delivery ${record.id}: ${reason}`,
+        surface: "log",
+        runId: record.runId,
+        cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+      });
+    }
+  }
+  if (orphanedMessages.length > 0) {
+    await db.update(messages).set({ deliveryStatus: "accepted" })
+      .where(inArray(messages.id, orphanedMessages.map((record) => record.id)));
+    for (const record of orphanedMessages) {
+      emitNamedEvent({ kind: "conversation.message_delivery_reclaimed", runId: record.runId, messageId: record.id });
+    }
   }
   notifyEventStreamSubscribers();
-  return orphaned.length;
+  return orphaned.length + orphanedMessages.length;
 }
 
 const CLIENT_MESSAGE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/**
- * Falls back to a fresh uuid when the client id is unusable — malformed, or
- * already taken by an earlier queue row — so a resend degrades to a duplicate
- * row rather than a primary-key failure that would lose the user's text.
- */
-async function resolveQueuedConversationMessageId(clientMessageId: string | null | undefined) {
+function resolveQueuedConversationMessageId(clientMessageId: string | null | undefined) {
   const candidate = typeof clientMessageId === "string" ? clientMessageId.trim().toLowerCase() : "";
   if (!CLIENT_MESSAGE_ID_PATTERN.test(candidate)) {
     return randomUUID();
   }
-  const existing = await db
-    .select({ id: queuedConversationMessages.id })
-    .from(queuedConversationMessages)
-    .where(eq(queuedConversationMessages.id, candidate))
-    .get();
-  return existing ? randomUUID() : candidate;
+  return candidate;
 }
 
 async function createQueuedConversationMessageUnlocked({
@@ -583,6 +648,7 @@ async function createQueuedConversationMessageUnlocked({
   content,
   attachments = [],
   clientMessageId = null,
+  operationFingerprint = null,
 }: {
   runId: string;
   targetWorkerId?: string | null;
@@ -595,6 +661,7 @@ async function createQueuedConversationMessageUnlocked({
    * blink out and back when the event stream catches up.
    */
   clientMessageId?: string | null;
+  operationFingerprint?: string | null;
 }) {
   await assertRunNotHandoffFenced(runId);
   const trimmedContent = content.trim();
@@ -603,14 +670,38 @@ async function createQueuedConversationMessageUnlocked({
     throw Object.assign(new Error("Message content or attachment is required"), { status: 400 });
   }
 
+  const id = resolveQueuedConversationMessageId(clientMessageId);
+  const attachmentsJson = serializeChatAttachments(normalizedAttachments);
+  const existing = await db
+    .select()
+    .from(queuedConversationMessages)
+    .where(eq(queuedConversationMessages.id, id))
+    .get();
+  if (existing) {
+    const matches = existing.runId === runId
+      && existing.targetWorkerId === targetWorkerId
+      && existing.action === action
+      && existing.content === trimmedContent
+      && (existing.attachmentsJson ?? null) === attachmentsJson
+      && (!existing.operationFingerprint || existing.operationFingerprint === operationFingerprint);
+    if (!matches) {
+      throw Object.assign(new Error("Client message id is already owned by a different queued message."), {
+        status: 409,
+        code: "conversation_message_id_conflict",
+      });
+    }
+    return serializeQueuedConversationMessage(existing);
+  }
+
   const now = await nextQueuedMessageCreatedAt(runId);
   const record = {
-    id: await resolveQueuedConversationMessageId(clientMessageId),
+    id,
     runId,
     targetWorkerId,
     action,
     content: trimmedContent,
-    attachmentsJson: serializeChatAttachments(normalizedAttachments),
+    attachmentsJson,
+    operationFingerprint,
     status: "pending",
     lastError: null,
     createdAt: now,
@@ -1025,6 +1116,7 @@ async function sendQueuedConversationMessageNowUnlocked({
     kind: "checkpoint",
     content: record.content,
     attachmentsJson: record.attachmentsJson,
+    operationFingerprint: record.operationFingerprint,
     createdAt: startedAt,
   };
 
@@ -1166,6 +1258,17 @@ async function drainQueuedImplementationMessagesUnlocked(runId: string) {
         continue;
       }
 
+      // Persist the concrete delivery owner before contacting the provider.
+      // Startup recovery needs this worker id to inspect the unified stream
+      // and decide whether replay would repeat work.
+      await db.update(queuedConversationMessages).set({
+        targetWorkerId: worker.id,
+        updatedAt: now,
+      }).where(and(
+        eq(queuedConversationMessages.id, record.id),
+        eq(queuedConversationMessages.status, "delivering"),
+      ));
+
       const normalizedAttachments = normalizeChatAttachments(record.attachmentsJson ? JSON.parse(record.attachmentsJson) : []);
       const workerContent = appendAttachmentContext(record.content, normalizedAttachments, {
         resolvePath: (storagePath) => getAppDataPath(storagePath),
@@ -1186,26 +1289,12 @@ async function drainQueuedImplementationMessagesUnlocked(runId: string) {
             interventionType: "continue",
           });
           interventionId = intervention.id;
-          const steerImages = resolveImageAttachments(normalizedAttachments, getAppDataPath);
-          const response = steerImages.length
-            ? await askAgent(worker.id, workerContent, steerImages)
-            : await askAgent(worker.id, workerContent);
-          const deliveredAt = new Date();
-          const userMessage = {
-            id: randomUUID(),
-            runId,
-            role: "user" as const,
-            kind: "checkpoint" as const,
-            content: record.content,
-            attachmentsJson: record.attachmentsJson,
-            createdAt: record.createdAt,
-          };
           await appendUserInputOnDelivery({
-            id: userMessage.id,
+            id: record.id,
             runId,
             workerId: worker.id,
             text: record.content,
-            deliveredAt,
+            deliveredAt: now,
             attachments: normalizedAttachments.map((attachment) => ({
               id: attachment.id,
               filename: attachment.name,
@@ -1215,6 +1304,22 @@ async function drainQueuedImplementationMessagesUnlocked(runId: string) {
             })),
             expectedTurnGeneration: worker.turnGeneration,
           });
+          notifyEventStreamSubscribers();
+          const steerImages = resolveImageAttachments(normalizedAttachments, getAppDataPath);
+          const response = steerImages.length
+            ? await askAgent(worker.id, workerContent, steerImages)
+            : await askAgent(worker.id, workerContent);
+          const deliveredAt = new Date();
+          const userMessage = {
+            id: record.id,
+            runId,
+            role: "user" as const,
+            kind: "checkpoint" as const,
+            content: record.content,
+            attachmentsJson: record.attachmentsJson,
+            operationFingerprint: record.operationFingerprint,
+            createdAt: record.createdAt,
+          };
           await db.insert(messages).values(userMessage);
           await db.insert(messages).values({
             id: randomUUID(),
@@ -1295,6 +1400,7 @@ async function drainQueuedImplementationMessagesUnlocked(runId: string) {
       kind: "checkpoint" as const,
       content: record.content,
       attachmentsJson: record.attachmentsJson,
+      operationFingerprint: record.operationFingerprint,
       createdAt: record.createdAt,
     });
 
@@ -1371,6 +1477,7 @@ async function drainQueuedWorkerMessagesUnlocked({
       kind: "checkpoint" as const,
       content: record.content,
       attachmentsJson: record.attachmentsJson,
+      operationFingerprint: record.operationFingerprint,
       createdAt: startedAt,
     };
     const claimed = await db.update(queuedConversationMessages).set({

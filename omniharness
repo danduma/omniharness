@@ -196,6 +196,7 @@ OMNIHARNESS_AUTH_PASSWORD_NOTICE_FILE="$AUTH_PASSWORD_NOTICE_FILE" node ./script
 
 if [ "${OMNIHARNESS_SKIP_AGENT_ACP_SETUP:-0}" != "1" ]; then
   ./scripts/install-agent-acp.sh --ensure-only || echo "[omniharness] Agent ACP adapter setup reported issues; continuing." >&2
+  export OMNIHARNESS_AGENT_ACP_SETUP_COMPLETE=1
 fi
 
 WEB_PORT="$(node --env-file-if-exists="$ROOT_DIR/.env" --input-type=module -e '

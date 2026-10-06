@@ -1,6 +1,6 @@
 import { isPermanentAccountFailure, isPoisonedSessionFailure } from "@/lib/provider-account-failures";
 
-export type RecoverRunAction = "retry" | "edit" | "fork";
+export type RecoverRunAction = "retry" | "resume" | "edit" | "fork";
 
 export function shouldSelectRecoveredRunAfterSuccess({
   action,

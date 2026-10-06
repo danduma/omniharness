@@ -51,6 +51,7 @@ const terminalSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/Terminal.tsx"),
   "utf8"
 );
+const globalsCssSource = readSource("src/interface/styles/globals.css");
 const cliBrandIconsSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/cli-brand-icons.tsx"),
   "utf8"
@@ -356,7 +357,7 @@ test("workspace side window owns workers and file tabs", () => {
   expect(sideWindowSource).toContain(') : activeTab?.kind === "workers" ? (');
   expect(pageSource).toContain("DropdownMenuCheckboxItem");
   expect(pageSource).toContain("fileViewerPanelManager.toggleWordWrap()");
-  expect(pageSource).toContain("void fileQuery.refetch()");
+  expect(pageSource).toContain("void activeQuery.refetch()");
   expect(pageSource).toContain('className="omni-conversation-text-scale min-h-0 flex-1 overflow-auto bg-muted/15 [scrollbar-width:thin]"');
   expect(pageSource).toContain('"min-w-0 overflow-hidden break-words [overflow-wrap:anywhere] leading-relaxed"');
   expect(pageSource).not.toContain('"overflow-x-auto leading-relaxed"');
@@ -367,6 +368,25 @@ test("workspace side window owns workers and file tabs", () => {
     sideWindowSource.indexOf('<span className="truncate">{tab.kind === "workers" ? workersTabLabel : tab.title}</span>'),
   );
   expect(sideWindowSource).toContain("showHeader={false}");
+});
+
+test("file viewer draws images instead of asking the text reader for their bytes", () => {
+  expect(pageSource).toContain("const isImage = isImagePath(relativePath);");
+  expect(pageSource).toContain('enabled: Boolean(root && relativePath) && !isImage');
+  expect(pageSource).toContain("runtimeApis.files.image({ root, file: relativePath })");
+  expect(pageSource).toContain("URL.createObjectURL(imageBlob)");
+  expect(pageSource).toContain("URL.revokeObjectURL(imageUrl)");
+  expect(pageSource).toContain('t("fileViewer.image.alt", { path: relativePath })');
+  expect(pageSource).toContain("fileViewerPanelManager.markImageLoaded(");
+  expect(pageSource).toContain("fileViewerPanelManager.markImageFailed(imageKey)");
+  expect(pageSource).toContain('t("fileViewer.menu.actualSize")');
+  expect(pageSource).toContain('t("fileViewer.metadata.dimensions"');
+  expect(pageSource).toContain("omni-image-canvas");
+});
+
+test("file viewer errors name the runtime failure instead of stringifying it", () => {
+  expect(pageSource).toContain("runtimeErrorMessage(activeQuery.error)");
+  expect(pageSource).not.toContain("String(fileQuery.error)");
 });
 
 test("workers sidebar gives a single visible worker the full available window and scrolls multi-worker lists", () => {
@@ -755,6 +775,16 @@ test("worker output exposes copy from a bottom-right mobile actions menu", () =>
   expect(pageSource).toContain('t("conversation.message.copyAria")');
 });
 
+test("assistant message actions fall back to a tappable menu on touch devices", () => {
+  expect(globalsCssSource).toContain("@custom-variant touch (@media (hover: none));");
+  expect(terminalSource).toContain("function AssistantMessageTouchMenu");
+  expect(terminalSource).toContain("<AssistantMessageTouchMenu");
+  expect(terminalSource).toContain("absolute bottom-0 right-0 z-10 hidden items-center gap-1 text-muted-foreground/70 touch:flex");
+  expect(terminalSource).toContain("z-10 flex items-center text-muted-foreground/70 touch:hidden");
+  expect(terminalSource).toContain('aria-label={t("conversation.message.actionsAria")}');
+  expect(terminalSource).toContain("<DropdownMenuSub key={action.label}>");
+});
+
 test("conversation sidebar remembers scroll across mobile drawer remounts", () => {
   expect(conversationSidebarSource).toContain("class ConversationSidebarScrollManager");
   expect(conversationSidebarSource).toContain("scrollTopBySurface");
@@ -824,7 +854,7 @@ test("direct conversations render the user transcript next to the worker surface
 
 test("settings entry opens the reorganized settings dialog", () => {
   expect(pageSource).toContain('activeSettingsTab: "general"');
-  expect(readSource("src/shared/home-types.ts")).toContain('export type SettingsTab = "general" | "models" | "credentials" | "agents" | "runtime" | "memory"');
+  expect(readSource("src/shared/home-types.ts")).toContain('export type SettingsTab = "general" | "presets" | "models" | "credentials" | "agents" | "runtime" | "memory"');
   expect(pageSource).toContain('import("@/components/home/SettingsDialog")');
   expect(pageSource).toContain("settingsDraftManager");
 });
@@ -1029,8 +1059,8 @@ test("new conversations expose only direct control and existing direct runs lock
   expect(pageSource).toContain('selectedConversationMode={activeComposerMode}');
   expect(pageSource).toContain('const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct"');
   expect(pageSource).not.toContain("Direct worker:");
-  expect(pageSource).toContain("{shouldLockDirectWorker ? (");
-  expect(pageSource).toContain('mode: selectedConversationMode');
+  expect(pageSource).toContain("lockedWorkerLabel={shouldLockDirectWorker ? lockedDirectWorkerLabel : null}");
+  expect(pageSource).toContain('mode: payload.launch.conversationMode');
 });
 
 test("starting a project-scoped conversation keeps the composer empty", () => {

@@ -5,10 +5,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   appendOutputEntry,
   appendBoundedText,
-  appendBoundedThoughts,
   appendMessageChunk,
   openAgentOutputArchive,
   reassembleArchivedEntries,
+  resolveAgentRuntimeDataDir,
   summarizeToolCallUpdate,
 } from "@/server/agent-runtime/output-store";
 import type { AgentRecord } from "@/server/agent-runtime/types";
@@ -28,6 +28,13 @@ describe("agent runtime output store", () => {
     tempRoots.push(root);
     return root;
   }
+
+  it("keeps raw archives inside the configured runtime or app-data root", () => {
+    expect(resolveAgentRuntimeDataDir({ dataDir: "/tmp/omni-runtime-data" }))
+      .toBe("/tmp/omni-runtime-data");
+    expect(resolveAgentRuntimeDataDir({ rootDir: "/tmp/omni-app-root" }))
+      .toBe("/tmp/omni-app-root/.omniharness");
+  });
 
   describe("appendBoundedText", () => {
     it("keeps recent text without adding an omitted-output placeholder", () => {
@@ -104,43 +111,6 @@ describe("agent runtime output store", () => {
     expect(JSON.stringify(record.outputEntries[0]?.raw).length).toBeLessThan(20_000);
   });
 
-  describe("appendBoundedThoughts", () => {
-    it("does not trim thoughts within limit", () => {
-      const result = appendBoundedThoughts("First thought.\n\nSecond thought.", "\n\nThird thought.", 100);
-      expect(result).toBe("First thought.\n\nSecond thought.\n\nThird thought.");
-    });
-
-    it("trims thoughts to start cleanly after a double newline", () => {
-      // Limit 40. "My prefix text that gets sliced out\n\nKeep block 1\n\nKeep block 2"
-      // Slicing last 40 characters: "ced out\n\nKeep block 1\n\nKeep block 2"
-      // First \n\n in slice is at index 7. We want it to trim cleanly to "Keep block 1\n\nKeep block 2"
-      const result = appendBoundedThoughts(
-        "My prefix text that gets sliced out",
-        "\n\nKeep block 1\n\nKeep block 2",
-        40
-      );
-      expect(result).toBe("Keep block 1\n\nKeep block 2");
-      expect(result).not.toContain("Earlier runtime output omitted");
-    });
-
-    it("trims thoughts to start cleanly after a single newline if no double newline is found", () => {
-      // Limit 30. "Sliced prefix\nKeep part 1\nKeep part 2"
-      // Slicing last 30 characters: "ced prefix\nKeep part 1\nKeep part 2"
-      // First \n is at index 10. We trim cleanly to "Keep part 1\nKeep part 2"
-      const result = appendBoundedThoughts(
-        "Sliced prefix",
-        "\nKeep part 1\nKeep part 2",
-        30
-      );
-      expect(result).toBe("Keep part 1\nKeep part 2");
-    });
-
-    it("falls back to strict slice when no newline exists in candidate", () => {
-      const result = appendBoundedThoughts("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "1234567890", 15);
-      expect(result).toBe("VWXYZ1234567890");
-    });
-  });
-
   describe("appendMessageChunk", () => {
     it("keeps the beginning of a long assistant message", () => {
       const dataDir = makeTempRoot();
@@ -164,7 +134,7 @@ describe("agent runtime output store", () => {
       expect(record.outputEntries[0]?.text).toBe(completeMessage);
     });
 
-    it("uses appendBoundedThoughts for type 'thought'", () => {
+    it("keeps every paragraph of a long thought", () => {
       const dataDir = makeTempRoot();
       const outputArchive = openAgentOutputArchive({ dataDir, name: "thought-worker" });
       const record = {
@@ -172,13 +142,18 @@ describe("agent runtime output store", () => {
         outputEntries: [],
         activeOutputEntryId: null,
       } as unknown as AgentRecord;
+      const completeThought = Array.from(
+        { length: 60 },
+        (_, index) => `Thinking step ${index}: ${"reasoning ".repeat(20)}`,
+      ).join("\n\n");
 
-      // First chunk
-      appendMessageChunk(record, "Old thoughts\n\nKeep block", "thought");
-      // Appending to the active entry
-      appendMessageChunk(record, "\n\nAdditional thoughts", "thought");
+      for (let offset = 0; offset < completeThought.length; offset += 97) {
+        appendMessageChunk(record, completeThought.slice(offset, offset + 97), "thought");
+      }
 
-      expect(record.outputEntries[0].text).toBe("Old thoughts\n\nKeep block\n\nAdditional thoughts");
+      expect(completeThought.length).toBeGreaterThan(5_000);
+      expect(record.outputEntries).toHaveLength(1);
+      expect(record.outputEntries[0]?.text).toBe(completeThought);
     });
 
     it("keeps writing one message while a background terminal streams updates", () => {

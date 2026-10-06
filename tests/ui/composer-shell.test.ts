@@ -13,9 +13,11 @@ const pageSource = [
   "src/interface/home/useHomeLifecycle.ts",
   "src/interface/home/useRunSelectionEffects.ts",
   "src/interface/home/useHomeMutations.ts",
+  "src/interface/home/composer-launch-selection.ts",
   "src/interface/home/useHomeViewModel.ts",
   "src/interface/home/useConversationActions.ts",
   "src/components/home/ConversationComposer.tsx",
+  "src/components/composer/WorkerLaunchControls.tsx",
   "src/components/home/QueuedMessageDrawer.tsx",
   "src/components/home/WorkersSidebar.tsx",
   "src/components/WorkerCard.tsx",
@@ -100,21 +102,24 @@ test("mobile composer keeps vertical touch scrolling available when viewport hei
 });
 
 test("composer supports auto agent selection while pinning explicit agent choices", () => {
-  expect(pageSource).toContain('const isAutoWorkerSelection = selectedCliAgent === "auto"');
+  expect(pageSource).toContain('const explicitWorkerType = args.selectedCliAgent === "auto" ? null : args.selectedCliAgent;');
   expect(pageSource).toContain("const autoSelectedWorkerType = useMemo(() => {");
   expect(pageSource).toContain("return activeAllowedWorkerTypes[0] ?? null;");
-  expect(pageSource).toContain("preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent");
-  expect(pageSource).toContain("const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel)");
-  expect(pageSource).toContain("preferredWorkerModel: resolvedSelectedModel");
-  expect(pageSource.match(/preferredWorkerEffort: resolveComposerEffortValue\(selectedEffort\)/g)).toHaveLength(3);
+  expect(pageSource).toContain("const workerType = explicitWorkerType ?? args.autoSelectedWorkerType;");
+  expect(pageSource).toContain("preferredWorkerType: selection.workerType");
+  expect(pageSource).toContain("preferredWorkerEffort: selection.effort");
   expect(pageSource).not.toContain("preferredWorkerEffort: selectedEffort.toLowerCase()");
-  expect(pageSource).toContain("allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent]");
-  expect(pageSource).toContain("options={composerWorkerOptions}");
+  expect(pageSource).toContain("effort: resolveComposerEffortValue(args.selectedEffort)");
+  // Every request that carries worker preferences builds them from one frozen
+  // selection, so none of them can pick up a composer reset mid-flight.
+  // Preset commands carry no composer preferences: the server owns their worker.
+  expect(pageSource.match(/buildLaunchPreferenceBody\(/g)).toHaveLength(3);
+  expect(pageSource).toContain("options: composerWorkerOptions,");
   expect(composerSelectSource).toContain("options.map");
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)');
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)');
   expect(pageSource).toContain('const savedModel = resolveSavedComposerModel(savedModelValue)');
-  expect(pageSource).toContain('if (savedModel) {\n      setSelectedModel(savedModel);\n    }');
+  expect(pageSource).toContain('if (savedModel) {\n      homeUiStateManager.setComposerSelectionField("model", savedModel, { userEdited: false });\n    }');
   expect(pageSource).toContain('window.localStorage.getItem(getEffortStorageKey(savedWorker, savedModel))');
   expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, COMPOSER_WORKER_STORAGE_KEY, selectedCliAgent)');
   expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, COMPOSER_MODEL_STORAGE_KEY, selectedModel)');
@@ -122,13 +127,14 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain('const nextEffort = resolveComposerEffortForPair(saved);');
   expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, key, selectedEffort)');
   expect(pageSource).toContain("const activeWorkerModelOptions = useMemo(");
-  expect(pageSource).toContain("options={activeWorkerModelOptions}");
+  expect(pageSource).toContain("options: activeWorkerModelOptions,");
   expect(composerModelPickerSource).toContain("options.map");
   expect(pageSource).not.toContain('if (selectedCliAgent !== "auto") {\n      setSelectedCliAgent("auto");');
   expect(pageSource).toContain('hydratedRunSelectionId: null');
   expect(pageSource).toContain('setHydratedRunSelectionId: homeUiStateManager.createSetter("hydratedRunSelectionId")');
   expect(pageSource).toContain('if (!selectedRunId || !selectedRun) {');
-  expect(pageSource).toContain('if (hydratedRunSelectionId === selectedRunId) {');
+  expect(pageSource).toContain("homeUiStateManager.hydrateComposerSelection({");
+  expect(pageSource).not.toContain('if (hydratedRunSelectionId === selectedRunId) {');
 });
 
 test("composer never sends an account that belongs to a different worker type", () => {
@@ -139,8 +145,11 @@ test("composer never sends an account that belongs to a different worker type", 
 test("direct mode requires an explicit cli agent and tightens dropdown alignment", () => {
   expect(pageSource).toContain('const shouldOfferAutoWorkerOption = activeComposerMode !== "direct"');
   expect(pageSource).toContain('return shouldOfferAutoWorkerOption');
-  expect(pageSource).toContain('if (activeComposerMode === "direct") {');
-  expect(pageSource).toContain('const nextDirectWorker = selectedCliAgent === "auto" ? (autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex") : selectedCliAgent;');
+  expect(pageSource).toContain('if (args.composerMode === "direct") {');
+  expect(pageSource).toContain('const current = args.selectedCliAgent === "auto" ? fallbackWorker : args.selectedCliAgent;');
+  // The worker the composer is coerced onto owns the model picker, or a new
+  // session comes up as "Codex · claude-opus-5 (unavailable)".
+  expect(pageSource).toContain("homeUiStateManager.setComposerWorkerSelection(reconciled.worker, reconciled.model, { userEdited: false })");
   expect(pageSource).toContain('<ComposerSelect');
   expect(pageSource).toContain('<ComposerModelPicker');
   expect(composerSelectSource).toContain('"h-7 min-w-0 appearance-none rounded-md border-0 bg-transparent py-0 pl-1.5 pr-5 text-xs shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/45 sm:h-8 sm:pl-2 sm:text-sm"');
@@ -235,7 +244,6 @@ test("mobile composer keeps the workspace chip above the input and the settings 
   expect(mobileComposerSettingsSource).toContain('<SheetContent data-composer-settings-dialog="true" side="bottom"');
   expect(mobileComposerSettingsSource).toContain("disabled={descriptorArgs.disabled}");
   expect(mobileComposerSettingsSource).not.toContain("MobileComposerChip");
-  expect(mobileComposerSettingsSource).not.toContain('t("settings.commitAgent.cli")');
   expect(mobileComposerSettingsSource).toContain("getMobileComposerSettingDescriptors");
   expect(mobileComposerSettingsSource).toContain("useI18nSnapshot()");
   expect(pageSource).toContain("<MobileComposerSettings");
@@ -296,6 +304,29 @@ test("selecting a session preserves its restored composer draft", () => {
   expect(block).not.toContain("setCommand(");
   expect(block).not.toContain("setCommandCursor(");
   expect(block).not.toContain("clearAttachments(");
+});
+
+test("starting a new session restores the unsent new-session draft", () => {
+  const actionsSource = fs.readFileSync(
+    path.resolve(process.cwd(), "src/interface/home/useConversationActions.ts"),
+    "utf8"
+  );
+
+  for (const signature of [
+    "const handleStartNewPlan = () => {",
+    "const beginConversationInProject = (projectPath: string) => {",
+  ]) {
+    const start = actionsSource.indexOf(signature);
+    const end = actionsSource.indexOf("\n  };", start);
+    const block = actionsSource.slice(start, end);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(block).toContain("setSelectedRunId(null);");
+    expect(block).not.toContain("setCommand(");
+    expect(block).not.toContain("setCommandCursor(");
+    expect(block).not.toContain("clearAttachments(");
+    expect(block).not.toContain("setSelectedConversationMode(");
+  }
 });
 
 test("composer submit button sends text, stops live conversations, and disables when idle empty", () => {

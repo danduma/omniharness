@@ -37,7 +37,34 @@ type AgentSessionTitleRejection = "prompt_leak" | "too_long" | "prompt_echo";
  * the accept and the reject event so a conversation that never gets a title can
  * be traced to the source that stayed silent.
  */
-export type AgentSessionTitleSource = "agent_session" | "agent_transcript" | "agent_thread_index";
+export type AgentSessionTitleSource =
+  | "agent_session"
+  | "agent_transcript"
+  | "agent_thread_index"
+  | "provider_custom"
+  | "provider_generated";
+
+const TITLE_SOURCE_RANK: Record<string, number> = {
+  initial: 0,
+  harness_fallback: 1,
+  agent_session: 2,
+  provider_generated: 3,
+  agent_transcript: 3,
+  harness_llm: 4,
+  agent_thread_index: 5,
+  provider_custom: 6,
+  manual: 100,
+  legacy: 100,
+};
+
+export async function isConversationTitleOwningWorker(runId: string, workerId: string) {
+  const owner = await db.select({ id: workers.id })
+    .from(workers)
+    .where(eq(workers.runId, runId))
+    .orderBy(asc(workers.workerNumber), asc(workers.createdAt), asc(workers.id))
+    .get();
+  return !owner || owner.id === workerId;
+}
 
 /**
  * Why this title cannot be shown, judged on the text alone.
@@ -177,6 +204,8 @@ export async function applyAgentSessionTitle(args: {
   runId: string;
   title: string;
   source?: AgentSessionTitleSource;
+  workerId?: string;
+  knownProviderPrompt?: string | null;
 }): Promise<"applied" | "unchanged" | "rejected"> {
   const title = args.title.trim();
   if (!title) {
@@ -184,30 +213,63 @@ export async function applyAgentSessionTitle(args: {
   }
 
   const source = args.source ?? "agent_session";
+  const run = await db.select({
+    title: runs.title,
+    titleOwnership: runs.titleOwnership,
+    titleSource: runs.titleSource,
+    titleRevision: runs.titleRevision,
+    titleOwnerWorkerId: runs.titleOwnerWorkerId,
+  }).from(runs).where(eq(runs.id, args.runId)).get();
+  if (!run || run.titleOwnership !== "automatic") return "unchanged";
+  if (args.workerId) {
+    if (run.titleOwnerWorkerId && run.titleOwnerWorkerId !== args.workerId) return "unchanged";
+    if (!await isConversationTitleOwningWorker(args.runId, args.workerId)) return "unchanged";
+  }
+  if ((TITLE_SOURCE_RANK[source] ?? 0) < (TITLE_SOURCE_RANK[run.titleSource] ?? 0)) {
+    return "unchanged";
+  }
   const rejection = await agentSessionTitleRejection(args.runId, title);
-  if (rejection) {
+  const normalizedProviderPrompt = normalizeForComparison(args.knownProviderPrompt ?? "");
+  const normalizedTitle = normalizeForComparison(title);
+  const providerPrefixEcho = normalizedProviderPrompt.length > normalizedTitle.length
+    && normalizedProviderPrompt.startsWith(normalizedTitle);
+  if (rejection || providerPrefixEcho) {
     emitNamedEvent({
       kind: "conversation.title_rejected",
       runId: args.runId,
       source,
-      reason: rejection,
+      reason: rejection ?? "prompt_echo",
       titleLength: title.length,
       titlePreview: title.slice(0, 120),
     });
     return "rejected";
   }
-
-  const run = await db.select({ title: runs.title }).from(runs).where(eq(runs.id, args.runId)).get();
-  if (!run || (run.title ?? "").trim() === title) {
+  if ((run.title ?? "").trim() === title) {
     return "unchanged";
   }
 
-  await db.update(runs).set({ title, updatedAt: new Date() }).where(eq(runs.id, args.runId));
+  const updated = await db.update(runs).set({
+    title,
+    titleSource: source,
+    titleRevision: run.titleRevision + 1,
+    ...(args.workerId ? { titleOwnerWorkerId: args.workerId } : {}),
+    updatedAt: new Date(),
+  }).where(and(
+    eq(runs.id, args.runId),
+    eq(runs.titleOwnership, "automatic"),
+    eq(runs.titleRevision, run.titleRevision),
+    args.workerId
+      ? or(isNull(runs.titleOwnerWorkerId), eq(runs.titleOwnerWorkerId, args.workerId))
+      : undefined,
+  )).returning({ revision: runs.titleRevision }).get();
+  if (!updated) return "unchanged";
   emitNamedEvent({
     kind: "conversation.title_updated",
     runId: args.runId,
     source,
     title,
+    revision: updated.revision,
+    workerId: args.workerId,
   });
   notifyEventStreamSubscribers();
   return "applied";
@@ -253,11 +315,14 @@ async function titleFromFirstUserMessage(runId: string) {
  */
 export async function repairLeakedConversationTitles(): Promise<number> {
   const candidates = await db
-    .select({ id: runs.id, title: runs.title })
+    .select({ id: runs.id, title: runs.title, revision: runs.titleRevision })
     .from(runs)
-    .where(or(
-      sql`length(${runs.title}) > ${MAX_AGENT_TITLE_CHARS}`,
-      ...HARNESS_PROMPT_MARKERS.map((marker) => like(sql`lower(${runs.title})`, `%${marker}%`)),
+    .where(and(
+      eq(runs.titleOwnership, "automatic"),
+      or(
+        sql`length(${runs.title}) > ${MAX_AGENT_TITLE_CHARS}`,
+        ...HARNESS_PROMPT_MARKERS.map((marker) => like(sql`lower(${runs.title})`, `%${marker}%`)),
+      ),
     ))
     .all();
 
@@ -273,12 +338,22 @@ export async function repairLeakedConversationTitles(): Promise<number> {
     }
 
     const title = await titleFromFirstUserMessage(candidate.id);
-    await db.update(runs).set({ title }).where(eq(runs.id, candidate.id));
+    const updated = await db.update(runs).set({
+      title,
+      titleSource: "leak_repair",
+      titleRevision: candidate.revision + 1,
+    }).where(and(
+      eq(runs.id, candidate.id),
+      eq(runs.titleOwnership, "automatic"),
+      eq(runs.titleRevision, candidate.revision),
+    )).returning({ revision: runs.titleRevision }).get();
+    if (!updated) continue;
     emitNamedEvent({
       kind: "conversation.title_updated",
       runId: candidate.id,
       source: "leak_repair",
       title,
+      revision: updated.revision,
     });
     repaired += 1;
   }

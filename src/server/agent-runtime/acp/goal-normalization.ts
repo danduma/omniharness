@@ -111,6 +111,7 @@ function normalizeProviderStatus(value: unknown): GoalStatus | null | "invalid" 
     pending: "pending",
     queued: "pending",
     pursuing: "pursuing",
+    active: "pursuing",
     in_progress: "pursuing",
     running: "pursuing",
     working: "pursuing",
@@ -157,12 +158,27 @@ function capabilityInput(value: Record<string, unknown>) {
     : null;
   return normalizeGoalCapabilities({
     set: capabilities.set === true || actions?.has("set") === true,
-    edit: capabilities.edit === true || actions?.has("edit") === true,
+    edit: capabilities.edit === true || actions?.has("edit") === true || actions?.has("set") === true,
     pause: capabilities.pause === true || actions?.has("pause") === true,
     resume: capabilities.resume === true || actions?.has("resume") === true,
     clear: capabilities.clear === true || actions?.has("clear") === true,
     fallbackMethod: capabilities.fallbackMethod,
   });
+}
+
+/** Codex advertises goal controls on InitializeResponse._meta. */
+export function normalizeGoalAgentCapabilities(initialization: unknown): Record<string, unknown> | null {
+  if (!isGoalRecord(initialization)) return null;
+  const capabilities = isGoalRecord(initialization.agentCapabilities) ? initialization.agentCapabilities : null;
+  const metadata = isGoalRecord(initialization._meta) ? initialization._meta : null;
+  if (!metadata || !isGoalRecord(metadata.goal)) return capabilities;
+  return {
+    ...capabilities,
+    _meta: {
+      ...(isGoalRecord(capabilities?._meta) ? capabilities._meta : {}),
+      goal: metadata.goal,
+    },
+  };
 }
 
 export function normalizeAcpGoalMetadata(value: unknown): AcpGoalMetadataResult {

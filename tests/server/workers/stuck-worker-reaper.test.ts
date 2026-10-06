@@ -2,7 +2,14 @@ import { randomUUID } from "crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { messages, plans, runs, workers } from "@/server/db/schema";
+import {
+  messages,
+  plans,
+  recoveryIncidents,
+  runs,
+  supervisorScheduledWakes,
+  workers,
+} from "@/server/db/schema";
 import {
   __resetNamedEventsForTests,
   getNamedEventsSince,
@@ -281,6 +288,61 @@ describe("reapStuckDirectWorkers", () => {
     });
   });
 
+  it("parks the run for quota recovery instead of failing it when redelivery hits a provider limit", async () => {
+    const TEN_MIN_AGO = new Date(Date.now() - 10 * 60_000);
+    const { runId, workerId } = await setupRun({
+      mode: "direct",
+      workerStatus: "working",
+      workerUpdatedAt: TEN_MIN_AGO,
+    });
+
+    const userMessageId = randomUUID();
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "continue",
+      createdAt: TEN_MIN_AGO,
+    });
+    await writeUserInputEntry(runId, workerId, {
+      id: userMessageId,
+      text: "continue",
+      timestamp: TEN_MIN_AGO,
+    });
+
+    mockCancelAgent.mockResolvedValue({ ok: true });
+    mockResumeMissingDirectWorker.mockImplementation(async () => {
+      await db.update(workers).set({ status: "idle" }).where(eq(workers.id, workerId));
+      return { name: workerId, state: "idle" };
+    });
+    mockAskAgent.mockRejectedValue(
+      new Error("Ask failed: Internal error: You've hit your session limit · resets 5:40pm (Europe/Madrid)"),
+    );
+
+    const outcome = await reapStuckDirectWorkers();
+
+    expect(outcome.ok).toBe(true);
+    const workerAfter = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    const runAfter = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    // The reset time is knowable, so this is a wait, not a failure. A failed
+    // run is what left the conversation dead until a human opened it.
+    expect(workerAfter?.status).toBe("cred-exhausted");
+    expect(runAfter?.status).toBe("quota_waiting");
+    expect(runAfter?.lastError).toBeFalsy();
+
+    const incident = await db.select().from(recoveryIncidents)
+      .where(eq(recoveryIncidents.runId, runId)).get();
+    expect(incident?.kind).toBe("quota_exhausted");
+
+    // Without a durable wake there is nothing to resume the conversation on
+    // its own once the window reopens.
+    const wake = await db.select().from(supervisorScheduledWakes)
+      .where(eq(supervisorScheduledWakes.runId, runId)).get();
+    expect(wake).toBeTruthy();
+    expect(new Date(wake!.wakeAt).getTime()).toBeGreaterThan(Date.now());
+  });
+
   it("does not touch workers whose stream activity is recent", async () => {
     const ONE_MIN_AGO = new Date(Date.now() - 60_000);
     const { runId, workerId } = await setupRun({
@@ -487,12 +549,9 @@ describe("reapStuckDirectWorkers", () => {
 
     expect(outcome.ok).toBe(true);
     expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
-    expect(mockAskAgent).toHaveBeenCalledWith(
-      workerId,
-      "continue",
-      undefined,
-      { expectedTurnGeneration: 0 },
-    );
+    // The question was the agent's response to "continue", so replaying
+    // "continue" would ask it to start over.
+    expect(mockAskAgent).not.toHaveBeenCalled();
   });
 
   it("leaves a worker alone when only the live bridge snapshot knows about the pending question", async () => {
@@ -765,6 +824,161 @@ describe("reapStuckDirectWorkers", () => {
       undefined,
       { expectedTurnGeneration: 0 },
     );
+  });
+
+  describe("a message the agent already answered (session 3d628f9b568a)", () => {
+    // The user's "yes go ahead with plan" got its response. Claude then ran a
+    // turn on its own after a background-task notification, ended it, and
+    // went quiet. Five minutes later the reaper re-sent the answered message
+    // and the agent took it as fresh consent to implement.
+    async function seedAnsweredConversation() {
+      const THIRTY_MIN_AGO = new Date(Date.now() - 30 * 60_000);
+      const TEN_MIN_AGO = new Date(Date.now() - 10 * 60_000);
+      const { runId, workerId } = await setupRun({
+        mode: "direct",
+        workerStatus: "working",
+        workerUpdatedAt: TEN_MIN_AGO,
+      });
+      const userMessageId = randomUUID();
+      await db.insert(messages).values({
+        id: userMessageId,
+        runId,
+        role: "user",
+        kind: "checkpoint",
+        content: "yes go ahead with plan",
+        createdAt: THIRTY_MIN_AGO,
+      });
+      await writeUserInputEntry(runId, workerId, {
+        id: userMessageId,
+        text: "yes go ahead with plan",
+        timestamp: THIRTY_MIN_AGO,
+      });
+      await writeWorkerOutputEntries(runId, workerId, [
+        {
+          id: randomUUID(),
+          type: "tool_call",
+          text: "Edit",
+          status: "pending",
+          timestamp: new Date(TEN_MIN_AGO.getTime() - 1000).toISOString(),
+          seq: 2,
+        },
+        {
+          id: randomUUID(),
+          type: "message",
+          text: "Say the word and I'll start on Task 0.",
+          timestamp: TEN_MIN_AGO.toISOString(),
+          seq: 3,
+        },
+      ]);
+      return { runId, workerId, lastEntryAt: TEN_MIN_AGO };
+    }
+
+    it("settles a quiesced agent without re-sending or tearing anything down", async () => {
+      const { runId, workerId, lastEntryAt } = await seedAnsweredConversation();
+      // The runtime finished the turn at the same moment it wrote the last
+      // entry, so "finished after the last entry" alone does not catch it.
+      mockGetAgent.mockResolvedValue({
+        name: workerId,
+        type: "claude",
+        cwd: "/tmp",
+        state: "idle",
+        stopReason: "end_turn",
+        currentText: "",
+        lastText: "Say the word and I'll start on Task 0.",
+        stderrBuffer: [],
+        outputEntries: [],
+        pendingPermissions: [],
+        pendingElicitations: [],
+        updatedAt: lastEntryAt.toISOString(),
+      });
+
+      const outcome = await reapStuckDirectWorkers();
+
+      expect(outcome.ok).toBe(true);
+      expect(mockAskAgent).not.toHaveBeenCalled();
+      expect(mockCancelAgent).not.toHaveBeenCalled();
+      expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
+      const workerAfter = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+      expect(workerAfter?.status).toBe("idle");
+      const runAfter = await db.select().from(runs).where(eq(runs.id, runId)).get();
+      expect(runAfter?.status).toBe("done");
+    });
+
+    it("stops a hung agent but never re-sends the answered message", async () => {
+      const { runId, workerId } = await seedAnsweredConversation();
+      // The runtime still claims the turn is running.
+      mockGetAgent.mockResolvedValue({
+        name: workerId,
+        type: "claude",
+        cwd: "/tmp",
+        state: "working",
+        stopReason: null,
+        currentText: "",
+        lastText: "",
+        stderrBuffer: [],
+        outputEntries: [],
+        pendingPermissions: [],
+        pendingElicitations: [],
+        updatedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+      });
+      mockCancelAgent.mockResolvedValue({ ok: true });
+      mockResumeMissingDirectWorker.mockResolvedValue({ name: workerId, state: "idle" });
+
+      const outcome = await reapStuckDirectWorkers();
+
+      expect(outcome.ok).toBe(true);
+      expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
+      expect(mockResumeMissingDirectWorker).toHaveBeenCalledTimes(1);
+      expect(mockAskAgent).not.toHaveBeenCalled();
+      const workerAfter = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+      expect(workerAfter?.status).toBe("idle");
+      const kinds = getNamedEventsSince(null, { runId }).events.map((entry) => entry.event.kind);
+      expect(kinds).toContain("worker.recovery_redelivery_skipped");
+      expect(kinds).not.toContain("worker.recovery_continuation_started");
+    });
+
+    it("still re-sends a message whose only later output is a prior turn's buffered tail", async () => {
+      const TEN_MIN_AGO = new Date(Date.now() - 10 * 60_000);
+      const TWENTY_MIN_AGO = new Date(Date.now() - 20 * 60_000);
+      const { runId, workerId } = await setupRun({
+        mode: "direct",
+        workerStatus: "working",
+        workerUpdatedAt: TEN_MIN_AGO,
+      });
+      const userMessageId = randomUUID();
+      await db.insert(messages).values({
+        id: userMessageId,
+        runId,
+        role: "user",
+        kind: "checkpoint",
+        content: "continue",
+        createdAt: TEN_MIN_AGO,
+      });
+      await writeUserInputEntry(runId, workerId, {
+        id: userMessageId,
+        text: "continue",
+        timestamp: TEN_MIN_AGO,
+      });
+      await writeWorkerOutputEntries(runId, workerId, [{
+        id: randomUUID(),
+        type: "message",
+        text: "tail of the previous turn",
+        timestamp: TWENTY_MIN_AGO.toISOString(),
+        seq: 2,
+      }]);
+      mockCancelAgent.mockResolvedValue({ ok: true });
+      mockResumeMissingDirectWorker.mockResolvedValue({ name: workerId, state: "idle" });
+      mockAskAgent.mockResolvedValue({ response: "ok", state: "idle" });
+
+      await reapStuckDirectWorkers();
+
+      expect(mockAskAgent).toHaveBeenCalledWith(
+        workerId,
+        "continue",
+        undefined,
+        { expectedTurnGeneration: 0 },
+      );
+    });
   });
 
   it("respects OMNIHARNESS_WORKER_STUCK_TIMEOUT_MS override", async () => {

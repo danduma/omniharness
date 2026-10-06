@@ -8,7 +8,7 @@ import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
-import { readWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
+import { refreshWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
 import { buildTranscriptReplayPrompt } from "./session-recovery";
 import { and, eq } from "drizzle-orm";
 
@@ -61,7 +61,13 @@ export async function recreateWorkerFromTranscript(args: {
   const { env: envParams } = await readRuntimeEnvFromSettings();
   const launchSelection = args.selection
     ?? resolveWorkerLaunchSelection(args.worker, args.run, {
-      accountId: await readWorkerAllocatedAccountId(args.worker.id),
+      accountId: await refreshWorkerAllocatedAccountId({
+        workerId: args.worker.id,
+        runId: args.run.id,
+        workerType: args.worker.type,
+        explicitAccountId: args.run.preferredWorkerAccountId,
+        env: envParams,
+      }),
     });
   const spawnParams = {
     type: args.selection?.type ?? args.worker.type,
@@ -116,6 +122,7 @@ export async function recreateWorkerFromTranscript(args: {
       effectiveLaunchModel: launchSelection.model,
       effectiveLaunchEffort: launchSelection.effort,
       launchCredentialSource: launchSelection.credentialSource,
+      launchSelectionRevision: args.run.preferredWorkerLaunchRevision,
     } : {}),
     updatedAt: now,
   }).where(workerPredicate).returning({ id: workers.id }).get();
@@ -127,19 +134,27 @@ export async function recreateWorkerFromTranscript(args: {
     throw superseded();
   }
 
-  if (args.selection?.accountId) {
+  if (args.selection) {
     const existingAllocation = await db
       .select()
       .from(workerCredentialAllocations)
       .where(eq(workerCredentialAllocations.workerId, args.worker.id))
       .get();
-    if (existingAllocation) {
+    if (existingAllocation && args.selection.accountId) {
       await db.update(workerCredentialAllocations).set({
         workerType: args.selection.type,
         accountId: args.selection.accountId,
         strategy: "manual",
         selectionReason: "explicit continuation worker selection",
         explicit: true,
+        updatedAt: now,
+      }).where(eq(workerCredentialAllocations.id, existingAllocation.id));
+    } else if (existingAllocation) {
+      await db.update(workerCredentialAllocations).set({
+        workerType: args.selection.type,
+        strategy: "subscription_then_api",
+        selectionReason: "automatic continuation worker selection",
+        explicit: false,
         updatedAt: now,
       }).where(eq(workerCredentialAllocations.id, existingAllocation.id));
     }

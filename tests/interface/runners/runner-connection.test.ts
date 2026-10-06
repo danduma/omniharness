@@ -1,4 +1,4 @@
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import {
   RunnerConnection,
@@ -137,6 +137,58 @@ describe("RunnerConnection", () => {
 
     await connection.start();
     expect(transport.closeMain).not.toHaveBeenCalled();
+  });
+
+  it("retries queries that failed while the runner was unreachable", async () => {
+    let streamHandlers: RunnerStreamHandlers | null = null;
+    const transport = runtime({
+      onOpen: (handlers) => {
+        streamHandlers = handlers as RunnerStreamHandlers;
+        handlers.onOpen?.();
+      },
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const queryFn = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce({ values: {} });
+    const connection = new RunnerConnection({
+      profile: profile(),
+      runtimeFactory: async () => transport.api,
+      persistence: persistence(),
+      queryClient,
+      schedule: () => 1,
+      cancelSchedule: () => {},
+    });
+
+    await connection.start();
+    expect(connection.getSnapshot().status).toBe("online");
+
+    const observer = new QueryObserver(queryClient, {
+      queryKey: ["settings"],
+      queryFn,
+      retry: false,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    await observer.refetch();
+    expect(observer.getCurrentResult().status).toBe("error");
+
+    streamHandlers!.onError?.({
+      code: "runtime.events_reconnecting",
+      message: "Event stream is reconnecting.",
+      surface: "web",
+    });
+    // A drop short enough to stay inside the grace period never shows as
+    // visible, but the requests it killed still have to be retried.
+    expect(connection.getSnapshot().status).toBe("online");
+
+    streamHandlers!.onOpen?.();
+    await vi.waitFor(() => {
+      expect(observer.getCurrentResult().status).toBe("success");
+    });
+    expect(queryFn).toHaveBeenCalledTimes(2);
+
+    unsubscribe();
   });
 
   it.each([
@@ -403,7 +455,7 @@ describe("RunnerConnection", () => {
     expect(connection.getSnapshot().status).toBe("offline");
   });
 
-  it("persists cursors, clears them on resync, and enters degraded backoff after four resyncs", async () => {
+  it("persists cursors, clears them on resync, and backs off as a reconnect after four resyncs", async () => {
     vi.useFakeTimers();
     let handlers: RunnerStreamHandlers | null = null;
     const saved = persistence();
@@ -429,7 +481,8 @@ describe("RunnerConnection", () => {
       await Promise.resolve();
       await Promise.resolve();
     }
-    expect(connection.getSnapshot().status).toBe("degraded");
+    expect(connection.getSnapshot().status).toBe("connecting");
+    expect(connection.getSnapshot().retryAt).not.toBeNull();
     expect(connection.getSnapshot().resyncCount).toBe(4);
     expect(saved.updateScopedState).toHaveBeenCalledWith("profile-1", {
       cursors: { events: "" },
@@ -444,7 +497,7 @@ describe("RunnerConnection", () => {
 
   it("gives EventSource time to reconnect before falling back to a fresh connection", async () => {
     let handlers: RunnerStreamHandlers | null = null;
-    const schedule = vi.fn(() => 1);
+    const schedule = vi.fn((_callback: () => void, _delay: number) => 1);
     const cancelSchedule = vi.fn();
     const transport = runtime({
       onOpen: (next) => {
@@ -458,6 +511,7 @@ describe("RunnerConnection", () => {
       persistence: persistence(),
       schedule,
       cancelSchedule,
+      streamReconnectGraceMs: 4_000,
     });
 
     await connection.start();
@@ -466,13 +520,58 @@ describe("RunnerConnection", () => {
       message: "Event stream is reconnecting.",
     });
 
-    expect(connection.getSnapshot().status).toBe("degraded");
+    // The browser is still retrying on its own, so the runner is still online.
+    expect(connection.getSnapshot().status).toBe("online");
     expect(transport.closeMain).not.toHaveBeenCalled();
     expect(schedule).toHaveBeenCalledOnce();
+    expect(schedule.mock.calls[0]![1]).toBe(4_000);
 
     handlers!.onOpen!();
     expect(connection.getSnapshot().status).toBe("online");
     expect(cancelSchedule).toHaveBeenCalledWith(1);
+  });
+
+  it("reconnects as 'connecting' only once the grace period passes without a reopen", async () => {
+    let handlers: RunnerStreamHandlers | null = null;
+    const pending: Array<() => void> = [];
+    const schedule = vi.fn((callback: () => void) => {
+      pending.push(callback);
+      return pending.length;
+    });
+    const transport = runtime({
+      onOpen: (next) => {
+        handlers = next;
+        next.onOpen?.();
+      },
+    });
+    const connection = new RunnerConnection({
+      profile: profile(),
+      runtimeFactory: async () => transport.api,
+      persistence: persistence(),
+      schedule,
+      cancelSchedule: () => {},
+      streamReconnectGraceMs: 4_000,
+    });
+
+    await connection.start();
+    handlers!.onError!({
+      code: "runtime.events_reconnecting",
+      message: "Event stream is reconnecting.",
+    });
+    expect(connection.getSnapshot().status).toBe("online");
+
+    // A second blip inside the window must not stack a second countdown.
+    handlers!.onError!({
+      code: "runtime.events_reconnecting",
+      message: "Event stream is reconnecting.",
+    });
+    expect(schedule).toHaveBeenCalledOnce();
+
+    pending[0]!();
+
+    expect(connection.getSnapshot().status).toBe("connecting");
+    expect(connection.getSnapshot().retryAt).not.toBeNull();
+    expect(schedule).toHaveBeenCalledTimes(2);
   });
 
   it("surfaces runner stopping frames without reconnecting", async () => {

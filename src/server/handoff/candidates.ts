@@ -136,14 +136,19 @@ function describeEdit(oldValue: unknown, newValue: unknown): string | null {
 }
 
 function editEvidenceForPath(group: readonly WorkerEntry[], targetPath: string, projectPath: string): string[] {
-  const evidence = new Set<string>();
+  const changes: Array<{ oldText: string | null; newText: string | null }> = [];
+  const collect = (oldValue: unknown, newValue: unknown) => {
+    const oldText = compactCodeEvidence(oldValue, 100);
+    const newText = compactCodeEvidence(newValue, 160);
+    if (oldText || newText) changes.push({ oldText, newText });
+  };
+
   for (const entry of group) {
     const raw = asRecord(entry.raw);
     for (const content of Array.isArray(raw?.content) ? raw.content : []) {
       const record = asRecord(content);
       if (projectRelativeToolPath(record?.path, projectPath) !== targetPath) continue;
-      const description = describeEdit(record?.oldText, record?.newText);
-      if (description) evidence.add(description);
+      collect(record?.oldText, record?.newText);
     }
 
     const rawInput = asRecord(raw?.rawInput);
@@ -151,11 +156,10 @@ function editEvidenceForPath(group: readonly WorkerEntry[], targetPath: string, 
       .map((value) => projectRelativeToolPath(value, projectPath))
       .find((value) => value === targetPath);
     if (inputPath) {
-      const description = describeEdit(
+      collect(
         rawInput?.old_string ?? rawInput?.oldString,
         rawInput?.new_string ?? rawInput?.newString ?? rawInput?.content,
       );
-      if (description) evidence.add(description);
     }
 
     const claudeCode = asRecord(asRecord(raw?._meta)?.claudeCode);
@@ -165,9 +169,25 @@ function editEvidenceForPath(group: readonly WorkerEntry[], targetPath: string, 
       projectPath,
     );
     if (responsePath === targetPath) {
-      const description = describeEdit(response?.oldString ?? response?.old_string, response?.newString ?? response?.new_string);
-      if (description) evidence.add(description);
+      collect(response?.oldString ?? response?.old_string, response?.newString ?? response?.new_string);
     }
+  }
+
+  // One tool call arrives as several progress updates, and an early one often
+  // carries only half the pair the finished diff reports in full. Rendering
+  // both leaves `Removed "old".` sitting next to the `Changed "old" to "new".`
+  // that already describes it, so a half is dropped once a complete change
+  // covers the same text.
+  const completeChanges = changes.filter((change) => change.oldText && change.newText);
+  const evidence = new Set<string>();
+  for (const change of changes) {
+    const isSubsumed = !(change.oldText && change.newText) && completeChanges.some((complete) => (
+      (change.oldText !== null && complete.oldText === change.oldText)
+      || (change.newText !== null && complete.newText === change.newText)
+    ));
+    if (isSubsumed) continue;
+    const description = describeEdit(change.oldText, change.newText);
+    if (description) evidence.add(description);
   }
   return [...evidence].slice(0, 8);
 }
@@ -247,7 +267,11 @@ function verificationResult(args: {
   output: string | null;
 }): HandoffVerification["result"] {
   const failureEvidence = Boolean(args.output && (
-    /(?:^|\n)\s*(?:FAIL\b|Error:|error TS\d+)/m.test(args.output)
+    /(?:^|\n)\s*(?:FAIL\b|Error:)/m.test(args.output)
+    // tsc writes diagnostics as `file(line,col): error TS1234: message`, so the
+    // code never begins the line and a line-anchored match misses every real
+    // typecheck failure.
+    || /\berror TS\d+\b/.test(args.output)
     || /\b[1-9]\d*\s+failed\b|\bbuild failed\b|\btypecheck failed\b/i.test(args.output)
   ));
   if (args.failed || (args.exitCode !== null && args.exitCode !== 0) || failureEvidence) return "failed";
@@ -395,7 +419,6 @@ export async function gatherHandoffCandidates(args: {
   const boundaryMessage = args.forkedFromMessageId
     ? await db.select().from(messages).where(and(eq(messages.id, args.forkedFromMessageId), eq(messages.runId, args.runId))).get()
     : null;
-  if (args.forkedFromMessageId && !boundaryMessage) throw new Error("The requested fork message does not belong to the source conversation.");
   const contextWorkers = await db.select().from(workers)
     .where(eq(workers.runId, args.runId))
     .orderBy(asc(workers.createdAt), asc(workers.id));
@@ -410,25 +433,32 @@ export async function gatherHandoffCandidates(args: {
     return entries;
   }));
   const allContextEntries = contextEntrySets.flat();
-  const forkBoundaryTimestamp = args.forkedFromMessageId
+  // A fork boundary is either a user checkpoint (a `messages` row, whose reply
+  // is left out) or an assistant reply (a stream entry, kept as the last thing
+  // the new conversation inherits).
+  const boundaryEntry = args.forkedFromMessageId
     ? allContextEntries
-      .filter((entry) => entry.id === args.forkedFromMessageId && entry.type === "user_input")
-      .map((entry) => entry.timestamp)
-      .sort()[0] ?? boundaryMessage?.createdAt.toISOString() ?? null
+      .filter((entry) => entry.id === args.forkedFromMessageId && (boundaryMessage ? entry.type === "user_input" : entry.type === "message"))
+      .sort((left, right) => left.timestamp.localeCompare(right.timestamp))[0] ?? null
     : null;
+  if (args.forkedFromMessageId && !boundaryMessage && !boundaryEntry) throw new Error("The requested fork message does not belong to the source conversation.");
+  const forkBoundaryTimestamp = args.forkedFromMessageId
+    ? boundaryEntry?.timestamp ?? boundaryMessage?.createdAt.toISOString() ?? null
+    : null;
+  const boundaryCreatedAt = boundaryMessage?.createdAt ?? (forkBoundaryTimestamp ? new Date(forkBoundaryTimestamp) : null);
   const boundedContextEntries = forkBoundaryTimestamp
     ? allContextEntries.filter((entry) => entry.timestamp <= forkBoundaryTimestamp)
     : allContextEntries;
   const streamCandidates = selectWorkerEntryCandidates(boundedContextEntries, null, projectPath);
   const boundedMessages = (await db.select().from(messages)
-    .where(boundaryMessage ? and(eq(messages.runId, args.runId), lte(messages.createdAt, boundaryMessage.createdAt)) : eq(messages.runId, args.runId))
+    .where(boundaryCreatedAt ? and(eq(messages.runId, args.runId), lte(messages.createdAt, boundaryCreatedAt)) : eq(messages.runId, args.runId))
     .orderBy(desc(messages.createdAt), desc(messages.id))
     .limit(80)).reverse();
   const originalUserMessage = await db.select().from(messages)
     .where(and(
       eq(messages.runId, args.runId),
       eq(messages.role, "user"),
-      ...(boundaryMessage ? [lte(messages.createdAt, boundaryMessage.createdAt)] : []),
+      ...(boundaryCreatedAt ? [lte(messages.createdAt, boundaryCreatedAt)] : []),
     ))
     .orderBy(asc(messages.createdAt), asc(messages.id))
     .limit(1).get();

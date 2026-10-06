@@ -225,7 +225,7 @@ test("user-initiated conversation sends reveal the appended turn", () => {
   const sendConversationScrollIndex = homeAppSource.indexOf("scrollConversationToBottom();", sendConversationSuccessIndex);
   const autoCommitSuccessIndex = homeAppSource.indexOf("const autoCommitChat = useMutation({");
   const autoCommitScrollIndex = homeAppSource.indexOf("scrollConversationToBottom();", autoCommitSuccessIndex);
-  const autoCommitProjectIndex = homeAppSource.indexOf("const autoCommitProject = useMutation({");
+  const autoCommitProjectIndex = homeAppSource.indexOf("const runPresetCommand = useMutation({");
 
   expect(sendConversationSuccessIndex).toBeGreaterThanOrEqual(0);
   expect(sendConversationScrollIndex).toBeGreaterThan(sendConversationSuccessIndex);
@@ -234,15 +234,20 @@ test("user-initiated conversation sends reveal the appended turn", () => {
   expect(autoCommitScrollIndex).toBeLessThan(autoCommitProjectIndex);
 });
 
-test("project menus expose an auto commit action that starts a commit conversation", () => {
-  expect(pageSource).toContain("AUTO_COMMIT_PROJECT_PROMPT");
-  expect(pageSource).toContain("MANUAL_COMMIT_PROJECT_PUSH_PROMPT");
-  expect(pageSource).toContain("mode: \"commit\"");
-  expect(pageSource).toContain("projectPath: payload.projectPath");
-  expect(pageSource).toContain("autoCommitProject(group.path)");
-  expect(pageSource).toContain('autoCommitProject(group.path, "commit-push")');
-  expect(pageSource).toContain("commit.menu.commitProjectNow");
-  expect(pageSource).toContain("commit.menu.commitAndPushProject");
+test("project menus list the configured preset commands above a separated delete", () => {
+  const menuStart = pageSource.indexOf("{presetCommands.map((preset) => (");
+  const separatorIndex = pageSource.indexOf("{presetCommands.length > 0 ? <DropdownMenuSeparator /> : null}", menuStart);
+  const removeIndex = pageSource.indexOf('t("conversation.sidebar.removeProject")', menuStart);
+
+  expect(menuStart).toBeGreaterThanOrEqual(0);
+  expect(separatorIndex).toBeGreaterThan(menuStart);
+  expect(removeIndex).toBeGreaterThan(separatorIndex);
+  expect(pageSource).toContain("runPresetCommand(group.path, preset.id)");
+  expect(pageSource).toContain("readPresetCommands(apiKeys)");
+  expect(pageSource).toContain(".filter(isRunnablePresetCommand)");
+  expect(pageSource).toContain("presetCommandId: payload.presetCommandId");
+  expect(pageSource).not.toContain("commit.menu.commitProjectNow");
+  expect(pageSource).not.toContain("commit.menu.commitAndPushProject");
 });
 
 test("deleting a conversation removes it optimistically before the request resolves", () => {
@@ -276,12 +281,18 @@ test("stopping a conversation updates local worker state before the request reso
   expect(pageSource).toContain('status: "cancelled"');
 });
 
-test("direct control user messages expose retry, edit, and fork recovery controls", () => {
+test("direct control user messages expose retry and edit; assistant replies expose fork", () => {
   expect(pageSource).toContain("conversation.message.action.retryFromHere");
   expect(pageSource).toContain("conversation.message.action.editInPlace");
-  expect(pageSource).toContain("conversation.message.action.forkFromHere");
   expect(pageSource).toContain("const canRecoverUserMessage = isDirectConversation || isImplementationConversation;");
   expect(pageSource).toContain("getUserMessageActions={getUserMessageActions}");
+  expect(pageSource).toContain("getAssistantMessageActions={getAssistantMessageActions}");
+  const userActionsStart = pageSource.indexOf("const getUserMessageActions = useCallback(");
+  const assistantActionsStart = pageSource.indexOf("const getAssistantMessageActions = useCallback(");
+  expect(userActionsStart).toBeGreaterThanOrEqual(0);
+  expect(assistantActionsStart).toBeGreaterThan(userActionsStart);
+  expect(pageSource.slice(userActionsStart, assistantActionsStart)).not.toContain("conversation.message.action.forkFromHere");
+  expect(pageSource.slice(assistantActionsStart)).toContain("conversation.message.action.forkFromHere");
   expect(pageSource).toContain("actions={userMessageActions}");
   expect(pageSource).toContain('body: { action, targetMessageId, content, gitWorkspaceLaunch, manualRecovery }');
   expect(pageSource).toContain('manualRecovery: true');
@@ -350,7 +361,7 @@ test("direct-control terminal user messages render attachment metadata", () => {
   expect(terminalSource).toContain('content: entry.entry.text,');
   expect(terminalSource).toContain('createdAt: authoritativeTimestamp,');
   expect(terminalSource).toContain('activity.attachments.length > 0');
-  expect(terminalSource).toContain('className="max-w-none whitespace-pre-wrap break-words"');
+  expect(terminalSource).toContain('className="max-w-none whitespace-pre-wrap break-words [overflow-wrap:anywhere]"');
   expect(terminalSource).toContain("attachmentImagePreviewManager.open({");
   expect(terminalSource).toContain("name: attachment.name,");
   expect(terminalSource).toContain("size: attachment.size,");
@@ -483,7 +494,7 @@ test("preflight implementation confirmations expose remembered quick actions", (
   expect(conversationMainSource).toContain("preflightConfirmationActionsManager.rememberMessage(msg.id)");
   expect(conversationMainSource).toContain("handlePreflightConfirmationAnswer");
   expect(homeAppSource).toContain("preflightConfirmationActionsManager.hydrateFromBrowser()");
-  expect(homeAppSource).toContain("sendConversationMessage.mutate({ runId: selectedRunId, content, clientMessageId: createSentConversationMessageId(), attachments: [] })");
+  expect(homeAppSource).toContain("sendMessageToConversation({ runId: selectedRunId, content, clientMessageId: createSentConversationMessageId(), attachments: [] })");
   expect(managerSource).toContain("omni.preflight-confirmation-actions.handled");
   expect(localeSource).toContain('"conversation.preflightConfirmation.yes": "Yes, implement it"');
   expect(localeSource).toContain('"conversation.preflightConfirmation.no": "No, let me clarify"');

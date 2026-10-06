@@ -23,6 +23,7 @@ import {
 } from "./acp/plan-stream";
 import { invokeAgentRequest, sendAgentNotification } from "./acp/agent-methods";
 import { initializeWorkerGoalSession } from "./acp/goal-state";
+import { normalizeGoalAgentCapabilities } from "./acp/goal-normalization";
 import { redactGoalErrorMessage } from "@/server/runs/goal-errors";
 import { sanitizeAcpStream } from "./acp-stream-sanitizer";
 import { applyCodexBridgeEnv, buildCodexAcpConfig, buildCodexConfigArgs, resolveCodexSessionMode, shouldSetRequestedMode } from "./codex";
@@ -34,8 +35,11 @@ import {
   appendOutputEntry,
   openAgentOutputArchive,
   renderOutputEntries,
+  resolveAgentOutputArchivePath,
+  resolveAgentRuntimeDataDir,
   selectLiveOutputEntries,
 } from "./output-store";
+import { RuntimeOutputRetentionManager } from "./output-retention";
 import type {
   AgentRecord,
   AgentRuntimeConfig,
@@ -48,6 +52,12 @@ import type {
   StartAgentInput,
 } from "./types";
 import { RuntimeHttpError } from "./types";
+import {
+  applyProviderConfigOptions,
+  beginProviderConfigChange,
+  markProviderConfigUnconfirmed,
+  rejectProviderConfigChange,
+} from "./config-state";
 import {
   applyAccountCredentialEnv,
   resolveAccountCredentials,
@@ -1005,7 +1015,11 @@ export class AgentRuntimeManager {
   private readonly startingAgentAccounts = new Map<string, string | null>();
   private readonly startingAgentResources = new Map<string, StartingAgentResources>();
   private readonly memoryTracer: MemoryTracer;
+  private readonly outputRetentionManager = new RuntimeOutputRetentionManager();
   private readonly pendingAgentReaps = new Map<string, NodeJS.Timeout>();
+  /** Idle stamp each goal-protected agent was last reported under, so the skip is logged once per idle period. */
+  private readonly goalProtectedIdleSince = new Map<string, string>();
+  private idleReapInFlight = false;
   private reapSweepTimer: NodeJS.Timeout | null = null;
   private resourcePressureTimer: NodeJS.Timeout | null = null;
   private resourcePressureCheckInFlight = false;
@@ -1013,6 +1027,7 @@ export class AgentRuntimeManager {
   private readonly runtimeStartedAt = Date.now();
   private lastAgentUseAt = this.runtimeStartedAt;
   private runtimeSettingsEnv: EnvLike = {};
+  private outputRetentionReady = false;
   private readonly poolMemberMaxAgeMs: number;
   private readonly agentIdleTimeoutMs: number;
   private readonly agentExitGraceMs: number;
@@ -1022,9 +1037,12 @@ export class AgentRuntimeManager {
       config?: AgentRuntimeConfig;
       env?: EnvLike;
       resourceSnapshotProvider?: SystemResourceSnapshotProvider;
+      /** Which of these agents hold an active goal; defaults to the goal table. */
+      findGoalHoldingAgents?: (names: readonly string[]) => Promise<Set<string>>;
     } = {},
   ) {
     const baseEnv = this.options.env || process.env;
+    this.outputRetentionReady = typeof baseEnv[RUNTIME_RESOURCE_SETTING_KEYS.outputLogMaxMb] === "string";
     const sizeRaw = baseEnv.OMNIHARNESS_WORKER_POOL_SIZE ?? baseEnv.OMNIHARNESS_GEMINI_POOL_SIZE;
     const parsed = sizeRaw ? Number.parseInt(sizeRaw, 10) : NaN;
     if (Number.isFinite(parsed) && parsed >= 0) {
@@ -1085,11 +1103,23 @@ export class AgentRuntimeManager {
       changed.push(key);
     }
 
+    const outputRetentionWasReady = this.outputRetentionReady;
+    if (typeof env[RUNTIME_RESOURCE_SETTING_KEYS.outputLogMaxMb] === "string") {
+      this.outputRetentionReady = true;
+    }
+
     if (changed.length > 0) {
       this.runtimeSettingsEnv = nextEnv;
       if (options.emit !== false) {
         emitNamedEvent({ kind: "runtime.settings_updated", keys: changed });
       }
+    }
+
+    if (
+      changed.includes(RUNTIME_RESOURCE_SETTING_KEYS.outputLogMaxMb)
+      || (!outputRetentionWasReady && this.outputRetentionReady)
+    ) {
+      this.runOutputRetentionSweep();
     }
 
     return { ok: true, keys: changed };
@@ -1158,18 +1188,97 @@ export class AgentRuntimeManager {
       process.stderr.write(`[runtime-sweep] pool sweep failed: ${describeUnknownError(error)}\n`);
     }
     const now = Date.now();
+    const staleIdleAgents: string[] = [];
     for (const [name, record] of this.agents) {
-      if (record.state !== "idle") continue;
-      const updatedAt = Date.parse(record.updatedAt);
-      if (!Number.isFinite(updatedAt)) continue;
-      if (now - updatedAt < this.agentIdleTimeoutMs) continue;
-      void this.stopAgent(name).catch((error) => {
-        process.stderr.write(
-          `[runtime-sweep] failed to reap idle agent ${name}: ${describeUnknownError(error)}\n`,
-        );
-      });
+      if (this.isStaleIdleAgent(record, now)) staleIdleAgents.push(name);
     }
+    if (staleIdleAgents.length > 0) void this.reapStaleIdleAgents(staleIdleAgents);
     this.runIdleCleanupSweep(now);
+    this.runOutputRetentionSweep();
+  }
+
+  private isStaleIdleAgent(record: AgentRecord, now: number) {
+    if (record.state !== "idle") return false;
+    const updatedAt = Date.parse(record.updatedAt);
+    return Number.isFinite(updatedAt) && now - updatedAt >= this.agentIdleTimeoutMs;
+  }
+
+  private async findGoalHoldingAgents(names: readonly string[]) {
+    if (this.options.findGoalHoldingAgents) return this.options.findGoalHoldingAgents(names);
+    const { listWorkersHoldingActiveGoals } = await import("@/server/runs/goal-worker-lease");
+    return listWorkersHoldingActiveGoals(names);
+  }
+
+  /**
+   * Stop idle agents, except those pursuing a goal. Such an agent ends its turn
+   * while the work it started runs in the background and is woken by that
+   * work's notification. Reaping it killed the agent and its monitors, so the
+   * notification had nothing to wake and the goal stalled until the user
+   * noticed. When the lookup fails nothing is reaped: a live agent costs memory,
+   * a reaped one costs the user's work.
+   */
+  private async reapStaleIdleAgents(names: string[]) {
+    if (this.idleReapInFlight) return;
+    this.idleReapInFlight = true;
+    try {
+      let goalHolders: Set<string>;
+      try {
+        goalHolders = await this.findGoalHoldingAgents(names);
+      } catch (error) {
+        process.stderr.write(`[runtime-sweep] goal lookup failed; skipping idle reap: ${describeUnknownError(error)}\n`);
+        return;
+      }
+      const now = Date.now();
+      for (const name of names) {
+        const record = this.agents.get(name);
+        if (!record || !this.isStaleIdleAgent(record, now)) continue;
+        if (goalHolders.has(name)) {
+          if (this.goalProtectedIdleSince.get(name) !== record.updatedAt) {
+            this.goalProtectedIdleSince.set(name, record.updatedAt);
+            emitNamedEvent({ kind: "runtime.agent_reap_skipped", workerId: name, reason: "active_goal" });
+          }
+          continue;
+        }
+        this.goalProtectedIdleSince.delete(name);
+        emitNamedEvent({
+          kind: "runtime.agent_reaped",
+          workerId: name,
+          idleMs: now - Date.parse(record.updatedAt),
+        });
+        await this.stopAgent(name).catch((error) => {
+          process.stderr.write(
+            `[runtime-sweep] failed to reap idle agent ${name}: ${describeUnknownError(error)}\n`,
+          );
+        });
+      }
+    } finally {
+      this.idleReapInFlight = false;
+    }
+  }
+
+  private runOutputRetentionSweep(): void {
+    if (!this.outputRetentionReady) return;
+
+    const env = this.getRuntimeEnv();
+    const settings = resolveRuntimeResourceSettings(env);
+    const dataDir = resolveAgentRuntimeDataDir({
+      dataDir: env.OMNIHARNESS_RUNTIME_DATA_DIR,
+      rootDir: env.OMNIHARNESS_ROOT,
+    });
+    const protectedPaths = new Set<string>();
+    for (const record of this.agents.values()) {
+      if (record.state === "stopped" || record.state === "error") continue;
+      protectedPaths.add(record.outputArchive.filePath);
+    }
+    for (const name of this.startingAgentAccounts.keys()) {
+      protectedPaths.add(resolveAgentOutputArchivePath({ dataDir, name }));
+    }
+
+    this.outputRetentionManager.sweep({
+      dataDir,
+      maxBytes: settings.outputLogMaxMb * 1024 * 1024,
+      protectedPaths,
+    });
   }
 
   private runIdleCleanupSweep(now: number): void {
@@ -1229,9 +1338,15 @@ export class AgentRuntimeManager {
       agentCapabilities: record.agentCapabilities,
       authMethods: record.authMethods,
       requestedModel: record.requestedModel,
+      pendingModel: record.pendingModel,
       effectiveModel: record.effectiveModel,
+      rejectedModel: record.rejectedModel,
+      modelStatus: record.modelStatus,
       requestedEffort: record.requestedEffort,
+      pendingEffort: record.pendingEffort,
       effectiveEffort: record.effectiveEffort,
+      rejectedEffort: record.rejectedEffort,
+      effortStatus: record.effortStatus,
       credentialProfile: record.credentialProfile,
       sessionMode: record.sessionMode,
       claudeConfigDir: record.claudeConfigDir,
@@ -1819,7 +1934,12 @@ export class AgentRuntimeManager {
     const effortConfig = findSessionConfigOption(sessionConfigOptions, "effort")
       ?? findSessionConfigOption(sessionConfigOptions, "reasoning_effort");
     const effortConfigId = asNonEmptyString(effortConfig?.id);
-    let effectiveEffort = effortConfigId ? sessionConfigValue(sessionConfigOptions, effortConfigId) : null;
+    let effectiveEffort = effortConfigId
+      ? normalizeReasoningEffort(sessionConfigValue(sessionConfigOptions, effortConfigId))
+      : null;
+    let pendingEffort: string | null = null;
+    let rejectedEffort: string | null = null;
+    let effortStatus: AgentRecord["effortStatus"] = effectiveEffort ? "effective" : requestedEffort ? "unknown" : "unset";
     const shouldApplyRequestedEffort = type === "codex" || (type === "claude" && !gatewayOverlay);
     if (
       connection
@@ -1828,6 +1948,8 @@ export class AgentRuntimeManager {
       && effortConfigId
       && effectiveEffort !== requestedEffort
     ) {
+      pendingEffort = requestedEffort;
+      effortStatus = "pending";
       try {
         const result = await connection.setSessionConfigOption({
           sessionId,
@@ -1837,11 +1959,57 @@ export class AgentRuntimeManager {
         const resultRecord = asRecord(result);
         if (Array.isArray(resultRecord?.configOptions)) {
           sessionConfigOptions = resultRecord.configOptions;
+          effectiveEffort = normalizeReasoningEffort(sessionConfigValue(sessionConfigOptions, effortConfigId));
+          pendingEffort = null;
+          const confirmed = effectiveEffort === requestedEffort;
+          rejectedEffort = confirmed ? null : requestedEffort;
+          effortStatus = confirmed ? "effective" : "rejected";
+          if (!confirmed) {
+            emitNamedEvent({
+              kind: "error.surfaced",
+              code: "worker.configuration.rejected",
+              message: `The ${type} provider reported effort "${effectiveEffort ?? "unknown"}" after "${requestedEffort}" was requested.`,
+              surface: "toast",
+              workerId: name,
+              cause: null,
+            });
+          }
+        } else {
+          effectiveEffort = null;
+          pendingEffort = null;
+          effortStatus = "unknown";
+          emitNamedEvent({
+            kind: "error.surfaced",
+            code: "worker.configuration.unconfirmed",
+            message: `The ${type} provider accepted effort "${requestedEffort}" but did not confirm the effective value.`,
+            surface: "toast",
+            workerId: name,
+            cause: null,
+          });
         }
-        effectiveEffort = sessionConfigValue(sessionConfigOptions, effortConfigId);
       } catch (effortError: unknown) {
+        pendingEffort = null;
+        rejectedEffort = requestedEffort;
+        effortStatus = "rejected";
         process.stderr.write(`[${name}] could not set ${type} effort to "${requestedEffort}": ${describeUnknownError(effortError)}\n`);
+        emitNamedEvent({
+          kind: "error.surfaced",
+          code: "worker.configuration.rejected",
+          message: `The ${type} provider rejected effort "${requestedEffort}": ${describeUnknownError(effortError)}`,
+          surface: "toast",
+          workerId: name,
+          cause: effortError instanceof Error ? { name: effortError.name, message: effortError.message } : null,
+        });
       }
+    } else if (requestedEffort && shouldApplyRequestedEffort && !effortConfigId) {
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "worker.configuration.unconfirmed",
+        message: `The ${type} provider did not expose an effort setting, so "${requestedEffort}" could not be confirmed.`,
+        surface: "toast",
+        workerId: name,
+        cause: null,
+      });
     }
 
     const created = nowIso();
@@ -1863,12 +2031,20 @@ export class AgentRuntimeManager {
       lastError: null,
       stderrBuffer,
       protocolVersion,
-      agentCapabilities: asRecord(initRecord?.agentCapabilities),
+      agentCapabilities: normalizeGoalAgentCapabilities(initRecord),
       authMethods: Array.isArray(initRecord?.authMethods) ? initRecord.authMethods : [],
       requestedModel,
-      effectiveModel: pinnedModel ?? requestedModel,
+      pendingModel: null,
+      effectiveModel: pinnedModel ?? sessionConfigValue(sessionConfigOptions, "model"),
+      rejectedModel: null,
+      modelStatus: pinnedModel || sessionConfigValue(sessionConfigOptions, "model") ? "effective" : requestedModel ? "unknown" : "unset",
+      modelConfigRevision: 0,
       requestedEffort,
+      pendingEffort,
       effectiveEffort,
+      rejectedEffort,
+      effortStatus,
+      effortConfigRevision: 0,
       credentialProfile: accountCredentials.credentialProfile.status,
       sessionMode: requestedMode || currentModeId || null,
       claudeConfigDir: type === "claude" ? agentProcessEnv.CLAUDE_CONFIG_DIR?.trim() || null : null,
@@ -1880,6 +2056,7 @@ export class AgentRuntimeManager {
       outputArchive: openAgentOutputArchive({
         name,
         dataDir: baseEnv.OMNIHARNESS_RUNTIME_DATA_DIR,
+        rootDir: baseEnv.OMNIHARNESS_ROOT,
         resume: Boolean(input.resumeSessionId),
       }),
       stopReason: null,
@@ -1929,7 +2106,7 @@ export class AgentRuntimeManager {
       client.setWorkerPlanStartupContext(null);
     }
     try {
-      await initializeWorkerGoalSession(name, sessionId);
+      await initializeWorkerGoalSession(name, sessionId, { agentCapabilities: record.agentCapabilities });
     } catch (error) {
       const message = redactGoalErrorMessage(error);
       emitNamedEvent({
@@ -2021,6 +2198,13 @@ export class AgentRuntimeManager {
   ) {
     const record = this.agents.get(name);
     if (!record) throw new RuntimeHttpError(404, `Agent not found: ${name}`);
+    const configId = method === acp.AGENT_METHODS.session_set_config_option
+      ? asNonEmptyString(params.configId)
+      : null;
+    const configValue = configId ? asNonEmptyString(params.value) : null;
+    const configOperation = configId && configValue
+      ? beginProviderConfigChange(record, configId, configValue)
+      : null;
     emitNamedEvent({ kind: "acp.method_started", workerId: name, method, notification });
     try {
       if (notification) {
@@ -2041,17 +2225,46 @@ export class AgentRuntimeManager {
           raw: { sessionUpdate: "current_mode_update", currentModeId: record.sessionMode },
         });
       }
-      if (method === acp.AGENT_METHODS.session_set_config_option && Array.isArray(resultRecord?.configOptions)) {
-        appendOutputEntry(record, {
-          type: "config_option",
-          text: resultRecord.configOptions.flatMap((option) => asNonEmptyString(asRecord(option)?.name) ?? []).join("\n"),
-          raw: { sessionUpdate: "config_option_update", configOptions: resultRecord.configOptions },
-        });
+      if (method === acp.AGENT_METHODS.session_set_config_option) {
+        if (Array.isArray(resultRecord?.configOptions)) {
+          applyProviderConfigOptions(record, resultRecord.configOptions, configOperation);
+          appendOutputEntry(record, {
+            type: "config_option",
+            text: resultRecord.configOptions.flatMap((option) => asNonEmptyString(asRecord(option)?.name) ?? []).join("\n"),
+            raw: { sessionUpdate: "config_option_update", configOptions: resultRecord.configOptions },
+          });
+          const settingRejected = configId === "model"
+            ? record.modelStatus === "rejected"
+            : configId === "effort" || configId === "reasoning_effort"
+              ? record.effortStatus === "rejected"
+              : false;
+          if (settingRejected) {
+            emitNamedEvent({
+              kind: "error.surfaced",
+              code: "worker.configuration.rejected",
+              message: `The provider did not activate the requested ${configId} value.`,
+              surface: "toast",
+              workerId: name,
+              cause: null,
+            });
+          }
+        } else if (configId) {
+          markProviderConfigUnconfirmed(record, configId, configOperation);
+          emitNamedEvent({
+            kind: "error.surfaced",
+            code: "worker.configuration.unconfirmed",
+            message: `The provider accepted ${configId} but did not confirm its effective value.`,
+            surface: "toast",
+            workerId: name,
+            cause: null,
+          });
+        }
       }
       record.updatedAt = nowIso();
       emitNamedEvent({ kind: "acp.method_completed", workerId: name, method, notification });
       return { ok: true, result };
     } catch (error) {
+      if (configId) rejectProviderConfigChange(record, configId, configOperation);
       emitNamedEvent({
         kind: "acp.method_failed",
         workerId: name,
@@ -2086,6 +2299,7 @@ export class AgentRuntimeManager {
     record.activeOutputEntryId = null;
     record.lastError = null;
     record.stopReason = null;
+    record.promptInFlight = true;
     const unsubscribe = onChunk ? this.subscribeChunks(name, onChunk) : null;
 
     try {
@@ -2131,7 +2345,13 @@ export class AgentRuntimeManager {
       applyPromptUsage(record, responseRecord?.usage);
       record.lastText = record.currentText;
       record.currentText = "";
-      record.state = "idle";
+      // A Codex /goal starts its next turn on its own, often before this
+      // prompt's response arrives. Reporting idle then would let the runner
+      // settle the conversation while the provider keeps working.
+      if (record.providerTurnActive) {
+        record.stopReason = null;
+      }
+      record.state = record.providerTurnActive ? "working" : "idle";
       record.updatedAt = nowIso();
       return {
         name,
@@ -2145,6 +2365,7 @@ export class AgentRuntimeManager {
       record.updatedAt = nowIso();
       throw error;
     } finally {
+      record.promptInFlight = false;
       unsubscribe?.();
     }
   }

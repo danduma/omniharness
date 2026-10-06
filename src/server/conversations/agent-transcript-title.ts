@@ -27,7 +27,13 @@ import { join } from "path";
  */
 const TAIL_BYTES = 256 * 1024;
 
-const titleCache = new Map<string, { size: number; title: string | null }>();
+export type TranscriptTitleCandidate = {
+  title: string;
+  source: "provider_custom" | "provider_generated";
+};
+
+const MAX_TITLE_CACHE_ENTRIES = 256;
+const titleCache = new Map<string, { size: number; candidate: TranscriptTitleCandidate | null }>();
 
 export function __resetAgentTranscriptTitleCacheForTests() {
   titleCache.clear();
@@ -155,12 +161,12 @@ async function readTail(path: string, size: number) {
   }
 }
 
-export async function readAgentSessionTitleFromTranscript(args: {
+export async function readAgentSessionTitleCandidateFromTranscript(args: {
   sessionId: string;
   cwd: string;
   configDir?: string;
   configDirs?: readonly string[];
-}): Promise<string | null> {
+}): Promise<TranscriptTitleCandidate | null> {
   const path = await resolveTranscriptPath(args);
   if (!path) {
     return null;
@@ -176,19 +182,39 @@ export async function readAgentSessionTitleFromTranscript(args: {
   // The transcript only grows, so an unchanged size means an unchanged title.
   const cached = titleCache.get(path);
   if (cached && cached.size === size) {
-    return cached.title;
+    return cached.candidate;
   }
 
-  let title: string | null = null;
+  let candidate: TranscriptTitleCandidate | null = null;
   try {
-    title = extractLatestAiTitle(await readTail(path, size));
+    const titles = extractLatestTranscriptTitles(await readTail(path, size));
+    candidate = titles.customTitle
+      ? { title: titles.customTitle, source: "provider_custom" }
+      : titles.aiTitle
+        ? { title: titles.aiTitle, source: "provider_generated" }
+        : null;
   } catch {
-    return cached?.title ?? null;
+    return cached?.candidate ?? null;
   }
 
   // A grown file whose tail no longer carries a title has not lost the one it
   // already reported.
-  const resolved = title ?? cached?.title ?? null;
-  titleCache.set(path, { size, title: resolved });
+  const resolved = candidate ?? cached?.candidate ?? null;
+  titleCache.delete(path);
+  titleCache.set(path, { size, candidate: resolved });
+  while (titleCache.size > MAX_TITLE_CACHE_ENTRIES) {
+    const oldest = titleCache.keys().next().value;
+    if (typeof oldest !== "string") break;
+    titleCache.delete(oldest);
+  }
   return resolved;
+}
+
+export async function readAgentSessionTitleFromTranscript(args: {
+  sessionId: string;
+  cwd: string;
+  configDir?: string;
+  configDirs?: readonly string[];
+}): Promise<string | null> {
+  return (await readAgentSessionTitleCandidateFromTranscript(args))?.title ?? null;
 }

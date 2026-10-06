@@ -96,8 +96,12 @@ export function ConversationWorkerCard({
 }) {
   const configuredModel = agent?.requestedModel || preferredModel || null;
   const configuredEffort = agent?.requestedEffort || preferredEffort || null;
-  const activeModel = agent?.effectiveModel || configuredModel;
-  const activeEffort = agent?.effectiveEffort || configuredEffort;
+  // A live runtime's requested value is intent, not evidence. When the
+  // provider has not confirmed the effective setting, leave the active value
+  // unknown; persisted preferences remain a fallback only when no runtime is
+  // available at all.
+  const activeModel = agent ? agent.effectiveModel ?? null : configuredModel;
+  const activeEffort = agent ? agent.effectiveEffort ?? null : configuredEffort;
   const pendingPermissions = agent?.pendingPermissions ?? [];
   const pendingElicitations = agent?.pendingElicitations ?? [];
   const runtimeLabel = formatWorkerRuntime(agent?.type || worker.type);

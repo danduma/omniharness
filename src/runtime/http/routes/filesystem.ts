@@ -8,7 +8,14 @@ import {
   findAllowedRootFor,
   getDefaultAllowedRoot,
 } from "@/server/fs/allowed-roots";
-import { isPathInside, listProjectFiles, readProjectTextFile } from "@/server/fs/files";
+import {
+  isPathInside,
+  listProjectFiles,
+  ProjectFileTooLargeError,
+  readProjectImageFile,
+  readProjectTextFile,
+  UnsupportedProjectFileTypeError,
+} from "@/server/fs/files";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 
 class InvalidDirectoryCreationRequestError extends Error {
@@ -217,6 +224,70 @@ export const handleProjectFilesRequest: OmniHttpHandler = async (request) => {
       status: 400,
       source: "Filesystem",
       action,
+    });
+  }
+};
+
+function getProjectImageErrorStatus(error: unknown) {
+  const code = error && typeof error === "object" && "code" in error
+    ? error.code
+    : null;
+  if (code === "ENOENT") return 404;
+  if (code === "EACCES" || code === "EPERM") return 403;
+  if (error instanceof UnsupportedProjectFileTypeError) return 415;
+  if (error instanceof ProjectFileTooLargeError) return 413;
+  return 400;
+}
+
+export const handleProjectImageRequest: OmniHttpHandler = async (request) => {
+  try {
+    if (request.method !== "GET") {
+      return Response.json({ error: { code: "method_not_allowed", message: "Method not allowed." } }, {
+        status: 405,
+        headers: { allow: "GET" },
+      });
+    }
+
+    const auth = await requireApiSession(request, {
+      source: "Filesystem",
+      action: "Read project image",
+      enforceSameOrigin: true,
+    });
+    if (auth.response) {
+      return auth.response;
+    }
+
+    const url = new URL(request.url);
+    const projectPath = resolveInsideAllowedRoot(url.searchParams.get("root"));
+    const filePath = url.searchParams.get("file");
+    if (!filePath) {
+      return errorResponse("File path is required.", {
+        status: 400,
+        source: "Filesystem",
+        action: "Read project image",
+      });
+    }
+
+    const image = readProjectImageFile(projectPath, filePath);
+    return new Response(new Uint8Array(image.bytes), {
+      headers: {
+        "Content-Type": image.mimeType,
+        "Content-Length": String(image.bytes.byteLength),
+        "Cache-Control": "private, no-store",
+        // An SVG reaching the browser as a top-level document would run its own
+        // scripts in this origin. The viewer only ever draws these bytes inside
+        // an <img>, where that cannot happen, so pin the rest shut: no
+        // subresources, no sniffing a different type out of the content.
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Disposition": "inline",
+      },
+    });
+  } catch (error) {
+    return errorResponse(error, {
+      status: getProjectImageErrorStatus(error),
+      source: "Filesystem",
+      action: "Read project image",
     });
   }
 };

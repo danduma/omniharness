@@ -71,7 +71,7 @@ export function UserInputMessage({
         <div className="omni-user-message group/user-message relative w-full overflow-hidden rounded-2xl px-5 py-3.5 text-left text-sm leading-6 transition-colors">
           {content ? (
             <span
-              className="block select-text overflow-hidden whitespace-pre-wrap break-words"
+              className="block select-text overflow-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
               style={{ maxHeight: isExpanded ? undefined : "calc(1.5rem * 6)" }}
             >
               {content}

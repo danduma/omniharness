@@ -14,7 +14,7 @@ interface UseAppErrorsProps {
   sendConversationMessageError?: unknown;
   cancelQueuedMessageError?: unknown;
   autoCommitChatError?: unknown;
-  autoCommitProjectError?: unknown;
+  runPresetCommandError?: unknown;
   recoverRunError: unknown;
   renameRunError: unknown;
   archiveRunError?: unknown;
@@ -38,7 +38,7 @@ export function useAppErrors({
   sendConversationMessageError,
   cancelQueuedMessageError,
   autoCommitChatError,
-  autoCommitProjectError,
+  runPresetCommandError,
   recoverRunError,
   renameRunError,
   archiveRunError,
@@ -101,10 +101,10 @@ export function useAppErrors({
       }));
     }
 
-    if (autoCommitProjectError) {
-      errors.push(buildInlineError(autoCommitProjectError, {
+    if (runPresetCommandError) {
+      errors.push(buildInlineError(runPresetCommandError, {
         source: "Conversations",
-        action: "Commit project",
+        action: "Run preset command",
       }));
     }
 
@@ -157,7 +157,7 @@ export function useAppErrors({
   }, [
     selectedRunId,
     autoCommitChatError,
-    autoCommitProjectError,
+    runPresetCommandError,
     archiveRunError,
     cancelQueuedMessageError,
     commitWorkflowSettingsError,

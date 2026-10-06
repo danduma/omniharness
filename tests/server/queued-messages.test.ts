@@ -259,6 +259,52 @@ describe("queued conversation messages", () => {
     expect(storedMessages[1]?.content).toContain("sent that to worker 1");
   });
 
+  it("persists the implementation target and queue-id stream anchor before provider completion", async () => {
+    const runId = await createRun("implementation");
+    const workerId = `${runId}-worker-1`;
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "codex",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const queued = await createQueuedConversationMessage({
+      runId,
+      action: "steer",
+      content: "Persist recovery evidence before asking.",
+      attachments: [],
+    });
+    const response = deferred<{ response: string; state: string }>();
+    mockAskAgent.mockReturnValueOnce(response.promise);
+
+    const drain = drainQueuedImplementationMessages(runId);
+    const evidence = await waitFor(async () => ({
+      record: await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queued.id)).get(),
+      entries: await readWorkerOutputEntries(runId, workerId),
+    }), ({ record, entries }) => (
+      record?.status === "delivering"
+      && record.targetWorkerId === workerId
+      && entries.some((entry) => entry.id === queued.id)
+    ));
+
+    expect(evidence.record?.targetWorkerId).toBe(workerId);
+    expect(evidence.entries).toContainEqual(expect.objectContaining({
+      id: queued.id,
+      type: "user_input",
+      text: "Persist recovery evidence before asking.",
+    }));
+
+    response.resolve({ response: "done", state: "idle" });
+    await expect(drain).resolves.toBe(1);
+  });
+
   it("keeps implementation steering pending when the active worker is still busy", async () => {
     const runId = await createRun("implementation");
     const workerId = `${runId}-worker-1`;

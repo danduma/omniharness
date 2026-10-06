@@ -45,6 +45,28 @@ function compareCandidates(left: GoalWorkerCandidate, right: GoalWorkerCandidate
     || right.id.localeCompare(left.id);
 }
 
+/**
+ * Which of these workers hold the lease of a goal that is still being pursued.
+ *
+ * An agent pursuing a goal routinely ends its turn while background work it
+ * started (sub-agents, test suites, monitors) runs on, and relies on that
+ * work's notification to start its next turn. Such an agent looks idle but is
+ * not finished, so the runtime must not reap it.
+ */
+export async function listWorkersHoldingActiveGoals(
+  workerIds: readonly string[],
+  client: Pick<DbClient, "execute"> = dbClient,
+) {
+  if (workerIds.length === 0) return new Set<string>();
+  const result = await client.execute({
+    sql: `SELECT worker_id FROM run_goals
+          WHERE status IN ('pending', 'pursuing') AND visible = 1
+            AND worker_id IN (${workerIds.map(() => "?").join(", ")})`,
+    args: [...workerIds],
+  });
+  return new Set(result.rows.map((row) => String(row.worker_id)));
+}
+
 export async function selectActiveGoalWorker(
   client: Pick<DbClient, "execute">,
   runId: string,

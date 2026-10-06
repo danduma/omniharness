@@ -29,6 +29,9 @@ export type ClaudeModelGatewaySettings = {
 
 export function readClaudeGatewayModelsFromSettingRows(rows: Array<{ key: string; value: string }>) {
   const values = new Map(rows.map((row) => [row.key, row.value]));
+  if (!parseBoolean(values.get(CLAUDE_MODEL_GATEWAY_SETTING_KEYS.enabled), false)) {
+    return { custom: [], discovered: [] };
+  }
   return {
     custom: parseModels(
       values.get(CLAUDE_MODEL_GATEWAY_SETTING_KEYS.models),

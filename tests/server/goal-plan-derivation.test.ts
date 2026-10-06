@@ -114,6 +114,39 @@ describe("derived goal plans", () => {
     ]);
   });
 
+  it("derives only checkboxes, ignoring decisions and fenced examples, under their task heading", async () => {
+    fs.writeFileSync(planPath, `# Implementation plan
+## Decisions
+1. No GSAP. Use our runtime.
+2. Mobile has full parity.
+## Phase 0: Base
+### Task 0.1: Land the work
+- [ ] Run the implementation gates.
+  - [x] Check the migration.
+\`\`\`md
+- [ ] This is sample syntax, not work.
+\`\`\`
+~~~markdown
+- [ ] Another sample.
+~~~
+### Task 0.2: Graphics spike
+* [X] Render a reference graphic.
+`, "utf8");
+    await seedGoal(`Fully implement ${planPath}`);
+    await refreshDerivedGoalPlan(RUN_ID, "goal_created");
+    expect((await goalControl.getGoal(RUN_ID))?.plan.map(({ phase, title, status }) => ({ phase, title, status }))).toEqual([
+      { phase: "Task 0.1: Land the work", title: "Run the implementation gates.", status: "pending" },
+      { phase: "Task 0.1: Land the work", title: "Check the migration.", status: "completed" },
+      { phase: "Task 0.2: Graphics spike", title: "Render a reference graphic.", status: "completed" },
+    ]);
+  });
+
+  it("reads file checklists larger than the inline Markdown payload limit", async () => {
+    fs.writeFileSync(planPath, PLAN_MARKDOWN + "\n" + "Context paragraph. ".repeat(8_000), "utf8");
+    await seedGoal(`Fully implement ${planPath}`);
+    expect(await refreshDerivedGoalPlan(RUN_ID, "goal_created")).toMatchObject({ kind: "derived", itemCount: 3 });
+  });
+
   it("resolves a project-relative reference", async () => {
     await seedGoal("Implement docs/plans/2026-09-05-caption-font-sizing-contract.md");
 

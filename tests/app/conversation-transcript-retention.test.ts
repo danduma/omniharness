@@ -22,7 +22,7 @@ function entry(seq: number, workerId = "w1"): WorkerEntry & { workerId: string }
 }
 
 function range(from: number, to: number, workerId = "w1") {
-  const entries = [];
+  const entries: Array<WorkerEntry & { workerId: string }> = [];
   for (let seq = from; seq <= to; seq += 1) {
     entries.push(entry(seq, workerId));
   }

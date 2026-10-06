@@ -1,18 +1,24 @@
 "use client";
 
 import type React from "react";
+import { useCallback, useMemo } from "react";
 import { useMutation } from "@tanstack/react-query";
 import type { PendingChatAttachment } from "@/lib/chat-attachments";
 import { mergeAppErrors } from "@/lib/app-errors";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
 import { runtimeErrorMessage } from "@/runtime-api/request";
-import { getManualCommitPrompt, getManualProjectCommitPrompt, type ManualCommitAction } from "@/lib/commit-workflow";
+import { getManualCommitPrompt, type ManualCommitAction } from "@/lib/commit-workflow";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { useQueuedMessageMutations } from "./useQueuedMessageMutations";
 import { uploadPendingChatAttachments } from "./upload-attachments";
 import { shouldSelectRecoveredRunAfterSuccess } from "./auto-resume-selection";
+import {
+  buildLaunchPreferenceBody,
+  resolveComposerLaunchSelection,
+  type ComposerLaunchSelection,
+} from "./composer-launch-selection";
 import { homeUiSetters, homeUiStateManager } from "./HomeUiStateManager";
 import { sentConversationMessagesManager } from "./SentConversationMessagesManager";
 import { appearancePreferencesManager } from "./AppearancePreferencesManager";
@@ -28,9 +34,8 @@ import {
   buildOptimisticSentConversationMessage,
   buildInlineError,
   removeRunFromHomeState,
+  restoreRunSlice,
   resolveOptimisticSentConversationMessage,
-  resolveComposerEffortValue,
-  resolveSelectedWorkerModel,
   type CreatedConversationSnapshot,
 } from "./utils";
 import type {
@@ -83,6 +88,7 @@ export interface UseHomeMutationsParams {
   selectedEffort: string;
   autoSelectedWorkerType: string | null;
   activeAllowedWorkerTypes: string[];
+  activeWorkerModelValues: string[];
   renamingRunId: string | null;
   pendingDeletedRunIdsRef: React.RefObject<Set<string>>;
   pendingCreatedConversationSnapshotsRef: React.RefObject<Map<string, CreatedConversationSnapshot>>;
@@ -102,6 +108,7 @@ export function useHomeMutations({
   selectedEffort,
   autoSelectedWorkerType,
   activeAllowedWorkerTypes,
+  activeWorkerModelValues,
   renamingRunId,
   pendingDeletedRunIdsRef,
   pendingCreatedConversationSnapshotsRef,
@@ -129,7 +136,25 @@ export function useHomeMutations({
     setAttachments,
     clearAttachments,
   } = homeUiSetters;
-  const preferredWorkerAccountId = selectedWorkerAccountId === "auto" ? null : selectedWorkerAccountId;
+  const composerLaunchSelection = useMemo(() => resolveComposerLaunchSelection({
+    conversationMode: selectedConversationMode,
+    selectedCliAgent,
+    selectedModel,
+    selectedEffort,
+    selectedWorkerAccountId,
+    autoSelectedWorkerType: autoSelectedWorkerType as WorkerType | null,
+    activeAllowedWorkerTypes: activeAllowedWorkerTypes as WorkerType[],
+    activeWorkerModelValues,
+  }), [
+    activeAllowedWorkerTypes,
+    activeWorkerModelValues,
+    autoSelectedWorkerType,
+    selectedCliAgent,
+    selectedConversationMode,
+    selectedEffort,
+    selectedModel,
+    selectedWorkerAccountId,
+  ]);
 
   // Worker-scoped failures still belong to a conversation, so resolve the
   // owning run to keep the error out of every other session's banner.
@@ -177,15 +202,17 @@ export function useHomeMutations({
 
   const saveSettings = useMutation({
     mutationFn: async () => {
-      const payload = settingsDraftManager.getSavePayload();
-      await runtimeApis.settings.save(payload);
+      const operation = settingsDraftManager.beginSave();
+      await runtimeApis.settings.save(operation.values);
+      return operation;
     },
-    onSuccess: () => {
-      const savedSettings = settingsDraftManager.getSnapshot().draft;
+    onSuccess: (operation) => {
+      settingsDraftManager.acknowledgeSave(operation);
       appearancePreferencesManager.saveDraft();
-      settingsDraftManager.markSaved(savedSettings);
-      setApiKeys((current) => ({ ...current, ...savedSettings }));
-      setShowSettings(false);
+      setApiKeys((current) => ({ ...current, ...operation.values }));
+      if (settingsDraftManager.getSnapshot().dirtyKeys.size === 0) {
+        setShowSettings(false);
+      }
     },
   });
 
@@ -198,51 +225,73 @@ export function useHomeMutations({
       const previousValue = homeUiStateManager.getSnapshot().apiKeys[key] ?? "";
       setApiKeys((current) => ({ ...current, [key]: value }));
       settingsDraftManager.setField(key, value);
-      return { key, previousValue };
+      const fieldRevision = settingsDraftManager.getSnapshot().fieldRevisions[key] ?? 0;
+      return { key, value, previousValue, fieldRevision };
     },
-    onSuccess: ({ key, value }) => {
-      settingsDraftManager.markFieldsSaved({ [key]: value });
+    onSuccess: ({ key, value }, _variables, context) => {
+      settingsDraftManager.markFieldsSaved(
+        { [key]: value },
+        context ? { [key]: context.fieldRevision } : {},
+      );
     },
     onError: (_error, _variables, context) => {
       if (!context) return;
-      setApiKeys((current) => ({ ...current, [context.key]: context.previousValue }));
+      const ownsLatestEdit = settingsDraftManager.getSnapshot().fieldRevisions[context.key] === context.fieldRevision;
+      if (!ownsLatestEdit) return;
+      setApiKeys((current) => current[context.key] === context.value
+        ? { ...current, [context.key]: context.previousValue }
+        : current);
       settingsDraftManager.setField(context.key, context.previousValue);
     },
   });
 
   const renameRun = useMutation({
+    onMutate: () => ({ dialogRevision: homeUiStateManager.getSnapshot().renameDialogRevision }),
     mutationFn: async ({ runId, title }: { runId: string; title: string }) =>
-      runtimeApis.runs.update({ runId, patch: { title } }),
-    onSuccess: (_data, variables) => {
+      runtimeApis.runs.update({ runId, patch: { title } }) as Promise<{
+        ok: true;
+        runId: string;
+        title: string;
+        titleRevision?: number;
+      }>,
+    onSuccess: (data, variables, context) => {
       setState((current: typeof state) => ({
         ...current,
         runs: (current.runs || []).map((run: RunRecord) =>
-          run.id === variables.runId ? { ...run, title: variables.title } : run,
+          run.id === variables.runId ? {
+            ...run,
+            title: data.title || variables.title,
+            ...(typeof data.titleRevision === "number" ? { titleRevision: data.titleRevision } : {}),
+            titleOwnership: "manual",
+          } : run,
         ),
       }));
-      setRenamingRunId(null);
-      setRenameValue("");
-      setRenameSource(null);
+      if (homeUiStateManager.getSnapshot().renameDialogRevision === context?.dialogRevision) {
+        setRenamingRunId(null);
+        setRenameValue("");
+        setRenameSource(null);
+      }
     },
   });
 
   const moveRunToProject = useMutation({
     onMutate: (variables: { runId: string; projectPath: string }) => {
-      const previousState = state;
+      const previousProjectPath = state.runs.find((run) => run.id === variables.runId)?.projectPath ?? null;
+      const dialogRevision = homeUiStateManager.getSnapshot().moveDialogRevision;
       setState((current: typeof state) => ({
         ...current,
         runs: (current.runs || []).map((run: RunRecord) =>
           run.id === variables.runId ? { ...run, projectPath: variables.projectPath } : run,
         ),
       }));
-      return { previousState };
+      return { previousProjectPath, dialogRevision };
     },
     mutationFn: async ({ runId, projectPath }: { runId: string; projectPath: string }) =>
       runtimeApis.runs.update({
         runId,
         patch: { projectPath },
       }) as Promise<{ ok: true; runId: string; projectPath: string }>,
-    onSuccess: (data, variables) => {
+    onSuccess: (data, variables, context) => {
       const nextProjectPath = data.projectPath || variables.projectPath;
       setState((current: typeof state) => ({
         ...current,
@@ -250,12 +299,19 @@ export function useHomeMutations({
           run.id === variables.runId ? { ...run, projectPath: nextProjectPath } : run,
         ),
       }));
-      setMovingRunId(null);
-      setMoveRunProjectPath("");
+      if (homeUiStateManager.getSnapshot().moveDialogRevision === context?.dialogRevision) {
+        setMovingRunId(null);
+        setMoveRunProjectPath("");
+      }
     },
-    onError: (_error, _variables, context) => {
+    onError: (_error, variables, context) => {
       if (!context) return;
-      setState(context.previousState);
+      setState((current) => ({
+        ...current,
+        runs: current.runs.map((run) => run.id === variables.runId && run.projectPath === variables.projectPath
+          ? { ...run, projectPath: context.previousProjectPath }
+          : run),
+      }));
     },
   });
 
@@ -281,6 +337,8 @@ export function useHomeMutations({
         setRenameSource(null);
       }
 
+      const optimisticRenameDialogRevision = homeUiStateManager.getSnapshot().renameDialogRevision;
+
       return {
         previousState,
         previousSelectedRunId,
@@ -289,6 +347,7 @@ export function useHomeMutations({
         previousRenameSource,
         previousPendingCreatedSnapshot,
         hadPendingCreatedSnapshot,
+        optimisticRenameDialogRevision,
       };
     },
     mutationFn: async ({ runId }: { runId: string }) =>
@@ -302,7 +361,7 @@ export function useHomeMutations({
       if (context.hadPendingCreatedSnapshot && context.previousPendingCreatedSnapshot) {
         pendingCreatedConversationSnapshotsRef.current.set(variables.runId, context.previousPendingCreatedSnapshot);
       }
-      setState(context.previousState);
+      setState((current) => restoreRunSlice(current, context.previousState, variables.runId));
       if (shouldRestoreSelectionAfterOptimisticRemovalError({
         removedRunId: variables.runId,
         selectedRunIdAtStart: context.previousSelectedRunId,
@@ -310,9 +369,11 @@ export function useHomeMutations({
       })) {
         setSelectedRunId(context.previousSelectedRunId);
       }
-      setRenamingRunId(context.previousRenamingRunId);
-      setRenameValue(context.previousRenameValue);
-      setRenameSource(context.previousRenameSource);
+      if (homeUiStateManager.getSnapshot().renameDialogRevision === context.optimisticRenameDialogRevision) {
+        setRenamingRunId(context.previousRenamingRunId);
+        setRenameValue(context.previousRenameValue);
+        setRenameSource(context.previousRenameSource);
+      }
     },
   });
 
@@ -338,6 +399,9 @@ export function useHomeMutations({
         setRenameSource(null);
       }
 
+
+      const optimisticRenameDialogRevision = homeUiStateManager.getSnapshot().renameDialogRevision;
+
       return {
         previousState,
         previousSelectedRunId,
@@ -346,6 +410,7 @@ export function useHomeMutations({
         previousRenameSource,
         previousPendingCreatedSnapshot,
         hadPendingCreatedSnapshot,
+        optimisticRenameDialogRevision,
       };
     },
     mutationFn: async ({ runId }: { runId: string }) =>
@@ -359,7 +424,7 @@ export function useHomeMutations({
       if (context.hadPendingCreatedSnapshot && context.previousPendingCreatedSnapshot) {
         pendingCreatedConversationSnapshotsRef.current.set(variables.runId, context.previousPendingCreatedSnapshot);
       }
-      setState(context.previousState);
+      setState((current) => restoreRunSlice(current, context.previousState, variables.runId));
       if (shouldRestoreSelectionAfterOptimisticRemovalError({
         removedRunId: variables.runId,
         selectedRunIdAtStart: context.previousSelectedRunId,
@@ -367,16 +432,18 @@ export function useHomeMutations({
       })) {
         setSelectedRunId(context.previousSelectedRunId);
       }
-      setRenamingRunId(context.previousRenamingRunId);
-      setRenameValue(context.previousRenameValue);
-      setRenameSource(context.previousRenameSource);
+      if (homeUiStateManager.getSnapshot().renameDialogRevision === context.optimisticRenameDialogRevision) {
+        setRenamingRunId(context.previousRenamingRunId);
+        setRenameValue(context.previousRenameValue);
+        setRenameSource(context.previousRenameSource);
+      }
     },
   });
 
   const recoverRun = useMutation({
     mutationFn: async ({ runId, action, targetMessageId, content, gitWorkspaceLaunch, manualRecovery }: {
       runId: string;
-      action: "retry" | "edit" | "fork";
+      action: "retry" | "resume" | "edit" | "fork";
       targetMessageId: string;
       content?: string;
       gitWorkspaceLaunch?: GitWorkspaceLaunchRequest;
@@ -423,9 +490,16 @@ export function useHomeMutations({
   });
 
   const runCommand = useMutation({
-    mutationFn: async (payload: { content: string; attachments: PendingChatAttachment[]; projectPath: string | null; requestedRunId: string }) => {
-      const isAutoWorkerSelection = selectedCliAgent === "auto";
-      const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel);
+    // `launch` is resolved by the caller, before `onMutate` selects the new
+    // conversation. Re-reading the composer here would read the selection this
+    // mutation itself just reset.
+    mutationFn: async (payload: {
+      content: string;
+      attachments: PendingChatAttachment[];
+      projectPath: string | null;
+      requestedRunId: string;
+      launch: ComposerLaunchSelection;
+    }) => {
       const uploadedAttachments = await uploadPendingChatAttachments(
         payload.attachments,
         runtimeApis.files,
@@ -438,17 +512,13 @@ export function useHomeMutations({
         ? workspaceState?.selectedTargetsByProject[payload.projectPath] ?? null
         : null;
       return runtimeApis.conversations.create({
-          mode: selectedConversationMode,
+          mode: payload.launch.conversationMode,
           command: payload.content,
           projectPath: payload.projectPath,
           requestedRunId: payload.requestedRunId,
           gitWorkspaceLaunch: pendingWorkspaceLaunch,
           gitWorkspaceTarget: selectedWorkspaceTarget,
-          preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
-          preferredWorkerModel: resolvedSelectedModel,
-          preferredWorkerEffort: resolveComposerEffortValue(selectedEffort),
-          preferredWorkerAccountId,
-          allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
+          ...buildLaunchPreferenceBody(payload.launch),
           attachments: uploadedAttachments,
         }) as Promise<{ runId?: string } & CreatedConversationSnapshot>;
     },
@@ -464,13 +534,19 @@ export function useHomeMutations({
         runId: requestedRunId,
         content: payload.content,
         projectPath: payload.projectPath,
-        mode: selectedConversationMode,
-        preferredWorkerType: selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent,
-        preferredWorkerAccountId,
+        mode: payload.launch.conversationMode,
+        preferredWorkerType: payload.launch.workerType,
+        preferredWorkerModel: payload.launch.model,
+        preferredWorkerEffort: payload.launch.effort,
+        preferredWorkerAccountId: payload.launch.accountId,
       });
       pendingCreatedConversationSnapshotsRef.current.set(requestedRunId, optimisticSnapshot);
       setCommand("");
       homeUiSetters.setCommandCursor(0);
+      // Before the selection moves: the new run has no draft of its own yet, and
+      // switching to a draftless run resets the composer to the generic
+      // new-conversation defaults.
+      homeUiSetters.adoptSelectionForCreatedRun(requestedRunId);
       setSelectedRunId(requestedRunId);
       replaceBrowserConversationPath(requestedRunId, null);
       setState((current) => appendCreatedConversationSnapshot(current, optimisticSnapshot));
@@ -550,6 +626,7 @@ export function useHomeMutations({
       clientMessageId: string;
       attachments: PendingChatAttachment[];
       busyAction?: BusyMessageAction;
+      launch: ComposerLaunchSelection;
     }) => {
       const snapshot = homeUiStateManager.getSnapshot();
       const attachments = payload.attachments.map(({ id, kind, name, mimeType, size, previewUrl }) => (
@@ -607,12 +684,8 @@ export function useHomeMutations({
       clientMessageId: string;
       attachments: PendingChatAttachment[];
       busyAction?: BusyMessageAction;
+      launch: ComposerLaunchSelection;
     }) => {
-      const isAutoWorkerSelection = selectedCliAgent === "auto";
-      const selectedWorkerType = isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent;
-      const resolvedSelectedModel = selectedWorkerType
-        ? resolveSelectedWorkerModel(selectedWorkerType as WorkerType, selectedModel)
-        : null;
       const uploadedAttachments = await uploadPendingChatAttachments(
         payload.attachments,
         runtimeApis.files,
@@ -626,11 +699,7 @@ export function useHomeMutations({
           clientMessageId: payload.clientMessageId,
           attachments: uploadedAttachments,
           busyAction: payload.busyAction,
-          preferredWorkerType: selectedWorkerType,
-          preferredWorkerModel: isAutoWorkerSelection ? null : resolvedSelectedModel,
-          preferredWorkerEffort: resolveComposerEffortValue(selectedEffort),
-          preferredWorkerAccountId,
-          allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedWorkerType],
+          ...buildLaunchPreferenceBody(payload.launch),
         },
       }) as Promise<{
         ok: true;
@@ -740,24 +809,19 @@ export function useHomeMutations({
     },
   });
 
-  const autoCommitProject = useMutation({
+  const runPresetCommand = useMutation({
     onMutate: () => ({
       selectedRunIdAtStart: homeUiStateManager.getSnapshot().selectedRunId,
       commandAtStart: homeUiStateManager.getSnapshot().command,
       attachmentsAtStart: homeUiStateManager.getSnapshot().attachments,
     }),
-    mutationFn: async (payload: { projectPath: string; action: ManualCommitAction }) => {
-      const isAutoWorkerSelection = selectedCliAgent === "auto";
-      const resolvedSelectedModel = isAutoWorkerSelection ? null : resolveSelectedWorkerModel(selectedCliAgent, selectedModel);
+    // The server resolves the preset's prompt and worker from saved settings,
+    // so the run never follows the composer's current CLI/model choice.
+    mutationFn: async (payload: { projectPath: string; presetCommandId: string }) => {
       return runtimeApis.conversations.create({
           mode: "commit",
-          command: getManualProjectCommitPrompt(payload.action),
+          presetCommandId: payload.presetCommandId,
           projectPath: payload.projectPath,
-          preferredWorkerType: isAutoWorkerSelection ? autoSelectedWorkerType : selectedCliAgent,
-          preferredWorkerModel: resolvedSelectedModel,
-          preferredWorkerEffort: resolveComposerEffortValue(selectedEffort),
-          preferredWorkerAccountId,
-          allowedWorkerTypes: isAutoWorkerSelection ? activeAllowedWorkerTypes : [selectedCliAgent],
         }) as Promise<{ runId?: string } & CreatedConversationSnapshot>;
     },
     onSuccess: (data, _variables, context) => {
@@ -991,6 +1055,30 @@ export function useHomeMutations({
     }
   };
 
+  // Both entry points freeze the composer selection here, in the caller's
+  // render, so the request carries the worker/model the user was looking at
+  // when they hit send.
+  const runCommandMutate = runCommand.mutate;
+  const startConversation = useCallback((payload: {
+    content: string;
+    attachments: PendingChatAttachment[];
+    projectPath: string | null;
+    requestedRunId: string;
+  }) => {
+    runCommandMutate({ ...payload, launch: composerLaunchSelection });
+  }, [composerLaunchSelection, runCommandMutate]);
+
+  const sendConversationMessageMutate = sendConversationMessage.mutate;
+  const sendMessageToConversation = useCallback((payload: {
+    runId: string;
+    content: string;
+    clientMessageId: string;
+    attachments: PendingChatAttachment[];
+    busyAction?: BusyMessageAction;
+  }) => {
+    sendConversationMessageMutate({ ...payload, launch: composerLaunchSelection });
+  }, [composerLaunchSelection, sendConversationMessageMutate]);
+
   return {
     loginMutation,
     logoutMutation,
@@ -1004,12 +1092,14 @@ export function useHomeMutations({
     recoverRun,
     resumeRunRecovery,
     runCommand,
+    startConversation,
     sendConversationMessage,
+    sendMessageToConversation,
     cancelQueuedMessage,
     sendQueuedMessageNow,
     interruptQueuedMessage,
     autoCommitChat,
-    autoCommitProject,
+    runPresetCommand,
     stopSupervisor,
     stopWorker,
     stopWorkerTerminalProcess,

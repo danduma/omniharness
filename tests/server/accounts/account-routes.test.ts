@@ -135,6 +135,36 @@ describe("account management routes", () => {
     });
   });
 
+  it("records an explicit disable separately from an automatic auth timeout", async () => {
+    await db.insert(accounts).values({
+      id: "claude-system-timeout",
+      cliType: "claude",
+      provider: "anthropic",
+      type: "subscription",
+      label: "Claude system session",
+      authMode: "local_session",
+      authRef: "local-session:claude",
+      enabled: false,
+      status: "unknown",
+      lifecycleOperationErrorCode: "account.auth.timeout",
+      createdAt: new Date("2026-06-29T15:00:00.000Z"),
+      updatedAt: new Date("2026-06-29T15:00:00.000Z"),
+    });
+
+    const response = await handleAccountDetailRequest(jsonRequest(
+      "http://localhost/api/accounts/claude-system-timeout",
+      "PATCH",
+      { enabled: false },
+    ), { surface: "test", params: { id: "claude-system-timeout" } });
+
+    expect(response.status).toBe(200);
+    expect(await db.select().from(accounts).where(eq(accounts.id, "claude-system-timeout")).get())
+      .toMatchObject({
+        enabled: false,
+        lifecycleOperationErrorCode: null,
+      });
+  });
+
   it("rejects client-supplied account status instead of treating it as provider truth", async () => {
     await db.insert(accounts).values({
       id: "codex-local",

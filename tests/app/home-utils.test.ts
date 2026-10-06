@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildOptimisticCreatedConversationSnapshot, buildOptimisticSentConversationMessage, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseBrowserConversationRoute, parseCollapsedProjectPaths, reorderExplicitProjectPaths, resolveComposerEffortForPair, resolveComposerEffortLabel, resolveComposerEffortValue, resolveComposerModelValue, resolveOptimisticSentConversationMessage, resolveSavedComposerModel, resolveSelectedWorkerModel, shouldClearMissingSelectedRunFromAuthoritativeSnapshot, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/interface/home/utils";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildOptimisticCreatedConversationSnapshot, buildOptimisticSentConversationMessage, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseBrowserConversationRoute, parseCollapsedProjectPaths, reorderExplicitProjectPaths, resolveComposerEffortForPair, resolveComposerEffortLabel, resolveComposerEffortValue, resolveComposerModelAfterWorkerChange, resolveComposerModelValue, resolveOptimisticSentConversationMessage, resolveSavedComposerModel, resolveSelectedWorkerModel, shouldClearMissingSelectedRunFromAuthoritativeSnapshot, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/interface/home/utils";
 import type { EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord, SupervisorInterventionRecord } from "@/interface/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 
@@ -1314,6 +1314,144 @@ describe("home utils", () => {
     expect(merged.messages.map((message) => message.id)).toEqual(["message-a", "message-b"]);
   });
 
+  it("does not restore a stale running status when another run's stream frame leaves the created run out", () => {
+    // Session 74b271da861a: created in this tab, then the user moved to another
+    // conversation. Stream frames for that conversation carry only its own run,
+    // so every frame re-inserted the creation-time row and the finished session
+    // read as running until the tab reloaded.
+    const pendingMessage = {
+      id: "message-b",
+      runId: "run-b",
+      role: "user" as const,
+      kind: "checkpoint",
+      content: "Start session B",
+      createdAt: "2026-04-27T00:01:00.000Z",
+    };
+    const pendingSnapshots = new Map([
+      ["run-b", {
+        plan: { id: "plan-b", path: "vibes/ad-hoc/b.md" },
+        run: buildRun({ id: "run-b", planId: "plan-b", status: "running" }),
+        message: pendingMessage,
+      }],
+    ]);
+    const emptyState: EventStreamState = {
+      messages: [],
+      plans: [],
+      runs: [],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+    };
+
+    mergePendingCreatedConversationSnapshots({
+      ...emptyState,
+      messages: [pendingMessage],
+      plans: [{ id: "plan-b", path: "vibes/ad-hoc/b.md" }],
+      runs: [buildRun({ id: "run-b", planId: "plan-b", status: "running" })],
+    }, pendingSnapshots, 1_000);
+    // The run finishes while another conversation is selected: the frame that
+    // carries the change has the run and its plan, but not its messages.
+    mergePendingCreatedConversationSnapshots({
+      ...emptyState,
+      plans: [{ id: "plan-b", path: "vibes/ad-hoc/b.md" }],
+      runs: [
+        buildRun({ id: "run-a", planId: "plan-a" }),
+        buildRun({ id: "run-b", planId: "plan-b", status: "done", updatedAt: "2026-04-27T00:02:00.000Z" }),
+      ],
+      messageScope: { runIds: ["run-a"], complete: true },
+    }, pendingSnapshots, 2_000);
+
+    const otherRunFrame = mergePendingCreatedConversationSnapshots({
+      ...emptyState,
+      runs: [buildRun({ id: "run-a", planId: "plan-a" })],
+      messageScope: { runIds: ["run-a"], complete: true },
+    }, pendingSnapshots, 3_000);
+
+    expect(otherRunFrame.runs.find((run) => run.id === "run-b")?.status).toBe("done");
+  });
+
+  it("does not restore a stale running status for a run the server listed before its first message", () => {
+    const pendingSnapshots = new Map([
+      ["run-b", {
+        plan: { id: "plan-b", path: "vibes/ad-hoc/b.md" },
+        run: buildRun({ id: "run-b", planId: "plan-b", status: "running" }),
+        message: {
+          id: "message-b",
+          runId: "run-b",
+          role: "user" as const,
+          kind: "checkpoint",
+          content: "Start session B",
+          createdAt: "2026-04-27T00:01:00.000Z",
+        },
+      }],
+    ]);
+    const emptyState: EventStreamState = {
+      messages: [],
+      plans: [],
+      runs: [],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+    };
+
+    const finished = mergePendingCreatedConversationSnapshots({
+      ...emptyState,
+      plans: [{ id: "plan-b", path: "vibes/ad-hoc/b.md" }],
+      runs: [buildRun({ id: "run-b", planId: "plan-b", status: "done" })],
+      messageScope: { runIds: ["run-a"], complete: true },
+    }, pendingSnapshots, 1_000);
+    const otherRunFrame = mergePendingCreatedConversationSnapshots({
+      ...emptyState,
+      runs: [buildRun({ id: "run-a", planId: "plan-a" })],
+      messageScope: { runIds: ["run-a"], complete: true },
+    }, pendingSnapshots, 2_000);
+
+    expect(finished.runs.find((run) => run.id === "run-b")?.status).toBe("done");
+    expect(finished.messages.map((message) => message.id)).toEqual(["message-b"]);
+    expect(otherRunFrame.runs.find((run) => run.id === "run-b")?.status).toBe("done");
+  });
+
+  it("drops the placeholder plan once the server lists the run before the create response returns", () => {
+    const pendingSnapshots = new Map([["run-1", buildOptimisticCreatedConversationSnapshot({
+      runId: "run-1",
+      content: "Start this",
+      projectPath: "/workspace/app",
+      mode: "direct",
+      now: new Date("2026-04-27T00:01:00.000Z"),
+    })]]);
+    const emptyState: EventStreamState = {
+      messages: [],
+      plans: [],
+      runs: [],
+      accounts: [],
+      agents: [],
+      workers: [],
+      planItems: [],
+      clarifications: [],
+      executionEvents: [],
+      supervisorInterventions: [],
+    };
+
+    const listed = mergePendingCreatedConversationSnapshots({
+      ...emptyState,
+      plans: [{ id: "plan-1", path: "vibes/ad-hoc/server.md" }],
+      runs: [buildRun({ id: "run-1", planId: "plan-1", status: "running" })],
+    }, pendingSnapshots, 1_000);
+    const stale = mergePendingCreatedConversationSnapshots(emptyState, pendingSnapshots, 2_000);
+
+    expect(listed.plans.map((plan) => plan.id)).toEqual(["plan-1"]);
+    expect(stale.plans.map((plan) => plan.id)).toEqual(["plan-1"]);
+    expect(stale.runs[0]).toMatchObject({ id: "run-1", planId: "plan-1", status: "running" });
+  });
+
   it("keeps a newly created conversation through stale payloads after a stable server-visible window", () => {
     const pendingSnapshots = new Map([
       ["run-1", {
@@ -1637,14 +1775,43 @@ describe("worker model normalization", () => {
     expect(resolveSelectedWorkerModel("codex", "openai/gpt-5.6-luna")).toBe("gpt-5.6-luna");
   });
 
+  it("maps the GPT-6 family between Codex and OpenCode ids", () => {
+    expect(resolveSelectedWorkerModel("opencode", "gpt-6-sol")).toBe("openai/gpt-6-sol");
+    expect(resolveSelectedWorkerModel("opencode", "GPT-6 Luna")).toBe("openai/gpt-6-luna");
+    expect(resolveSelectedWorkerModel("codex", "openai/gpt-6-sol")).toBe("gpt-6-sol");
+    expect(resolveSelectedWorkerModel("opencode", "GPT-6.1 Sol")).toBe("openai/gpt-6.1-sol");
+    expect(resolveSelectedWorkerModel("codex", "openai/gpt-6.1-sol")).toBe("gpt-6.1-sol");
+  });
+
   it("restores GPT-5.6 selections using the provider's id shape", () => {
     expect(resolveComposerModelValue("gpt-5.6-sol")).toBe("gpt-5.6-sol");
     expect(resolveComposerModelValue("openai/gpt-5.6-sol")).toBe("openai/gpt-5.6-sol");
   });
 
-  it("migrates only the superseded default while preserving explicit saved choices", () => {
-    expect(resolveSavedComposerModel("claude-opus-5")).toBe("gpt-5.6-sol");
+  it("preserves explicit saved model choices without cross-provider substitution", () => {
+    expect(resolveSavedComposerModel("claude-opus-5")).toBe("claude-opus-5");
     expect(resolveSavedComposerModel("gpt-5.4")).toBe("gpt-5.4");
     expect(resolveSavedComposerModel("  ")).toBe("");
+  });
+
+  it("chooses a valid model when the user explicitly switches workers", () => {
+    const catalog = {
+      codex: [{ value: "gpt-current", label: "GPT Current" }],
+      claude: [{ value: "claude-current", label: "Claude Current" }],
+    };
+
+    expect(resolveComposerModelAfterWorkerChange({
+      catalog,
+      workerType: "claude",
+      selectedModel: "gpt-current",
+    })).toBe("claude-current");
+  });
+
+  it("keeps an equivalent model when the next worker supports its normalized id", () => {
+    expect(resolveComposerModelAfterWorkerChange({
+      catalog: undefined,
+      workerType: "opencode",
+      selectedModel: "gpt-5.6-sol",
+    })).toBe("openai/gpt-5.6-sol");
   });
 });

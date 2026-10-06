@@ -4,8 +4,41 @@ import * as schema from './schema';
 import { getAppDataPath } from '@/server/app-root';
 
 const dbPath = getAppDataPath('sqlite.db');
-const DB_SCHEMA_VERSION = 9;
+const DB_SCHEMA_VERSION = 10;
+const CONNECTION_BUSY_TIMEOUT_MS = 15_000;
 export type DbClient = ReturnType<typeof createClient>;
+
+/**
+ * `busy_timeout` is connection-scoped, and libsql's local client hands its open
+ * connection to `transaction()` before dropping its own reference, so the next
+ * query runs on a replacement connection that never saw the pragma set during
+ * schema init. Left alone, every query after the first transaction abandons a
+ * contended write immediately instead of waiting out the other writer — which
+ * is the failure the `withSqliteBusyRetry` call sites keep catching.
+ *
+ * Re-apply the pragma as soon as the configured connection is taken away.
+ * Doing it here rather than after the commit also opens the replacement while
+ * the transaction is still running, so a query arriving in between finds a
+ * configured connection instead of opening a bare one.
+ */
+function preserveConnectionPragmas(client: DbClient): DbClient {
+  const applyPragmas = () => client.execute(`PRAGMA busy_timeout = ${CONNECTION_BUSY_TIMEOUT_MS}`);
+  const openTransaction = client.transaction.bind(client);
+  const reconnect = client.reconnect.bind(client);
+
+  client.transaction = (async (...args: Parameters<typeof openTransaction>) => {
+    const transaction = await openTransaction(...args);
+    await applyPragmas();
+    return transaction;
+  }) as typeof client.transaction;
+
+  client.reconnect = (async () => {
+    await reconnect();
+    await applyPragmas();
+  }) as typeof client.reconnect;
+
+  return client;
+}
 
 async function tableColumns(client: DbClient, table: string): Promise<Set<string>> {
   const result = await client.execute(`PRAGMA table_info(${table})`);
@@ -13,7 +46,7 @@ async function tableColumns(client: DbClient, table: string): Promise<Set<string
 }
 
 export async function initializeDatabaseSchema(client: DbClient) {
-await client.execute('PRAGMA busy_timeout = 15000');
+await client.execute(`PRAGMA busy_timeout = ${CONNECTION_BUSY_TIMEOUT_MS}`);
 const versionResult = await client.execute('PRAGMA user_version');
 const currentSchemaVersion = Number((versionResult.rows[0] as Record<string, unknown> | undefined)?.user_version ?? 0);
 
@@ -41,10 +74,16 @@ CREATE TABLE IF NOT EXISTS runs (
   phase text,
   project_path text,
   title text,
+	  title_ownership text NOT NULL DEFAULT 'automatic',
+	  title_source text NOT NULL DEFAULT 'initial',
+	  title_revision integer NOT NULL DEFAULT 0,
+	  title_owner_worker_id text,
 	  preferred_worker_type text,
 	  preferred_worker_model text,
 	  preferred_worker_effort text,
 	  preferred_worker_account_id text,
+	  preferred_worker_revision integer NOT NULL DEFAULT 0,
+	  preferred_worker_launch_revision integer NOT NULL DEFAULT 0,
 	  allowed_worker_types text,
   spec_path text,
   artifact_plan_path text,
@@ -154,6 +193,7 @@ CREATE TABLE IF NOT EXISTS workers (
   effective_launch_model text,
   effective_launch_effort text,
   launch_credential_source text,
+  launch_selection_revision integer NOT NULL DEFAULT 0,
   turn_generation integer NOT NULL DEFAULT 0,
   superseded_seq_ranges text,
   active_work_started_at integer,
@@ -236,6 +276,9 @@ CREATE TABLE IF NOT EXISTS messages (
   worker_id text,
   superseded_at integer,
   edited_from_message_id text,
+  delivery_status text NOT NULL DEFAULT 'delivered',
+  operation_fingerprint text,
+  delivery_options_json text,
   created_at integer NOT NULL,
   FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action,
   FOREIGN KEY (worker_id) REFERENCES workers(id) ON UPDATE no action ON DELETE no action
@@ -256,6 +299,7 @@ CREATE TABLE IF NOT EXISTS queued_conversation_messages (
   action text NOT NULL,
   content text NOT NULL,
   attachments_json text,
+  operation_fingerprint text,
   status text NOT NULL,
   last_error text,
   created_at integer NOT NULL,
@@ -620,6 +664,26 @@ if (!runColumnNames.has("title")) {
   await client.execute("ALTER TABLE runs ADD COLUMN title text;");
 }
 
+if (!runColumnNames.has("title_ownership")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN title_ownership text NOT NULL DEFAULT 'automatic';");
+  // Titles predating ownership metadata are ambiguous. Preserve them until a
+  // human explicitly renames or resets them instead of guessing they were
+  // generated and allowing a background writer to replace them.
+  await client.execute("UPDATE runs SET title_ownership = 'legacy';");
+}
+
+if (!runColumnNames.has("title_source")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN title_source text NOT NULL DEFAULT 'initial';");
+}
+
+if (!runColumnNames.has("title_revision")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN title_revision integer NOT NULL DEFAULT 0;");
+}
+
+if (!runColumnNames.has("title_owner_worker_id")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN title_owner_worker_id text;");
+}
+
 if (!runColumnNames.has("preferred_worker_type")) {
   await client.execute("ALTER TABLE runs ADD COLUMN preferred_worker_type text;");
 }
@@ -634,6 +698,15 @@ if (!runColumnNames.has("preferred_worker_effort")) {
 
 if (!runColumnNames.has("preferred_worker_account_id")) {
   await client.execute("ALTER TABLE runs ADD COLUMN preferred_worker_account_id text;");
+}
+
+if (!runColumnNames.has("preferred_worker_revision")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN preferred_worker_revision integer NOT NULL DEFAULT 0;");
+}
+
+if (!runColumnNames.has("preferred_worker_launch_revision")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN preferred_worker_launch_revision integer NOT NULL DEFAULT 0;");
+  await client.execute("UPDATE runs SET preferred_worker_launch_revision = preferred_worker_revision;");
 }
 
 if (!runColumnNames.has("allowed_worker_types")) {
@@ -776,6 +849,10 @@ if (!workerColumnNames.has("launch_credential_source")) {
   await client.execute("ALTER TABLE workers ADD COLUMN launch_credential_source text;");
 }
 
+if (!workerColumnNames.has("launch_selection_revision")) {
+  await client.execute("ALTER TABLE workers ADD COLUMN launch_selection_revision integer NOT NULL DEFAULT 0;");
+}
+
 if (!workerColumnNames.has("turn_generation")) {
   await client.execute("ALTER TABLE workers ADD COLUMN turn_generation integer NOT NULL DEFAULT 0;");
 }
@@ -853,6 +930,23 @@ if (!messageColumnNames.has("edited_from_message_id")) {
 
 if (!messageColumnNames.has("attachments_json")) {
   await client.execute("ALTER TABLE messages ADD COLUMN attachments_json text;");
+}
+
+if (!messageColumnNames.has("delivery_status")) {
+  await client.execute("ALTER TABLE messages ADD COLUMN delivery_status text NOT NULL DEFAULT 'delivered';");
+}
+
+if (!messageColumnNames.has("operation_fingerprint")) {
+  await client.execute("ALTER TABLE messages ADD COLUMN operation_fingerprint text;");
+}
+
+if (!messageColumnNames.has("delivery_options_json")) {
+  await client.execute("ALTER TABLE messages ADD COLUMN delivery_options_json text;");
+}
+
+const queuedMessageColumnNames = await tableColumns(client, "queued_conversation_messages");
+if (!queuedMessageColumnNames.has("operation_fingerprint")) {
+  await client.execute("ALTER TABLE queued_conversation_messages ADD COLUMN operation_fingerprint text;");
 }
 
 // ── runs.last_activity_at ──────────────────────────────────────────
@@ -1220,7 +1314,7 @@ COMMIT;
 }
 
 function createDbState() {
-  const client = createClient({ url: `file:${dbPath}` });
+  const client = preserveConnectionPragmas(createClient({ url: `file:${dbPath}` }));
   const schemaInitStart = Date.now();
   const dbReady = initializeDatabaseSchema(client).then(() => {
     console.log(`[db] schema ready in ${Date.now() - schemaInitStart}ms`);

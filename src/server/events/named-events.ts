@@ -19,7 +19,7 @@
 import { notifyEventStreamSubscribers } from "./live-updates";
 import type { HandoffEvent } from "./handoff-events";
 import type { ClaudeSessionModelReason } from "@/lib/claude-session-model";
-import type { GoalAction, GoalPublishedEventKind, GoalSnapshot } from "@/shared/goal-plan";
+import type { GoalAction, GoalMutationAction, GoalPublishedEventKind, GoalSnapshot } from "@/shared/goal-plan";
 import { randomBytes } from "node:crypto";
 import {
   formatEventStreamId,
@@ -42,7 +42,11 @@ export type SurfacedErrorCode =
   | "conversation.delete.failed"
   | "conversation.delete.worker_cancel_failed"
   | "conversation.continue.failed"
+  | "conversation.fork.failed"
   | "conversation.delivery_refused"
+  | "conversation.delivery_recovery_failed"
+  | "conversation.preference_audit_failed"
+  | "conversation.preset_command_missing"
   | "conversation.title_generation_failed"
   | "external_session.import_failed"
   | "process.spawn.failed"
@@ -54,6 +58,7 @@ export type SurfacedErrorCode =
   | "recovery.needs_user"
   | "recovery.run_failed"
   | "runtime.resource_pressure"
+  | "runtime.output_logs_prune_failed"
   | "runtime.settings_apply_failed"
   | "runtime.start_failed"
   | "runner.bridge_start_failed"
@@ -105,6 +110,7 @@ export type SurfacedErrorCode =
   | "worker.bridge.fatal_stderr"
   | "worker.environment_mismatch"
   | "worker.idle.empty_output"
+  | "worker.stream.gap_unrecoverable"
   | "worker.idle.missing_output"
   | "worker.initial.empty_output"
   | "worker.initial.turn_failed"
@@ -125,6 +131,8 @@ export type SurfacedErrorCode =
   // family is never correct, so the launch is refused instead.
   | "worker.model.family_unavailable"
   | "worker.model.pin_unsupported"
+  | "worker.configuration.rejected"
+  | "worker.configuration.unconfirmed"
   | "goal.objective.invalid"
   | "goal.revision_conflict"
   | "goal.action.unsupported"
@@ -132,6 +140,7 @@ export type SurfacedErrorCode =
   | "goal.lease.stale"
   | "goal.acp.transport_failed"
   | "goal.reconciliation.failed"
+  | "goal.continuation.failed"
   | "goal.validation.failed"
   | "goal.persistence.failed"
   | "goal.outbox.poisoned"
@@ -217,6 +226,26 @@ export type RuntimeEvent =
       keys: string[];
     }
   | {
+      kind: "runtime.output_logs_pruned";
+      deletedFiles: number;
+      deletedBytes: number;
+      remainingBytes: number;
+      maxBytes: number;
+    }
+  | {
+      kind: "runtime.output_logs_prune_deferred";
+      remainingBytes: number;
+      maxBytes: number;
+      protectedFiles: number;
+      protectedBytes: number;
+    }
+  | {
+      kind: "runtime.output_logs_prune_failed";
+      directory: string;
+      failures: number;
+      reason: string;
+    }
+  | {
       kind: "runtime.settings_apply_failed";
       keys: string[];
       reason: string;
@@ -224,6 +253,16 @@ export type RuntimeEvent =
   | {
       kind: "runtime.agent_start_coalesced";
       workerId: string;
+    }
+  | {
+      kind: "runtime.agent_reaped";
+      workerId: string;
+      idleMs: number;
+    }
+  | {
+      kind: "runtime.agent_reap_skipped";
+      workerId: string;
+      reason: "active_goal";
     }
   | {
       kind: "runtime.idle_cleanup";
@@ -343,9 +382,25 @@ export type WorkerEvent =
       requestedType: string;
       reason: "worker_turn_active";
     }
+  | {
+      kind: "worker.selection_changed";
+      runId: string;
+      requestedType: string | null;
+      preferenceRevision: number;
+      launchRevision: number;
+      source: "composer_selection" | "message_text";
+    }
+  | {
+      kind: "worker.selection_rolled_back";
+      runId: string;
+      messageId: string;
+      rejectedPreferenceRevision: number;
+      restoredPreferenceRevision: number;
+    }
   | { kind: "worker.recovery_continuation_started"; runId: string; workerId: string }
   | { kind: "worker.recovery_continuation_completed"; runId: string; workerId: string }
   | { kind: "worker.recovery_continuation_superseded"; runId: string; workerId: string }
+  | { kind: "worker.recovery_redelivery_skipped"; runId: string; workerId: string; reason: "already_answered" }
   | {
       kind: "worker.human_input_reconciled";
       runId: string;
@@ -444,6 +499,22 @@ export type WorkerEvent =
       runId: string;
       workerId: string;
       expectedLatestSeq: number;
+    }
+  // Emitted when the runtime's live window had already rolled past entries the
+  // stream never saved. `backfilled` means they were copied from the runtime
+  // archive ahead of the live window; `unrecoverable` means the archive could
+  // not place them, so the stream keeps a hole.
+  | {
+      kind: "worker.stream_gap_backfilled";
+      runId: string;
+      workerId: string;
+      recoveredEntries: number;
+    }
+  | {
+      kind: "worker.stream_gap_unrecoverable";
+      runId: string;
+      workerId: string;
+      reason: "live_entry_not_archived";
     }
   | {
       kind: "worker.failover_started";
@@ -555,10 +626,25 @@ export type GoalEvent =
   | { kind: "goal.action.completed"; runId: string; goalId: string; operationId: string; action: GoalAction; revision: number }
   | { kind: "goal.action.refused"; runId: string; goalId: string; operationId: string; action: GoalAction; reason: string }
   | { kind: "goal.action.failed"; runId: string; goalId: string; operationId: string; action: GoalAction; reason: string }
+  | {
+      kind: "goal.control.failed_after_acceptance";
+      runId: string;
+      goalId: string;
+      workerId: string;
+      action: GoalMutationAction;
+      method: "extension" | "slash";
+      reason: string;
+    }
   | { kind: "goal.reconciliation.completed"; runId: string; goalId: string; workerId: string; revision: number; leaseGeneration: number }
   | { kind: "goal.reconciliation.refused"; runId: string; goalId: string; workerId: string | null; reason: string }
   | { kind: "goal.reconciliation.failed"; runId: string; goalId: string; workerId: string | null; reason: string }
   | { kind: "goal.worker_transferred"; runId: string; goalId: string; previousWorkerId: string | null; workerId: string; leaseGeneration: number }
+  | { kind: "goal.worker_revival.started"; runId: string; goalId: string; workerId: string }
+  | { kind: "goal.worker_revival.completed"; runId: string; goalId: string; workerId: string }
+  | { kind: "goal.worker_revival.skipped"; runId: string; goalId: string; workerId: string | null; reason: string }
+  | { kind: "goal.worker_continuation.started"; runId: string; goalId: string; workerId: string }
+  | { kind: "goal.worker_continuation.completed"; runId: string; goalId: string; workerId: string }
+  | { kind: "goal.worker_continuation.failed"; runId: string; goalId: string; workerId: string; reason: string }
   | { kind: "goal.stale_lease_ignored"; runId: string; goalId: string; workerId: string; leaseGeneration: number; currentLeaseGeneration: number }
   | { kind: "goal.payload_rejected"; runId: string; goalId: string; workerId: string; reason: string }
   | {
@@ -586,6 +672,24 @@ export type RecoveryEvent =
   | { kind: "recovery.gave_up"; runId: string; incidentId: string; attempts: number }
   | { kind: "recovery.resolved"; runId: string; incidentId: string }
   | {
+      /**
+       * A background pass declined to reconcile a run because someone else owns
+       * it now (deleted mid-pass, or fenced by a handoff). Not a failure, and
+       * deliberately never surfaced to the user.
+       */
+      kind: "recovery.reconcile_stood_down";
+      runId: string;
+      code: string;
+      source: string;
+    }
+  | {
+      /** Background reconciliation threw. The run is left for the next pass. */
+      kind: "recovery.reconcile_failed";
+      runId: string;
+      reason: string;
+      source: string;
+    }
+  | {
       kind: "recovery.quota_wait_preserved";
       runId: string;
       incidentId: string;
@@ -611,6 +715,7 @@ export type AccountEvent =
   | { kind: "account.auth_verifying"; accountId: string; operationId: string; workerType: "claude" }
   | { kind: "account.auth_completed"; accountId: string; operationId: string; workerType: "claude"; status: "available" }
   | { kind: "account.auth_failed"; accountId: string; operationId: string; workerType: "claude"; code: string; reason: string }
+  | { kind: "account.auth_timeout_bypassed"; accountId: string; workerType: string; reason: "status_probe_timeout" }
   | { kind: "account.auth_cancelled"; accountId: string; operationId: string; workerType: "claude" }
   | { kind: "account.auth_interrupted"; accountId: string; operationId: string; workerType: "claude"; recovered: boolean }
   | { kind: "account.auth_exit_ignored"; accountId: string; operationId: string; workerType: "claude"; reason: "operation_missing" | "operation_replaced" | "operation_not_authenticating" | "cancel_owner_mismatch" }
@@ -654,26 +759,39 @@ export type AccountEvent =
 
 export type ConversationEvent =
   | {
-      kind: "conversation.commit_agent_selected";
+      kind: "conversation.preset_command_selected";
       runId: string;
+      presetCommandId: string;
       workerType: string;
       model: string;
       effort: string;
+      accountId: string | null;
     }
   | { kind: "conversation.awaiting_user"; runId: string; workerId?: string; reason: "worker_requested_input" }
   | { kind: "conversation.read"; runId: string; lastReadAt: string }
+  | { kind: "conversation.message_delivery_reclaimed"; runId: string; messageId: string }
+  | { kind: "conversation.message_delivery_resumed"; runId: string; messageId: string }
+  | { kind: "conversation.message_delivery_resume_failed"; runId: string; messageId: string; reason: string }
+  | { kind: "conversation.queued_delivery_recovered"; runId: string; messageId: string; workerId: string }
+  | { kind: "conversation.delivery_reclaim_failed"; runId: string | null; messageId: string | null; reason: string }
+  | { kind: "conversation.preference_audit_failed"; runId: string; messageId: string; reason: string }
   | {
       kind: "conversation.title_updated";
       runId: string;
       source:
+        | "manual"
         | "agent_session"
         | "agent_transcript"
         | "agent_thread_index"
+        | "provider_custom"
+        | "provider_generated"
         | "harness_llm"
         | "harness_fallback"
         | "leak_repair"
         | "public_api";
       title: string;
+      revision: number;
+      workerId?: string;
     }
   | {
       kind: "conversation.title_sources_missing";
@@ -696,7 +814,7 @@ export type ConversationEvent =
   | {
       kind: "conversation.title_rejected";
       runId: string;
-      source: "agent_session" | "agent_transcript" | "agent_thread_index";
+      source: "agent_session" | "agent_transcript" | "agent_thread_index" | "provider_custom" | "provider_generated";
       reason: "prompt_leak" | "too_long" | "prompt_echo";
       titleLength: number;
       titlePreview: string;
@@ -811,6 +929,7 @@ export type ErrorSurfacedEvent = {
   workerId?: string;
   conversationId?: string;
   accountId?: string;
+  presetCommandId?: string;
   path?: string;
   cause?: { name: string; message: string } | null;
 };
@@ -825,6 +944,11 @@ export type FilesystemEvent =
     };
 
 export type StreamControlEvent = {
+  kind: "runtime.live_enrichment_failed";
+  /** The conversation whose payload was being built, when scoped to one. */
+  runId: string | null;
+  reason: string;
+} | {
   kind: "stream.resync_required";
   reason: StreamResyncReason;
 };
@@ -919,7 +1043,11 @@ export type AcpEvent =
   | { kind: "acp.interaction_requested"; workerId: string; interaction: "permission" | "elicitation"; requestId: number }
   | { kind: "acp.interaction_resolved"; workerId: string; interaction: "permission" | "elicitation"; requestId: number; outcome: string }
   | { kind: "acp.resource_created"; workerId: string; resource: "terminal" | "mcp"; resourceId: string }
-  | { kind: "acp.resource_released"; workerId: string; resource: "terminal" | "mcp"; resourceId: string };
+  | { kind: "acp.resource_released"; workerId: string; resource: "terminal" | "mcp"; resourceId: string }
+  // The provider started or finished a turn nobody prompted (Codex /goal
+  // continuation), so the runtime moved the agent between working and idle.
+  | { kind: "acp.provider_turn_started"; workerId: string }
+  | { kind: "acp.provider_turn_ended"; workerId: string };
 
 export type ClaudeModelGatewayEvent =
   | { kind: "claude_gateway.install_started"; operationId: string }
@@ -1029,6 +1157,9 @@ function append(event: NamedEvent | SnapshotMarker, runIdOverride?: string | nul
 const DELTA_ONLY_EVENT_KINDS = new Set<string>([
   "filesystem.directory_created",
   "filesystem.directory_create_failed",
+  "runtime.output_logs_pruned",
+  "runtime.output_logs_prune_deferred",
+  "runtime.output_logs_prune_failed",
   "worker.entry_appended",
   "worker.plan_boundary_started",
   "worker.plan_updated",

@@ -1,6 +1,6 @@
 import fs from "fs";
 import { randomUUID } from "crypto";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
   clarifications,
@@ -34,12 +34,14 @@ import {
 import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/supervisor/worker-types";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import {
+  appendWorkerEntryWithResult,
   findWorkerEntrySeqById,
   readWorkerLatestSeq,
   readWorkerOutputEntries,
   withWorkerOutputWriteFence,
 } from "@/server/workers/output-store";
 import { parseSupersededSeqRanges, serializeSupersededSeqRanges } from "@/lib/superseded-entries";
+import type { WorkerEntry } from "@/server/workers/entries-types";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { appendWorkerSessionMetadata, readWorkerSessionMetadata } from "@/server/workers/session-metadata";
@@ -57,7 +59,7 @@ import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallba
 import { updateDirectRunStatusFromWorkerOutput } from "@/server/conversations/direct-run-status";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
-import { readWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
+import { refreshWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
 import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { createBranchWorktree } from "@/server/git/workspaces";
@@ -69,6 +71,7 @@ import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget,
 import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
 import { reconcileRecoveredHumanInputEntries } from "@/server/workers/human-input-entries";
 import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
+import { readVisibleConversationTranscript, type ConversationTranscriptEntry } from "@/server/conversations/visible-transcript";
 import {
   abortWorkerTurn,
   advanceWorkerTurnGeneration,
@@ -83,7 +86,17 @@ import {
   runWorkerTurn,
 } from "@/server/conversations/worker-turn-gate";
 
-export type RecoveryAction = "retry" | "edit" | "fork";
+/**
+ * `retry` rewinds: the user picked a message and asked for a different answer,
+ * so everything the worker produced after it becomes a discarded branch.
+ *
+ * `resume` does not. It continues a conversation that stopped against its will
+ * (a crashed runtime, an exhausted quota window) by re-delivering the same
+ * message to the same saved session, leaving the transcript intact. Automated
+ * recovery must use this one: recovery running `retry` against the first
+ * message of a run superseded the entire conversation behind it.
+ */
+export type RecoveryAction = "retry" | "resume" | "edit" | "fork";
 
 interface RecoverRunArgs {
   runId: string;
@@ -134,18 +147,6 @@ function buildRunWorkspaceSnapshot(args: {
     warnings: args.warnings ?? args.snapshot.warnings,
     selectedAt: new Date().toISOString(),
   };
-}
-
-async function findLatestUserMessageId(runId: string) {
-  const latestUserMessage = await db.select()
-    .from(messages)
-    .where(and(eq(messages.runId, runId), eq(messages.role, "user")))
-    .orderBy(desc(messages.createdAt), desc(messages.id))
-    .get();
-  if (!latestUserMessage) {
-    throw new Error("Fork source run has no user message to fork from");
-  }
-  return latestUserMessage.id;
 }
 
 async function cancelRunWorkers(runId: string) {
@@ -464,18 +465,19 @@ async function startDirectRerun(
         imagesInlined: true,
       });
       const nextUserPrompt = buildDirectWorkerPrompt(run.mode, workerContent, cwd);
-      const replay = options.replayTargetMessageId
+      const replayTargetMessageId = options.replayTargetMessageId ?? null;
+      const replay = replayTargetMessageId
         ? await buildConversationTranscriptReplayPromptBeforeEntry({
           runId: run.id,
-          targetEntryId: options.replayTargetMessageId,
+          targetEntryId: replayTargetMessageId,
           nextUserPrompt,
         })
         : null;
-      if (options.replayTargetMessageId && !replay) {
-        throw new Error(`Cannot reconstruct the visible conversation before edited checkpoint ${options.replayTargetMessageId}.`);
+      if (replayTargetMessageId && !replay) {
+        throw new Error(`Cannot reconstruct the visible conversation before checkpoint ${replayTargetMessageId}.`);
       }
       const workerPrompt = replay?.prompt ?? nextUserPrompt;
-      if (replay && options.replayTargetMessageId) {
+      if (replay && replayTargetMessageId) {
         await recordExecutionEvent({
           runId: run.id,
           workerId,
@@ -486,7 +488,7 @@ async function startDirectRerun(
             sourceRunId: run.id,
             sourceWorkerIds: replay.sourceWorkerIds,
             targetWorkerId: replay.targetWorkerId,
-            targetMessageId: options.replayTargetMessageId,
+            targetMessageId: replayTargetMessageId,
             sessionId: agent.sessionId ?? null,
             transcriptReplay: true,
           },
@@ -709,6 +711,7 @@ async function resumeDirectRunFromSavedSession(
   targetMessage: typeof messages.$inferSelect,
   content: string,
   recoveryEpoch: number,
+  options: { rewind: boolean } = { rewind: true },
 ) {
   const worker = await selectDirectRecoveryWorker(run.id, targetMessage.id);
   const sessionId = worker?.bridgeSessionId?.trim();
@@ -727,23 +730,34 @@ async function resumeDirectRunFromSavedSession(
   }
   const expectedTurnGeneration = worker.turnGeneration;
 
-  const laterMessages = await db.select().from(messages).where(eq(messages.runId, run.id));
-  const laterMessageIds = laterMessages
-    .filter((message) => message.createdAt > targetMessage.createdAt)
-    .map((message) => message.id);
+  // A resume continues work the user still wants; only a rewind discards it.
+  // Re-delivering the message below is idempotent either way — the worker
+  // stream dedupes by entry id — so a resume leaves the transcript untouched.
+  if (options.rewind) {
+    const laterMessages = await db.select().from(messages).where(eq(messages.runId, run.id));
+    const laterMessageIds = laterMessages
+      .filter((message) => message.createdAt > targetMessage.createdAt)
+      .map((message) => message.id);
 
-  if (laterMessageIds.length > 0) {
-    await db.delete(messages).where(inArray(messages.id, laterMessageIds));
+    if (laterMessageIds.length > 0) {
+      await db.delete(messages).where(inArray(messages.id, laterMessageIds));
+    }
+
+    await supersedeDiscardedBranch(run.id, targetMessage.id);
   }
-
-  await supersedeDiscardedBranch(run.id, targetMessage.id);
 
   const sessionMode = worker.bridgeSessionMode?.trim();
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
   const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
   const { env: envParams } = await readRuntimeEnvFromSettings();
   const launchSelection = resolveWorkerLaunchSelection(worker, run, {
-    accountId: await readWorkerAllocatedAccountId(worker.id),
+    accountId: await refreshWorkerAllocatedAccountId({
+      workerId: worker.id,
+      runId: run.id,
+      workerType: worker.type,
+      explicitAccountId: run.preferredWorkerAccountId,
+      env: envParams,
+    }),
   });
   let resumedWorker: AgentRecord | null = null;
   let recreatedFromRejectedEmptySession = false;
@@ -1253,6 +1267,236 @@ async function handleDirectWorkerAskQuotaError(args: {
   };
 }
 
+// What a fork carries over from the source transcript. Pending permission and
+// elicitation requests, plans and session bookkeeping belong to the source's
+// live session; copying them would resurface stale prompts or hand the new
+// worker the source's session identity.
+const FORK_INHERITED_ENTRY_TYPES = new Set<WorkerEntry["type"]>([
+  "user_input",
+  "supervisor_input",
+  "message",
+  "thought",
+  "tool_call",
+  "tool_call_update",
+  "agent_content",
+]);
+
+/** Copy a conversation into an idle run, leaving the source untouched. */
+async function forkDirectRun(args: {
+  sourceRun: typeof runs.$inferSelect;
+  recovery: RecoverRunArgs;
+  content: string;
+  historyMessages: Array<typeof messages.$inferSelect>;
+  inheritedEntries: ConversationTranscriptEntry[];
+}) {
+  const { sourceRun: run, recovery, content } = args;
+  const newPlanId = randomUUID();
+  const newRunId = createRunId();
+  const now = new Date();
+  const workspaceResult = recovery.gitWorkspaceLaunch
+    ? await createBranchWorktree({
+      projectPath: recovery.gitWorkspaceLaunch.projectPath,
+      newBranchName: recovery.gitWorkspaceLaunch.newBranchName,
+      checkoutPath: recovery.gitWorkspaceLaunch.checkoutPath,
+      startPoint: recovery.gitWorkspaceLaunch.startPoint,
+      worktreeParent: recovery.gitWorkspaceLaunch.worktreeParent,
+      expectedHeadSha: recovery.gitWorkspaceLaunch.expectedHeadSha,
+      expectedStatusFingerprint: recovery.gitWorkspaceLaunch.expectedStatusFingerprint,
+    })
+    : null;
+  const runWorkspaceSnapshot = workspaceResult
+    ? buildRunWorkspaceSnapshot({
+      target: workspaceResult.target,
+      snapshot: workspaceResult.snapshot,
+    })
+    : null;
+  let forkedRunCreated = false;
+
+  try {
+    const planPath = createAdHocPlan(content);
+
+    await db.insert(plans).values({
+      id: newPlanId,
+      path: planPath,
+      status: "done",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(runs).values({
+      id: newRunId,
+      planId: newPlanId,
+      mode: run.mode,
+      title: run.title,
+      titleOwnership: run.titleOwnership,
+      titleSource: run.titleSource,
+      projectPath: workspaceResult?.target.checkoutPath ?? run.projectPath,
+      preferredWorkerType: run.preferredWorkerType,
+      preferredWorkerModel: run.preferredWorkerModel,
+      preferredWorkerEffort: run.preferredWorkerEffort,
+      preferredWorkerAccountId: run.preferredWorkerAccountId,
+      allowedWorkerTypes: run.allowedWorkerTypes,
+      autoCommitMilestones: run.autoCommitMilestones,
+      pushOnCommit: run.pushOnCommit,
+      gitWorkspaceJson: runWorkspaceSnapshot ? JSON.stringify(runWorkspaceSnapshot) : run.gitWorkspaceJson,
+      parentRunId: recovery.runId,
+      forkedFromMessageId: recovery.targetMessageId || args.inheritedEntries.filter((entry) => FORK_INHERITED_ENTRY_TYPES.has(entry.type)).at(-1)?.id || args.historyMessages.at(-1)?.id || null,
+      status: "done",
+      createdAt: now,
+      updatedAt: now,
+    });
+    forkedRunCreated = true;
+
+    // `messages.id` is global, so copied rows need fresh ids. The seeded
+    // `user_input` entries take the same fresh ids: the transcript matches a
+    // user row to its stream entry by id, and a mismatch renders it twice.
+    const copiedMessageIds = new Map<string, string>();
+    const copiedMessages: Array<typeof messages.$inferInsert> = [];
+    for (const message of args.historyMessages) {
+      const copiedMessageId = randomUUID();
+      copiedMessageIds.set(message.id, copiedMessageId);
+      copiedMessages.push({
+        id: copiedMessageId,
+        runId: newRunId,
+        role: message.role,
+        kind: message.kind,
+        content: message.content,
+        attachmentsJson: message.attachmentsJson,
+        createdAt: message.createdAt,
+      });
+    }
+
+    if (runWorkspaceSnapshot) {
+      await recordExecutionEvent({
+        runId: newRunId,
+        eventType: "git_workspace_forked",
+        details: {
+          parentRunId: recovery.runId,
+          forkedFromMessageId: recovery.targetMessageId,
+          target: runWorkspaceSnapshot.target,
+          headSha: runWorkspaceSnapshot.headSha,
+          branchName: runWorkspaceSnapshot.branchName,
+          detachedLabel: runWorkspaceSnapshot.detachedLabel,
+          dirtyFileCount: runWorkspaceSnapshot.dirtyFileCount,
+          conflictedFileCount: runWorkspaceSnapshot.conflictedFileCount,
+          warnings: runWorkspaceSnapshot.warnings,
+        },
+        createdAt: now,
+      });
+    }
+
+    const newRun = await db.select().from(runs).where(eq(runs.id, newRunId)).get();
+    if (!newRun) {
+      throw new Error("Forked run not found");
+    }
+
+    const seedEntries = args.inheritedEntries
+      .filter((entry) => FORK_INHERITED_ENTRY_TYPES.has(entry.type))
+      .map(({ seq: _seq, workerId: _workerId, ...entry }) => ({
+        ...entry,
+        id: entry.type === "user_input" ? copiedMessageIds.get(entry.id) ?? entry.id : entry.id,
+      }));
+    // Legacy user rows may predate the unified stream. Put them in their
+    // chronological place before assigning new stream sequence numbers.
+    const seededIds = new Set(seedEntries.map((entry) => entry.id));
+    for (const message of args.historyMessages) {
+      const copiedId = copiedMessageIds.get(message.id)!;
+      if (message.role === "user" && !seededIds.has(copiedId)) {
+        seedEntries.push({
+          id: copiedId,
+          type: "user_input",
+          text: message.content,
+          timestamp: message.createdAt.toISOString(),
+          authorRole: "user",
+          channel: "stdin",
+          attachments: workerEntryAttachments(message),
+        });
+      }
+    }
+    seedEntries.sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
+    const { workerId, workerNumber } = await allocateWorkerIdentity(newRunId);
+    const workerType = run.preferredWorkerType?.trim()
+      ? normalizeWorkerType(run.preferredWorkerType)
+      : parseAllowedWorkerTypes(run.allowedWorkerTypes)[0] || "codex";
+    const launchSelection = resolveWorkerLaunchSelection({}, run);
+    await db.insert(workers).values({
+      id: workerId,
+      runId: newRunId,
+      workerNumber,
+      type: workerType,
+      status: "idle",
+      cwd: newRun.projectPath || process.cwd(),
+      effectiveLaunchModel: launchSelection.model,
+      effectiveLaunchEffort: launchSelection.effort,
+      launchCredentialSource: launchSelection.credentialSource,
+      createdAt: now,
+      updatedAt: now,
+    });
+    for (const entry of seedEntries) {
+      await appendWorkerEntryWithResult(newRunId, workerId, entry);
+    }
+    if (copiedMessages.length) await db.insert(messages).values(copiedMessages);
+    emitNamedEvent({ kind: "session.created", runId: newRunId, sessionType: newRun.sessionType, actorIds: [workerId] });
+    emitNamedEvent({ kind: "session.status", runId: newRunId, sessionType: newRun.sessionType, prev: null, next: "done", reason: "fork_cloned" });
+    return {
+      runId: newRunId,
+      ...(workspaceResult && runWorkspaceSnapshot
+        ? { target: workspaceResult.target, runLaunchSnapshot: runWorkspaceSnapshot, snapshot: workspaceResult.snapshot }
+        : {}),
+    };
+  } catch (error) {
+    if (workspaceResult && recovery.gitWorkspaceLaunch && !forkedRunCreated) {
+      throw pendingOrphanWorktreeError({
+        projectPath: recovery.gitWorkspaceLaunch.projectPath,
+        operation: "fork_run_worktree",
+        target: workspaceResult.target,
+        sourceRunId: recovery.runId,
+        targetMessageId: recovery.targetMessageId,
+        error,
+      });
+    }
+    throw error;
+  }
+}
+
+/** Copy visible history without delivering a prompt or changing the source. */
+async function cloneDirectRun(args: RecoverRunArgs) {
+  await assertRunNotHandoffFenced(args.runId);
+  const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
+  if (!run) throw new Error("Run not found");
+  if (run.mode !== "direct" && run.mode !== "commit") {
+    throw new Error("Fork recovery is only available in direct control conversations");
+  }
+  const { entries } = await readVisibleConversationTranscript(run.id);
+  const allMessages = await db.select().from(messages).where(eq(messages.runId, run.id)).orderBy(asc(messages.createdAt), asc(messages.id));
+  const targetIndex = args.targetMessageId
+    ? entries.findIndex((entry) => entry.id === args.targetMessageId && (entry.type === "message" || entry.type === "user_input"))
+    : -1;
+  const targetMessage = allMessages.find((message) => message.id === args.targetMessageId && message.role === "user");
+  if (args.targetMessageId && targetIndex < 0 && !targetMessage) {
+    throw new Error("Fork target message not found in this conversation");
+  }
+  const inheritedEntries = !args.targetMessageId
+    ? entries
+    : targetIndex >= 0
+      ? entries.slice(0, targetIndex + 1)
+      : entries.filter((entry) => Date.parse(entry.timestamp) <= targetMessage!.createdAt.getTime());
+  const boundaryMs = targetIndex >= 0 ? Date.parse(entries[targetIndex]!.timestamp) : targetMessage?.createdAt.getTime();
+  const inheritedIds = new Set(inheritedEntries.map((entry) => entry.id));
+  const streamIds = new Set(entries.map((entry) => entry.id));
+  const historyMessages = allMessages.filter((message) => (
+    message.role === "user" && (!args.targetMessageId || inheritedIds.has(message.id)
+      || (!streamIds.has(message.id) && message.createdAt.getTime() <= (boundaryMs ?? 0)))
+  ));
+  return forkDirectRun({
+    sourceRun: run,
+    recovery: args,
+    content: historyMessages.at(-1)?.content || run.title || "",
+    historyMessages,
+    inheritedEntries,
+  });
+}
+
 async function recoverRunUnlocked(args: RecoverRunArgs, recoveryEpoch?: number) {
   await assertRunNotHandoffFenced(args.runId);
   const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
@@ -1283,11 +1527,13 @@ async function recoverRunUnlocked(args: RecoverRunArgs, recoveryEpoch?: number) 
   }
 
   if (run.mode === "implementation") {
-    if (args.action !== "retry" && args.action !== "edit") {
+    if (args.action !== "retry" && args.action !== "resume" && args.action !== "edit") {
       throw new Error("Fork recovery is only available in direct control conversations");
     }
 
-    if (args.action === "retry") {
+    // `resumeImplementationRun` never rewound in the first place, so retry and
+    // resume are the same operation here.
+    if (args.action === "retry" || args.action === "resume") {
       return resumeImplementationRun(run, plan);
     }
 
@@ -1301,141 +1547,32 @@ async function recoverRunUnlocked(args: RecoverRunArgs, recoveryEpoch?: number) 
   if (recoveryEpoch === undefined) {
     throw new Error("Direct recovery is missing its admission generation");
   }
-  if (args.action === "retry") {
-    const resumed = await resumeDirectRunFromSavedSession(run, targetMessage, nextContent, recoveryEpoch);
+  if (args.action === "retry" || args.action === "resume") {
+    const resumed = await resumeDirectRunFromSavedSession(
+      run,
+      targetMessage,
+      nextContent,
+      recoveryEpoch,
+      { rewind: args.action === "retry" },
+    );
     if (resumed) {
       return resumed;
     }
-  }
-
-  if (args.action === "fork") {
-    await cancelRunWorkers(args.runId);
-
-    const newPlanId = randomUUID();
-    const newRunId = createRunId();
-    const now = new Date();
-    const workspaceResult = args.gitWorkspaceLaunch
-      ? await createBranchWorktree({
-        projectPath: args.gitWorkspaceLaunch.projectPath,
-        newBranchName: args.gitWorkspaceLaunch.newBranchName,
-        checkoutPath: args.gitWorkspaceLaunch.checkoutPath,
-        startPoint: args.gitWorkspaceLaunch.startPoint,
-        worktreeParent: args.gitWorkspaceLaunch.worktreeParent,
-        expectedHeadSha: args.gitWorkspaceLaunch.expectedHeadSha,
-        expectedStatusFingerprint: args.gitWorkspaceLaunch.expectedStatusFingerprint,
-      })
-      : null;
-    const runWorkspaceSnapshot = workspaceResult
-      ? buildRunWorkspaceSnapshot({
-        target: workspaceResult.target,
-        snapshot: workspaceResult.snapshot,
-      })
-      : null;
-    let forkedRunCreated = false;
-
-    try {
-      const planPath = createAdHocPlan(nextContent);
-
-      await db.insert(plans).values({
-        id: newPlanId,
-        path: planPath,
-        status: "running",
-        createdAt: now,
-        updatedAt: now,
+    if (args.action === "resume") {
+      // There is no saved session left to continue. The fall-through below
+      // rebuilds one by rewinding to the target message, which is precisely
+      // what a resume must never do. Surface it and leave the transcript
+      // alone; the user can still choose an explicit retry.
+      const message = `Conversation ${run.id} has no resumable worker session; retry the last message to restart it.`;
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "worker.resume.failed",
+        message,
+        surface: "banner",
+        runId: run.id,
+        cause: null,
       });
-
-      await db.insert(runs).values({
-        id: newRunId,
-        planId: newPlanId,
-        mode: run.mode,
-        title: run.title,
-        projectPath: workspaceResult?.target.checkoutPath ?? run.projectPath,
-        preferredWorkerType: run.preferredWorkerType,
-        preferredWorkerModel: run.preferredWorkerModel,
-        preferredWorkerEffort: run.preferredWorkerEffort,
-        allowedWorkerTypes: run.allowedWorkerTypes,
-        gitWorkspaceJson: runWorkspaceSnapshot ? JSON.stringify(runWorkspaceSnapshot) : null,
-        parentRunId: args.runId,
-        forkedFromMessageId: args.targetMessageId,
-        status: "running",
-        createdAt: now,
-        updatedAt: now,
-      });
-      forkedRunCreated = true;
-
-      const messagesToCopy = (await db.select()
-        .from(messages)
-        .where(eq(messages.runId, args.runId))
-        .orderBy(asc(messages.createdAt), asc(messages.id)))
-        .filter((message) => (
-          message.createdAt.getTime() < targetMessage.createdAt.getTime()
-          || (message.createdAt.getTime() === targetMessage.createdAt.getTime() && message.id <= targetMessage.id)
-        ));
-
-      let forkTargetMessageId: string | undefined;
-      for (const message of messagesToCopy) {
-        const copiedMessageId = randomUUID();
-        if (message.id === args.targetMessageId) {
-          forkTargetMessageId = copiedMessageId;
-        }
-        await db.insert(messages).values({
-          id: copiedMessageId,
-          runId: newRunId,
-          role: message.role,
-          kind: message.id === args.targetMessageId ? "checkpoint" : message.kind,
-          content: message.id === args.targetMessageId ? nextContent : message.content,
-          attachmentsJson: message.attachmentsJson,
-          createdAt: now,
-        });
-      }
-
-      if (runWorkspaceSnapshot) {
-        await recordExecutionEvent({
-          runId: newRunId,
-          eventType: "git_workspace_forked",
-          details: {
-            parentRunId: args.runId,
-            forkedFromMessageId: args.targetMessageId,
-            target: runWorkspaceSnapshot.target,
-            headSha: runWorkspaceSnapshot.headSha,
-            branchName: runWorkspaceSnapshot.branchName,
-            detachedLabel: runWorkspaceSnapshot.detachedLabel,
-            dirtyFileCount: runWorkspaceSnapshot.dirtyFileCount,
-            conflictedFileCount: runWorkspaceSnapshot.conflictedFileCount,
-            warnings: runWorkspaceSnapshot.warnings,
-          },
-          createdAt: now,
-        });
-      }
-
-      const newRun = await db.select().from(runs).where(eq(runs.id, newRunId)).get();
-      if (!newRun) {
-        throw new Error("Forked run not found");
-      }
-
-      await startDirectRerun(newRun, nextContent, forkTargetMessageId, targetAttachments);
-      return {
-        runId: newRunId,
-        ...(workspaceResult && runWorkspaceSnapshot
-          ? {
-            target: workspaceResult.target,
-            runLaunchSnapshot: runWorkspaceSnapshot,
-            snapshot: workspaceResult.snapshot,
-          }
-          : {}),
-      };
-    } catch (error) {
-      if (workspaceResult && args.gitWorkspaceLaunch && !forkedRunCreated) {
-        throw pendingOrphanWorktreeError({
-          projectPath: args.gitWorkspaceLaunch.projectPath,
-          operation: "fork_run_worktree",
-          target: workspaceResult.target,
-          sourceRunId: args.runId,
-          targetMessageId: args.targetMessageId,
-          error,
-        });
-      }
-      throw error;
+      throw new Error(message);
     }
   }
 
@@ -1483,6 +1620,23 @@ async function recoverRunUnlocked(args: RecoverRunArgs, recoveryEpoch?: number) 
 }
 
 export async function recoverRun(args: RecoverRunArgs) {
+  // A plain fork is a snapshot, outside the source's turn/mutation gate. It
+  // must never cancel a running source or wait for its current turn to finish.
+  if (args.action === "fork") {
+    try {
+      return await cloneDirectRun(args);
+    } catch (error) {
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "conversation.fork.failed",
+        message: formatErrorMessage(error),
+        surface: "banner",
+        runId: args.runId,
+        cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+      });
+      throw error;
+    }
+  }
   // A queued delivery deliberately holds the conversation mutation while its
   // provider turn runs. Preempt the local turn before joining that queue so an
   // agent blocked on an elicitation cannot prevent edit/retry from ever
@@ -1547,7 +1701,7 @@ export async function forkRunIntoWorktree(args: ForkRunWorktreeArgs) {
   if (!run || !projectPath) {
     throw new Error("Fork source run is missing a project path");
   }
-  const targetMessageId = args.targetMessageId?.trim() || await findLatestUserMessageId(args.runId);
+  const targetMessageId = args.targetMessageId?.trim() || "";
   return recoverRun({
     runId: args.runId,
     action: "fork",

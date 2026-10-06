@@ -878,6 +878,8 @@ async function interruptWithDraftMessageUnlocked(params: {
   attachments?: ChatAttachment[];
   targetWorkerId?: string | null;
   source?: InterruptSource;
+  clientMessageId?: string | null;
+  operationFingerprint?: string | null;
 }): Promise<InterruptResult> {
   await assertRunNotHandoffFenced(params.runId);
   const run = await loadRun(params.runId);
@@ -902,6 +904,8 @@ async function interruptWithDraftMessageUnlocked(params: {
     action: "steer",
     content: params.content,
     attachments: normalizedAttachments,
+    clientMessageId: params.clientMessageId,
+    operationFingerprint: params.operationFingerprint,
   });
   const record = await loadQueuedRecord(params.runId, created.id);
   return interruptAndDeliver({ run, record, source: params.source ?? "escape" });

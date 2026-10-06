@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type React from "react";
-import { type UseMutationResult } from "@tanstack/react-query";
+import { type UseMutationResult, useQueryClient } from "@tanstack/react-query";
 import { type AppErrorDescriptor, mergeAppErrors } from "@/lib/app-errors";
 import {
   clampConversationSidebarWidth,
@@ -21,6 +21,7 @@ import { homeUiStateManager } from "./HomeUiStateManager";
 import { LiveEventConnectionManager, LiveEventCursorManager } from "./LiveEventConnectionManager";
 import { acpPlanManager } from "./AcpPlanManager";
 import { goalPlanManager } from "./GoalPlanManager";
+import { refetchFailedQueries } from "@/lib/failed-query-retry";
 import type { ComposerWorkerOption, ConversationModeOption, EventStreamState } from "./types";
 import { buildConversationPath, buildInlineError, parseBrowserConversationRoute, parseCollapsedProjectPaths, resolveComposerEffortForPair, resolveSavedComposerModel } from "./utils";
 import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
@@ -36,6 +37,7 @@ interface UseHomeLifecycleProps {
   setHasReceivedInitialEventStreamPayload: React.Dispatch<React.SetStateAction<boolean>>;
   setState: React.Dispatch<React.SetStateAction<EventStreamState>>;
   applyServerEventStreamState?: React.Dispatch<React.SetStateAction<EventStreamState>>;
+  reconcileServerCatalog?: (state: EventStreamState) => void;
   applyGoalEvent?: (snapshot: import("@/shared/goal-plan").GoalSnapshot, eventKey: string | null) => boolean;
   setRuntimeErrors: React.Dispatch<React.SetStateAction<AppErrorDescriptor[]>>;
   routeReady: boolean;
@@ -51,10 +53,6 @@ interface UseHomeLifecycleProps {
   setSelectedRunId: (value: string | null) => void;
   draftProjectPath: string | null;
   setDraftProjectPath: React.Dispatch<React.SetStateAction<string | null>>;
-  setSelectedConversationMode: React.Dispatch<React.SetStateAction<ConversationModeOption>>;
-  setSelectedCliAgent: React.Dispatch<React.SetStateAction<ComposerWorkerOption>>;
-  setSelectedModel: React.Dispatch<React.SetStateAction<string>>;
-  setSelectedEffort: React.Dispatch<React.SetStateAction<string>>;
   collapsedProjectPaths: Set<string>;
   setCollapsedProjectPaths: React.Dispatch<React.SetStateAction<Set<string>>>;
   leftSidebarWidth: number;
@@ -94,6 +92,7 @@ export function useHomeLifecycle({
   setHasReceivedInitialEventStreamPayload,
   setState,
   applyServerEventStreamState,
+  reconcileServerCatalog,
   applyGoalEvent,
   setRuntimeErrors,
   routeReady,
@@ -109,10 +108,6 @@ export function useHomeLifecycle({
   setSelectedRunId,
   draftProjectPath,
   setDraftProjectPath,
-  setSelectedConversationMode,
-  setSelectedCliAgent,
-  setSelectedModel,
-  setSelectedEffort,
   collapsedProjectPaths,
   setCollapsedProjectPaths,
   leftSidebarWidth,
@@ -135,6 +130,7 @@ export function useHomeLifecycle({
   runnerConnection,
 }: UseHomeLifecycleProps) {
   const runtimeApis = useRuntimeAPIs();
+  const queryClient = useQueryClient();
   acpPlanManager.configure(runtimeApis.workers.getPlan);
   const didMountThemeEffectRef = useRef(false);
   const didHydrateCollapsedProjectsRef = useRef(false);
@@ -205,10 +201,22 @@ export function useHomeLifecycle({
       getSnapshotChecksum,
       planManager: acpPlanManager,
       applyUpdate: applyEventStreamUpdate,
+      reconcileCatalog: (data) => {
+        if (!isActive) {
+          return;
+        }
+        reconcileServerCatalog?.(filterEventStreamState?.(data) ?? data);
+      },
       applyGoalEvent,
       onStreamResync: () => {
         claudeModelGatewayManager.resetRevisionAuthority();
         goalPlanManager.reconnect();
+      },
+      onConnectionRestored: () => {
+        if (!isActive) {
+          return;
+        }
+        void refetchFailedQueries(queryClient);
       },
       reportError: (error) => {
         if (!isActive) {
@@ -230,7 +238,9 @@ export function useHomeLifecycle({
     filterEventStreamState,
     getSnapshotChecksum,
     applyServerEventStreamState,
+    reconcileServerCatalog,
     applyGoalEvent,
+    queryClient,
     routeReady,
     runnerConnection,
     runtimeApis.events,
@@ -260,35 +270,31 @@ export function useHomeLifecycle({
       // Legacy persisted values ("planning"/"implementation") collapse into the
       // single "omni" picker option.
       if (savedMode === "direct") {
-        setSelectedConversationMode("direct");
+        homeUiStateManager.setComposerSelectionField("conversationMode", "direct", { userEdited: false });
       } else if (savedMode === "omni" || savedMode === "planning" || savedMode === "implementation") {
-        setSelectedConversationMode("omni");
+        homeUiStateManager.setComposerSelectionField("conversationMode", "omni", { userEdited: false });
       }
     } else {
       if (route.draftProjectPath) {
         setDraftProjectPath(route.draftProjectPath);
       }
       setSelectedRunId(null);
-      setSelectedConversationMode("direct");
+      homeUiStateManager.setComposerSelectionField("conversationMode", "direct", { userEdited: false });
     }
     if (savedWorker === "auto" || WORKER_OPTIONS.some((option) => option.value === savedWorker)) {
-      setSelectedCliAgent(savedWorker as ComposerWorkerOption);
+      homeUiStateManager.setComposerSelectionField("worker", savedWorker as ComposerWorkerOption, { userEdited: false });
     }
     if (savedModel) {
-      setSelectedModel(savedModel);
+      homeUiStateManager.setComposerSelectionField("model", savedModel, { userEdited: false });
     }
     if (EFFORT_OPTIONS.includes(savedEffort)) {
-      setSelectedEffort(savedEffort);
+      homeUiStateManager.setComposerSelectionField("effort", savedEffort, { userEdited: false });
     }
     setRouteReady(true);
   }, [
     setDraftProjectPath,
     setPairTokenFromUrl,
     setRouteReady,
-    setSelectedCliAgent,
-    setSelectedConversationMode,
-    setSelectedEffort,
-    setSelectedModel,
     setSelectedRunId,
   ]);
 
@@ -600,6 +606,16 @@ export function useHomeLifecycle({
     }
     if (!selectedRunId) {
       lastAuthoritativeRunSelectionIdRef.current = null;
+    } else {
+      // Browser pair defaults initialize only a new conversation. A saved
+      // conversation owns its whole compound selection, including effort, so
+      // catalog aliases and background refreshes cannot reapply a global pair
+      // default over it.
+      const key = getEffortStorageKey(selectedCliAgent, selectedModel);
+      effortPairRef.current = key;
+      pendingEffortHydrationRef.current = null;
+      safeSetBrowserStorageItem(window.localStorage, key, selectedEffort);
+      return;
     }
 
     const key = getEffortStorageKey(selectedCliAgent, selectedModel);
@@ -609,7 +625,7 @@ export function useHomeLifecycle({
       const nextEffort = resolveComposerEffortForPair(saved);
       if (nextEffort !== selectedEffort) {
         pendingEffortHydrationRef.current = { key, value: nextEffort };
-        setSelectedEffort(nextEffort);
+        homeUiStateManager.setComposerSelectionField("effort", nextEffort, { userEdited: false });
         return;
       }
       pendingEffortHydrationRef.current = null;
@@ -626,7 +642,7 @@ export function useHomeLifecycle({
     }
 
     safeSetBrowserStorageItem(window.localStorage, key, selectedEffort);
-  }, [hydratedRunSelectionId, selectedCliAgent, selectedEffort, selectedModel, selectedRunId, setSelectedEffort]);
+  }, [hydratedRunSelectionId, selectedCliAgent, selectedEffort, selectedModel, selectedRunId]);
 
 }
 

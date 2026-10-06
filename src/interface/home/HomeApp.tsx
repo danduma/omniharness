@@ -18,7 +18,9 @@ import { AttachmentImagePreviewDialog } from "@/components/AttachmentImagePrevie
 import { ConversationMain } from "@/components/home/ConversationMain";
 import { ConversationSidebar } from "@/components/home/ConversationSidebar";
 import { HomeHeader } from "@/components/home/HomeHeader";
+import { useIsCompactLayout } from "@/hooks/use-mobile";
 import { resolveProjectScope } from "@/lib/project-scope";
+import { isRunnablePresetCommand, readPresetCommands } from "@/lib/preset-commands";
 import { clearPreviewCacheStorage } from "@/lib/browser-storage";
 import { WORKER_OPTIONS } from "./constants";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
@@ -52,6 +54,7 @@ import {
   mergePendingSentConversationMessages,
   parseBrowserConversationRoute,
   parseProjectList,
+  resolveComposerModelAfterWorkerChange,
   resolveRepoName,
   resolveSelectedWorkerModel,
   shouldClearMissingSelectedRunFromAuthoritativeSnapshot,
@@ -302,7 +305,6 @@ export function HomeApp({
     setRouteReady,
     setHasReceivedInitialEventStreamPayload,
     setSelectedConversationMode,
-    setSelectedCliAgent,
     setSelectedWorkerAccountId,
     setSelectedModel,
     setSelectedEffort,
@@ -359,6 +361,12 @@ export function HomeApp({
       stateManager.updateFromServer(action);
     },
     [selectedRunId, stateManager],
+  );
+  const reconcileServerCatalog = useCallback(
+    (snapshot: EventStreamState) => {
+      stateManager.reconcileServerCatalog(snapshot);
+    },
+    [stateManager],
   );
   const getSnapshotChecksum = useCallback(
     () => stateManager.getSnapshot().snapshotChecksum ?? null,
@@ -599,6 +607,18 @@ export function HomeApp({
     conversationWorkerGroups,
   } = vm;
 
+  const setSelectedCliAgent = useCallback((worker: typeof selectedCliAgent) => {
+    const workerType = worker === "auto"
+      ? autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex"
+      : worker;
+    const model = resolveComposerModelAfterWorkerChange({
+      catalog: workerCatalogQuery.data?.workerModels,
+      workerType,
+      selectedModel: homeUiStateManager.getSnapshot().selectedModel,
+    });
+    homeUiStateManager.setComposerWorkerSelection(worker, model);
+  }, [activeAllowedWorkerTypes, autoSelectedWorkerType, workerCatalogQuery.data?.workerModels]);
+
   const hasCredentialReauthFailure = hasVerifiedDeadCredentialMarker(selectedRun?.lastError);
   const credentialReauthAccountId = hasCredentialReauthFailure
     ? readVerifiedDeadCredentialAccountId(selectedRun?.lastError)
@@ -681,6 +701,11 @@ export function HomeApp({
     selectedAccountId: selectedWorkerAccountId,
   });
 
+  const activeWorkerModelValues = useMemo(
+    () => activeWorkerModelOptions.map((option) => option.value),
+    [activeWorkerModelOptions],
+  );
+
   // Mutations
   const mutations = useHomeMutations({
     state,
@@ -693,6 +718,7 @@ export function HomeApp({
     selectedEffort,
     autoSelectedWorkerType,
     activeAllowedWorkerTypes,
+    activeWorkerModelValues,
     renamingRunId,
     pendingDeletedRunIdsRef,
     pendingCreatedConversationSnapshotsRef,
@@ -714,12 +740,14 @@ export function HomeApp({
     recoverRun,
     resumeRunRecovery,
     runCommand,
+    startConversation,
     sendConversationMessage,
+    sendMessageToConversation,
     cancelQueuedMessage,
     sendQueuedMessageNow,
     interruptQueuedMessage,
     autoCommitChat,
-    autoCommitProject,
+    runPresetCommand,
     stopSupervisor,
     stopWorker,
     stopWorkerTerminalProcess,
@@ -740,7 +768,7 @@ export function HomeApp({
       recoverRun,
       resumeRunRecovery,
       autoCommitChat,
-      autoCommitProject,
+      runPresetCommand,
       commitWorkflowSettings,
       cancelQueuedMessage,
     },
@@ -756,9 +784,9 @@ export function HomeApp({
 
   // Layout controller
   const layout = useHomeLayoutController();
-  const handleOpenMobileConversationList = useCallback(() => {
-    setMobileNavOpen(true);
-  }, [setMobileNavOpen]);
+  // Below `lg` the desktop sidebar is display:none, but mounted it still
+  // re-rendered every row (each with its own menu) on every live frame.
+  const isCompactLayout = useIsCompactLayout();
   const terminalPaneRef = useRef<HTMLDivElement | null>(null);
   useTerminalPanelResize(isResizingTerminalPanel, terminalPaneRef);
 
@@ -769,6 +797,7 @@ export function HomeApp({
     setHasReceivedInitialEventStreamPayload,
     setState,
     applyServerEventStreamState,
+    reconcileServerCatalog,
     applyGoalEvent,
     setRuntimeErrors,
     routeReady,
@@ -784,10 +813,6 @@ export function HomeApp({
     setSelectedRunId,
     draftProjectPath,
     setDraftProjectPath,
-    setSelectedConversationMode,
-    setSelectedCliAgent,
-    setSelectedModel,
-    setSelectedEffort,
     collapsedProjectPaths,
     setCollapsedProjectPaths,
     leftSidebarWidth,
@@ -828,17 +853,12 @@ export function HomeApp({
     selectedRun,
     activeComposerMode,
     selectedCliAgent,
-    setSelectedCliAgent,
+    selectedModel,
     autoSelectedWorkerType,
     activeAllowedWorkerTypes,
-    hydratedRunSelectionId,
+    workerModelCatalog: workerCatalogQuery.data?.workerModels,
+    workerModelsRefreshing: Boolean(workerCatalogQuery.data?.workerModelsRefreshing),
     setHydratedRunSelectionId,
-    selectedModel,
-    setSelectedModel,
-    selectedEffort,
-    setSelectedEffort,
-    selectedWorkerAccountId,
-    setSelectedWorkerAccountId,
     availableWorkerTypes,
     configuredAllowedWorkerTypes,
     apiKeys,
@@ -852,11 +872,30 @@ export function HomeApp({
     if (activeWorkerModelOptions.length === 0) return;
     const resolved = resolveSelectedWorkerModel(vm.activeWorkerModelType, selectedModel);
     if (activeWorkerModelOptions.some((o) => o.value === resolved)) {
-      if (resolved !== selectedModel) setSelectedModel(resolved);
+      if (resolved !== selectedModel) {
+        homeUiStateManager.setComposerSelectionField("model", resolved, { userEdited: false });
+      }
       return;
     }
-    setSelectedModel(activeWorkerModelOptions[0].value);
-  }, [activeWorkerModelOptions, vm.activeWorkerModelType, selectedModel, setSelectedModel]);
+    // Discovery may be a fallback list or an in-progress refresh. Even a
+    // complete catalog is evidence that the saved choice is unavailable, not
+    // permission to silently replace it with the first unrelated model.
+  }, [activeWorkerModelOptions, vm.activeWorkerModelType, selectedModel]);
+
+  const composerModelOptions = useMemo(() => {
+    const resolved = resolveSelectedWorkerModel(vm.activeWorkerModelType, selectedModel);
+    if (!selectedModel || activeWorkerModelOptions.some((option) => option.value === resolved)) {
+      return activeWorkerModelOptions;
+    }
+    const discovered = workerCatalogQuery.data?.workerModels?.[vm.activeWorkerModelType];
+    const catalogComplete = Array.isArray(discovered) && !workerCatalogQuery.data?.workerModelsRefreshing;
+    if (!catalogComplete) return activeWorkerModelOptions;
+    return [{
+      value: selectedModel,
+      label: t("conversation.composer.modelUnavailable", { model: selectedModel }),
+      unavailable: true,
+    }, ...activeWorkerModelOptions];
+  }, [activeWorkerModelOptions, selectedModel, vm.activeWorkerModelType, workerCatalogQuery.data?.workerModels, workerCatalogQuery.data?.workerModelsRefreshing]);
 
   const composerAccountOptions = useMemo(() => {
     const options = [{
@@ -1022,7 +1061,10 @@ export function HomeApp({
       const current = autoResumeStateRef.current.get(runId);
       if (!current) return;
       autoResumeStateRef.current.set(runId, { ...current, attempts: current.attempts + 1, timerId: null });
-      recoverRun.mutate({ runId, action: "retry", targetMessageId });
+      // `resume`, never `retry`: a retry rewinds to `targetMessageId` and
+      // supersedes everything after it. On a conversation whose only user
+      // message is its first one, that discarded the entire transcript.
+      recoverRun.mutate({ runId, action: "resume", targetMessageId });
     }, delay);
     autoResumeStateRef.current.set(runId, { ...state, timerId });
   }, [
@@ -1103,7 +1145,7 @@ export function HomeApp({
       autoCommitChat.variables?.runId,
       selectedRunId,
     ),
-    autoCommitProjectError: autoCommitProject.error,
+    runPresetCommandError: runPresetCommand.error,
     // Scope `recoverRun` error display to the run it was triggered for.
     // React Query keeps the last mutation error around until reset, so
     // without this an "Agent not found …" error from a failed recover
@@ -1207,6 +1249,12 @@ export function HomeApp({
   const isComposerSendBusy = isStartingCurrentProjectConversation || isSendingSelectedConversationMessage || isSendingSelectedQueuedMessage || isPromotePlanningPendingForSelectedRun || isStopConversationPending;
   const isComposerSubmitBlocked = isStartingCurrentProjectConversation || isPromotePlanningPendingForSelectedRun || isStopConversationPending;
   const busyMessageAction = parseBusyMessageAction(apiKeys.BUSY_MESSAGE_ACTION);
+  const presetCommands = useMemo(
+    () => readPresetCommands(apiKeys)
+      .filter(isRunnablePresetCommand)
+      .map((preset) => ({ id: preset.id, name: preset.name.trim() })),
+    [apiKeys],
+  );
   const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
   const lockedDirectWorkerLabel = WORKER_OPTIONS.find((o) => o.value === (selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent))?.label
     || WORKER_OPTIONS.find((o) => o.value === autoSelectedWorkerType)?.label
@@ -1233,8 +1281,8 @@ export function HomeApp({
   const stopWorkerMutate = stopWorker.mutate;
   const interruptQueuedMessageMutate = interruptQueuedMessage.mutate;
   const cancelQueuedMessageMutate = cancelQueuedMessage.mutate;
-  const sendConversationMessageMutate = sendConversationMessage.mutate;
-  const runCommandMutate = runCommand.mutate;
+  const sendConversationMessageMutate = sendMessageToConversation;
+  const runCommandMutate = startConversation;
 
   const handleStopConversation = useCallback(() => {
     if (!selectedRunId || isStopConversationPending) return;
@@ -1314,7 +1362,7 @@ export function HomeApp({
       composerAccountOptions={composerAccountOptions}
       selectedModel={selectedModel}
       setSelectedModel={setSelectedModel}
-      activeWorkerModelOptions={activeWorkerModelOptions}
+      activeWorkerModelOptions={composerModelOptions}
       selectedEffort={selectedEffort}
       setSelectedEffort={setSelectedEffort}
       isComposerSendBusy={isComposerSendBusy}
@@ -1411,8 +1459,9 @@ export function HomeApp({
     openFolderPicker,
     startNewPlan: actions.handleStartNewPlan,
     beginConversationInProject: actions.beginConversationInProject,
-    autoCommitProject: actions.handleManualCommitProject,
-    isAutoCommitProjectPending: autoCommitProject.isPending,
+    presetCommands,
+    runPresetCommand: actions.handleRunPresetCommand,
+    isPresetCommandPending: runPresetCommand.isPending,
     handleRemoveProject: actions.handleRemoveProject,
     selectRun: actions.handleSelectRun,
     renamingRunId,
@@ -1458,11 +1507,13 @@ export function HomeApp({
           onPointerDown={layout.handleLeftSidebarResizeStart}
         />
         <div className={`flex h-full min-w-0 flex-1 transition-transform duration-150 ease-out motion-reduce:transition-none ${leftSidebarOpen ? "translate-x-0" : "-translate-x-3"}`}>
-          <ConversationSidebar
-            {...sharedSidebarProps}
-            runnerControlsMode="desktop"
-            onCollapse={() => setLeftSidebarOpen(false)}
-          />
+          {isCompactLayout ? null : (
+            <ConversationSidebar
+              {...sharedSidebarProps}
+              runnerControlsMode="desktop"
+              onCollapse={() => setLeftSidebarOpen(false)}
+            />
+          )}
         </div>
       </div>
 
@@ -1593,7 +1644,7 @@ export function HomeApp({
           handleSaveEditedMessage={(messageId) => actions.handleSaveEditedMessage(messageId, editingMessageValue)}
           handlePreflightConfirmationAnswer={(content) => {
             if (selectedRunId) {
-              sendConversationMessage.mutate({ runId: selectedRunId, content, clientMessageId: createSentConversationMessageId(), attachments: [] });
+              sendMessageToConversation({ runId: selectedRunId, content, clientMessageId: createSentConversationMessageId(), attachments: [] });
             }
           }}
           isPreflightConfirmationAnswering={isSendingSelectedConversationMessage}
@@ -1609,7 +1660,7 @@ export function HomeApp({
           projectRoot={currentProjectScope}
           onOpenProjectFile={actions.handleOpenProjectFile}
           onOpenWorkerActivity={handleOpenWorkerActivity}
-          onOpenMobileConversationList={handleOpenMobileConversationList}
+          setMobileConversationListOpen={setMobileNavOpen}
           onRespondElicitation={(input) => respondElicitation.mutateAsync(input)}
           onRespondPermission={(input) => respondPermission.mutate(input)}
           respondingElicitationRequestId={respondElicitation.isPending && respondElicitation.variables?.workerId === vm.primaryConversationAgent?.name ? respondElicitation.variables.requestId : null}
@@ -1724,6 +1775,7 @@ export function HomeApp({
         saveSettings={saveSettings}
         activeProjectPath={activeConversationCwd ?? null}
         claudeAccountAuthManager={claudeAccountAuthManager}
+        themeMode={themeMode}
       />
 
       <PairDeviceDialog

@@ -20,11 +20,7 @@ import {
   workerTokenUsage,
   workers,
 } from "@/server/db/schema";
-import {
-  GIT_COMMIT_WORKER_EFFORT_SETTING,
-  GIT_COMMIT_WORKER_MODEL_SETTING,
-  GIT_COMMIT_WORKER_TYPE_SETTING,
-} from "@/lib/commit-workflow";
+import { PRESET_COMMANDS_SETTING, buildDefaultPresetCommands, serializePresetCommands } from "@/lib/preset-commands";
 import {
   conversationsRouteModule as conversationsRoute,
   eventsRouteModule as eventsRoute,
@@ -136,12 +132,13 @@ afterEach(async () => {
 });
 
 describe("lifecycle — commit worker model routing", () => {
-  it("launches the dedicated commit model instead of the composer model", async () => {
-    await db.insert(settings).values([
-      { key: GIT_COMMIT_WORKER_TYPE_SETTING, value: "codex", updatedAt: new Date() },
-      { key: GIT_COMMIT_WORKER_MODEL_SETTING, value: "gpt-5.6-luna", updatedAt: new Date() },
-      { key: GIT_COMMIT_WORKER_EFFORT_SETTING, value: "high", updatedAt: new Date() },
-    ]);
+  it("launches the preset's model instead of the composer model", async () => {
+    const [, commitPushPreset] = buildDefaultPresetCommands();
+    await db.insert(settings).values([{
+      key: PRESET_COMMANDS_SETTING,
+      value: serializePresetCommands([{ ...commitPushPreset, workerType: "codex", model: "gpt-5.6-luna", effort: "high" }]),
+      updatedAt: new Date(),
+    }]);
     await client.bootstrapSnapshot();
     await client.subscribe({});
 
@@ -150,7 +147,7 @@ describe("lifecycle — commit worker model routing", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         mode: "commit",
-        command: "Commit and push the project changes.",
+        presetCommandId: commitPushPreset.id,
         projectPath: "/workspace/app",
         preferredWorkerType: "claude",
         preferredWorkerModel: "claude-opus-5",

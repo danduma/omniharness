@@ -143,7 +143,10 @@ export const handleConversationsRequest: OmniHttpHandler = async (request) => {
     const command = String(body?.command ?? "").trim();
     const attachments = normalizeChatAttachments(body?.attachments);
     const externalClaudeSessionId = readExternalClaudeSessionId(body?.externalClaudeSessionId);
-    const mode = externalClaudeSessionId ? "direct" : normalizeConversationMode(body?.mode);
+    const presetCommandId = typeof body?.presetCommandId === "string" && body.presetCommandId.trim()
+      ? body.presetCommandId.trim()
+      : null;
+    const mode = externalClaudeSessionId ? "direct" : presetCommandId ? "commit" : normalizeConversationMode(body?.mode);
     requestedRunIdForError = readRequestedRunId(body?.requestedRunId);
     requestedWorkerTypeForError = typeof body?.preferredWorkerType === "string" && body.preferredWorkerType
       ? body.preferredWorkerType
@@ -153,7 +156,7 @@ export const handleConversationsRequest: OmniHttpHandler = async (request) => {
       : null;
     const hasProcessArgv = sessionType === "process" && Array.isArray(body?.process?.argv) && body.process.argv.length > 0;
     const hasProcessCommand = sessionType === "process" && typeof body?.process?.command === "string" && body.process.command.trim();
-    if (!command && attachments.length === 0 && !hasProcessArgv && !hasProcessCommand && !externalClaudeSessionId) {
+    if (!command && attachments.length === 0 && !hasProcessArgv && !hasProcessCommand && !externalClaudeSessionId && !presetCommandId) {
       return errorResponse("Command or attachment is required", {
         status: 400,
         source: "Conversations",
@@ -185,6 +188,7 @@ export const handleConversationsRequest: OmniHttpHandler = async (request) => {
       requestedRunId: requestedRunIdForError,
       attachments,
       externalClaudeSessionId,
+      presetCommandId: sessionType === "omni" ? presetCommandId : null,
       process: sessionType === "process" && body?.process && typeof body.process === "object"
         ? {
           argv: Array.isArray(body.process.argv) ? body.process.argv : undefined,

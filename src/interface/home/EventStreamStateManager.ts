@@ -163,26 +163,24 @@ function mergeScopedCatalog(current: EventStreamState, incoming: EventStreamStat
     };
   }
 
-  const selectedRunIsAbsent = Boolean(
-    catalogIsPartial
-    && scopedRunId
-    && !(incoming.runs ?? []).some((run) => run.id === scopedRunId),
+  // Older servers only supplied `snapshotRunId`; current servers make the
+  // completeness claim explicit. Retain the legacy interpretation during a
+  // rolling upgrade so obsolete children can still be retired safely.
+  const completeRunIds = new Set(
+    incoming.snapshotScope?.catalog?.completeRunIds
+      ?? (scopedRunId ? [scopedRunId] : []),
   );
-  const removedPlanId = selectedRunIsAbsent
-    ? current.runs.find((run) => run.id === scopedRunId)?.planId
-    : null;
-  const currentRuns = selectedRunIsAbsent
-    ? current.runs.filter((run) => run.id !== scopedRunId)
-    : current.runs;
-  const currentPlans = removedPlanId
-    ? current.plans.filter((plan) => plan.id !== removedPlanId)
-    : current.plans;
-  const currentWorkers = selectedRunIsAbsent
-    ? current.workers.filter((worker) => worker.runId !== scopedRunId)
-    : current.workers;
-  const currentSessions = selectedRunIsAbsent
-    ? current.sessions?.filter((session) => session.runId !== scopedRunId)
-    : current.sessions;
+  const incomingRunIds = new Set((incoming.runs ?? []).map((run) => run.id));
+  const absentCompleteRunIds = new Set([...completeRunIds].filter((runId) => !incomingRunIds.has(runId)));
+  const removedPlanIds = new Set(current.runs
+    .filter((run) => completeRunIds.has(run.id))
+    .map((run) => run.planId));
+  const currentRuns = current.runs.filter((run) => !absentCompleteRunIds.has(run.id));
+  const currentPlans = current.plans.filter((plan) => !removedPlanIds.has(plan.id));
+  // A scoped frame explicitly carries the complete worker/session membership
+  // for these runs. Replace that scope while retaining unrelated runs.
+  const currentWorkers = current.workers.filter((worker) => !completeRunIds.has(worker.runId));
+  const currentSessions = current.sessions?.filter((session) => !completeRunIds.has(session.runId));
   const mergedRuns = mergeByKey(currentRuns, incoming.runs, (run) => run.id);
   return {
     ...incoming,
@@ -198,12 +196,70 @@ function mergeScopedCatalog(current: EventStreamState, incoming: EventStreamStat
   };
 }
 
+/**
+ * A run's activity clock only ever moves forward.
+ *
+ * "Server-authoritative" says where a payload came from, not when it was true.
+ * A snapshot body is read out of SQLite and then serialized, checksummed and
+ * sent, so a live frame built milliseconds later routinely overtakes it, and
+ * the late body rewinds every row it carries. Nothing corrects that rewind: the
+ * SSE catalog delta only re-sends rows that changed *since this connection last
+ * delivered them*, and from the server's side those rows were already handed
+ * over. So the stale value stands until some later poll happens to land — which
+ * is how a finished conversation, whose row has not changed in SQLite for an
+ * hour, walks up and down the project list while the user watches it.
+ *
+ * Pinning the high-water mark is safe because the column only advances
+ * server-side: the `runs_activity_*` triggers in `src/server/db/index.ts` each
+ * carry an explicit `last_activity_at < NEW` guard, and no client code writes
+ * the field optimistically. A genuinely newer row still wins.
+ *
+ * Deliberately narrow. `updatedAt` gets no such treatment — optimistic
+ * mutations stamp it with a local clock the server has not caught up to yet, so
+ * a server row that looks "older" there is normal and must still be applied.
+ */
+function keepLastActivityMonotonic(currentRun: RunRecord, incomingRun: RunRecord): RunRecord {
+  if (timestampMs(currentRun.lastActivityAt) <= timestampMs(incomingRun.lastActivityAt)) {
+    return incomingRun;
+  }
+
+  return { ...incomingRun, lastActivityAt: currentRun.lastActivityAt };
+}
+
+/**
+ * Take a server row for a run the client already holds, keeping the locally
+ * newer title revision and the activity high-water mark.
+ */
+function mergeServerRun(currentRun: RunRecord, incomingRun: RunRecord): RunRecord {
+  const mergedRun = keepLastActivityMonotonic(currentRun, incomingRun);
+  const currentRevision = currentRun.titleRevision ?? -1;
+  const incomingRevision = mergedRun.titleRevision ?? -1;
+  if (currentRevision <= incomingRevision) return mergedRun;
+  return {
+    ...mergedRun,
+    title: currentRun.title,
+    titleRevision: currentRun.titleRevision,
+    titleOwnership: currentRun.titleOwnership,
+    titleSource: currentRun.titleSource,
+    titleOwnerWorkerId: currentRun.titleOwnerWorkerId,
+  };
+}
+
 function mergeScopedRuns(current: EventStreamState, incoming: EventStreamState, options: {
   serverAuthoritative: boolean;
 }) {
   const catalogMergedIncoming = mergeScopedCatalog(current, incoming);
   if (options.serverAuthoritative) {
-    return catalogMergedIncoming;
+    const currentRunsById = new Map(current.runs.map((run) => [run.id, run]));
+    let changed = false;
+    const runs = catalogMergedIncoming.runs.map((incomingRun) => {
+      const currentRun = currentRunsById.get(incomingRun.id);
+      if (!currentRun) return incomingRun;
+      const mergedRun = mergeServerRun(currentRun, incomingRun);
+      if (mergedRun !== incomingRun) changed = true;
+      return mergedRun;
+    });
+    return changed ? { ...catalogMergedIncoming, runs } : catalogMergedIncoming;
   }
 
   const incomingRuns = catalogMergedIncoming.runs ?? [];
@@ -215,8 +271,11 @@ function mergeScopedRuns(current: EventStreamState, incoming: EventStreamState, 
   let changed = false;
   const mergedRuns = incomingRuns.map((incomingRun) => {
     const currentRun = currentRunsById.get(incomingRun.id);
-    if (!currentRun || runUpdatedTimestampMs(currentRun) <= runUpdatedTimestampMs(incomingRun)) {
-      return incomingRun;
+    if (!currentRun) return incomingRun;
+    if (runUpdatedTimestampMs(currentRun) <= runUpdatedTimestampMs(incomingRun)) {
+      const mergedRun = keepLastActivityMonotonic(currentRun, incomingRun);
+      if (mergedRun !== incomingRun) changed = true;
+      return mergedRun;
     }
 
     changed = true;
@@ -557,6 +616,77 @@ export class EventStreamStateManager {
 
   updateFromServer(action: EventStreamStateAction) {
     return this.update(action, { snapshotSource: "server" });
+  }
+
+  /**
+   * Fold the catalog rows of a complete server snapshot into the current state
+   * without treating the snapshot as a whole as newer than what is on screen.
+   *
+   * This is the only way a run that changed while the stream was down ever
+   * reaches the sidebar. The live stream re-sends a catalog row only when it
+   * changed *since this connection last delivered it*, and a fresh connection
+   * starts that baseline from the rows it is about to skip — so a run that
+   * finished during a blip is, from the server's side, already delivered, and
+   * the client keeps spinning its "running" row for the life of the page. The
+   * complete snapshot polled after a reconnect is the correction, but that body
+   * is built while live frames keep arriving, and applying it wholesale would
+   * rewind the selected conversation to whatever the database held a moment
+   * ago. So the caller hands an overtaken body here instead: rows the server
+   * stamped later than the copy on screen are taken, everything else is kept,
+   * and the selected-run transcript is never touched.
+   *
+   * Rows absent from the snapshot are left alone; retiring archived runs is
+   * still the job of a snapshot that lands cleanly.
+   */
+  reconcileServerCatalog(snapshot: EventStreamState) {
+    if (snapshot.snapshotScope?.catalog?.complete !== true || !Array.isArray(snapshot.runs)) {
+      return false;
+    }
+    const currentRunsById = new Map(this.state.runs.map((run) => [run.id, run]));
+    const takenRunIds = new Set<string>();
+    let changed = false;
+    const reconciledRuns = new Map<string, RunRecord>();
+    for (const incomingRun of snapshot.runs) {
+      const currentRun = currentRunsById.get(incomingRun.id);
+      if (!currentRun) {
+        reconciledRuns.set(incomingRun.id, incomingRun);
+        takenRunIds.add(incomingRun.id);
+        changed = true;
+        continue;
+      }
+      if (this.pendingOptimisticStopRunIds.has(incomingRun.id) && currentRun.status === "cancelled") {
+        continue;
+      }
+      if (runUpdatedTimestampMs(currentRun) > runUpdatedTimestampMs(incomingRun)) {
+        continue;
+      }
+      const mergedRun = mergeServerRun(currentRun, incomingRun);
+      if (mergedRun.status !== currentRun.status || mergedRun.updatedAt !== currentRun.updatedAt) {
+        changed = true;
+      }
+      reconciledRuns.set(incomingRun.id, mergedRun);
+      takenRunIds.add(incomingRun.id);
+    }
+    if (!changed) {
+      return false;
+    }
+    const runs = this.state.runs.map((run) => reconciledRuns.get(run.id) ?? run);
+    for (const [runId, run] of reconciledRuns) {
+      if (!currentRunsById.has(runId)) runs.push(run);
+    }
+    const incomingSessions = (snapshot.sessions ?? []).filter((session) => takenRunIds.has(session.runId));
+    const nextState: EventStreamState = {
+      ...this.state,
+      runs,
+      plans: mergeByKey(this.state.plans, snapshot.plans, (plan) => plan.id),
+      sessions: incomingSessions.length > 0
+        ? mergeByKey(this.state.sessions, incomingSessions, (session) => session.runId)
+        : this.state.sessions,
+    };
+    this.state = nextState;
+    this.snapshotCache.rememberState(nextState, this.snapshotCacheScope);
+    this.listeners.forEach((listener) => listener(this.state));
+    return true;
   }
 
   applyGoalEvent(rawSnapshot: unknown, eventKey?: string | null) {

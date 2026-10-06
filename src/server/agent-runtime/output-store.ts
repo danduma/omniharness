@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { appendFileSync, closeSync, createReadStream, existsSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmSync, statSync } from "fs";
-import { basename, dirname, join } from "path";
+import { basename, dirname, join, resolve } from "path";
 import { createInterface } from "readline";
 import type { AgentRecord, OutputArchivePage, OutputArchiveStats, OutputEntry } from "./types";
 import { preserveInlineImageContentData } from "@/shared/worker-entries";
@@ -32,6 +32,29 @@ function sanitizePathPart(input: string) {
   return sanitized || "agent";
 }
 
+export function resolveAgentRuntimeDataDir(input: {
+  dataDir?: string | null;
+  rootDir?: string | null;
+} = {}) {
+  const configuredDataDir = input.dataDir?.trim();
+  if (configuredDataDir) return resolve(configuredDataDir);
+
+  const configuredRoot = input.rootDir?.trim() || process.env.OMNIHARNESS_ROOT?.trim();
+  return join(configuredRoot ? resolve(configuredRoot) : process.cwd(), ".omniharness");
+}
+
+export function resolveAgentOutputArchivePath(input: {
+  dataDir?: string | null;
+  rootDir?: string | null;
+  name: string;
+}) {
+  return join(
+    resolveAgentRuntimeDataDir(input),
+    "agent-runtime-output",
+    `${sanitizePathPart(input.name)}.jsonl`,
+  );
+}
+
 export function truncateString(value: string, maxChars: number) {
   if (value.length <= maxChars) {
     return value;
@@ -48,33 +71,6 @@ export function appendBoundedText(existing: string, chunk: string, maxChars = LI
     return next;
   }
   return next.slice(-Math.max(0, maxChars));
-}
-
-export function appendBoundedThoughts(existing: string, chunk: string, maxChars = LIVE_OUTPUT_ENTRY_TEXT_CHARS) {
-  if (chunk.length === 0) {
-    return existing;
-  }
-  const next = existing + chunk;
-  if (next.length <= maxChars) {
-    return next;
-  }
-
-  // Get the raw end slice
-  const candidate = next.slice(-maxChars);
-
-  // Find the first paragraph break in the sliced text to start cleanly
-  const dblNewlineIdx = candidate.indexOf("\n\n");
-  if (dblNewlineIdx !== -1) {
-    return candidate.slice(dblNewlineIdx + 2);
-  }
-
-  const newlineIdx = candidate.indexOf("\n");
-  if (newlineIdx !== -1) {
-    return candidate.slice(newlineIdx + 1);
-  }
-
-  // Fallback to strict slice if no newlines are present
-  return candidate;
 }
 
 function compactRawValue(
@@ -137,10 +133,10 @@ function createArchiveEntry(input: OutputEntryInput): OutputEntry {
 function toLiveEntry(entry: OutputEntry): OutputEntry {
   return {
     ...entry,
-    // Assistant messages are conversation content, not disposable runtime
-    // diagnostics. They must remain complete so the unified worker stream can
-    // persist the whole answer instead of a suffix-only live snapshot.
-    text: entry.type === "message"
+    // Assistant messages and thinking are conversation content, not disposable
+    // runtime diagnostics. They must remain complete so the unified worker
+    // stream can persist the whole text instead of a suffix-only live snapshot.
+    text: entry.type === "message" || entry.type === "thought"
       ? entry.text
       : truncateString(entry.text, LIVE_OUTPUT_ENTRY_TEXT_CHARS),
     // Inline image payloads are conversation content for the same reason, and
@@ -303,11 +299,15 @@ export class AgentOutputArchive {
   }
 }
 
-export function openAgentOutputArchive(input: { dataDir?: string | null; name: string; resume?: boolean }) {
-  const dataDir = input.dataDir?.trim() || join(process.cwd(), ".omniharness");
+export function openAgentOutputArchive(input: {
+  dataDir?: string | null;
+  rootDir?: string | null;
+  name: string;
+  resume?: boolean;
+}) {
   return new AgentOutputArchive(
     input.name,
-    join(dataDir, "agent-runtime-output", `${sanitizePathPart(input.name)}.jsonl`),
+    resolveAgentOutputArchivePath(input),
     { truncate: !input.resume },
   );
 }
@@ -398,11 +398,7 @@ export function appendMessageChunk(record: AgentRecord, text: string, type: "mes
     : null;
 
   if (activeEntry && activeEntry.type === type) {
-    if (type === "thought") {
-      activeEntry.text = appendBoundedThoughts(activeEntry.text, text, LIVE_OUTPUT_ENTRY_TEXT_CHARS);
-    } else {
-      activeEntry.text += text;
-    }
+    activeEntry.text += text;
     return;
   }
 
