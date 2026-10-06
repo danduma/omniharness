@@ -2280,7 +2280,24 @@ async function sendConversationMessageUnlocked(args: SendConversationMessageArgs
           await setMessageDeliveryStatus(userMessage.id, "failed");
           if (!isAgentBusyError(error)) {
             console.error("Direct conversation follow-up failed:", error);
+            return;
           }
+          // The agent was running a turn the runner had not seen yet, such as
+          // one Claude started for a background-task notification. Marking the
+          // message failed and stopping there dropped it without a word, so
+          // queue it for the worker exactly as a busy steer is queued; the
+          // queue drains when the worker goes idle.
+          await db.delete(messages).where(eq(messages.id, userMessage.id));
+          await createQueuedConversationMessage({
+            runId,
+            targetWorkerId: worker.id,
+            action: "queue",
+            content: trimmedContent,
+            attachments: normalizedAttachments,
+            clientMessageId: userMessage.id,
+            operationFingerprint,
+          });
+          notifyEventStreamSubscribers();
         },
       ),
       { runId },

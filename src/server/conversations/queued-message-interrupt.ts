@@ -231,19 +231,20 @@ async function interruptAndDeliver(args: {
 
   // Steer is cancel-and-replace, and it must be instant. Two rules make it so:
   //
-  //   1. The local abort is authoritative. Tripping the running turn's signal
+  //   1. The local abort releases the runner request. Tripping the turn's signal
   //      tears down its in-flight request here and now; it needs no cooperation
   //      from an agent that may be wedged.
   //   2. `session/cancel` is best-effort. It tells the agent to stop the work it
   //      is doing, which is worth sending, but awaiting it put a possibly
   //      unbounded round trip on the user's critical path — a wedged adapter
   //      used to block the steer button indefinitely, and a failed cancel
-  //      refused the steer outright with a 502.
+  //      refused the steer outright with a 502. Delivery waits in the background
+  //      for provider settlement; a failed cancel requires a fresh process.
   const cancelStartedAt = Date.now();
   const abortedLiveTurn = abortWorkerTurn(worker.id, "user steer");
   const agentCancelSettled = Promise.resolve()
     .then(() => cancelAgentTurn(worker.id))
-    .then(() => undefined)
+    .then(() => true)
     .catch(async (error) => {
       await recordExecutionEvent({
         runId,
@@ -255,7 +256,9 @@ async function interruptAndDeliver(args: {
           error: errorMessage(error),
           source,
         },
-      }).catch(() => undefined);
+      });
+      emitNamedEvent({ kind: "error.surfaced", code: "worker.cancel.failed", runId, workerId: worker.id, surface: "log", message: errorMessage(error), cause: null });
+      return false;
     });
   const cancelDurationMs = Date.now() - cancelStartedAt;
 
@@ -390,7 +393,7 @@ async function deliverInterruptedQueuedMessage(args: {
   workerContent: string;
   attachments: ChatAttachment[];
   generation: number;
-  agentCancelSettled: Promise<void>;
+  agentCancelSettled: Promise<boolean>;
   source: InterruptSource;
   requestedAt: number;
 }) {
@@ -455,7 +458,7 @@ async function deliverInterruptedQueuedMessage(args: {
     // The API has already returned, so waiting here does not hold up the UI.
     // Starting the replacement request before the provider confirms the old
     // cancellation lets the late cancel or late output hit the new turn.
-    await agentCancelSettled;
+    const cancellationSettled = await agentCancelSettled;
     await runWorkerTurn(worker.id, async () => {
       if (!(await isStillCurrent())) {
         notifyEventStreamSubscribers();
@@ -503,9 +506,21 @@ async function deliverInterruptedQueuedMessage(args: {
         return;
       }
 
-      const workerPrompt = run.mode === "direct" || run.mode === "commit"
+      let workerPrompt = run.mode === "direct" || run.mode === "commit"
         ? buildDirectWorkerPrompt(workerContent)
         : workerContent;
+      if (!cancellationSettled) {
+        const currentWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
+        const recreated = await recreateWorkerFromTranscript({
+          run,
+          worker: currentWorker ?? worker,
+          nextUserPrompt: workerPrompt,
+          source: "steer",
+          reason: "provider_cancellation_failed",
+          expectedTurnGeneration: generation,
+        });
+        workerPrompt = recreated.replayPrompt;
+      }
       const imageAttachments = resolveImageAttachments(attachments, getAppDataPath);
       let response;
       try {
