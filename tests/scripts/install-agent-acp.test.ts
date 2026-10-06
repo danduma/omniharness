@@ -204,6 +204,51 @@ fi
     expect(fs.existsSync(cargoLogPath)).toBe(false);
   });
 
+  it("refreshes an existing npm Claude ACP adapter when its package is outdated", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
+    const binDir = path.join(tempDir, "bin");
+    const homeDir = path.join(tempDir, "home");
+    const npmRoot = path.join(tempDir, "global-node-modules");
+    const npmLogPath = path.join(tempDir, "npm.log");
+    const packageDir = path.join(npmRoot, "@agentclientprotocol", "claude-agent-acp");
+    tempDirs.push(tempDir);
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(homeDir, { recursive: true });
+    fs.mkdirSync(packageDir, { recursive: true });
+    fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ version: "1.0.0" }));
+
+    createFakeBin("claude", binDir);
+    createFakeBin("claude-agent-acp", binDir);
+    createFakeBin(
+      "npm",
+      binDir,
+      `#!/bin/sh
+if [ "$1" = "root" ] && [ "$2" = "-g" ]; then
+  echo "${npmRoot}"
+elif [ "$1" = "view" ]; then
+  echo "1.1.0"
+elif [ "$1" = "install" ]; then
+  echo "$@" >> "${npmLogPath}"
+fi
+exit 0
+`,
+    );
+
+    const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh", "--ensure-only"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        PATH: `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("managed `@agentclientprotocol/claude-agent-acp` is outdated; refreshing it");
+    expect(fs.readFileSync(npmLogPath, "utf8")).toContain("install -g @agentclientprotocol/claude-agent-acp@latest");
+  });
+
   it("leaves an existing Codex ACP adapter untouched in auto mode", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
     const binDir = path.join(tempDir, "bin");
