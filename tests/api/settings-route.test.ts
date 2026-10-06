@@ -24,11 +24,17 @@ import {
   settingsGetRoute as GET,
   settingsPostRoute as POST,
 } from "@/../tests/helpers/runtime-routes";
-import {
-  GIT_COMMIT_WORKER_EFFORT_SETTING,
-  GIT_COMMIT_WORKER_MODEL_SETTING,
-  GIT_COMMIT_WORKER_TYPE_SETTING,
-} from "@/lib/commit-workflow";
+import { PRESET_COMMANDS_SETTING, serializePresetCommands } from "@/lib/preset-commands";
+
+const releaseNotesPreset = {
+  id: "release-notes",
+  name: "Release notes",
+  prompt: "Draft release notes.",
+  workerType: "claude" as const,
+  accountId: null,
+  model: "custom-commit-model",
+  effort: "xhigh" as const,
+};
 
 describe("/api/settings", () => {
   let tempDirs: string[] = [];
@@ -109,38 +115,32 @@ describe("/api/settings", () => {
     expect(payload.resourceSnapshot).toHaveProperty("diskTotalMb");
   });
 
-  it("stores the dedicated project commit agent settings", async () => {
+  it("stores the project preset commands", async () => {
+    const value = serializePresetCommands([releaseNotesPreset]);
     const response = await POST(await makeAuthenticatedRequest("http://localhost/api/settings", {
       method: "POST",
-      body: JSON.stringify({
-        [GIT_COMMIT_WORKER_TYPE_SETTING]: "claude",
-        [GIT_COMMIT_WORKER_MODEL_SETTING]: "custom-commit-model",
-        [GIT_COMMIT_WORKER_EFFORT_SETTING]: "extra high",
-      }),
+      body: JSON.stringify({ [PRESET_COMMANDS_SETTING]: value }),
     }));
 
     expect(response.status).toBe(200);
     const rows = await db.select().from(settings);
     expect(Object.fromEntries(rows.map((row) => [row.key, row.value]))).toMatchObject({
-      [GIT_COMMIT_WORKER_TYPE_SETTING]: "claude",
-      [GIT_COMMIT_WORKER_MODEL_SETTING]: "custom-commit-model",
-      [GIT_COMMIT_WORKER_EFFORT_SETTING]: "extra high",
+      [PRESET_COMMANDS_SETTING]: value,
     });
   });
 
-  it("rejects invalid dedicated project commit agent settings", async () => {
+  it("rejects invalid project preset commands", async () => {
     const response = await POST(await makeAuthenticatedRequest("http://localhost/api/settings", {
       method: "POST",
       body: JSON.stringify({
-        [GIT_COMMIT_WORKER_TYPE_SETTING]: "not-a-worker",
-        [GIT_COMMIT_WORKER_EFFORT_SETTING]: "not-an-effort",
+        [PRESET_COMMANDS_SETTING]: JSON.stringify([{ ...releaseNotesPreset, workerType: "not-a-worker" }]),
       }),
     }));
 
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({
       error: {
-        code: "invalid_commit_worker_settings",
+        code: "invalid_preset_commands",
       },
     });
   });

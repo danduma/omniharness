@@ -25,13 +25,12 @@ import { PRODUCT_NAME } from "@/interface/home/constants";
 import { mobileConversationSwipeManager, type MobileDrawerDragSnapshot } from "@/interface/home/MobileConversationSwipeManager";
 import type { ProjectDropPlacement } from "@/interface/home/utils";
 import type { AgentSnapshot, ConversationSidebarTab, MessageRecord, RunRecord, SidebarGroup, SidebarRun, SupervisorInterventionRecord } from "@/interface/home/types";
-import type { ManualCommitAction } from "@/lib/commit-workflow";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { useIsCompactLayout } from "@/hooks/use-mobile";
 import { getVisualViewportDialogStyle, useVisualViewportSnapshot } from "@/hooks/use-visual-viewport";
-import { ConversationSidebar } from "./ConversationSidebar";
+import { ConversationSidebar, type ProjectPresetCommandMenuItem } from "./ConversationSidebar";
 import { RunWorkspaceBadge, resolveRunWorkspace } from "./RunWorkspaceBadge";
 import { ThemeModeToggle } from "./ThemeModeToggle";
 
@@ -122,8 +121,9 @@ interface HomeHeaderProps {
   openFolderPicker: () => void;
   startNewPlan: () => void;
   beginConversationInProject: (projectPath: string) => void;
-  autoCommitProject: (projectPath: string, action?: ManualCommitAction) => void;
-  isAutoCommitProjectPending: boolean;
+  presetCommands: ProjectPresetCommandMenuItem[];
+  runPresetCommand: (projectPath: string, presetCommandId: string) => void;
+  isPresetCommandPending: boolean;
   handleRemoveProject: (pathToRemove: string) => void;
   selectRun: (runId: string) => void;
   renamingRunId: string | null;
@@ -229,8 +229,9 @@ const HomeHeader = memo(function HomeHeader({
   openFolderPicker,
   startNewPlan,
   beginConversationInProject,
-  autoCommitProject,
-  isAutoCommitProjectPending,
+  presetCommands,
+  runPresetCommand,
+  isPresetCommandPending,
   handleRemoveProject,
   selectRun,
   renamingRunId,
@@ -423,8 +424,9 @@ const HomeHeader = memo(function HomeHeader({
             openFolderPicker={openFolderPicker}
             startNewPlan={startNewPlan}
             beginConversationInProject={beginConversationInProject}
-            autoCommitProject={autoCommitProject}
-            isAutoCommitProjectPending={isAutoCommitProjectPending}
+            presetCommands={presetCommands}
+            runPresetCommand={runPresetCommand}
+            isPresetCommandPending={isPresetCommandPending}
             handleRemoveProject={handleRemoveProject}
             selectRun={selectRun}
             renamingRunId={renamingRunId}

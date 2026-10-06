@@ -20,6 +20,7 @@ import { ConversationSidebar } from "@/components/home/ConversationSidebar";
 import { HomeHeader } from "@/components/home/HomeHeader";
 import { useIsCompactLayout } from "@/hooks/use-mobile";
 import { resolveProjectScope } from "@/lib/project-scope";
+import { isRunnablePresetCommand, readPresetCommands } from "@/lib/preset-commands";
 import { clearPreviewCacheStorage } from "@/lib/browser-storage";
 import { WORKER_OPTIONS } from "./constants";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
@@ -746,7 +747,7 @@ export function HomeApp({
     sendQueuedMessageNow,
     interruptQueuedMessage,
     autoCommitChat,
-    autoCommitProject,
+    runPresetCommand,
     stopSupervisor,
     stopWorker,
     stopWorkerTerminalProcess,
@@ -767,7 +768,7 @@ export function HomeApp({
       recoverRun,
       resumeRunRecovery,
       autoCommitChat,
-      autoCommitProject,
+      runPresetCommand,
       commitWorkflowSettings,
       cancelQueuedMessage,
     },
@@ -1144,7 +1145,7 @@ export function HomeApp({
       autoCommitChat.variables?.runId,
       selectedRunId,
     ),
-    autoCommitProjectError: autoCommitProject.error,
+    runPresetCommandError: runPresetCommand.error,
     // Scope `recoverRun` error display to the run it was triggered for.
     // React Query keeps the last mutation error around until reset, so
     // without this an "Agent not found …" error from a failed recover
@@ -1248,6 +1249,12 @@ export function HomeApp({
   const isComposerSendBusy = isStartingCurrentProjectConversation || isSendingSelectedConversationMessage || isSendingSelectedQueuedMessage || isPromotePlanningPendingForSelectedRun || isStopConversationPending;
   const isComposerSubmitBlocked = isStartingCurrentProjectConversation || isPromotePlanningPendingForSelectedRun || isStopConversationPending;
   const busyMessageAction = parseBusyMessageAction(apiKeys.BUSY_MESSAGE_ACTION);
+  const presetCommands = useMemo(
+    () => readPresetCommands(apiKeys)
+      .filter(isRunnablePresetCommand)
+      .map((preset) => ({ id: preset.id, name: preset.name.trim() })),
+    [apiKeys],
+  );
   const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
   const lockedDirectWorkerLabel = WORKER_OPTIONS.find((o) => o.value === (selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent))?.label
     || WORKER_OPTIONS.find((o) => o.value === autoSelectedWorkerType)?.label
@@ -1452,8 +1459,9 @@ export function HomeApp({
     openFolderPicker,
     startNewPlan: actions.handleStartNewPlan,
     beginConversationInProject: actions.beginConversationInProject,
-    autoCommitProject: actions.handleManualCommitProject,
-    isAutoCommitProjectPending: autoCommitProject.isPending,
+    presetCommands,
+    runPresetCommand: actions.handleRunPresetCommand,
+    isPresetCommandPending: runPresetCommand.isPending,
     handleRemoveProject: actions.handleRemoveProject,
     selectRun: actions.handleSelectRun,
     renamingRunId,
@@ -1767,6 +1775,7 @@ export function HomeApp({
         saveSettings={saveSettings}
         activeProjectPath={activeConversationCwd ?? null}
         claudeAccountAuthManager={claudeAccountAuthManager}
+        themeMode={themeMode}
       />
 
       <PairDeviceDialog

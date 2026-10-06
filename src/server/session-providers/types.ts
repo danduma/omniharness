@@ -65,6 +65,7 @@ export type CreateSessionInput = {
   requestedRunId?: string | null;
   attachments?: ChatAttachment[];
   externalClaudeSessionId?: string | null;
+  presetCommandId?: string | null;
   process?: {
     argv?: string[];
     command?: string;

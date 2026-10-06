@@ -225,7 +225,7 @@ test("user-initiated conversation sends reveal the appended turn", () => {
   const sendConversationScrollIndex = homeAppSource.indexOf("scrollConversationToBottom();", sendConversationSuccessIndex);
   const autoCommitSuccessIndex = homeAppSource.indexOf("const autoCommitChat = useMutation({");
   const autoCommitScrollIndex = homeAppSource.indexOf("scrollConversationToBottom();", autoCommitSuccessIndex);
-  const autoCommitProjectIndex = homeAppSource.indexOf("const autoCommitProject = useMutation({");
+  const autoCommitProjectIndex = homeAppSource.indexOf("const runPresetCommand = useMutation({");
 
   expect(sendConversationSuccessIndex).toBeGreaterThanOrEqual(0);
   expect(sendConversationScrollIndex).toBeGreaterThan(sendConversationSuccessIndex);
@@ -234,15 +234,20 @@ test("user-initiated conversation sends reveal the appended turn", () => {
   expect(autoCommitScrollIndex).toBeLessThan(autoCommitProjectIndex);
 });
 
-test("project menus expose an auto commit action that starts a commit conversation", () => {
-  expect(pageSource).toContain("AUTO_COMMIT_PROJECT_PROMPT");
-  expect(pageSource).toContain("MANUAL_COMMIT_PROJECT_PUSH_PROMPT");
-  expect(pageSource).toContain("mode: \"commit\"");
-  expect(pageSource).toContain("projectPath: payload.projectPath");
-  expect(pageSource).toContain("autoCommitProject(group.path)");
-  expect(pageSource).toContain('autoCommitProject(group.path, "commit-push")');
-  expect(pageSource).toContain("commit.menu.commitProjectNow");
-  expect(pageSource).toContain("commit.menu.commitAndPushProject");
+test("project menus list the configured preset commands above a separated delete", () => {
+  const menuStart = pageSource.indexOf("{presetCommands.map((preset) => (");
+  const separatorIndex = pageSource.indexOf("{presetCommands.length > 0 ? <DropdownMenuSeparator /> : null}", menuStart);
+  const removeIndex = pageSource.indexOf('t("conversation.sidebar.removeProject")', menuStart);
+
+  expect(menuStart).toBeGreaterThanOrEqual(0);
+  expect(separatorIndex).toBeGreaterThan(menuStart);
+  expect(removeIndex).toBeGreaterThan(separatorIndex);
+  expect(pageSource).toContain("runPresetCommand(group.path, preset.id)");
+  expect(pageSource).toContain("readPresetCommands(apiKeys)");
+  expect(pageSource).toContain(".filter(isRunnablePresetCommand)");
+  expect(pageSource).toContain("presetCommandId: payload.presetCommandId");
+  expect(pageSource).not.toContain("commit.menu.commitProjectNow");
+  expect(pageSource).not.toContain("commit.menu.commitAndPushProject");
 });
 
 test("deleting a conversation removes it optimistically before the request resolves", () => {

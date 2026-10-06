@@ -17,6 +17,7 @@ const pageSource = [
   "src/interface/home/useHomeViewModel.ts",
   "src/interface/home/useConversationActions.ts",
   "src/components/home/ConversationComposer.tsx",
+  "src/components/composer/WorkerLaunchControls.tsx",
   "src/components/home/QueuedMessageDrawer.tsx",
   "src/components/home/WorkersSidebar.tsx",
   "src/components/WorkerCard.tsx",
@@ -111,8 +112,9 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain("effort: resolveComposerEffortValue(args.selectedEffort)");
   // Every request that carries worker preferences builds them from one frozen
   // selection, so none of them can pick up a composer reset mid-flight.
-  expect(pageSource.match(/buildLaunchPreferenceBody\(/g)).toHaveLength(4);
-  expect(pageSource).toContain("options={composerWorkerOptions}");
+  // Preset commands carry no composer preferences: the server owns their worker.
+  expect(pageSource.match(/buildLaunchPreferenceBody\(/g)).toHaveLength(3);
+  expect(pageSource).toContain("options: composerWorkerOptions,");
   expect(composerSelectSource).toContain("options.map");
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)');
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)');
@@ -125,7 +127,7 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain('const nextEffort = resolveComposerEffortForPair(saved);');
   expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, key, selectedEffort)');
   expect(pageSource).toContain("const activeWorkerModelOptions = useMemo(");
-  expect(pageSource).toContain("options={activeWorkerModelOptions}");
+  expect(pageSource).toContain("options: activeWorkerModelOptions,");
   expect(composerModelPickerSource).toContain("options.map");
   expect(pageSource).not.toContain('if (selectedCliAgent !== "auto") {\n      setSelectedCliAgent("auto");');
   expect(pageSource).toContain('hydratedRunSelectionId: null');
@@ -242,7 +244,6 @@ test("mobile composer keeps the workspace chip above the input and the settings 
   expect(mobileComposerSettingsSource).toContain('<SheetContent data-composer-settings-dialog="true" side="bottom"');
   expect(mobileComposerSettingsSource).toContain("disabled={descriptorArgs.disabled}");
   expect(mobileComposerSettingsSource).not.toContain("MobileComposerChip");
-  expect(mobileComposerSettingsSource).not.toContain('t("settings.commitAgent.cli")');
   expect(mobileComposerSettingsSource).toContain("getMobileComposerSettingDescriptors");
   expect(mobileComposerSettingsSource).toContain("useI18nSnapshot()");
   expect(pageSource).toContain("<MobileComposerSettings");

@@ -347,7 +347,6 @@ const unlockedHandoffCoordinator = createHandoffCoordinator({
       parentRunId: source.id,
       forkedFromMessageId: handoff.forkedFromMessageId,
       gitBaselineJsonOverride: JSON.stringify(baseline),
-      bypassCommitWorkerSettings: true,
       bypassHandoffFence: true,
     });
     const targetWorker = await db.select().from(workers).where(eq(workers.runId, created.runId)).orderBy(desc(workers.createdAt)).limit(1).get();

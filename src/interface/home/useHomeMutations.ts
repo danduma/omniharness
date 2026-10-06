@@ -7,7 +7,7 @@ import type { PendingChatAttachment } from "@/lib/chat-attachments";
 import { mergeAppErrors } from "@/lib/app-errors";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
 import { runtimeErrorMessage } from "@/runtime-api/request";
-import { getManualCommitPrompt, getManualProjectCommitPrompt, type ManualCommitAction } from "@/lib/commit-workflow";
+import { getManualCommitPrompt, type ManualCommitAction } from "@/lib/commit-workflow";
 import { applyRunRecoveryOptimisticUpdate, type RecoverableConversationState } from "@/lib/run-recovery-state";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
@@ -809,18 +809,19 @@ export function useHomeMutations({
     },
   });
 
-  const autoCommitProject = useMutation({
+  const runPresetCommand = useMutation({
     onMutate: () => ({
       selectedRunIdAtStart: homeUiStateManager.getSnapshot().selectedRunId,
       commandAtStart: homeUiStateManager.getSnapshot().command,
       attachmentsAtStart: homeUiStateManager.getSnapshot().attachments,
     }),
-    mutationFn: async (payload: { projectPath: string; action: ManualCommitAction }) => {
+    // The server resolves the preset's prompt and worker from saved settings,
+    // so the run never follows the composer's current CLI/model choice.
+    mutationFn: async (payload: { projectPath: string; presetCommandId: string }) => {
       return runtimeApis.conversations.create({
           mode: "commit",
-          command: getManualProjectCommitPrompt(payload.action),
+          presetCommandId: payload.presetCommandId,
           projectPath: payload.projectPath,
-          ...buildLaunchPreferenceBody(composerLaunchSelection),
         }) as Promise<{ runId?: string } & CreatedConversationSnapshot>;
     },
     onSuccess: (data, _variables, context) => {
@@ -1098,7 +1099,7 @@ export function useHomeMutations({
     sendQueuedMessageNow,
     interruptQueuedMessage,
     autoCommitChat,
-    autoCommitProject,
+    runPresetCommand,
     stopSupervisor,
     stopWorker,
     stopWorkerTerminalProcess,

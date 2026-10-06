@@ -51,6 +51,7 @@ const terminalSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/Terminal.tsx"),
   "utf8"
 );
+const globalsCssSource = readSource("src/interface/styles/globals.css");
 const cliBrandIconsSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/cli-brand-icons.tsx"),
   "utf8"
@@ -774,6 +775,16 @@ test("worker output exposes copy from a bottom-right mobile actions menu", () =>
   expect(pageSource).toContain('t("conversation.message.copyAria")');
 });
 
+test("assistant message actions fall back to a tappable menu on touch devices", () => {
+  expect(globalsCssSource).toContain("@custom-variant touch (@media (hover: none));");
+  expect(terminalSource).toContain("function AssistantMessageTouchMenu");
+  expect(terminalSource).toContain("<AssistantMessageTouchMenu");
+  expect(terminalSource).toContain("hidden items-center text-muted-foreground/70 touch:flex");
+  expect(terminalSource).toContain("z-10 flex items-center text-muted-foreground/70 touch:hidden");
+  expect(terminalSource).toContain('aria-label={t("conversation.message.actionsAria")}');
+  expect(terminalSource).toContain("<DropdownMenuSub key={action.label}>");
+});
+
 test("conversation sidebar remembers scroll across mobile drawer remounts", () => {
   expect(conversationSidebarSource).toContain("class ConversationSidebarScrollManager");
   expect(conversationSidebarSource).toContain("scrollTopBySurface");
@@ -843,7 +854,7 @@ test("direct conversations render the user transcript next to the worker surface
 
 test("settings entry opens the reorganized settings dialog", () => {
   expect(pageSource).toContain('activeSettingsTab: "general"');
-  expect(readSource("src/shared/home-types.ts")).toContain('export type SettingsTab = "general" | "models" | "credentials" | "agents" | "runtime" | "memory"');
+  expect(readSource("src/shared/home-types.ts")).toContain('export type SettingsTab = "general" | "presets" | "models" | "credentials" | "agents" | "runtime" | "memory"');
   expect(pageSource).toContain('import("@/components/home/SettingsDialog")');
   expect(pageSource).toContain("settingsDraftManager");
 });
@@ -1048,7 +1059,7 @@ test("new conversations expose only direct control and existing direct runs lock
   expect(pageSource).toContain('selectedConversationMode={activeComposerMode}');
   expect(pageSource).toContain('const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct"');
   expect(pageSource).not.toContain("Direct worker:");
-  expect(pageSource).toContain("{shouldLockDirectWorker ? (");
+  expect(pageSource).toContain("lockedWorkerLabel={shouldLockDirectWorker ? lockedDirectWorkerLabel : null}");
   expect(pageSource).toContain('mode: payload.launch.conversationMode');
 });
 

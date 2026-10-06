@@ -3,17 +3,11 @@ import { randomUUID } from "crypto";
 import { db } from "@/server/db";
 import { eq } from "drizzle-orm";
 import { accounts, artifactStreams, executionEvents, messages, plans, queuedConversationMessages, runs, settings, supervisorInterventions, workerCounters, workerCredentialAllocations, workerTokenUsage, workers } from "@/server/db/schema";
-import { AUTO_COMMIT_PROJECT_PROMPT } from "@/lib/conversation-visuals";
 import {
-  DEFAULT_COMMIT_WORKER_EFFORT,
-  DEFAULT_COMMIT_WORKER_MODEL,
-  DEFAULT_COMMIT_WORKER_TYPE,
   GIT_AUTO_COMMIT_MILESTONES_SETTING,
-  GIT_COMMIT_WORKER_EFFORT_SETTING,
-  GIT_COMMIT_WORKER_MODEL_SETTING,
-  GIT_COMMIT_WORKER_TYPE_SETTING,
   GIT_PUSH_ON_COMMIT_SETTING,
 } from "@/lib/commit-workflow";
+import { PRESET_COMMANDS_SETTING, buildDefaultPresetCommands, serializePresetCommands } from "@/lib/preset-commands";
 import { getAppDataPath, getAppRoot } from "@/server/app-root";
 import type { GitWorkspaceSnapshot, GitWorkspaceTarget } from "@/lib/git-workspace";
 import {
@@ -29,6 +23,8 @@ import {
 } from "@/server/conversations/worker-turn-gate";
 import { ResourceAdmissionError } from "@/server/agent-runtime/resource-admission";
 import { __resetArtifactStreamCachesForTests } from "@/server/artifacts/stream-metadata";
+
+const AUTO_COMMIT_PROJECT_PROMPT = buildDefaultPresetCommands()[0].prompt;
 
 const {
   mockStartSupervisorRun,
@@ -1368,18 +1364,26 @@ describe("POST /api/conversations", () => {
     expect(createdRun?.mode).toBe("commit");
   });
 
-  it("uses the dedicated saved agent for project commit runs", async () => {
-    await db.insert(settings).values([
-      { key: GIT_COMMIT_WORKER_TYPE_SETTING, value: "claude", updatedAt: new Date() },
-      { key: GIT_COMMIT_WORKER_MODEL_SETTING, value: "custom-commit-model", updatedAt: new Date() },
-      { key: GIT_COMMIT_WORKER_EFFORT_SETTING, value: "extra high", updatedAt: new Date() },
-    ]);
+  it("runs a saved preset command on its own worker instead of the composer selection", async () => {
+    await db.insert(settings).values([{
+      key: PRESET_COMMANDS_SETTING,
+      value: serializePresetCommands([{
+        id: "release-notes",
+        name: "Release notes",
+        prompt: "Draft release notes from the commits since the last tag.",
+        workerType: "claude",
+        accountId: null,
+        model: "custom-commit-model",
+        effort: "xhigh",
+      }]),
+      updatedAt: new Date(),
+    }]);
 
     const response = await POST(new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
-        mode: "commit",
-        command: AUTO_COMMIT_PROJECT_PROMPT,
+        presetCommandId: "release-notes",
+        command: "ignored composer text",
         projectPath: "/workspace/app",
         preferredWorkerType: "codex",
         preferredWorkerModel: "latest-composer-model",
@@ -1392,16 +1396,19 @@ describe("POST /api/conversations", () => {
     const payload = await response.json();
     const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
     const createdWorker = await db.select().from(workers).where(eq(workers.runId, payload.runId)).get();
-    const commitAgentEvent = getNamedEventsSince(0).events.find((entry) => entry.event.kind === "conversation.commit_agent_selected");
+    const initialMessage = await db.select().from(messages).where(eq(messages.runId, payload.runId)).get();
+    const presetEvent = getNamedEventsSince(0).events.find((entry) => entry.event.kind === "conversation.preset_command_selected");
 
     expect(createdRun).toMatchObject({
       mode: "commit",
+      title: "Release notes",
       preferredWorkerType: "claude",
       preferredWorkerModel: "custom-commit-model",
       preferredWorkerEffort: "xhigh",
       allowedWorkerTypes: JSON.stringify(["claude"]),
       preferredWorkerAccountId: null,
     });
+    expect(initialMessage?.content).toBe("Draft release notes from the commits since the last tag.");
     expect(createdWorker).toMatchObject({
       type: "claude",
       effectiveLaunchModel: "custom-commit-model",
@@ -1411,23 +1418,23 @@ describe("POST /api/conversations", () => {
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
       type: "claude",
       model: "custom-commit-model",
-      effort: "extra high",
     }));
-    expect(commitAgentEvent?.event).toEqual({
-      kind: "conversation.commit_agent_selected",
+    expect(presetEvent?.event).toEqual({
+      kind: "conversation.preset_command_selected",
       runId: payload.runId,
+      presetCommandId: "release-notes",
       workerType: "claude",
       model: "custom-commit-model",
-      effort: "extra high",
+      effort: "xhigh",
+      accountId: null,
     });
   });
 
-  it("uses deterministic defaults for commit runs when the settings are absent", async () => {
+  it("runs the seeded commit preset when no presets have been saved", async () => {
     const response = await POST(new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
-        mode: "commit",
-        command: AUTO_COMMIT_PROJECT_PROMPT,
+        presetCommandId: "commit-project",
         projectPath: "/workspace/app",
         preferredWorkerType: "gemini",
         preferredWorkerModel: "latest-composer-model",
@@ -1440,10 +1447,29 @@ describe("POST /api/conversations", () => {
     const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
 
     expect(createdRun).toMatchObject({
-      preferredWorkerType: DEFAULT_COMMIT_WORKER_TYPE,
-      preferredWorkerModel: DEFAULT_COMMIT_WORKER_MODEL,
-      preferredWorkerEffort: DEFAULT_COMMIT_WORKER_EFFORT,
-      allowedWorkerTypes: JSON.stringify([DEFAULT_COMMIT_WORKER_TYPE]),
+      mode: "commit",
+      title: "Commit project",
+      preferredWorkerType: "codex",
+      preferredWorkerModel: "gpt-5.6-sol",
+      preferredWorkerEffort: "medium",
+      allowedWorkerTypes: JSON.stringify(["codex"]),
+    });
+  });
+
+  it("refuses an unknown preset command and surfaces why", async () => {
+    await db.insert(settings).values([{ key: PRESET_COMMANDS_SETTING, value: "[]", updatedAt: new Date() }]);
+
+    const response = await POST(new Request("http://localhost/api/conversations", {
+      method: "POST",
+      body: JSON.stringify({ presetCommandId: "commit-project", projectPath: "/workspace/app" }),
+    }));
+
+    expect(response.status).toBe(404);
+    expect(await db.select().from(runs)).toEqual([]);
+    const surfaced = getNamedEventsSince(0).events.find((entry) => entry.event.kind === "error.surfaced");
+    expect(surfaced?.event).toMatchObject({
+      code: "conversation.preset_command_missing",
+      presetCommandId: "commit-project",
     });
   });
 

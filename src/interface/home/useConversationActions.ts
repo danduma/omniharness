@@ -29,7 +29,7 @@ type MutationsRef = {
   };
   resumeRunRecovery: { mutate: (vars: { runId: string }) => void };
   autoCommitChat: { mutate: (vars: { runId: string; action: ManualCommitAction }) => void; isPending: boolean };
-  autoCommitProject: { mutate: (vars: { projectPath: string; action: ManualCommitAction }) => void; isPending: boolean };
+  runPresetCommand: { mutate: (vars: { projectPath: string; presetCommandId: string }) => void; isPending: boolean };
   commitWorkflowSettings: { mutate: (vars: { key: string; value: string }) => void; error: Error | null };
   cancelQueuedMessage: { mutate: (vars: { runId: string; messageId: string }) => void };
 };
@@ -137,8 +137,8 @@ export function useConversationActions({
     mutations.autoCommitChat.mutate({ runId: selectedRunId, action });
   };
 
-  const handleManualCommitProject = (projectPath: string, action: ManualCommitAction = "commit") => {
-    mutations.autoCommitProject.mutate({ projectPath, action });
+  const handleRunPresetCommand = (projectPath: string, presetCommandId: string) => {
+    mutations.runPresetCommand.mutate({ projectPath, presetCommandId });
   };
 
   const beginConversationInProject = (projectPath: string) => {
@@ -373,7 +373,7 @@ export function useConversationActions({
     handleReorderProjects,
     updateCommitWorkflowSetting,
     handleManualCommitChat,
-    handleManualCommitProject,
+    handleRunPresetCommand,
     beginConversationInProject,
     handleSelectRun,
     handleStartRenamingRun,

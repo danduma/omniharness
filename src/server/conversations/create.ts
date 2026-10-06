@@ -25,10 +25,10 @@ import { getAppDataPath, getAppRoot } from "@/server/app-root";
 import { appendAttachmentContext, normalizeChatAttachments, resolveImageAttachments, serializeChatAttachments, type ChatAttachment, type ResolvedImageAttachment } from "@/lib/chat-attachments";
 import {
   GIT_AUTO_COMMIT_MILESTONES_SETTING,
-  normalizeCommitWorkerSettings,
   GIT_PUSH_ON_COMMIT_SETTING,
   parseBooleanSetting,
 } from "@/lib/commit-workflow";
+import { findPresetCommand, type PresetCommand } from "@/lib/preset-commands";
 import { captureGitBaseline } from "@/server/git/auto-commit";
 import { serializeMessageRecord } from "./message-records";
 import { buildInitialConversationTitle } from "./initial-title";
@@ -330,14 +330,33 @@ function shouldCaptureCommitWorkflowForMode(mode: ConversationMode) {
   return mode === "implementation" || mode === "direct";
 }
 
-async function readCommitWorkflowSettings() {
+async function readSettingValues() {
   const rows = await db.select().from(settings);
-  const values = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+}
+
+async function readCommitWorkflowSettings() {
+  const values = await readSettingValues();
   return {
     autoCommitMilestones: parseBooleanSetting(values[GIT_AUTO_COMMIT_MILESTONES_SETTING], false),
     pushOnCommit: parseBooleanSetting(values[GIT_PUSH_ON_COMMIT_SETTING], false),
-    commitWorker: normalizeCommitWorkerSettings(values),
   };
+}
+
+async function resolvePresetCommand(presetCommandId: string): Promise<PresetCommand> {
+  const preset = findPresetCommand(await readSettingValues(), presetCommandId);
+  if (!preset || !preset.name.trim() || !preset.prompt.trim()) {
+    const message = `Preset command "${presetCommandId}" was not found. It may have been removed in Settings.`;
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "conversation.preset_command_missing",
+      message,
+      surface: "toast",
+      presetCommandId,
+    });
+    throw Object.assign(new Error(message), { status: 404 });
+  }
+  return preset;
 }
 
 type GitWorkspaceLaunchRequest = {
@@ -816,15 +835,22 @@ export async function createConversation(args: {
   parentRunId?: string | null;
   forkedFromMessageId?: string | null;
   gitBaselineJsonOverride?: string | null;
-  bypassCommitWorkerSettings?: boolean;
   bypassHandoffFence?: boolean;
+  /**
+   * Runs a saved project preset command. The preset owns the prompt, title and
+   * worker (CLI, account, model, effort); the request's command and worker
+   * preferences are ignored so the run cannot drift onto the composer's choice.
+   */
+  presetCommandId?: string | null;
 }) {
-  const command = args.command.trim();
+  const presetCommandId = args.presetCommandId?.trim() || null;
+  const presetCommand = presetCommandId ? await resolvePresetCommand(presetCommandId) : null;
+  const command = presetCommand ? presetCommand.prompt.trim() : args.command.trim();
   // Resolve the client request (which may be the "omni" alias) into the stored
   // run mode plus phase. `usePlanner` is true whenever the opening turn should
   // run the interactive planner worker rather than the supervisor: legacy
   // planning runs, or an Omni run that still needs a plan.
-  const resolvedRequest = resolveOmniRequest(args.mode, command);
+  const resolvedRequest = resolveOmniRequest(presetCommand ? "commit" : args.mode, command);
   const isExternalClaudeResume = Boolean(args.externalClaudeSessionId?.trim());
   const externalSessionId = args.externalClaudeSessionId?.trim() || null;
   const requestedExternalWorkerType = args.preferredWorkerType?.trim()
@@ -836,15 +862,12 @@ export async function createConversation(args: {
   const mode = isExternalClaudeResume ? "direct" : resolvedRequest.runMode;
   const phase = isExternalClaudeResume ? null : resolvedRequest.phase;
   const usePlanner = !isExternalClaudeResume && (phase === "planning" || mode === "planning");
-  const commitWorkerSettings = mode === "commit" && !args.bypassCommitWorkerSettings
-    ? (await readCommitWorkflowSettings()).commitWorker
-    : null;
-  const effectivePreferredWorkerType = commitWorkerSettings?.workerType ?? args.preferredWorkerType;
-  const effectivePreferredWorkerModel = commitWorkerSettings?.model ?? args.preferredWorkerModel;
-  const effectivePreferredWorkerEffort = commitWorkerSettings?.effort ?? args.preferredWorkerEffort;
-  const effectivePreferredWorkerAccountId = commitWorkerSettings ? null : args.preferredWorkerAccountId;
-  const effectiveAllowedWorkerTypes = commitWorkerSettings
-    ? [commitWorkerSettings.workerType]
+  const effectivePreferredWorkerType = presetCommand?.workerType ?? args.preferredWorkerType;
+  const effectivePreferredWorkerModel = presetCommand?.model ?? args.preferredWorkerModel;
+  const effectivePreferredWorkerEffort = presetCommand?.effort ?? args.preferredWorkerEffort;
+  const effectivePreferredWorkerAccountId = presetCommand ? presetCommand.accountId : args.preferredWorkerAccountId;
+  const effectiveAllowedWorkerTypes = presetCommand
+    ? [presetCommand.workerType]
     : args.allowedWorkerTypes;
   const requestedProjectPath = args.projectPath?.trim() || getAppRoot();
   const requestedModel = effectivePreferredWorkerModel?.trim() || null;
@@ -891,7 +914,9 @@ export async function createConversation(args: {
     // (see `adoptAgentGeneratedTitle`). OmniHarness used to spend a supervisor
     // LLM call re-summarising this same text, which is both worse than the
     // agent's own title and a second provider to keep working.
-    const defaultTitle = externalClaudeSession?.title?.trim() || getDefaultConversationTitle(mode, command);
+    const defaultTitle = externalClaudeSession?.title?.trim()
+      || presetCommand?.name.trim()
+      || getDefaultConversationTitle(mode, command);
     const allowedWorkerTypes = parseAllowedWorkerTypes(
       Array.isArray(effectiveAllowedWorkerTypes)
         ? JSON.stringify(effectiveAllowedWorkerTypes)
@@ -963,13 +988,15 @@ export async function createConversation(args: {
     });
     runCreated = true;
 
-    if (commitWorkerSettings) {
+    if (presetCommand) {
       emitNamedEvent({
-        kind: "conversation.commit_agent_selected",
+        kind: "conversation.preset_command_selected",
         runId,
-        workerType: commitWorkerSettings.workerType,
-        model: commitWorkerSettings.model,
-        effort: commitWorkerSettings.effort,
+        presetCommandId: presetCommand.id,
+        workerType: presetCommand.workerType,
+        model: presetCommand.model,
+        effort: presetCommand.effort,
+        accountId: presetCommand.accountId,
       });
     }
 
