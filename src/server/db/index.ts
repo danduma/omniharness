@@ -445,6 +445,13 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_at integer NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS public_api_rate_limits (
+  project_id text PRIMARY KEY NOT NULL,
+  window_started_at integer NOT NULL,
+  request_count integer NOT NULL,
+  updated_at integer NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS auth_sessions (
   id text PRIMARY KEY NOT NULL,
   token_hash text NOT NULL,

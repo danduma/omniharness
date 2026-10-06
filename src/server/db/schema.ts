@@ -386,6 +386,13 @@ export const settings = sqliteTable('settings', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });
 
+export const publicApiRateLimits = sqliteTable('public_api_rate_limits', {
+  projectId: text('project_id').primaryKey(),
+  windowStartedAt: integer('window_started_at', { mode: 'timestamp' }).notNull(),
+  requestCount: integer('request_count').notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
 export const authSessions = sqliteTable('auth_sessions', {
   id: text('id').primaryKey(),
   tokenHash: text('token_hash').notNull(),

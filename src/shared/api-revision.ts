@@ -40,7 +40,7 @@ export const ROUTE_CONTRACT_DECLARATION = {
   // purge, connect) and the project image preview route.
   // These are additive capabilities, so the revision window is unchanged:
   // an older client simply never calls the new routes.
-  fingerprint: "fnv1a32:1143f776",
+  fingerprint: "fnv1a32:1b6ec906",
   classification: "additive-capability",
   capability: "project_file_image_preview",
   apiRevision: 1,
