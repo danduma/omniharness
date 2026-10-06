@@ -3,6 +3,10 @@
 @import "shadcn/tailwind.css";
 
 @custom-variant dark (&:is(.dark *));
+/* Devices that cannot hover (phones, tablets without a pointer). Hover-revealed
+   controls need a tappable fallback here; width breakpoints miss iPads with
+   trackpads and narrow desktop windows. */
+@custom-variant touch (@media (hover: none));
 
 :root {
   --font-geist-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
