@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
-import { ALargeSmall, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, ExternalLink, LoaderCircle, MoreHorizontal } from "lucide-react";
+import { ALargeSmall, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, ExternalLink, LoaderCircle, Menu } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { ProjectFileContextMenu } from "@/components/ProjectFileContextMenu";
 import { conversationCopyNoticeManager, terminalUiManager } from "@/components/component-state-managers";
@@ -2159,8 +2159,11 @@ function GeneratedImagesCarousel({ activity }: { activity: GeneratedImagesActivi
 /**
  * Touch-only stand-in for the hover toolbar on assistant messages. Phones never
  * hover, so the overlay stayed invisible and untappable there; this puts copy,
- * the message actions, and the model/time behind one in-flow ⋯ button instead
- * of showing the whole toolbar under every message.
+ * the message actions, and the model/time behind one button overlaid on the
+ * message's bottom-right corner, so it costs no row of its own.
+ *
+ * Deliberately not an ellipsis: a "…" under the last line of an agent message
+ * reads as "the model is still typing" or "the reply was cut off".
  */
 function AssistantMessageTouchMenu({
   actions,
@@ -2174,16 +2177,25 @@ function AssistantMessageTouchMenu({
   onCopy: () => void;
 }) {
   return (
-    <div className="relative hidden items-center text-muted-foreground/70 touch:flex">
+    <div className="pointer-events-none absolute bottom-0 right-0 z-10 hidden items-center gap-1 text-muted-foreground/70 touch:flex">
+      {copied ? (
+        <span
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none whitespace-nowrap rounded-md border border-border/70 bg-popover px-2 py-1 text-[11px] font-medium leading-none text-popover-foreground shadow-sm"
+        >
+          {t("conversation.message.copiedNotice")}
+        </span>
+      ) : null}
       <DropdownMenu>
         <DropdownMenuTrigger
           aria-label={t("conversation.message.actionsAria")}
           title={t("conversation.message.actionsAria")}
-          className="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-muted data-popup-open:text-foreground"
+          className="pointer-events-auto inline-flex h-8 w-8 items-center justify-center rounded-md bg-background/80 shadow-sm backdrop-blur-[2px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-muted data-popup-open:text-foreground"
         >
-          <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
+          <Menu className="h-4 w-4" aria-hidden="true" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" side="top">
+        <DropdownMenuContent align="end" side="top">
           {metaLabel ? (
             <DropdownMenuLabel className="whitespace-nowrap font-normal tabular-nums">{metaLabel}</DropdownMenuLabel>
           ) : null}
@@ -2226,15 +2238,6 @@ function AssistantMessageTouchMenu({
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
-      {copied ? (
-        <span
-          role="status"
-          aria-live="polite"
-          className="pointer-events-none whitespace-nowrap rounded-md border border-border/70 bg-popover px-2 py-1 text-[11px] font-medium leading-none text-popover-foreground shadow-sm"
-        >
-          {t("conversation.message.copiedNotice")}
-        </span>
-      ) : null}
     </div>
   );
 }
@@ -2491,7 +2494,7 @@ const ActivityRow = memo(function ActivityRow({
               // screen to hit deliberately.
               //
               // Touch screens never fire `group-hover`, so there the overlay
-              // is dropped for the in-flow menu below.
+              // is dropped for the always-visible touch menu below.
               <div className="pointer-events-none absolute bottom-0 left-0 z-10 flex items-center text-muted-foreground/70 touch:hidden sm:left-auto sm:right-0">
                 <span className={cn(
                   "pointer-events-none relative inline-flex items-center gap-1 rounded-md bg-background/80 opacity-0 shadow-sm backdrop-blur-[2px] transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-hover/agent-message:pointer-events-auto group-hover/agent-message:opacity-100",
