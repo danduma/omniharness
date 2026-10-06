@@ -610,6 +610,17 @@ export class RuntimeClient implements acp.Client {
     if (update.sessionUpdate === "usage_update") {
       applySessionUsageUpdate(record, update as unknown as Record<string, unknown>);
       settleUnpromptedTurnAtResult(record, update as unknown as Record<string, unknown>);
+      if (isTurnResultUsageUpdate(update as unknown as Record<string, unknown>)) {
+        record.promptTurnWatch?.onTurnResult();
+      }
+    } else if (
+      update.sessionUpdate === "agent_message_chunk"
+      || update.sessionUpdate === "agent_thought_chunk"
+      || update.sessionUpdate === "tool_call"
+    ) {
+      // Only output a turn produces counts. Trailing usage, title and status
+      // updates follow a turn's result and must not read as a new turn.
+      record.promptTurnWatch?.onTurnActivity();
     }
 
     const normalized = normalizeSessionUpdate(update);

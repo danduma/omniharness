@@ -49,6 +49,7 @@ import type {
   ElicitationResponse,
   PendingElicitation,
   PendingPermission,
+  PromptTurnWatch,
   StartAgentInput,
 } from "./types";
 import { RuntimeHttpError } from "./types";
@@ -520,6 +521,14 @@ function asStringArray(value: unknown, field: string): string[] {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+const ABSORBED_PROMPT = Symbol("absorbed-prompt");
+
+/** claude-agent-acp advertises `_meta.claudeCode.promptQueueing` at initialize. */
+function adapterQueuesPrompts(record: AgentRecord) {
+  const meta = asRecord(record.agentCapabilities?._meta);
+  return asRecord(meta?.claudeCode)?.promptQueueing === true;
 }
 
 function asNonEmptyString(value: unknown): string | null {
@@ -1010,6 +1019,7 @@ function readCachedEndpointCheck(urlString: string): EndpointCheckResult | null 
 
 export class AgentRuntimeManager {
   readonly agents = new Map<string, AgentRecord>();
+  private readonly promptSettlements = new WeakMap<AgentRecord, Promise<void>>();
   private readonly chunkSubscribers = new Map<string, Set<(chunk: string) => void>>();
   private readonly workerPool = new WorkerPool();
   private readonly startingAgentAccounts = new Map<string, string | null>();
@@ -1031,6 +1041,7 @@ export class AgentRuntimeManager {
   private readonly poolMemberMaxAgeMs: number;
   private readonly agentIdleTimeoutMs: number;
   private readonly agentExitGraceMs: number;
+  private readonly absorbedPromptQuietMs: number;
 
   constructor(
     private readonly options: {
@@ -1064,6 +1075,13 @@ export class AgentRuntimeManager {
     this.agentExitGraceMs = readPositiveInteger(
       baseEnv.OMNIHARNESS_AGENT_EXIT_GRACE_MS,
       60_000,
+    );
+    // Longer than a queued prompt takes to show output once the turn ahead of
+    // it ends (hooks plus time to first token on a large context), short
+    // enough that an absorbed prompt does not hold the conversation for long.
+    this.absorbedPromptQuietMs = readPositiveInteger(
+      baseEnv.OMNIHARNESS_ABSORBED_PROMPT_QUIET_MS,
+      30_000,
     );
     const sweepIntervalMs = readPositiveInteger(
       baseEnv.OMNIHARNESS_RUNTIME_SWEEP_INTERVAL_MS,
@@ -2290,7 +2308,7 @@ export class AgentRuntimeManager {
       throw new RuntimeHttpError(404, `Agent not found: ${name}`);
     }
     assertAgentCanReceiveRequest(record);
-    if (record.state === "working") {
+    if (record.state === "working" || record.promptInFlight) {
       throw new RuntimeHttpError(409, `Agent is busy: ${name}`);
     }
     record.state = "working";
@@ -2300,6 +2318,8 @@ export class AgentRuntimeManager {
     record.lastError = null;
     record.stopReason = null;
     record.promptInFlight = true;
+    let settlePrompt!: () => void;
+    this.promptSettlements.set(record, new Promise<void>((resolve) => { settlePrompt = resolve; }));
     const unsubscribe = onChunk ? this.subscribeChunks(name, onChunk) : null;
 
     try {
@@ -2333,13 +2353,35 @@ export class AgentRuntimeManager {
         sessionId: record.sessionId,
         prompt: contentBlocks,
       } as Parameters<acp.ClientSideConnection["prompt"]>[0];
-      const response = await retrySupervisorRequest(
-        () => this.runAgentRequest(record, () => record.connection.prompt(promptParams)),
+      const absorption = this.watchForAbsorbedPrompt(record);
+      let abandoned = false;
+      const promptRequest = retrySupervisorRequest(
+        () => {
+          // A retry re-sends the prompt. Once absorbed, the model has already
+          // answered it, so sending it again would deliver the message twice.
+          if (abandoned) throw new Error(`Absorbed prompt abandoned: ${name}`);
+          return this.runAgentRequest(record, () => record.connection.prompt(promptParams));
+        },
         {
           maxDelayMs: WORKER_CONNECTION_RESET_MAX_BACKOFF_MS,
           retryIndefinitelyWhen: isRecoverableConnectionSupervisorError,
         },
       );
+      let response: unknown;
+      try {
+        response = await Promise.race([promptRequest, absorption.absorbed]);
+      } finally {
+        absorption.dispose();
+      }
+      if (response === ABSORBED_PROMPT) {
+        // The model answered this prompt inside the turn that absorbed it, and
+        // that turn is over. The abandoned request belongs to no turn now; if
+        // the adapter ever settles or fails it, nothing is waiting for it.
+        abandoned = true;
+        promptRequest.catch(() => undefined);
+        emitNamedEvent({ kind: "acp.prompt_absorbed", workerId: name, quietMs: this.absorbedPromptQuietMs });
+        response = { stopReason: "end_turn" };
+      }
       const responseRecord = asRecord(response);
       record.stopReason = typeof responseRecord?.stopReason === "string" ? responseRecord.stopReason : null;
       applyPromptUsage(record, responseRecord?.usage);
@@ -2366,8 +2408,53 @@ export class AgentRuntimeManager {
       throw error;
     } finally {
       record.promptInFlight = false;
+      this.promptSettlements.delete(record);
+      settlePrompt();
       unsubscribe?.();
     }
+  }
+
+  /**
+   * claude-agent-acp queues prompts (`promptQueueing`). A prompt that arrives
+   * while Claude runs a turn of its own, such as one started by a background
+   * task notification, is folded into that turn at the next tool boundary. The
+   * model answers it there, but the adapter never settles the prompt request,
+   * so the ask used to wait forever and every later message on the worker
+   * queued behind it (session fc8d9cb681ef ignored the user for 35 minutes).
+   *
+   * A turn ending while the prompt is unsettled is not proof by itself: the
+   * prompt may be queued behind that turn and start next. So the watch waits
+   * for a quiet period after a turn result. Any output (a message, a thought,
+   * a new tool call) means a turn started and disarms it; the next result
+   * re-arms it.
+   */
+  private watchForAbsorbedPrompt(record: AgentRecord): { absorbed: Promise<typeof ABSORBED_PROMPT>; dispose(): void } {
+    if (!adapterQueuesPrompts(record)) {
+      return { absorbed: new Promise(() => undefined), dispose: () => undefined };
+    }
+    let quietTimer: ReturnType<typeof setTimeout> | null = null;
+    let markAbsorbed!: (value: typeof ABSORBED_PROMPT) => void;
+    const absorbed = new Promise<typeof ABSORBED_PROMPT>((resolve) => { markAbsorbed = resolve; });
+    const disarm = () => {
+      if (quietTimer) clearTimeout(quietTimer);
+      quietTimer = null;
+    };
+    const watch: PromptTurnWatch = {
+      onTurnResult: () => {
+        disarm();
+        quietTimer = setTimeout(() => markAbsorbed(ABSORBED_PROMPT), this.absorbedPromptQuietMs);
+        quietTimer.unref?.();
+      },
+      onTurnActivity: disarm,
+    };
+    record.promptTurnWatch = watch;
+    return {
+      absorbed,
+      dispose: () => {
+        disarm();
+        if (record.promptTurnWatch === watch) record.promptTurnWatch = null;
+      },
+    };
   }
 
   async cancelAgentTurn(name: string) {
@@ -2377,13 +2464,33 @@ export class AgentRuntimeManager {
     }
     assertAgentCanReceiveRequest(record);
     const cancelParams = { sessionId: record.sessionId } as Parameters<acp.ClientSideConnection["cancel"]>[0];
-    await this.runAgentRequest(record, () => record.connection.cancel(cancelParams));
-    const cancelledPermissions = this.cancelAllPendingPermissions(record);
-    const cancelledElicitations = this.cancelAllPendingElicitations(record);
-    record.updatedAt = nowIso();
-    if (record.state === "working") {
-      record.state = "idle";
+    // Sending the cancel notification does not settle the outstanding prompt.
+    // Keep admission closed until its owner has finished updating the record.
+    const settlement = this.promptSettlements.get(record);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let cancelledPermissions = 0;
+    let cancelledElicitations = 0;
+    try {
+      await Promise.race([
+        (async () => {
+          await this.runAgentRequest(record, () => record.connection.cancel(cancelParams));
+          cancelledPermissions = this.cancelAllPendingPermissions(record);
+          cancelledElicitations = this.cancelAllPendingElicitations(record);
+          await settlement;
+        })(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new RuntimeHttpError(409, `Agent cancellation did not settle: ${name}`)), 5_000);
+        }),
+      ]);
+    } catch (error) {
+      emitNamedEvent({ kind: "acp.method_failed", workerId: name, method: "session/cancel", notification: true, reason: describeUnknownError(error) });
+      emitNamedEvent({ kind: "error.surfaced", code: "worker.cancel.failed", workerId: name, surface: "log", message: describeUnknownError(error), cause: null });
+      throw error;
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
+    record.updatedAt = nowIso();
+    emitNamedEvent({ kind: "acp.method_completed", workerId: name, method: "session/cancel", notification: true });
     return { ok: true, name: record.name, cancelledPermissions, cancelledElicitations };
   }
 

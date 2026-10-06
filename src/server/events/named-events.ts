@@ -125,6 +125,7 @@ export type SurfacedErrorCode =
   | "worker.plan.event_publish_failed"
   | "worker.plan.binding_hydration_failed"
   | "worker.prompt.image_attachment_unreadable"
+  | "worker.cancel.failed"
   | "worker.output_content_unavailable"
   | "worker.model.version_unavailable"
   // The requested model's *family* is not offered at all. Substituting another
@@ -1047,7 +1048,11 @@ export type AcpEvent =
   // The provider started or finished a turn nobody prompted (Codex /goal
   // continuation), so the runtime moved the agent between working and idle.
   | { kind: "acp.provider_turn_started"; workerId: string }
-  | { kind: "acp.provider_turn_ended"; workerId: string };
+  | { kind: "acp.provider_turn_ended"; workerId: string }
+  // claude-agent-acp folded a prompt into a turn Claude was already running
+  // and never settled the prompt, so the runtime settled it after `quietMs`
+  // with no new turn starting.
+  | { kind: "acp.prompt_absorbed"; workerId: string; quietMs: number };
 
 export type ClaudeModelGatewayEvent =
   | { kind: "claude_gateway.install_started"; operationId: string }

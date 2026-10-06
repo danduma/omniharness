@@ -126,6 +126,59 @@ afterEach(() => {
   }
 });
 
+describe("AgentRuntimeManager prompt cancellation", () => {
+  it("keeps the old prompt busy until it settles after cancellation", async () => {
+    const dir = createTempDir("omni-cancel-settlement-");
+    const manager = new AgentRuntimeManager({ env: { ...process.env, OMNIHARNESS_MEMORY_TRACE: "0" } });
+    try {
+      await startAgent(manager, dir, "cancel-settlement");
+      const record = manager.agents.get("cancel-settlement")!;
+      let finish!: (value: { stopReason: string }) => void;
+      vi.spyOn(record.connection, "prompt").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+      vi.spyOn(record.connection, "cancel").mockResolvedValue();
+      const original = manager.askAgent(record.name, "original");
+      void original.catch(() => undefined);
+      await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+      let cancelled = false;
+      const cancellation = manager.cancelAgentTurn(record.name).then(() => { cancelled = true; });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(record.state).toBe("working");
+      expect(cancelled).toBe(false);
+      await expect(manager.askAgent(record.name, "replacement")).rejects.toThrow("Agent is busy");
+      finish({ stopReason: "cancelled" });
+      await original;
+      await cancellation;
+      expect(record.state).toBe("idle");
+    } finally {
+      await manager.stopAgent("cancel-settlement");
+      manager.shutdownPools();
+    }
+  });
+  it("refuses a stuck cancellation instead of admitting an overlapping prompt", async () => {
+    const dir = createTempDir("omni-cancel-timeout-");
+    const manager = new AgentRuntimeManager({ env: { ...process.env, OMNIHARNESS_MEMORY_TRACE: "0" } });
+    let finish!: (value: { stopReason: string }) => void;
+    try {
+      await startAgent(manager, dir, "cancel-timeout");
+      const record = manager.agents.get("cancel-timeout")!;
+      vi.spyOn(record.connection, "prompt").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+      vi.spyOn(record.connection, "cancel").mockResolvedValue();
+      const original = manager.askAgent(record.name, "original");
+      await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+      await expect(manager.cancelAgentTurn(record.name)).rejects.toThrow("Agent cancellation did not settle");
+      await expect(manager.askAgent(record.name, "replacement")).rejects.toThrow("Agent is busy");
+      finish({ stopReason: "cancelled" });
+      await original;
+    } finally {
+      finish?.({ stopReason: "cancelled" });
+      await manager.stopAgent("cancel-timeout");
+      manager.shutdownPools();
+    }
+  });
+
+});
+
 describe("AgentRuntimeManager setMode permission draining", () => {
   it("applies a requested Claude effort through the session config before reporting it effective", async () => {
     const dir = createTempDir("omni-claude-effort-");

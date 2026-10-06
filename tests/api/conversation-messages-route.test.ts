@@ -646,6 +646,57 @@ describe("POST /api/conversations/[id]/messages", () => {
     expect(mockSpawnAgent).not.toHaveBeenCalled();
   });
 
+  it("queues a direct follow-up the agent refused as busy instead of dropping it", async () => {
+    // Claude can be running a turn the runner has not seen yet (one it started
+    // for a background-task notification). The follow-up used to be marked
+    // failed and go nowhere, so the user's message was silently ignored.
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+    await db.insert(plans).values({ id: planId, path: "busy-follow-up.md", status: "done", createdAt: now, updatedAt: now });
+    await db.insert(runs).values({ id: runId, planId, mode: "direct", status: "done", createdAt: now, updatedAt: now });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "idle",
+      cwd: "/workspace/app",
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+    mockAskAgent.mockRejectedValueOnce(new Error(`Ask failed: Agent is busy: ${workerId}`));
+    mockGetAgent.mockResolvedValue({
+      name: workerId,
+      type: "claude",
+      cwd: "/workspace/app",
+      state: "working",
+      outputEntries: [],
+      currentText: "",
+      lastText: "",
+    });
+
+    const response = await POST(new Request(`http://localhost/api/conversations/${runId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content: "Did you see this?" }),
+    }), { params: Promise.resolve({ id: runId }) });
+
+    expect(response.status).toBe(200);
+    await waitForConversationBackgroundTasksForTests();
+    const queued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.runId, runId)).all();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toMatchObject({
+      action: "queue",
+      status: "pending",
+      targetWorkerId: workerId,
+      content: "Did you see this?",
+    });
+  });
+
   it("rejects a client message id already owned by a non-user record", async () => {
     const planId = randomUUID();
     const runId = randomUUID();

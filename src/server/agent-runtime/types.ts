@@ -65,6 +65,13 @@ export type AgentOutputArchiveHandle = {
   readPage(input?: { cursor?: number; limit?: number }): Promise<OutputArchivePage>;
 };
 
+export type PromptTurnWatch = {
+  /** A turn ended: the adapter reported the SDK's turn `result`. */
+  onTurnResult(): void;
+  /** A turn is producing output: a message, a thought or a new tool call. */
+  onTurnActivity(): void;
+};
+
 export type AgentRecord = {
   name: string;
   type: string;
@@ -120,6 +127,12 @@ export type AgentRecord = {
   promptInFlight?: boolean;
   /** Last thread status the provider reported; true while it runs any turn, prompted or not. */
   providerTurnActive?: boolean;
+  /**
+   * Set by `askAgent` while its prompt is in flight on an adapter that queues
+   * prompts. The session-update handler reports turn boundaries to it so a
+   * prompt folded into another turn, and never settled, can be detected.
+   */
+  promptTurnWatch?: PromptTurnWatch | null;
   pendingPermissions: PendingPermission[];
   pendingElicitations: PendingElicitation[];
   activeTask: { taskId: string; subtaskId: string } | null;
