@@ -64,6 +64,18 @@ import {
   handleTerminalResizeRequest,
   handleTerminalStreamRequest,
 } from "./terminals";
+import {
+  handlePublicChatRequest,
+  handlePublicChatStatusRequest,
+  handlePublicChatStreamRequest,
+  handlePublicApiDiscoveryRequest,
+  handlePublicProjectChatMessageRequest,
+  handlePublicProjectChatRequest,
+  handlePublicProjectChatStopRequest,
+  handlePublicProjectChatStreamRequest,
+  handlePublicProjectChatsRequest,
+  handlePublicProjectsRequest,
+} from "./public-chat";
 
 export function createOmniRuntimeHttpRegistry() {
   return createOmniHttpRegistry()
@@ -71,6 +83,18 @@ export function createOmniRuntimeHttpRegistry() {
       auth: "public",
       responseKind: "json",
     })
+    .route("GET", "/api/public/v1", handlePublicApiDiscoveryRequest, { auth: "public", responseKind: "json" })
+    .route("POST", "/api/public/v1/chat", handlePublicChatRequest, { auth: "public", responseKind: "json" })
+    .route("GET", "/api/public/v1/chat/:id", handlePublicChatStatusRequest, { auth: "public", responseKind: "json" })
+    .route("GET", "/api/public/v1/chat/:id/stream", handlePublicChatStreamRequest, { auth: "public", responseKind: "stream" })
+    .route("GET", "/api/public/v1/projects", handlePublicProjectsRequest, { auth: "public", responseKind: "json" })
+    .route("GET", "/api/public/v1/projects/:projectId/chats", handlePublicProjectChatsRequest, { auth: "public", responseKind: "json" })
+    .route("POST", "/api/public/v1/projects/:projectId/chats", handlePublicProjectChatsRequest, { auth: "public", responseKind: "json" })
+    .route("GET", "/api/public/v1/projects/:projectId/chats/:chatId", handlePublicProjectChatRequest, { auth: "public", responseKind: "json" })
+    .route("PATCH", "/api/public/v1/projects/:projectId/chats/:chatId", handlePublicProjectChatRequest, { auth: "public", responseKind: "json" })
+    .route("POST", "/api/public/v1/projects/:projectId/chats/:chatId/stop", handlePublicProjectChatStopRequest, { auth: "public", responseKind: "json" })
+    .route("POST", "/api/public/v1/projects/:projectId/chats/:chatId/messages", handlePublicProjectChatMessageRequest, { auth: "public", responseKind: "json" })
+    .route("GET", "/api/public/v1/projects/:projectId/chats/:chatId/stream", handlePublicProjectChatStreamRequest, { auth: "public", responseKind: "stream" })
     .route("GET", "/api/runtime/bootstrap", handleRuntimeBootstrapRequest)
     .route("PATCH", "/api/runner", handleRunnerSettingsRequest)
     .route("POST", "/api/runner/rekey", handleRunnerRekeyRequest)
