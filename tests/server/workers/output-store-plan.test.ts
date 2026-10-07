@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getAppDataPath } from "@/server/app-root";
 import {
   __resetOutputStoreCachesForTests,
@@ -81,9 +81,49 @@ describe("readLatestWorkerPlanEntries", () => {
     expect(cachedPage._path).toBe("cache.filtered");
     expect(cachedPage.entries).toHaveLength(200);
 
+    __resetOutputStoreCachesForTests();
     const result = await readLatestWorkerPlanEntries(runId, workerId);
 
     expect(result.latestSeq).toBe(1_500);
     expect(result.entries.map((entry) => entry.id)).toEqual(["boundary-100", "plan-1200"]);
+  });
+});
+
+
+describe("indexed history pages", () => {
+  it.each([3, 100])("reads only the requested page and the latest cursor after seq %i", async (afterSeq) => {
+    const runId = `bounded-page-${Date.now()}`;
+    const workerId = "worker-bounded-page";
+    createdRunIds.push(runId);
+    const filePath = workerOutputFilePathFor(runId, workerId);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    let offset = 0;
+    const lines: string[] = [];
+    const index: string[] = [];
+    for (let seq = 1; seq <= 3_000; seq++) {
+      const line = `${JSON.stringify({ id: `entry-${seq}`, seq, type: "message", text: "é🚀".repeat(256) })}\n`;
+      if (seq % 100 === 0) index.push(JSON.stringify({ seq, offset }));
+      lines.push(line);
+      offset += Buffer.byteLength(line);
+    }
+    await fs.writeFile(filePath, lines.join(""));
+    await fs.writeFile(`${filePath}.idx`, `${index.join("\n")}\n`);
+    const parse = JSON.parse;
+    const parsedSeqs: number[] = [];
+    const spy = vi.spyOn(JSON, "parse").mockImplementation((...args) => {
+      const value = parse(...args);
+      if (value?.type === "message") parsedSeqs.push(value.seq);
+      return value;
+    });
+    try {
+      const page = await readWorkerEntriesSince(runId, workerId, afterSeq);
+      expect(page._path).toBe("jsonl.indexSeek");
+      expect(page.entries.map((entry) => entry.seq)).toEqual(Array.from({ length: 200 }, (_, i) => i + afterSeq + 1));
+      expect(page.entries[0]?.text).toBe("é🚀".repeat(256));
+      expect(page.latestSeq).toBe(3_000);
+      expect(parsedSeqs.filter((seq) => seq > afterSeq + 200 && seq < 3_000)).toHaveLength(0);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

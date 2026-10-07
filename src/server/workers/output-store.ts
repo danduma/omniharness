@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs, existsSync } from "node:fs";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { brotliDecompressSync, gzipSync, gunzipSync } from "node:zlib";
 import AdmZip from "adm-zip";
 import { eq } from "drizzle-orm";
@@ -1803,7 +1804,7 @@ function latestPlanBoundary(entries: readonly WorkerEntry[]): WorkerEntry | null
  * The common path is handled by the sparse-index tail reader above; this
  * deeper scan is only used when a plan session has outlived the tail window.
  */
-async function scanLatestPlanBoundaryFromJsonl(filePath: string): Promise<WorkerEntry | null | undefined> {
+async function scanLatestPlanBoundaryFromJsonl(filePath: string): Promise<WorkerEntry[] | null | undefined> {
   let size: number;
   try {
     size = (await fs.stat(filePath)).size;
@@ -1813,6 +1814,15 @@ async function scanLatestPlanBoundaryFromJsonl(filePath: string): Promise<Worker
   }
   if (size === 0) return null;
 
+  const acceptedBySession = new Map<string, WorkerEntry>();
+  const visit = (entry: WorkerEntry): WorkerEntry[] | null => {
+    if (entry.planProjection === "accepted_core" && entry.acpSessionId && !acceptedBySession.has(entry.acpSessionId)) {
+      acceptedBySession.set(entry.acpSessionId, entry);
+    }
+    if (entry.planProjection !== "session_reset" || !entry.acpSessionId) return null;
+    const accepted = acceptedBySession.get(entry.acpSessionId);
+    return accepted && accepted.seq > entry.seq ? [entry, accepted] : [entry];
+  };
   const handle = await fs.open(filePath, "r");
   try {
     let offset = size;
@@ -1833,7 +1843,8 @@ async function scanLatestPlanBoundaryFromJsonl(filePath: string): Promise<Worker
           if (typeof entry.seq !== "number" || !Number.isFinite(entry.seq) || entry.seq <= 0) {
             return undefined;
           }
-          if (entry.planProjection === "session_reset" && entry.acpSessionId) return entry;
+          const projection = visit(entry);
+          if (projection) return projection;
         } catch {
           // A malformed line inside the stream means sequence boundaries cannot
           // be proven. Fall back to the canonical legacy/recovery reader.
@@ -1849,7 +1860,7 @@ async function scanLatestPlanBoundaryFromJsonl(filePath: string): Promise<Worker
           if (typeof entry.seq !== "number" || !Number.isFinite(entry.seq) || entry.seq <= 0) {
             return undefined;
           }
-          return entry.planProjection === "session_reset" && entry.acpSessionId ? entry : null;
+          return visit(entry);
         } catch {
           return undefined;
         }
@@ -1882,9 +1893,9 @@ function retainCurrentPlanProjection(
 
 /**
  * Bounded derived reader for the current ACP plan. It finds the newest
- * session boundary via the existing sparse-index tail path (or a backward
- * scan when the boundary is older), then pages forward with the existing
- * 200-entry cap while retaining only the newest accepted projection.
+ * session boundary via the existing sparse-index tail path (or a single
+ * backward scan when the boundary is older), retaining only the newest
+ * accepted projection for each encountered session.
  */
 export async function readLatestWorkerPlanEntries(
   runId: string,
@@ -1892,54 +1903,25 @@ export async function readLatestWorkerPlanEntries(
 ): Promise<{ entries: WorkerEntry[]; latestSeq: number }> {
   const paths = await workerStreamPaths(runId, workerId, "read");
   const tail = await readWorkerEntriesTailJsonl(runId, workerId, PLAN_BOUNDARY_TAIL_WINDOW);
-  let boundary = tail ? latestPlanBoundary(tail.entries) : null;
-
-  if (!boundary && tail?.hasOlder) {
-    const scanned = await scanLatestPlanBoundaryFromJsonl(paths.filePath);
-    if (scanned === undefined) {
-      const canonical = await readCanonicalPersistedEntries(runId, workerId);
-      const canonicalBoundary = latestPlanBoundary(canonical);
-      return {
-        entries: canonicalBoundary ? retainCurrentPlanProjection(canonicalBoundary, canonical) : [],
-        latestSeq: canonical.reduce((latest, entry) => Math.max(latest, entry.seq || 0), 0),
-      };
+  const boundary = tail ? latestPlanBoundary(tail.entries) : null;
+  if (boundary && tail) {
+    return { entries: retainCurrentPlanProjection(boundary, tail.entries), latestSeq: tail.latestSeq };
+  }
+  if (tail) {
+    if (!tail.hasOlder) return { entries: [], latestSeq: tail.latestSeq };
+    // Collect the newest accepted plan while scanning back to its boundary.
+    // Paging forward again would repeatedly revisit the same long history.
+    const projection = await scanLatestPlanBoundaryFromJsonl(paths.filePath);
+    if (projection !== undefined) {
+      return { entries: projection ?? [], latestSeq: tail.latestSeq };
     }
-    boundary = scanned;
   }
-
-  if (!tail) {
-    const canonical = await readCanonicalPersistedEntries(runId, workerId);
-    const canonicalBoundary = latestPlanBoundary(canonical);
-    return {
-      entries: canonicalBoundary ? retainCurrentPlanProjection(canonicalBoundary, canonical) : [],
-      latestSeq: canonical.reduce((latest, entry) => Math.max(latest, entry.seq || 0), 0),
-    };
-  }
-
-  const latestSeq = tail.latestSeq;
-  if (!boundary) return { entries: [], latestSeq };
-
-  let cursor = boundary.seq;
-  let accepted: WorkerEntry | null = null;
-  while (cursor < latestSeq) {
-    const page = await readWorkerEntriesSince(runId, workerId, cursor);
-    if (page.entries.length === 0) break;
-    for (const entry of page.entries) {
-      if (
-        entry.planProjection === "accepted_core"
-        && entry.acpSessionId === boundary.acpSessionId
-        && entry.seq > boundary.seq
-        && (!accepted || entry.seq > accepted.seq)
-      ) {
-        accepted = entry;
-      }
-    }
-    const nextCursor = page.entries.reduce((latest, entry) => Math.max(latest, entry.seq || 0), cursor);
-    if (nextCursor <= cursor) break;
-    cursor = nextCursor;
-  }
-
-  return { entries: accepted ? [boundary, accepted] : [boundary], latestSeq };
+  const canonical = await readCanonicalPersistedEntries(runId, workerId);
+  const canonicalBoundary = latestPlanBoundary(canonical);
+  return {
+    entries: canonicalBoundary ? retainCurrentPlanProjection(canonicalBoundary, canonical) : [],
+    latestSeq: canonical.reduce((latest, entry) => Math.max(latest, entry.seq || 0), 0),
+  };
 }
 
 function isWorkerMessageFragmentCandidate(entry: WorkerEntry | null | undefined) {
@@ -2160,8 +2142,8 @@ export async function readWorkerEntriesBefore(
  * falls back to the backward tail scan.
  *
  * The index is sparse (one entry per INDEX_CADENCE seqs) so the seek
- * point is at-or-before the first record we actually need; we read all
- * the bytes from that offset to EOF and filter by `afterSeq`.
+ * point is at-or-before the first record we need. Stream only one page
+ * from that offset, and obtain the latest sequence separately from the tail.
  */
 async function readWorkerEntriesSinceViaIndex(
   filePath: string,
@@ -2170,22 +2152,54 @@ async function readWorkerEntriesSinceViaIndex(
   const index = await readIndex(filePath);
   if (!index || index.length === 0) return null;
   // findIndexPointForSeq returns at-or-before; we want the largest seq
-  // strictly <= afterSeq so the read starts just before the cutoff. If
-  // afterSeq sits below the smallest indexed seq, there's no seek point
-  // and we'd have to read the whole file — let the caller's backward
-  // scan handle that (it has its own maxBytes cap).
-  const seek = findIndexPointForSeq(index, afterSeq);
-  if (!seek) return null;
-  let body: string;
+  // strictly <= afterSeq so the read starts just before the cutoff.
+  // Before the first index point, stream a page from the beginning rather
+  // than falling back to a full transcript allocation.
+  const seek = findIndexPointForSeq(index, afterSeq) ?? { seq: 0, offset: 0 };
   try {
     const handle = await fs.open(filePath, "r");
     try {
       const stat = await handle.stat();
-      const length = Math.max(0, stat.size - seek.offset);
-      if (length === 0) return { entries: [], latestSeq: seek.seq };
-      const buf = Buffer.alloc(length);
-      await handle.read(buf, 0, length, seek.offset);
-      body = buf.toString("utf8");
+      if (stat.size <= seek.offset) return null;
+      // Obtain the authoritative cursor from the tail, independently of the
+      // page. Loading the entire suffix here made each 200-entry plan page
+      // reallocate and parse the rest of a long conversation.
+      const latestSeq = await readLatestSeqFromJsonlTail(filePath, stat.size);
+      if (latestSeq === null) return null;
+      const stream = handle.createReadStream({
+        start: seek.offset,
+        end: stat.size - 1,
+        encoding: "utf8",
+        highWaterMark: 64 * 1024,
+        autoClose: false,
+      });
+      const lines = createInterface({ input: stream, crlfDelay: Infinity });
+      const entries: WorkerEntry[] = [];
+      try {
+        for await (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          let parsed: WorkerEntry;
+          try {
+            parsed = JSON.parse(trimmed) as WorkerEntry;
+          } catch {
+            // An incomplete final append is not part of the durable page.
+            // Fall back if corruption appears before the authoritative tail.
+            if (entries.at(-1)?.seq === latestSeq) break;
+            return null;
+          }
+          const seq = typeof parsed.seq === "number" && Number.isFinite(parsed.seq)
+            ? Math.floor(parsed.seq)
+            : 0;
+          if (seq <= 0) return null;
+          if (seq > afterSeq) entries.push(parsed);
+          if (entries.length >= MAX_FORWARD_ENTRIES) break;
+        }
+        return { entries, latestSeq };
+      } finally {
+        lines.close();
+        stream.destroy();
+      }
     } finally {
       await handle.close();
     }
@@ -2193,29 +2207,6 @@ async function readWorkerEntriesSinceViaIndex(
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
-  const entries: WorkerEntry[] = [];
-  let latestSeq = 0;
-  for (const line of body.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const parsed = JSON.parse(trimmed) as WorkerEntry;
-      const seq = typeof parsed.seq === "number" && Number.isFinite(parsed.seq)
-        ? Math.floor(parsed.seq)
-        : 0;
-      if (seq <= 0) {
-        // Encountered a legacy/malformed line we can't sequence — give
-        // up and let the caller take the backward-scan path.
-        return null;
-      }
-      if (seq > latestSeq) latestSeq = seq;
-      if (seq > afterSeq) entries.push(parsed);
-    } catch {
-      // Tolerate a single trailing partial line (mid-append crash). If
-      // it's not the last line we genuinely can't trust the boundary.
-    }
-  }
-  return { entries, latestSeq };
 }
 
 /**
