@@ -279,7 +279,7 @@ describe("restart controller", () => {
           actions.push(`log:${message}`);
         },
         ensureDir: () => undefined,
-        findListenerPids: async () => [],
+        findListenerPids: async () => [303],
         isProcessAlive: async () => false,
         readPidFile: async () => ({ pid: 777, startedAt: 1, command: ["pnpm", "run", "start"], mode: "prod" }),
         readRecentLog: async () => "",
@@ -335,6 +335,31 @@ describe("restart controller", () => {
     });
     expect(actions).not.toContain("spawn");
     expect(actions).toContain("log:prod startup restore skipped: recorded process 777 is still alive");
+  });
+
+  it("recovers a dead recorded runner even when a forwarding listener survives", async () => {
+    const actions: string[] = [];
+    const controller = createRestartController({
+      config: resolveRestartControlConfig("/repo", {}),
+      system: {
+        appendLog: (message) => { actions.push(message); },
+        ensureDir: () => undefined,
+        findListenerPids: async () => [303],
+        isProcessAlive: async () => false,
+        readPidFile: async () => ({ pid: 777, startedAt: 1, command: ["pnpm", "run", "start"], mode: "prod" }),
+        readRecentLog: async () => "",
+        removePidFile: async () => undefined,
+        signalProcess: async () => undefined,
+        spawnDetached: async () => 999,
+        waitForExit: async () => undefined,
+        writePidFile: async () => undefined,
+      },
+    });
+
+    await expect(controller.getStatus()).resolves.toMatchObject({ running: false, listenerPids: [303] });
+    const supervisor = createRestartSupervisor({ controller, appendLog: () => undefined });
+    await expect(supervisor.check()).resolves.toMatchObject({ status: "recovered", pid: 999 });
+    expect(actions).toContain("prod restart requested: automatic supervision");
   });
 
   it("reports running status, listener pids, and recent logs", async () => {
