@@ -238,16 +238,9 @@ export function createRestartController({ config, system }: {
         return { status: "skipped" as const, reason: "no_previous_mode" as const };
       }
 
-      const [pidRunning, listenerPids] = await Promise.all([
-        system.isProcessAlive(pidEntry.pid),
-        system.findListenerPids(config.managedPorts),
-      ]);
+      const pidRunning = await system.isProcessAlive(pidEntry.pid);
       if (pidRunning) {
         await system.appendLog(`${pidEntry.mode} startup restore skipped: recorded process ${pidEntry.pid} is still alive`);
-        return { status: "skipped" as const, reason: "already_running" as const };
-      }
-      if (listenerPids.length > 0) {
-        await system.appendLog(`${pidEntry.mode} startup restore skipped: managed listener already exists`);
         return { status: "skipped" as const, reason: "already_running" as const };
       }
 
@@ -268,7 +261,9 @@ export function createRestartController({ config, system }: {
       const recentLog = await system.readRecentLog(options.logLines);
       const pidRunning = Boolean(pidEntry && await system.isProcessAlive(pidEntry.pid));
       return {
-        running: pidRunning || listenerPids.length > 0,
+        // A surviving proxy (or the bridge) is not proof that the managed
+        // runner is alive. When we own a recorded process, trust its PID.
+        running: pidEntry ? pidRunning : listenerPids.length > 0,
         pid: pidEntry?.pid ?? null,
         mode: pidEntry?.mode ?? null,
         command: pidEntry?.command ?? [],
