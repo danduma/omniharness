@@ -10,11 +10,12 @@
  * Drives the manager with a tiny stub ACP CLI (Node script) so we don't depend
  * on any real agent binary.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { AgentRuntimeManager } from "@/server/agent-runtime/manager";
+import { ARMED_WAKE_GRACE_MS } from "@/server/agent-runtime/acp/armed-wakes";
 import { acquireWorkerSpawnResources } from "@/server/agent-runtime/resource-admission";
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 
@@ -61,6 +62,18 @@ process.stdin.on('data', (chunk) => {
 // Keep alive until parent signals exit.
 process.stdin.on('end', () => process.exit(0));
 `;
+
+// Like the minimal CLI, but once the session exists it reports a completed
+// Monitor call, shaped as claude-agent-acp sent it in session dc6098ddbf64.
+const armedMonitorAcpScript = minimalAcpScript.replace(
+  "write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-1' } });",
+  `write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-1' } });
+      setTimeout(() => write({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'session-1', update: {
+        _meta: { claudeCode: { toolResponse: { taskId: 'bxr1hghpz', timeoutMs: 1800000, persistent: false }, toolName: 'Monitor' } },
+        toolCallId: 'toolu_01SvzJYuBNb8PjU1Gdw51X1r',
+        sessionUpdate: 'tool_call_update',
+      } } }), 10);`,
+);
 
 async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -226,6 +239,52 @@ describe("AgentRuntimeManager idle-agent sweep", () => {
       }
     } finally {
       await manager.stopAgent("goal-holder");
+      manager.shutdownPools();
+    }
+  });
+
+  // Session dc6098ddbf64: the agent armed a 30-minute Monitor on its background
+  // workers and ended its turn. The idle timeout is also 30 minutes, so the
+  // sweep reaped the agent seconds before the expiry could start its next turn,
+  // and nothing collected the workers' results until the user asked hours later.
+  it("keeps idle agents that armed a Monitor until the wake is due, then reaps them", async () => {
+    const dir = createTempDir("omni-reaper-armed-wake-");
+    const command = createExecutable(dir, "acp-armed-wake.js", armedMonitorAcpScript);
+    const persisted: Array<[string, number | null]> = [];
+    const manager = new AgentRuntimeManager({
+      env: {
+        ...process.env,
+        OMNIHARNESS_AGENT_EXIT_GRACE_MS: "10000",
+        OMNIHARNESS_AGENT_IDLE_TIMEOUT_MS: "1000",
+        OMNIHARNESS_RUNTIME_SWEEP_INTERVAL_MS: "30",
+        OMNIHARNESS_MEMORY_TRACE: "0",
+      } as Record<string, string>,
+      findGoalHoldingAgents: async () => new Set<string>(),
+      persistArmedWake: async (workerId, wakeAt) => {
+        persisted.push([workerId, wakeAt]);
+      },
+    });
+    try {
+      await manager.startAgent({ type: "gemini", name: "armed-wake", cwd: dir, command, args: [] });
+      const record = manager.agents.get("armed-wake")!;
+      await vi.waitFor(() => expect(record.armedWakeAt).toBeGreaterThan(Date.now() + 25 * 60_000));
+      record.state = "idle";
+      record.updatedAt = new Date(Date.now() - 5_000).toISOString();
+
+      await sleep(200);
+
+      expect(manager.agents.get("armed-wake")?.state).toBe("idle");
+      const events = getNamedEventsSince(0).events.map((entry) => entry.event);
+      expect(events).toContainEqual({ kind: "runtime.agent_reap_skipped", workerId: "armed-wake", reason: "armed_wake" });
+      // Stored once, so a restart or crash cannot lose it.
+      expect(persisted).toEqual([["armed-wake", record.armedWakeAt]]);
+
+      record.armedWakeAt = Date.now() - ARMED_WAKE_GRACE_MS - 1;
+      await sleep(200);
+
+      expect(manager.agents.has("armed-wake")).toBe(false);
+    } finally {
+      if (manager.agents.has("armed-wake")) await manager.stopAgent("armed-wake");
       manager.shutdownPools();
     }
   });

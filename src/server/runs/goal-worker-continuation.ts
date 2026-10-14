@@ -96,6 +96,8 @@ const defaultDependencies: GoalContinuationDependencies = {
   now: () => Date.now(),
 };
 
+export { defaultDependencies as defaultContinuationDependencies };
+
 const lastContinuationAt = new Map<string, number>();
 
 /**
@@ -123,16 +125,39 @@ export async function continueStalledGoals(
   return { continued };
 }
 
-async function continueStalledGoal(goal: ActiveGoalLease, dependencies: GoalContinuationDependencies) {
+export type StoppedWorkerDependencies = Omit<GoalContinuationDependencies, "listPursuedGoals" | "sendContinuation">;
+
+/**
+ * The worker, when its agent process is gone and a continuation may be sent to
+ * it now; null otherwise. Shared by every sweep that resumes a stopped agent,
+ * so they agree on what counts as stopped and share one cooldown per run.
+ */
+export async function findContinuableStoppedWorker(
+  lease: { runId: string; workerId: string },
+  dependencies: StoppedWorkerDependencies,
+) {
   const now = dependencies.now();
-  const lastAttempt = lastContinuationAt.get(goal.runId);
-  if (lastAttempt !== undefined && now - lastAttempt < CONTINUATION_COOLDOWN_MS) return false;
+  const lastAttempt = lastContinuationAt.get(lease.runId);
+  if (lastAttempt !== undefined && now - lastAttempt < CONTINUATION_COOLDOWN_MS) return null;
 
   const [run, worker] = await Promise.all([
-    dependencies.loadRun(goal.runId),
-    dependencies.loadWorker(goal.workerId),
+    dependencies.loadRun(lease.runId),
+    dependencies.loadWorker(lease.workerId),
   ]);
-  if (!run || !worker || worker.runId !== run.id) return false;
+  if (!run || !worker || worker.runId !== run.id) return null;
+  return await isStoppedAndContinuable(run, worker, now, dependencies) ? worker : null;
+}
+
+export function markWorkerContinued(runId: string, now: number) {
+  lastContinuationAt.set(runId, now);
+}
+
+async function isStoppedAndContinuable(
+  run: RunRecord,
+  worker: WorkerRecord,
+  now: number,
+  dependencies: StoppedWorkerDependencies,
+) {
   if (run.archivedAt) return false;
   if (run.mode !== "direct" && run.mode !== "commit") return false;
   const runStatus = normalizedStatus(run.status);
@@ -154,7 +179,14 @@ async function continueStalledGoal(goal: ActiveGoalLease, dependencies: GoalCont
     if (!isRuntimeAgentMissingError(error)) return false;
   }
 
-  lastContinuationAt.set(goal.runId, now);
+  return true;
+}
+
+async function continueStalledGoal(goal: ActiveGoalLease, dependencies: GoalContinuationDependencies) {
+  const worker = await findContinuableStoppedWorker(goal, dependencies);
+  if (!worker) return false;
+
+  markWorkerContinued(goal.runId, dependencies.now());
   emitNamedEvent({
     kind: "goal.worker_continuation.started",
     runId: goal.runId,
@@ -162,7 +194,7 @@ async function continueStalledGoal(goal: ActiveGoalLease, dependencies: GoalCont
     workerId: worker.id,
   });
   try {
-    await dependencies.sendContinuation(run.id, GOAL_CONTINUATION_PROMPT);
+    await dependencies.sendContinuation(goal.runId, GOAL_CONTINUATION_PROMPT);
     emitNamedEvent({
       kind: "goal.worker_continuation.completed",
       runId: goal.runId,

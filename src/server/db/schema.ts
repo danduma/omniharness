@@ -160,6 +160,10 @@ export const workers = sqliteTable('workers', {
   // session is resumed in place). Readers hide superseded entries so the
   // conversation shows one coherent thread instead of every abandoned attempt.
   supersededSeqRanges: text('superseded_seq_ranges'),
+  // Epoch ms when a wake the agent armed for itself (a Claude Code Monitor or
+  // ScheduleWakeup) is due, until a turn after that time consumes it. Lets a
+  // sweep resume an agent whose process died before its wake could run.
+  armedWakeAt: integer('armed_wake_at'),
   activeWorkStartedAt: integer('active_work_started_at', { mode: 'timestamp' }),
   activeWorkDurationMs: integer('active_work_duration_ms').notNull().default(0),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
