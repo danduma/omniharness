@@ -11,6 +11,7 @@ import { reapStuckDirectWorkers } from "@/server/workers/stuck-worker-reaper";
 import { syncConversationSessionsFromBridge } from "@/server/conversations/sync";
 import { resumeElapsedQuotaWaits } from "@/server/quota/worker-resume";
 import { continueStalledGoals } from "@/server/runs/goal-worker-continuation";
+import { continueArmedWakeWorkers } from "@/server/runs/armed-wake-continuation";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { reconcileExpiredHandoffs } from "@/server/handoff/reconciler";
 
@@ -97,6 +98,11 @@ export async function syncRunningSupervision() {
   // until the user noticed.
   await continueStalledGoals().catch((error) => {
     process.stderr.write(`[goal-continuation] sweep failed: ${error instanceof Error ? error.message : String(error)}\n`);
+  });
+  // The same holds for an agent waiting on a wake it armed (a Monitor or
+  // ScheduleWakeup): the wake lived in the process that died.
+  await continueArmedWakeWorkers().catch((error) => {
+    process.stderr.write(`[armed-wake-continuation] sweep failed: ${error instanceof Error ? error.message : String(error)}\n`);
   });
 
   const activeRuns = await db.select().from(runs).where(and(

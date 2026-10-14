@@ -133,6 +133,12 @@ export type AgentRecord = {
    * prompt folded into another turn, and never settled, can be detected.
    */
   promptTurnWatch?: PromptTurnWatch | null;
+  /**
+   * Epoch ms when a wake the agent armed for itself (Monitor, ScheduleWakeup)
+   * is due; null once a turn consumed it; undefined until this process has
+   * produced output, so a stale wake from an earlier process is not trusted.
+   */
+  armedWakeAt?: number | null;
   pendingPermissions: PendingPermission[];
   pendingElicitations: PendingElicitation[];
   activeTask: { taskId: string; subtaskId: string } | null;

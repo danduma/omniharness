@@ -69,6 +69,7 @@ import {
   WorkerPool,
 } from "./worker-pool";
 import { MemoryTracer } from "./memory-trace";
+import { hasArmedWake } from "./acp/armed-wakes";
 import {
   resolveRuntimeResourceSettings,
   RUNTIME_RESOURCE_SETTING_KEYS,
@@ -1027,9 +1028,12 @@ export class AgentRuntimeManager {
   private readonly memoryTracer: MemoryTracer;
   private readonly outputRetentionManager = new RuntimeOutputRetentionManager();
   private readonly pendingAgentReaps = new Map<string, NodeJS.Timeout>();
-  /** Idle stamp each goal-protected agent was last reported under, so the skip is logged once per idle period. */
-  private readonly goalProtectedIdleSince = new Map<string, string>();
+  /** Idle stamp each protected agent was last reported under, so the skip is logged once per idle period. */
+  private readonly reapSkippedIdleSince = new Map<string, string>();
   private idleReapInFlight = false;
+  /** Armed wake last written for each agent, so the sweep writes only changes. */
+  private readonly persistedArmedWakeAt = new Map<string, number | null>();
+  private armedWakeSyncInFlight = false;
   private reapSweepTimer: NodeJS.Timeout | null = null;
   private resourcePressureTimer: NodeJS.Timeout | null = null;
   private resourcePressureCheckInFlight = false;
@@ -1050,6 +1054,8 @@ export class AgentRuntimeManager {
       resourceSnapshotProvider?: SystemResourceSnapshotProvider;
       /** Which of these agents hold an active goal; defaults to the goal table. */
       findGoalHoldingAgents?: (names: readonly string[]) => Promise<Set<string>>;
+      /** Store a worker's armed wake; defaults to the workers table. */
+      persistArmedWake?: (workerId: string, wakeAt: number | null) => Promise<void>;
     } = {},
   ) {
     const baseEnv = this.options.env || process.env;
@@ -1211,6 +1217,7 @@ export class AgentRuntimeManager {
       if (this.isStaleIdleAgent(record, now)) staleIdleAgents.push(name);
     }
     if (staleIdleAgents.length > 0) void this.reapStaleIdleAgents(staleIdleAgents);
+    void this.syncArmedWakes();
     this.runIdleCleanupSweep(now);
     this.runOutputRetentionSweep();
   }
@@ -1221,6 +1228,47 @@ export class AgentRuntimeManager {
     return Number.isFinite(updatedAt) && now - updatedAt >= this.agentIdleTimeoutMs;
   }
 
+  private async persistArmedWake(workerId: string, wakeAt: number | null) {
+    if (this.options.persistArmedWake) return this.options.persistArmedWake(workerId, wakeAt);
+    const { persistWorkerArmedWake } = await import("@/server/runs/armed-wake-continuation");
+    await persistWorkerArmedWake(workerId, wakeAt);
+  }
+
+  /**
+   * Store each agent's armed wake where it outlives the process. The runtime
+   * holds the wake only in memory, so a restart or crash lost both the wake and
+   * any record that the agent was waiting on one; the continuation sweep reads
+   * this to start the turn the wake would have.
+   */
+  private async syncArmedWakes() {
+    if (this.armedWakeSyncInFlight) return;
+    this.armedWakeSyncInFlight = true;
+    try {
+      for (const [name, record] of this.agents) {
+        const wakeAt = record.armedWakeAt;
+        if (wakeAt === undefined || this.persistedArmedWakeAt.get(name) === wakeAt) continue;
+        try {
+          await this.persistArmedWake(name, wakeAt);
+          this.persistedArmedWakeAt.set(name, wakeAt);
+          emitNamedEvent({ kind: "runtime.armed_wake_persisted", workerId: name, wakeAt });
+        } catch (error) {
+          emitNamedEvent({
+            kind: "error.surfaced",
+            code: "worker.armed_wake.persist_failed",
+            message: `Could not record the wake this agent armed; it will not be resumed if it stops first: ${describeUnknownError(error)}`,
+            surface: "log",
+            workerId: name,
+          });
+        }
+      }
+      for (const name of this.persistedArmedWakeAt.keys()) {
+        if (!this.agents.has(name)) this.persistedArmedWakeAt.delete(name);
+      }
+    } finally {
+      this.armedWakeSyncInFlight = false;
+    }
+  }
+
   private async findGoalHoldingAgents(names: readonly string[]) {
     if (this.options.findGoalHoldingAgents) return this.options.findGoalHoldingAgents(names);
     const { listWorkersHoldingActiveGoals } = await import("@/server/runs/goal-worker-lease");
@@ -1228,10 +1276,11 @@ export class AgentRuntimeManager {
   }
 
   /**
-   * Stop idle agents, except those pursuing a goal. Such an agent ends its turn
-   * while the work it started runs in the background and is woken by that
-   * work's notification. Reaping it killed the agent and its monitors, so the
-   * notification had nothing to wake and the goal stalled until the user
+   * Stop idle agents, except those pursuing a goal or waiting on a wake they
+   * armed (Monitor, ScheduleWakeup). Such an agent ends its turn while the work
+   * it started runs in the background and is woken by that work's
+   * notification. Reaping it killed the agent and its monitors, so the
+   * notification had nothing to wake and the work stalled until the user
    * noticed. When the lookup fails nothing is reaped: a live agent costs memory,
    * a reaped one costs the user's work.
    */
@@ -1250,14 +1299,17 @@ export class AgentRuntimeManager {
       for (const name of names) {
         const record = this.agents.get(name);
         if (!record || !this.isStaleIdleAgent(record, now)) continue;
-        if (goalHolders.has(name)) {
-          if (this.goalProtectedIdleSince.get(name) !== record.updatedAt) {
-            this.goalProtectedIdleSince.set(name, record.updatedAt);
-            emitNamedEvent({ kind: "runtime.agent_reap_skipped", workerId: name, reason: "active_goal" });
+        const skipReason = goalHolders.has(name)
+          ? "active_goal"
+          : hasArmedWake(record, now) ? "armed_wake" : null;
+        if (skipReason) {
+          if (this.reapSkippedIdleSince.get(name) !== record.updatedAt) {
+            this.reapSkippedIdleSince.set(name, record.updatedAt);
+            emitNamedEvent({ kind: "runtime.agent_reap_skipped", workerId: name, reason: skipReason });
           }
           continue;
         }
-        this.goalProtectedIdleSince.delete(name);
+        this.reapSkippedIdleSince.delete(name);
         emitNamedEvent({
           kind: "runtime.agent_reaped",
           workerId: name,

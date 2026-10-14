@@ -8,6 +8,7 @@ import {
   appendOutputEntry,
 } from "../output-store";
 import { normalizeSessionUpdate } from "./session-updates";
+import { trackArmedWake } from "./armed-wakes";
 import { TerminalService } from "./terminal-service";
 import { McpService, registeredAcpMcpHandlersSnapshot, type AcpMcpHandler } from "./mcp-service";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -583,6 +584,7 @@ export class RuntimeClient implements acp.Client {
     }
     const update = params.update;
     record.updatedAt = nowIso();
+    trackArmedWake(record, update);
 
     if (update.sessionUpdate === "config_option_update") {
       const previousModelStatus = record.modelStatus;

@@ -196,6 +196,7 @@ CREATE TABLE IF NOT EXISTS workers (
   launch_selection_revision integer NOT NULL DEFAULT 0,
   turn_generation integer NOT NULL DEFAULT 0,
   superseded_seq_ranges text,
+  armed_wake_at integer,
   active_work_started_at integer,
   active_work_duration_ms integer NOT NULL DEFAULT 0,
   created_at integer NOT NULL,
@@ -866,6 +867,10 @@ if (!workerColumnNames.has("turn_generation")) {
 
 if (!workerColumnNames.has("superseded_seq_ranges")) {
   await client.execute("ALTER TABLE workers ADD COLUMN superseded_seq_ranges text;");
+}
+
+if (!workerColumnNames.has("armed_wake_at")) {
+  await client.execute("ALTER TABLE workers ADD COLUMN armed_wake_at integer;");
 }
 
 if (!workerColumnNames.has("active_work_started_at")) {
