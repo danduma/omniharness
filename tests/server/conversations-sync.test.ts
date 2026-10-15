@@ -5,7 +5,7 @@ import { db } from "@/server/db";
 import { clarifications, conversationReadMarkers, creditEvents, executionEvents, messages, planItems, planningReviewFindings, planningReviewRounds, planningReviewRuns, plans, processSessions, queuedConversationMessages, recoveryIncidents, runs, settings, supervisorInterventions, supervisorScheduledWakes, workerAssignments, workerCounters, workers } from "@/server/db/schema";
 import { getEventStreamNotificationVersion } from "@/server/events/live-updates";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
-import { waitForConversationBackgroundTasksForTests } from "@/server/conversations/worker-turn-gate";
+import { runWorkerTurn, waitForConversationBackgroundTasksForTests } from "@/server/conversations/worker-turn-gate";
 import { annotateVerifiedDeadCredential } from "@/lib/provider-account-failures";
 
 const { mockAskAgent, mockGetAgent, mockRespondElicitation, mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
@@ -962,6 +962,29 @@ describe("syncConversationSessions", () => {
     const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
 
     expect(run?.status).toBe("running");
+  });
+
+  it("keeps a commit turn running during a transient idle snapshot after its first message", async () => {
+    const now = new Date();
+    const runId = randomUUID();
+    const planId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    await db.insert(plans).values({ id: planId, path: "commit.md", status: "running", createdAt: now, updatedAt: now });
+    await db.insert(runs).values({ id: runId, planId, mode: "commit", status: "running", createdAt: now, updatedAt: now });
+    await db.insert(workers).values({ id: workerId, runId, type: "codex", status: "working", cwd: process.cwd(), createdAt: now, updatedAt: now });
+    const agent = {
+      name: workerId, type: "codex", cwd: process.cwd(), state: "idle",
+      currentText: "", lastText: "I’ll inspect the branch, then commit and push.",
+      stopReason: null, stderrBuffer: [],
+      outputEntries: [{ id: "intro", type: "message",  text: "I’ll inspect the branch, then commit and push.", timestamp: now.toISOString() }],
+    };
+    await runWorkerTurn(workerId, async () => {
+      await syncConversationSessionsUnsettled([agent], { selectedRunId: runId });
+      expect((await db.select().from(runs).where(eq(runs.id, runId)).get())?.status).toBe("running");
+      expect((await db.select().from(workers).where(eq(workers.id, workerId)).get())?.status).toBe("working");
+    });
+    await syncConversationSessions([agent], { selectedRunId: runId });
+    expect((await db.select().from(runs).where(eq(runs.id, runId)).get())?.status).toBe("done");
   });
 
   it("completes a running direct run when the live worker is idle with output but no stop reason", async () => {

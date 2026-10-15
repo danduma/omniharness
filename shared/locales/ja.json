@@ -960,5 +960,16 @@
   "settings.publicApi.generate": "API キーを生成",
   "settings.publicApi.copy": "キーをコピー",
   "settings.publicApi.key": "パブリック API キー",
-  "settings.publicApi.saveHelp": "今すぐキーをコピーしてから、保存を選択してください。完全なキーは設定を閉じるまでしか表示されません。"
+  "settings.publicApi.saveHelp": "今すぐキーをコピーしてから、保存を選択してください。完全なキーは設定を閉じるまでしか表示されません。",
+  "notifications.push.completeTitle": "{title} — 完了",
+  "notifications.push.completeFallback": "ワークフローが完了しました。会話を開いて結果を確認してください。",
+  "notifications.push.responseTitle": "{title} — 返信が届きました",
+  "notifications.push.responseFallback": "エージェントがこのターンを終了しました。会話を開いて返信を確認してください。",
+  "notifications.push.inputTitle": "{title} — 回答が必要です",
+  "notifications.push.inputFallback": "回答を待つため作業を一時停止しています。会話を開いて回答してください。",
+  "notifications.push.permissionTitle": "{title} — 承認が必要です",
+  "notifications.push.permissionFallback": "ツールの実行に承認が必要です。会話を開いてリクエストを確認してください。",
+  "notifications.push.failedTitle": "{title} — 失敗",
+  "notifications.push.failedFallback": "エラーにより作業が停止しました。会話を開いて詳細を確認してください。",
+  "notifications.push.runnerTitle": "{runner}: {title}"
 }

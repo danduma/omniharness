@@ -1,6 +1,8 @@
+import { WorkerEntriesManager } from "./WorkerEntriesManager";
 import { StateManager } from "@/lib/state-manager";
 import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
 import { t } from "@/lib/i18n";
+import { conversationNotificationContent, notificationEventDetail, notificationPreview, type ConversationNotificationKind } from "@/lib/conversation-notification-content";
 import { registerServiceWorker } from "@/lib/pwa";
 import type { AgentSnapshot, EventStreamState, RunRecord } from "./types";
 import type { RuntimeAPIs } from "@/runtime-api/types";
@@ -48,6 +50,7 @@ type ConversationNotificationManagerOptions = {
   focusProvider?: () => boolean;
   pushClient?: ConversationPushClient;
   subscriptionApi?: ConversationSubscriptionApi;
+  listEntries?: RuntimeAPIs["workers"]["listEntries"];
 };
 
 type ConversationPushClient = {
@@ -233,9 +236,9 @@ function normalizeStatus(status: string | null | undefined) {
   return (status ?? "").trim().toLowerCase();
 }
 
-function isCompletedRun(run: RunRecord, completedRunIds: Set<string>) {
+function isCompletedRun(run: RunRecord, index: RunNotificationIndex) {
   const status = normalizeStatus(run.status);
-  return status === "done" || status === "completed" || completedRunIds.has(run.id);
+  return (status === "done" || status === "completed") && !index.busyRunIds.has(run.id);
 }
 
 function titleForRun(run: RunRecord) {
@@ -258,18 +261,47 @@ function agentBelongsToRun(agent: AgentSnapshot, run: RunRecord, workerRunIds: M
 // cost runs × (workers + agents), which on a long conversation history kept the
 // main thread busy enough to delay keystrokes and drop touch gestures.
 interface RunNotificationIndex {
-  completedRunIds: Set<string>;
+  busyRunIds: Set<string>;
+  agentsByRun: Map<string, AgentSnapshot[]>;
+  detailsByRun: Map<string, string>;
+  questionsByRun: Map<string, string>;
   workerRunIds: Map<string, string>;
   agentsWithPendingPermissions: AgentSnapshot[];
   pendingClarificationRunIds: Set<string>;
 }
 
 function buildRunNotificationIndex(state: EventStreamState): RunNotificationIndex {
+  const workerRunIds = new Map((state.workers ?? []).map((worker) => [worker.id, worker.runId]));
+  const busyRunIds = new Set((state.queuedMessages ?? [])
+    .filter((message) => message.status === "pending" || message.status === "delivering").map((message) => message.runId));
+  const active = new Set(["starting", "working", "running", "stuck", "recovering"]);
+  for (const worker of state.workers ?? []) {
+    if (active.has(normalizeStatus(worker.status))) busyRunIds.add(worker.runId);
+  }
+  const agentsByRun = new Map<string, AgentSnapshot[]>();
+  for (const agent of state.agents ?? []) {
+    const runId = workerRunIds.get(agent.name) ?? agent.name.match(/^(.*)-worker-\d+$/)?.[1];
+    if (!runId) continue;
+    const agents = agentsByRun.get(runId) ?? [];
+    agents.push(agent);
+    agentsByRun.set(runId, agents);
+    if (active.has(normalizeStatus(agent.state))) busyRunIds.add(runId);
+  }
+  const detailsByRun = new Map<string, string>();
+  const latestEventTimes = new Map<string, number>();
+  for (const event of state.executionEvents ?? []) {
+    if (event.eventType !== "run_completed") continue;
+    const time = Date.parse(event.createdAt);
+    if (time < (latestEventTimes.get(event.runId) ?? -Infinity)) continue;
+    latestEventTimes.set(event.runId, time);
+    detailsByRun.set(event.runId, notificationEventDetail(event.details));
+  }
+  const questionsByRun = new Map((state.clarifications ?? [])
+    .filter((question) => normalizeStatus(question.status) === "pending")
+    .map((question) => [question.runId, question.question]));
   return {
-    completedRunIds: new Set((state.executionEvents ?? [])
-      .filter((event) => event.eventType === "run_completed")
-      .map((event) => event.runId)),
-    workerRunIds: new Map((state.workers ?? []).map((worker) => [worker.id, worker.runId])),
+    busyRunIds, agentsByRun, detailsByRun, questionsByRun,
+    workerRunIds,
     agentsWithPendingPermissions: (state.agents ?? []).filter((agent) => (agent.pendingPermissions?.length ?? 0) > 0),
     pendingClarificationRunIds: new Set((state.clarifications ?? [])
       .filter((clarification) => normalizeStatus(clarification.status) === "pending")
@@ -311,7 +343,7 @@ function buildObservedRunState(run: RunRecord, index: RunNotificationIndex): Obs
   return {
     status: normalizeStatus(run.status),
     inputNeeded: normalizeStatus(run.status) === "awaiting_user" || index.pendingClarificationRunIds.has(run.id),
-    completed: isCompletedRun(run, index.completedRunIds),
+    completed: isCompletedRun(run, index),
     permissionKeys: buildPermissionKeys(run, index),
   };
 }
@@ -324,6 +356,7 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
   private readonly focusProvider: () => boolean;
   private readonly pushClient: ConversationPushClient;
   private subscriptionApi: ConversationSubscriptionApi | null;
+  private listEntries: RuntimeAPIs["workers"]["listEntries"] | undefined;
   private readonly observedRuns = new Map<string, ObservedRunState>();
   private readonly observedScopes = new Set<string>();
 
@@ -336,9 +369,11 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
     this.focusProvider = options.focusProvider ?? getBrowserFocus;
     this.pushClient = options.pushClient ?? createBrowserPushClient();
     this.subscriptionApi = options.subscriptionApi ?? null;
+    this.listEntries = options.listEntries;
   }
 
-  configure(notifications: RuntimeAPIs["notifications"]) {
+  configure(notifications: RuntimeAPIs["notifications"], listEntries?: RuntimeAPIs["workers"]["listEntries"]) {
+    this.listEntries = listEntries;
     this.subscriptionApi = createRuntimeSubscriptionApi(notifications);
   }
 
@@ -438,6 +473,7 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
       scope: "default",
       runnerName: null,
       runnerProfileId: null,
+      listEntries: this.listEntries,
     }, state);
   }
 
@@ -446,6 +482,7 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
       profileId: string;
       runnerInstanceId: string | null;
       runnerName: string;
+      listEntries?: RuntimeAPIs["workers"]["listEntries"];
     },
     state: EventStreamState,
   ) {
@@ -453,6 +490,7 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
       scope: runner.runnerInstanceId ?? runner.profileId,
       runnerName: runner.runnerName,
       runnerProfileId: runner.profileId,
+      listEntries: runner.listEntries,
     }, state);
   }
 
@@ -461,12 +499,13 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
       scope: string;
       runnerName: string | null;
       runnerProfileId: string | null;
+      listEntries?: RuntimeAPIs["workers"]["listEntries"];
     },
     state: EventStreamState,
   ) {
     const index = buildRunNotificationIndex(state);
     const nextObservedRuns = new Map<string, ObservedRunState>();
-    const notifications: ConversationNotificationRequest[] = [];
+    const notifications: Array<{ request: ConversationNotificationRequest; workerId?: string; scopedRunId: string; observed: ObservedRunState }> = [];
 
     for (const run of state.runs ?? []) {
       const tagScope = runner.runnerProfileId ? `${runner.scope}-` : "";
@@ -479,41 +518,55 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
         continue;
       }
 
+      const agents = index.agentsByRun.get(run.id) ?? [];
       const newPermissionKey = hasNewPermission(previous, observed.permissionKeys);
+      let kind: ConversationNotificationKind | null = null;
+      let detail = "";
+      let tag = "";
       if (newPermissionKey) {
-        notifications.push({
-          title: runner.runnerName
-            ? t("notifications.push.runnerNeedsInput", { runner: runner.runnerName })
-            : t("notifications.push.needsInput"),
-          body: t("notifications.push.permissionBody", { title: titleForRun(run) }),
-          tag: `omniharness-${tagScope}${run.id}-permission-${newPermissionKey}`,
-          url: runUrl(run.id, runner.runnerProfileId ?? undefined),
-        });
-        continue;
+        kind = "permission";
+        for (const agent of agents) {
+          const permission = agent.pendingPermissions?.find((item) => `${agent.name}-${item.requestId}` === newPermissionKey);
+          if (permission) detail = permission.toolCall?.title ?? "";
+        }
+        tag = `permission-${newPermissionKey}`;
+      } else if (!previous.inputNeeded && observed.inputNeeded) {
+        kind = "input";
+        detail = index.questionsByRun.get(run.id) ?? "";
+        tag = "input";
+      } else if (previous.status !== "failed" && observed.status === "failed") {
+        kind = "failed";
+        detail = run.lastError ?? "";
+        tag = "failed";
+      } else if (!previous.completed && observed.completed && !observed.inputNeeded && observed.permissionKeys.size === 0) {
+        kind = run.mode === "direct" || run.mode === "commit" ? "response" : "complete";
+        detail = kind === "complete" ? index.detailsByRun.get(run.id) ?? "" : "";
+        tag = "complete";
       }
-
-      if (!previous.inputNeeded && observed.inputNeeded) {
-        notifications.push({
-          title: runner.runnerName
-            ? t("notifications.push.runnerNeedsInput", { runner: runner.runnerName })
-            : t("notifications.push.needsInput"),
-          body: t("notifications.push.needsInputBody", { title: titleForRun(run) }),
-          tag: `omniharness-${tagScope}${run.id}-input`,
-          url: runUrl(run.id, runner.runnerProfileId ?? undefined),
+      if (!kind) continue;
+      if (!detail && kind !== "permission" && kind !== "failed") {
+        // The latest assistant message of the settled turn is its result.
+        // ACP does not expose commentary/final channels, so only read after
+        // the latest input and only once the lifecycle says the turn settled.
+        const messages = agents.flatMap((agent) => {
+          const entries = agent.outputEntries ?? [];
+          const input = entries.findLastIndex((entry) => entry.type === "user_input" || entry.type === "user_message_chunk" || entry.type === "supervisor_input");
+          return entries.slice(input + 1).filter((entry) => entry.type === "message" && entry.status !== "archived" && entry.text.trim());
         });
-        continue;
+        messages.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+        detail = notificationPreview(messages.at(-1)?.text);
       }
-
-      if (!previous.completed && observed.completed) {
-        notifications.push({
-          title: runner.runnerName
-            ? t("notifications.push.runnerComplete", { runner: runner.runnerName })
-            : t("notifications.push.conversationComplete"),
-          body: t("notifications.push.conversationCompleteBody", { title: titleForRun(run) }),
-          tag: `omniharness-${tagScope}${run.id}-complete`,
+      notifications.push({
+        scopedRunId, observed,
+        workerId: !detail && (kind === "response" || kind === "input")
+          ? [...(state.workers ?? [])].filter((worker) => worker.runId === run.id).sort((a, b) => (a.workerNumber ?? 0) - (b.workerNumber ?? 0)).at(-1)?.id
+          : undefined,
+        request: {
+          ...conversationNotificationContent({ kind, title: titleForRun(run), detail, runner: runner.runnerName }, t),
+          tag: `omniharness-${tagScope}${run.id}-${tag}`,
           url: runUrl(run.id, runner.runnerProfileId ?? undefined),
-        });
-      }
+        },
+      });
     }
 
     for (const key of [...this.observedRuns.keys()]) {
@@ -531,12 +584,35 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
     }
 
     for (const notification of notifications) {
-      void this.notifier.notify(notification).catch((error: unknown) => {
-        this.patch({
-          lastError: runtimeErrorMessage(error),
-        });
+      void this.deliverNotification(notification, runner.listEntries).catch((error: unknown) => {
+        this.patch({ lastError: runtimeErrorMessage(error) });
       });
     }
+  }
+
+  private async deliverNotification(
+    notification: { request: ConversationNotificationRequest; workerId?: string; scopedRunId: string; observed: ObservedRunState },
+    listEntries?: RuntimeAPIs["workers"]["listEntries"],
+  ) {
+    const request = { ...notification.request };
+    if (notification.workerId && listEntries) {
+      // Read the canonical stream through its existing manager. Snapshot frames
+      // intentionally omit conversation content; never add a second projection.
+      const reader = new WorkerEntriesManager({ listEntries, storage: null });
+      await reader.ensureLoaded(notification.workerId);
+      const stream = reader.getState(notification.workerId);
+      if (stream.lastError) this.patch({ lastError: stream.lastError });
+      const input = stream.entries.findLastIndex((entry) => ["user_input", "user_message_chunk", "supervisor_input"].includes(entry.type));
+      const message = stream.entries.slice(input + 1).findLast((entry) => entry.type === "message" && entry.status !== "archived" && entry.text.trim());
+      request.body = notificationPreview(message?.text) || request.body;
+      reader.reset();
+    }
+    // A reply or runner refresh may arrive while the preview is loading.
+    const current = this.observedRuns.get(notification.scopedRunId);
+    if (!current || current.status !== notification.observed.status
+      || current.inputNeeded !== notification.observed.inputNeeded
+      || current.completed !== notification.observed.completed || !this.canNotifyNow()) return;
+    await this.notifier.notify(request);
   }
 
   private canNotifyNow() {

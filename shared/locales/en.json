@@ -960,5 +960,16 @@
   "settings.publicApi.generate": "Generate API key",
   "settings.publicApi.copy": "Copy key",
   "settings.publicApi.key": "Public API key",
-  "settings.publicApi.saveHelp": "Copy the key now, then select Save. The full key is shown only until you close Settings."
+  "settings.publicApi.saveHelp": "Copy the key now, then select Save. The full key is shown only until you close Settings.",
+  "notifications.push.completeTitle": "{title} — completed",
+  "notifications.push.completeFallback": "The workflow has finished. Open the conversation to review the result.",
+  "notifications.push.responseTitle": "{title} — response ready",
+  "notifications.push.responseFallback": "The agent finished this turn. Open the conversation to read the response.",
+  "notifications.push.inputTitle": "{title} — answer needed",
+  "notifications.push.inputFallback": "Work is paused for your answer. Open the conversation to reply.",
+  "notifications.push.permissionTitle": "{title} — approval needed",
+  "notifications.push.permissionFallback": "A tool needs your approval. Open the conversation to review the request.",
+  "notifications.push.failedTitle": "{title} — failed",
+  "notifications.push.failedFallback": "Work stopped because of an error. Open the conversation for details.",
+  "notifications.push.runnerTitle": "{runner}: {title}"
 }

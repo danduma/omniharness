@@ -960,5 +960,16 @@
   "settings.publicApi.generate": "API-Schlüssel erzeugen",
   "settings.publicApi.copy": "Schlüssel kopieren",
   "settings.publicApi.key": "Öffentlicher API-Schlüssel",
-  "settings.publicApi.saveHelp": "Kopiere den Schlüssel jetzt und wähle dann Speichern. Der vollständige Schlüssel wird nur angezeigt, bis du die Einstellungen schließt."
+  "settings.publicApi.saveHelp": "Kopiere den Schlüssel jetzt und wähle dann Speichern. Der vollständige Schlüssel wird nur angezeigt, bis du die Einstellungen schließt.",
+  "notifications.push.completeTitle": "{title} — abgeschlossen",
+  "notifications.push.completeFallback": "Der Ablauf ist abgeschlossen. Öffne die Unterhaltung, um das Ergebnis zu prüfen.",
+  "notifications.push.responseTitle": "{title} — Antwort bereit",
+  "notifications.push.responseFallback": "Der Agent hat diesen Schritt beendet. Öffne die Unterhaltung, um die Antwort zu lesen.",
+  "notifications.push.inputTitle": "{title} — Antwort erforderlich",
+  "notifications.push.inputFallback": "Die Arbeit wartet auf deine Antwort. Öffne die Unterhaltung, um zu antworten.",
+  "notifications.push.permissionTitle": "{title} — Freigabe erforderlich",
+  "notifications.push.permissionFallback": "Ein Werkzeug benötigt deine Freigabe. Öffne die Unterhaltung, um die Anfrage zu prüfen.",
+  "notifications.push.failedTitle": "{title} — fehlgeschlagen",
+  "notifications.push.failedFallback": "Die Arbeit wurde wegen eines Fehlers angehalten. Öffne die Unterhaltung für Details.",
+  "notifications.push.runnerTitle": "{runner}: {title}"
 }

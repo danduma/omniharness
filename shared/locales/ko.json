@@ -960,5 +960,16 @@
   "settings.publicApi.generate": "API 키 생성",
   "settings.publicApi.copy": "키 복사",
   "settings.publicApi.key": "공개 API 키",
-  "settings.publicApi.saveHelp": "지금 키를 복사한 다음 저장을 선택하세요. 전체 키는 설정을 닫을 때까지만 표시됩니다."
+  "settings.publicApi.saveHelp": "지금 키를 복사한 다음 저장을 선택하세요. 전체 키는 설정을 닫을 때까지만 표시됩니다.",
+  "notifications.push.completeTitle": "{title} — 완료",
+  "notifications.push.completeFallback": "작업 흐름이 완료되었습니다. 대화를 열어 결과를 확인하세요.",
+  "notifications.push.responseTitle": "{title} — 응답 준비됨",
+  "notifications.push.responseFallback": "에이전트가 이번 턴을 마쳤습니다. 대화를 열어 응답을 읽어보세요.",
+  "notifications.push.inputTitle": "{title} — 답변 필요",
+  "notifications.push.inputFallback": "답변을 기다리며 작업이 일시 중지되었습니다. 대화를 열어 답변하세요.",
+  "notifications.push.permissionTitle": "{title} — 승인 필요",
+  "notifications.push.permissionFallback": "도구 실행에 승인이 필요합니다. 대화를 열어 요청을 검토하세요.",
+  "notifications.push.failedTitle": "{title} — 실패",
+  "notifications.push.failedFallback": "오류로 작업이 중단되었습니다. 대화를 열어 자세한 내용을 확인하세요.",
+  "notifications.push.runnerTitle": "{runner}: {title}"
 }

@@ -960,5 +960,16 @@
   "settings.publicApi.generate": "Generar clave de API",
   "settings.publicApi.copy": "Copiar clave",
   "settings.publicApi.key": "Clave de API pública",
-  "settings.publicApi.saveHelp": "Copia ahora la clave y selecciona Guardar. La clave completa solo se muestra hasta que cierres Configuración."
+  "settings.publicApi.saveHelp": "Copia ahora la clave y selecciona Guardar. La clave completa solo se muestra hasta que cierres Configuración.",
+  "notifications.push.completeTitle": "{title} — completado",
+  "notifications.push.completeFallback": "El flujo ha terminado. Abre la conversación para revisar el resultado.",
+  "notifications.push.responseTitle": "{title} — respuesta lista",
+  "notifications.push.responseFallback": "El agente terminó este turno. Abre la conversación para leer la respuesta.",
+  "notifications.push.inputTitle": "{title} — necesita respuesta",
+  "notifications.push.inputFallback": "El trabajo está pausado esperando tu respuesta. Abre la conversación para responder.",
+  "notifications.push.permissionTitle": "{title} — necesita aprobación",
+  "notifications.push.permissionFallback": "Una herramienta necesita tu aprobación. Abre la conversación para revisar la solicitud.",
+  "notifications.push.failedTitle": "{title} — error",
+  "notifications.push.failedFallback": "El trabajo se detuvo por un error. Abre la conversación para ver los detalles.",
+  "notifications.push.runnerTitle": "{runner}: {title}"
 }

@@ -36,8 +36,9 @@ import {
 } from "@/lib/provider-account-failures";
 import { markAccountLoginRequired } from "@/server/accounts/login-required";
 import { drainQueuedWorkerMessages } from "./queued-messages";
-import { trackConversationBackgroundTask } from "./worker-turn-gate";
+import { hasLiveWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
 import {
+  directWorkerOutputHasPendingHumanInput,
   resolveDirectRunStatusFromWorkerOutput,
   updateDirectRunStatusFromWorkerOutput,
 } from "./direct-run-status";
@@ -296,6 +297,14 @@ async function hasPersistedWorkerOutput(worker: typeof workers.$inferSelect) {
 function resolveSyncedRunState(run: typeof runs.$inferSelect, agent: ReturnType<typeof normalizeAgentRecord>) {
   if (agent.state === "error") {
     return "failed";
+  }
+
+  // An idle bridge snapshot can land between session creation and prompt
+  // acceptance, or between commentary and the next tool. The owned request
+  // remains authoritative until it settles; structured input requests can
+  // still pause it, but a question in streaming prose cannot.
+  if (isDirectRunMode(run.mode) && hasLiveWorkerTurn(agent.name) && !directWorkerOutputHasPendingHumanInput(agent)) {
+    return "running";
   }
 
   if (isDirectRunMode(run.mode) && resolveDirectRunStatusFromWorkerOutput({ ...agent, workerStatus: agent.state }) === "awaiting_user") {
@@ -994,8 +1003,9 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
       continue;
     }
     const nextRunState = resolveSyncedRunState(run, agent);
-    const quiescedDirectWorker = isDirectRunMode(run.mode) && directLiveAgentHasCompletedTurn(agent);
-    const nextWorkerStatus = quiescedDirectWorker ? "idle" : agent.state;
+    const turnInFlight = isDirectRunMode(run.mode) && hasLiveWorkerTurn(worker.id);
+    const quiescedDirectWorker = !turnInFlight && isDirectRunMode(run.mode) && directLiveAgentHasCompletedTurn(agent);
+    const nextWorkerStatus = quiescedDirectWorker ? "idle" : turnInFlight && agent.state === "idle" ? "working" : agent.state;
     const nextWorkerCwd = agent.cwd || worker.cwd;
     const nextWorkerCurrentText = quiescedDirectWorker ? "" : agent.currentText;
     const workerChanged = worker.status !== nextWorkerStatus

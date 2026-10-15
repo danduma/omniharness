@@ -209,7 +209,7 @@ export function HomeApp({
   }, [runnerConnection, runtimeApis.accounts]);
   gitWorkspaceManager.configure(runtimeApis.git.execute);
   handoffManager.configure(runtimeApis.handoffs);
-  conversationNotificationManager.configure(runtimeApis.notifications);
+  conversationNotificationManager.configure(runtimeApis.notifications, runtimeApis.workers.listEntries);
   applyHomeBootstrap(bootstrap, false);
   const initialEventState = bootstrap?.initialEventState ?? INITIAL_EVENT_STREAM_STATE;
   const initialRoute = typeof window === "undefined"
