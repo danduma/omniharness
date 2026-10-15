@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import {
   authorizeRestartRequest,
   authorizeSessionCookie,
   createRestartController,
+  createNodeRestartSystem,
   createRestartSupervisor,
   createSessionCookie,
   passwordsMatch,
@@ -347,7 +351,7 @@ describe("restart controller", () => {
         findListenerPids: async () => [303],
         isProcessAlive: async () => false,
         readPidFile: async () => ({ pid: 777, startedAt: 1, command: ["pnpm", "run", "start"], mode: "prod" }),
-        readRecentLog: async () => "",
+        readRecentLog: async () => { throw new Error("Supervision must not read logs"); },
         removePidFile: async () => undefined,
         signalProcess: async () => undefined,
         spawnDetached: async () => 999,
@@ -356,7 +360,7 @@ describe("restart controller", () => {
       },
     });
 
-    await expect(controller.getStatus()).resolves.toMatchObject({ running: false, listenerPids: [303] });
+    await expect(controller.getStatus({ includeRecentLog: false })).resolves.toMatchObject({ running: false, listenerPids: [303] });
     const supervisor = createRestartSupervisor({ controller, appendLog: () => undefined });
     await expect(supervisor.check()).resolves.toMatchObject({ status: "recovered", pid: 999 });
     expect(actions).toContain("prod restart requested: automatic supervision");
@@ -517,5 +521,27 @@ describe("restart supervision", () => {
     expect(actions.filter((action) => action.includes("runner.supervision.gave_up"))).toEqual([
       "log:runner.supervision.gave_up mode=prod attempts=2",
     ]);
+  });
+});
+
+
+describe("restart log reads", () => {
+  it("reads recent lines without loading the complete log", async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "omni-restart-log-"));
+    const config = resolveRestartControlConfig(root, {});
+    await fs.promises.mkdir(path.dirname(config.logFile), { recursive: true });
+    await fs.promises.writeFile(config.logFile, `${"x".repeat(2 * 1024 * 1024)}\nolder\nlatest one\nlatest two\n`);
+    const readFile = fs.readFileSync;
+    const spy = vi.spyOn(fs, "readFileSync").mockImplementation((...args: Parameters<typeof fs.readFileSync>) => {
+      if (args[0] === config.logFile) throw new Error("Whole-log reads are forbidden");
+      return readFile(...args);
+    });
+    try {
+      const system = createNodeRestartSystem(config);
+      await expect(system.readRecentLog(3)).resolves.toBe("latest one\nlatest two");
+    } finally {
+      spy.mockRestore();
+      await fs.promises.rm(root, { recursive: true, force: true });
+    }
   });
 });

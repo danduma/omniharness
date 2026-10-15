@@ -255,10 +255,10 @@ export function createRestartController({ config, system }: {
       }
     },
     start,
-    async getStatus(options: { logLines?: number } = {}) {
+    async getStatus(options: { logLines?: number; includeRecentLog?: boolean } = {}) {
       const pidEntry = await system.readPidFile();
       const listenerPids = await system.findListenerPids(config.managedPorts);
-      const recentLog = await system.readRecentLog(options.logLines);
+      const recentLog = options.includeRecentLog === false ? "" : await system.readRecentLog(options.logLines);
       const pidRunning = Boolean(pidEntry && await system.isProcessAlive(pidEntry.pid));
       return {
         // A surviving proxy (or the bridge) is not proof that the managed
@@ -277,7 +277,7 @@ export function createRestartController({ config, system }: {
 }
 
 type RestartSupervisionController = {
-  getStatus(): Promise<{ running: boolean; mode: RestartMode | null }>;
+  getStatus(options?: { includeRecentLog?: boolean }): Promise<{ running: boolean; mode: RestartMode | null }>;
   restart(reason: string, mode: RestartMode): Promise<RestartPidEntry>;
 };
 
@@ -300,7 +300,7 @@ export function createRestartSupervisor({
   let inFlight: Promise<unknown> | null = null;
 
   const inspectAndRecover = async () => {
-    const status = await controller.getStatus();
+    const status = await controller.getStatus({ includeRecentLog: false });
     if (status.running) {
       const checkedAt = now();
       healthySince ??= checkedAt;
@@ -455,7 +455,33 @@ export function createNodeRestartSystem(config: RestartControlConfig): RestartSy
     readRecentLog: async (lines) => {
       const requested = Number.isFinite(lines) && (lines as number) > 0 ? Math.floor(lines as number) : 80;
       try {
-        return fs.readFileSync(config.logFile, "utf8").split("\n").slice(-requested).join("\n").trim();
+        const handle = await fs.promises.open(config.logFile, "r");
+        try {
+          const { size } = await handle.stat();
+          const chunks: Buffer[] = [];
+          let offset = size;
+          let bytesRead = 0;
+          let newlines = 0;
+          // Logs grow across restarts. Never allocate the entire historical
+          // log just to show its last few lines, especially under memory pressure.
+          const maxBytes = 1024 * 1024;
+          while (offset > 0 && bytesRead < maxBytes && newlines < requested) {
+            const length = Math.min(64 * 1024, offset, maxBytes - bytesRead);
+            offset -= length;
+            const buffer = Buffer.alloc(length);
+            const read = await handle.read(buffer, 0, length, offset);
+            const chunk = buffer.subarray(0, read.bytesRead);
+            chunks.push(chunk);
+            bytesRead += read.bytesRead;
+            for (const byte of chunk) if (byte === 10) newlines++;
+            if (read.bytesRead === 0) break;
+          }
+          let tail = Buffer.concat(chunks.reverse()).toString("utf8");
+          if (offset > 0) tail = tail.slice(tail.indexOf("\n") + 1);
+          return tail.split("\n").slice(-requested).join("\n").trim();
+        } finally {
+          await handle.close();
+        }
       } catch {
         return "";
       }
