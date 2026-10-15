@@ -27,8 +27,10 @@ import { getAppDataPath } from "@/server/app-root";
 import { buildPlannerSystemPrompt } from "@/server/prompts";
 import {
   appendAttachmentContext,
+  normalizeChatAttachments,
   parseChatAttachmentsJson,
   resolveImageAttachments,
+  serializeChatAttachments,
   type ChatAttachment,
 } from "@/lib/chat-attachments";
 import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/supervisor/worker-types";
@@ -1497,6 +1499,77 @@ async function cloneDirectRun(args: RecoverRunArgs) {
   });
 }
 
+/**
+ * A direct send appends its `user_input` stream entry before inserting the
+ * message row, so a send whose insert failed — or whose row a busy-agent
+ * fallback deleted without managing to queue it — leaves a message the user
+ * can see and click but the DB has never heard of. Retry and edit on that
+ * bubble then failed outright. The stream entry carries everything the row
+ * needs, so rebuild the row from it and let recovery continue.
+ */
+async function restoreUserMessageFromWorkerStream(
+  run: Pick<typeof runs.$inferSelect, "id" | "mode">,
+  messageId: string,
+): Promise<typeof messages.$inferSelect | null> {
+  if (run.mode !== "direct" && run.mode !== "commit") {
+    return null;
+  }
+
+  const runWorkers = await db.select().from(workers).where(eq(workers.runId, run.id));
+  for (const worker of runWorkers) {
+    let entries: WorkerEntry[];
+    try {
+      entries = await readWorkerOutputEntries(run.id, worker.id);
+    } catch (error) {
+      emitNamedEvent({
+        kind: "conversation.message_restore_failed",
+        runId: run.id,
+        messageId,
+        workerId: worker.id,
+        reason: formatErrorMessage(error),
+      });
+      continue;
+    }
+    const entry = entries.find((candidate) => candidate.type === "user_input" && candidate.id === messageId);
+    const content = entry?.text?.trim();
+    if (!entry || !content) {
+      continue;
+    }
+
+    const createdAt = new Date(entry.timestamp);
+    const restored: typeof messages.$inferInsert = {
+      id: messageId,
+      runId: run.id,
+      role: "user",
+      kind: "checkpoint",
+      content,
+      attachmentsJson: serializeChatAttachments(normalizeChatAttachments((entry.attachments ?? []).map((attachment) => ({
+        id: attachment.id,
+        name: attachment.filename,
+        mimeType: attachment.mimeType,
+        size: attachment.sizeBytes,
+        storagePath: attachment.storagePath,
+      })))),
+      // It never reached the agent; recovery is what delivers it now.
+      deliveryStatus: "failed",
+      createdAt: Number.isNaN(createdAt.getTime()) ? new Date() : createdAt,
+    };
+    await db.insert(messages).values(restored).onConflictDoNothing();
+    emitNamedEvent({
+      kind: "conversation.message_restored_from_stream",
+      runId: run.id,
+      messageId,
+      workerId: worker.id,
+    });
+    return await db.select().from(messages).where(and(
+      eq(messages.id, messageId),
+      eq(messages.runId, run.id),
+    )).get() ?? null;
+  }
+
+  return null;
+}
+
 async function recoverRunUnlocked(args: RecoverRunArgs, recoveryEpoch?: number) {
   await assertRunNotHandoffFenced(args.runId);
   const run = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
@@ -1641,7 +1714,7 @@ export async function recoverRun(args: RecoverRunArgs) {
   // provider turn runs. Preempt the local turn before joining that queue so an
   // agent blocked on an elicitation cannot prevent edit/retry from ever
   // reaching the cancellation and generation-advance phase.
-  const [run, targetMessage, runWorkers] = await Promise.all([
+  const [run, persistedTargetMessage, runWorkers] = await Promise.all([
     db.select({ id: runs.id, mode: runs.mode }).from(runs).where(eq(runs.id, args.runId)).get(),
     db.select({ id: messages.id, role: messages.role, runId: messages.runId })
       .from(messages)
@@ -1649,6 +1722,8 @@ export async function recoverRun(args: RecoverRunArgs) {
       .get(),
     db.select({ id: workers.id }).from(workers).where(eq(workers.runId, args.runId)),
   ]);
+  const targetMessage = persistedTargetMessage
+    ?? (run ? await restoreUserMessageFromWorkerStream(run, args.targetMessageId) : null);
   let recoveryEpoch: number | undefined;
   if (
     run

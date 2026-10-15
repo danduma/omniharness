@@ -785,4 +785,129 @@ describe("rewinding a conversation supersedes the discarded branch", () => {
     // to live yet, so it must keep rendering.
     expect(parseSupersededSeqRanges(rewoundWorker?.supersededSeqRanges)).toEqual([{ from: 2, through: 2 }]);
   });
+
+  // A direct send appends its user_input entry before inserting the message
+  // row. When the insert never lands, the bubble is on screen but retry and
+  // edit refused it as "not a user message in this run".
+  it("edits a message that only the worker stream recorded", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const firstMessageId = randomUUID();
+    const orphanMessageId = randomUUID();
+    const start = new Date("2026-07-25T08:40:00.000Z");
+
+    await db.insert(plans).values({
+      id: planId,
+      path: "vibes/ad-hoc/direct.md",
+      status: "running",
+      createdAt: start,
+      updatedAt: start,
+    });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Direct",
+      projectPath: process.cwd(),
+      preferredWorkerType: "claude",
+      allowedWorkerTypes: JSON.stringify(["claude"]),
+      status: "done",
+      createdAt: start,
+      updatedAt: start,
+    });
+    await db.insert(messages).values({
+      id: firstMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "first question",
+      createdAt: start,
+    });
+    await db.insert(workers).values({
+      id: workerId,
+      runId,
+      type: "claude",
+      status: "idle",
+      cwd: process.cwd(),
+      workerNumber: 1,
+      outputLog: "",
+      outputEntriesJson: "[]",
+      currentText: "",
+      lastText: "",
+      createdAt: start,
+      updatedAt: start,
+    });
+    await appendWorkerEntry(runId, workerId, {
+      id: firstMessageId,
+      type: "user_input",
+      text: "first question",
+      timestamp: start.toISOString(),
+    });
+    await appendWorkerEntry(runId, workerId, {
+      id: "answer-to-first",
+      type: "message",
+      text: "answer to the first question",
+      timestamp: new Date(start.getTime() + 30_000).toISOString(),
+    });
+    await appendWorkerEntry(runId, workerId, {
+      id: orphanMessageId,
+      type: "user_input",
+      text: "follow-up that never got a row",
+      timestamp: new Date(start.getTime() + 60_000).toISOString(),
+    });
+
+    mockSpawnAgent.mockResolvedValue({
+      name: `${runId}-worker-2`,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "session-2",
+      sessionMode: "full-access",
+      outputEntries: [],
+      currentText: "",
+      lastText: "",
+    });
+    mockAskAgent.mockResolvedValue({ response: "answer after the edit", state: "idle" });
+    mockGetAgent.mockResolvedValue(null);
+
+    await recoverRun({
+      runId,
+      action: "edit",
+      targetMessageId: orphanMessageId,
+      content: "edited follow-up",
+    });
+
+    const replayPrompt = String(mockAskAgent.mock.calls.at(-1)?.[1] ?? "");
+    expect(replayPrompt).toContain("Assistant: answer to the first question");
+    expect(replayPrompt).toContain("Next user prompt:\nedited follow-up");
+    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(
+      expect.objectContaining({
+        kind: "conversation.message_restored_from_stream",
+        runId,
+        messageId: orphanMessageId,
+        workerId,
+      }),
+    );
+  });
+
+  it("still refuses a target that neither the DB nor the stream knows", async () => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const start = new Date("2026-07-25T08:40:00.000Z");
+    await db.insert(plans).values({ id: planId, path: "vibes/ad-hoc/direct.md", status: "running", createdAt: start, updatedAt: start });
+    await db.insert(runs).values({
+      id: runId,
+      planId,
+      mode: "direct",
+      title: "Direct",
+      projectPath: process.cwd(),
+      status: "done",
+      createdAt: start,
+      updatedAt: start,
+    });
+
+    await expect(recoverRun({ runId, action: "retry", targetMessageId: randomUUID() }))
+      .rejects.toThrow("Target message must be a user message in this run");
+  });
 });
