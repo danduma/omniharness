@@ -922,6 +922,99 @@ describe("EventStreamStateManager", () => {
     expect(manager.getSnapshot().agents[0]?.pendingElicitations).toEqual([]);
   });
 
+  // A live frame whose build started before the answer reached the runtime
+  // still lists the request. Delivered after the optimistic clear, it put the
+  // submitted form back on screen until the next build caught up.
+  it("does not resurrect an answered elicitation from a live frame built before the answer landed", () => {
+    const manager = new EventStreamStateManager({
+      ...state("run-a", "conversation", "sha256:a"),
+      agents: [agentWithElicitation(false)] as any,
+    }, { snapshotCache: new EventStreamSnapshotCacheManager({ storage: null }) });
+
+    manager.updateLocal((current) => ({
+      ...current,
+      agents: current.agents.map((agent) => ({ ...agent, pendingElicitations: [] })),
+    }));
+
+    manager.updateFromServer({
+      ...state("run-a", "conversation", "sha256:stale"),
+      agents: [agentWithElicitation(false)] as any,
+    });
+
+    expect(manager.getSnapshot().agents[0]?.pendingElicitations).toEqual([]);
+  });
+
+  it("does not resurrect an answered permission from a live frame built before the answer landed", () => {
+    const withPermission = {
+      ...agentWithElicitation(false),
+      pendingElicitations: [],
+      pendingPermissions: [{ requestId: 3, requestedAt: new Date(0).toISOString() }],
+    };
+    const manager = new EventStreamStateManager({
+      ...state("run-a", "conversation", "sha256:a"),
+      agents: [withPermission] as any,
+    }, { snapshotCache: new EventStreamSnapshotCacheManager({ storage: null }) });
+
+    manager.updateLocal((current) => ({
+      ...current,
+      agents: current.agents.map((agent) => ({ ...agent, pendingPermissions: [] })),
+    }));
+
+    manager.updateFromServer({
+      ...state("run-a", "conversation", "sha256:stale"),
+      agents: [withPermission] as any,
+    });
+
+    expect(manager.getSnapshot().agents[0]?.pendingPermissions).toEqual([]);
+  });
+
+  it("shows the request again when a failed answer restores it locally", () => {
+    const manager = new EventStreamStateManager({
+      ...state("run-a", "conversation", "sha256:a"),
+      agents: [agentWithElicitation(false)] as any,
+    }, { snapshotCache: new EventStreamSnapshotCacheManager({ storage: null }) });
+    const beforeAnswer = manager.getSnapshot();
+
+    manager.updateLocal((current) => ({
+      ...current,
+      agents: current.agents.map((agent) => ({ ...agent, pendingElicitations: [] })),
+    }));
+    // The mutation's onError path restores the captured pre-answer state.
+    manager.updateLocal(beforeAnswer);
+
+    manager.updateFromServer({
+      ...state("run-a", "conversation", "sha256:b"),
+      agents: [agentWithElicitation(false)] as any,
+    });
+
+    expect(manager.getSnapshot().agents[0]?.pendingElicitations?.map((item) => item.requestId)).toEqual([7]);
+  });
+
+  it("shows a new request that reuses an answered request id after a runtime restart", () => {
+    const manager = new EventStreamStateManager({
+      ...state("run-a", "conversation", "sha256:a"),
+      agents: [agentWithElicitation(false)] as any,
+    }, { snapshotCache: new EventStreamSnapshotCacheManager({ storage: null }) });
+
+    manager.updateLocal((current) => ({
+      ...current,
+      agents: current.agents.map((agent) => ({ ...agent, pendingElicitations: [] })),
+    }));
+
+    const restarted = agentWithElicitation(false);
+    restarted.pendingElicitations = [{
+      requestId: 7,
+      requestedAt: new Date(60_000).toISOString(),
+      message: "A different question",
+    }];
+    manager.updateFromServer({
+      ...state("run-a", "conversation", "sha256:b"),
+      agents: [restarted] as any,
+    });
+
+    expect(manager.getSnapshot().agents[0]?.pendingElicitations?.map((item) => item.message)).toEqual(["A different question"]);
+  });
+
   it("clears a pending elicitation when a live snapshot reports it resolved", () => {
     const manager = new EventStreamStateManager({
       ...state("run-a", "conversation", "sha256:a"),
