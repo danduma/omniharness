@@ -179,9 +179,28 @@ describe("bridge client", () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it.each([false, true])("surfaces a terminal Claude limit after progress text (chunk fallback: %s)", async (chunkFallback) => {
+    const notice = "You've hit your session limit · resets 3:30pm (Europe/Madrid)";
+    const response = "Plan 034 is written. Reading the billing code next:" + notice;
+    global.fetch = vi.fn().mockResolvedValue(new Response([
+      "event: chunk",
+      `data: ${JSON.stringify({ chunk: response })}`,
+      "",
+      "event: done",
+      `data: ${JSON.stringify({ state: "idle", stopReason: "end_turn", ...(chunkFallback ? {} : { response }) })}`,
+      "",
+      "",
+    ].join("\n"), { headers: { "Content-Type": "text/event-stream" } })) as typeof fetch;
+    const { askAgent } = await import("@/server/bridge-client");
+    await expect(askAgent("worker-1", "continue")).rejects.toThrow(notice);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     'The provider returned "You\'ve hit your session limit · resets 1am (Europe/Madrid)". I fixed detection.',
     "You've used 85% of your session limit",
+    'Example provider text: "You\'ve hit your session limit · resets 1am (Europe/Madrid)',
+    "> You've hit your session limit · resets 1am (Europe/Madrid)",
   ])("keeps ordinary responses mentioning quota successful: %s", async (response) => {
     global.fetch = vi.fn().mockResolvedValue(new Response(
       `event: done\ndata: ${JSON.stringify({ response, state: "idle", stopReason: "end_turn" })}\n\n`,

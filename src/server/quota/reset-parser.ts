@@ -42,15 +42,18 @@ const GENERIC_OVERLOAD_PATTERN = /\b(?:overloaded|busy|temporar(?:y|ily)|service
 const USAGE_PROGRESS_PATTERN = /\b(?:you(?:'|’)ve\s+)?used\s+(\d{1,3}(?:\.\d+)?)%\s+of\s+(?:your\s+)?(?:(?:weekly|session|usage|subscription|billing)\s+)?limit\b/i;
 const CLOCK_SKEW_MS = 60_000;
 
-/** Claude can return this notice in a successful end_turn rather than an
- * error. Match the provider notice itself, including duplicated chunks, so
- * quoted diagnostics and ordinary discussion of quota remain successful. */
+/** Claude can finish normally after progress text with a quota notice.
+ * Require the exact provider notice at the end, including duplicated chunks;
+ * quoted diagnostics and ordinary discussion must remain successful. */
 export function providerQuotaNoticeText(text: string | null | undefined): string | null {
-  const notice = text?.trim();
-  if (!notice || !/^(?:you(?:'|’)ve hit your (?:(?:session|weekly|usage|subscription) )?limit(?:\s*·\s*resets\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?(?:\s*\([\w/+:-]+\))?)?\s*)+$/i.test(notice)) {
-    return null;
-  }
-  return notice;
+  const response = text?.trim();
+  const match = response?.match(/(?:you(?:'|’)ve hit your (?:(?:session|weekly|usage|subscription) )?limit(?:\s*·\s*resets\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?(?:\s*\([\w/+:-]+\))?)?\s*)+$/i);
+  if (!match || !response) return null;
+  // A quotation opener immediately before the notice identifies diagnostic
+  // prose, even when the quoted text was left without a closing delimiter.
+  const prefix = response.slice(0, match.index).trimEnd();
+  if (/["'`“‘>]$/.test(prefix)) return null;
+  return match[0].trim();
 }
 
 function nowDate(value: Date | number | undefined) {
