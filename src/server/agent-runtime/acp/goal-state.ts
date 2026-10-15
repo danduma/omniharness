@@ -306,6 +306,108 @@ export async function handleAcpGoalSessionUpdateForWorker(args: {
   return { kind: "accepted", revision: result.snapshot.revision };
 }
 
+const STOP_HOOK_BLOCK_CAP_NOTICE = /\bA hook blocked the turn from ending \d+ consecutive times\b/i;
+
+/**
+ * Claude Code's notice that a Stop hook blocked the turn too many times in a
+ * row and was overridden. The adapter delivers it as an agent message chunk
+ * because this client does not take ACP notices.
+ */
+export function isStopHookBlockCapNotice(update: unknown) {
+  if (!isGoalRecord(update) || update.sessionUpdate !== "agent_message_chunk") return false;
+  const content = update.content;
+  return isGoalRecord(content) && typeof content.text === "string" && STOP_HOOK_BLOCK_CAP_NOTICE.test(content.text);
+}
+
+export type GoalStopHookCapResult =
+  | { kind: "ignored"; reason: string }
+  | { kind: "parked"; revision: number; dispatch: string };
+
+/**
+ * Park the worker's goal on the user after Claude overrode its `/goal` Stop hook.
+ *
+ * Claude's `/goal` is a Stop hook that blocks every turn from ending until an
+ * evaluator says the condition holds. When what is left needs the user (a
+ * device, a recording, a decision), the agent can only answer "still blocked"
+ * until Claude Code gives up after its block cap. The goal stays armed, so every
+ * later turn (each user message, each background task notification) replayed
+ * the same run of "still blocked" replies ending in the cap warning. The cap is
+ * the signal that the agent has stopped pursuing the goal, so the goal moves to
+ * `waiting_user` and is disarmed in the agent until the user resumes it.
+ */
+export async function parkGoalAfterStopHookBlockCap(args: {
+  workerId: string;
+  sessionId: string | null | undefined;
+  dispatch?: (
+    snapshot: import("@/shared/goal-plan").GoalSnapshot,
+    action: import("@/shared/goal-plan").GoalMutationAction,
+  ) => Promise<{ kind: string; reason?: string }>;
+}): Promise<GoalStopHookCapResult> {
+  const { emitNamedEvent } = await import("@/server/events/named-events");
+  const runId = await resolveRunIdForGoalWorker(args.workerId);
+  const skip = (reason: string, goalId: string | null = null): GoalStopHookCapResult => {
+    emitNamedEvent({ kind: "goal.park_skipped", runId, goalId, workerId: args.workerId, reason });
+    return { kind: "ignored", reason };
+  };
+  if (!runId) return skip("worker_not_persisted");
+  const { goalControl } = await import("@/server/runs/goal-control");
+  const current = await goalControl.getGoal(runId);
+  if (!current || !current.visible || current.status === "cleared") return skip("goal_absent");
+  if (current.status !== "pursuing") return skip(`goal_${current.status}`, current.goalId);
+  const sessionId = typeof args.sessionId === "string" ? args.sessionId.trim() : "";
+  if (current.workerId !== args.workerId || current.acpSessionId !== sessionId) {
+    return skip("stale_lease", current.goalId);
+  }
+  const parked = await goalControl.markWaitingForUser(current);
+  if (!parked.ok) return skip(parked.code, current.goalId);
+  emitNamedEvent({
+    kind: "goal.parked_on_user",
+    runId,
+    goalId: parked.snapshot.goalId,
+    workerId: args.workerId,
+    reason: "stop_hook_block_cap",
+    revision: parked.snapshot.revision,
+  });
+
+  const [{ goalControlDispatchCoordinator, recoveryAction }, { goalOutboxDispatcher }] = await Promise.all([
+    import("@/server/runs/goal-control-dispatch"),
+    import("@/server/runs/goal-outbox"),
+  ]);
+  const action = recoveryAction(parked.snapshot);
+  let dispatch: string;
+  try {
+    // The agent is usually still ending the capped turn, so this mostly parks
+    // as a deferred control that the turn-settled sync replays.
+    const outcome: { kind: string; reason?: string } = args.dispatch
+      ? await args.dispatch(parked.snapshot, action)
+      : await goalControlDispatchCoordinator.dispatch(parked.snapshot, action);
+    dispatch = outcome.kind;
+    if (outcome.kind !== "dispatched" && outcome.kind !== "already_applied" && outcome.kind !== "deferred") {
+      emitNamedEvent({
+        kind: "goal.reconciliation.refused",
+        runId,
+        goalId: parked.snapshot.goalId,
+        workerId: args.workerId,
+        reason: outcome.reason ?? outcome.kind,
+      });
+    }
+  } catch (error) {
+    const reason = redactGoalErrorMessage(error);
+    dispatch = "failed";
+    emitNamedEvent({ kind: "goal.reconciliation.failed", runId, goalId: parked.snapshot.goalId, workerId: args.workerId, reason });
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "goal.reconciliation.failed",
+      message: reason,
+      surface: "log",
+      runId,
+      workerId: args.workerId,
+    });
+  }
+  await goalOutboxDispatcher.drainPending();
+  return { kind: "parked", revision: parked.snapshot.revision, dispatch };
+}
+
 export async function initializeWorkerGoalSession(
   workerId: string,
   sessionId: string,
@@ -377,7 +479,7 @@ export async function initializeWorkerGoalSession(
   }
   let settledSnapshot = snapshot;
   try {
-    const { createGoalControlDispatchCoordinator, goalControlDispatchCoordinator } = await import(
+    const { createGoalControlDispatchCoordinator, goalControlDispatchCoordinator, recoveryAction } = await import(
       "@/server/runs/goal-control-dispatch"
     );
     const coordinator = options.dispatch
@@ -388,7 +490,11 @@ export async function initializeWorkerGoalSession(
           markControlApplied: (goalSnapshot, method, action) => goalControl.markControlApplied(goalSnapshot, method, action),
         })
       : goalControlDispatchCoordinator;
-    const dispatched = await coordinator.dispatch(snapshot, "set");
+    // A new session must not pick a goal back up while it waits on the user.
+    const dispatched = await coordinator.dispatch(
+      snapshot,
+      snapshot.status === "waiting_user" ? recoveryAction(snapshot) : "set",
+    );
     if (dispatched.snapshot) settledSnapshot = dispatched.snapshot;
     if (dispatched.kind === "unsupported") {
         await goalControl.recordControlFailure(dispatched.snapshot, "unsupported", dispatched.reason);
