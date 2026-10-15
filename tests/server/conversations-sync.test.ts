@@ -374,6 +374,45 @@ describe("syncConversationSessions", () => {
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["running", "", false], ["running", "Reading the next plan:", false],
+    ["done", "Reading the next plan:", false], ["done", "", true], ["cancelled", "", false],
+  ])("arms quota recovery before an idle Claude snapshot can settle the run (status: %s, prefix: %s)", async (status, prefix, alreadyPersisted) => {
+    const planId = randomUUID();
+    const runId = randomUUID();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+    const notice = "You've hit your session limit · resets 3:30pm (Europe/Madrid)";
+    await db.insert(plans).values({ id: planId, path: "quota-snapshot.md", status: "running", createdAt: now, updatedAt: now });
+    await db.insert(runs).values({ id: runId, planId, mode: "direct", status, createdAt: now, updatedAt: now });
+    await db.insert(workers).values({
+      id: workerId, runId, type: "claude", status: "working", cwd: process.cwd(),
+      bridgeSessionId: "claude-session-1", outputLog: "", outputEntriesJson: "[]",
+      currentText: "", lastText: alreadyPersisted ? notice : "", createdAt: now, updatedAt: now,
+    });
+    const agent = {
+      name: workerId, type: "claude", cwd: process.cwd(), state: "idle",
+      sessionId: "claude-session-1", currentText: "", lastText: prefix + notice,
+      outputEntries: [], pendingPermissions: [], pendingElicitations: [], stderrBuffer: [], stopReason: "end_turn",
+    };
+    await syncConversationSessions([agent]);
+    await syncConversationSessions([agent]);
+    if (status === "cancelled" || alreadyPersisted) {
+      expect((await db.select().from(runs).where(eq(runs.id, runId)).get())?.status).toBe(status);
+      expect(await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId))).toHaveLength(0);
+      expect(await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get()).toBeUndefined();
+      return;
+    }
+    expect((await db.select().from(runs).where(eq(runs.id, runId)).get())?.status).toBe("quota_waiting");
+    expect((await db.select().from(workers).where(eq(workers.id, workerId)).get())?.status).toBe("cred-exhausted");
+    const incidents = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0]).toMatchObject({ kind: "quota_exhausted", status: "open" });
+    expect(await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get())
+      .toMatchObject({ reason: "quota_wait", incidentId: incidents[0].id });
+    expect(mockAskAgent).not.toHaveBeenCalled();
+  });
+
   it("preserves direct quota waits even when the bridge still reports a live worker", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -458,6 +497,12 @@ describe("syncConversationSessions", () => {
     expect(worker?.status).toBe("cred-exhausted");
     expect(worker?.currentText).toContain("session limit");
     expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+
+    // A missing runtime must not let the persisted-worker pass overwrite
+    // the quota state that the first pass preserved.
+    await syncConversationSessions([]);
+    expect((await db.select().from(runs).where(eq(runs.id, runId)).get())?.status).toBe("quota_waiting");
+
   });
 
   it("marks a selected planning run for recovery when its active worker is missing without a saved session", async () => {

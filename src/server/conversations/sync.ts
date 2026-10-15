@@ -10,6 +10,8 @@ import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { listExecutionEventsForWorker, recordExecutionEvent } from "@/server/events/execution-event-store";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { persistRunFailure } from "@/server/runs/failures";
+import { providerQuotaNoticeText } from "@/server/quota/reset-parser";
+import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import { isTerminalRunStatus } from "@/server/runs/status";
 import { isLongWorkerCompletionText } from "@/server/supervisor/worker-completion";
 import { startSupervisorRun } from "@/server/supervisor/start";
@@ -718,6 +720,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
     incident.kind === "quota_exhausted"
     && (incident.status === "open" || incident.status === "recovering")
   ));
+  const quotaOwnedRunIds = new Set<string>();
   const runsWithUnsettledIncidents = new Set(
     allIncidents
       .filter((incident) => isUnsettledRecoveryIncidentStatus(incident.status))
@@ -742,6 +745,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
       ),
     );
     if (quotaIncident && quotaRecoveryOwnsPersistedState) {
+      quotaOwnedRunIds.add(run.id);
       if (run.status !== "quota_waiting" || run.lastError || run.failedAt) {
         const updated = await withSqliteBusyRetry(() => db.update(runs).set({
           status: "quota_waiting",
@@ -886,6 +890,26 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
     // Codex /goal keeps running turns after the prompted one settled the run,
     // and gating this on the selected run left a goal's output unpersisted
     // for as long as nobody had that conversation open.
+    const terminalQuotaNotice = isDirectRunMode(run.mode)
+      && agent
+      && ["idle", "error", "stopped"].includes(normalizedStatus(agent.state))
+      && !isCancelledWorkerStatus(worker.status)
+      ? providerQuotaNoticeText(agent.lastText || agent.currentText)
+      : null;
+    // A provider-owned background turn can start and finish between polls.
+    // New terminal text proves the earlier completion no longer describes it.
+    // Only reopen done; cancellation and other terminal barriers still win.
+    let reopenedForQuota = false;
+    if (run.status === "done" && terminalQuotaNotice && agent?.lastText !== worker.lastText) {
+      const reopened = await withSqliteBusyRetry(() => db.update(runs).set({
+        status: "running",
+        updatedAt: new Date(),
+      }).where(and(eq(runs.id, run.id), eq(runs.status, "done"))).returning({ id: runs.id }));
+      if (reopened.length === 0) continue;
+      reopenedForQuota = true;
+      emitNamedEvent({ kind: "session.status", runId: run.id, sessionType: run.sessionType,
+        prev: "done", next: "running", reason: "provider_background_quota_notice" });
+    }
     const terminalDirectRunStillStreaming = Boolean(
       isDirectRunMode(run.mode)
       && agent
@@ -894,7 +918,8 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
         || (isReopenableSettledRunStatus(run.status) && isCleanWorkingLiveAgent(agent))
       ),
     );
-    if (isTerminalRunStatus(run.status) && !staleBusyFailure && !terminalDirectRunStillStreaming) {
+    if (isTerminalRunStatus(run.status) && !staleBusyFailure && !terminalDirectRunStillStreaming
+      && !reopenedForQuota) {
       // A queue row written in the same beat that the run reached a terminal
       // state would otherwise strand forever: this loop skips terminal runs,
       // and the persisted loop below skips them too, so no drain is ever
@@ -952,6 +977,20 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
       { expectedTurnGeneration: worker.turnGeneration },
     );
     if (!outputPersisted) {
+      continue;
+    }
+    // Background provider turns have no ask promise to reject. Admit their
+    // terminal quota notice before normal completion can settle this run.
+    const quotaNotice = terminalQuotaNotice;
+    if (quotaNotice) {
+      await handleWorkerQuotaExhaustion({
+        runId: run.id,
+        workerId: worker.id,
+        text: quotaNotice,
+        provider: worker.type,
+      });
+      quotaOwnedRunIds.add(run.id);
+      notifyEventStreamSubscribers();
       continue;
     }
     const nextRunState = resolveSyncedRunState(run, agent);
@@ -1096,7 +1135,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
 
   for (const run of allRuns) {
     const staleBusyFailure = isAgentBusyRunFailure(run);
-    if (run.mode === "implementation" || (isTerminalRunStatus(run.status) && !staleBusyFailure)) {
+    if (quotaOwnedRunIds.has(run.id) || run.mode === "implementation" || (isTerminalRunStatus(run.status) && !staleBusyFailure)) {
       continue;
     }
 
