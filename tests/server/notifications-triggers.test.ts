@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/server/db";
 import {
+  clarifications,
   authEvents,
   authPairTokens,
   authSessions,
@@ -31,6 +32,7 @@ describe("notification lifecycle triggers", () => {
     await db.delete(authEvents);
     await db.delete(authPairTokens);
     await db.delete(authSessions);
+    await db.delete(clarifications);
     await db.delete(runs);
     await db.delete(plans);
     await db.delete(settings);
@@ -67,8 +69,8 @@ describe("notification lifecycle triggers", () => {
     });
 
     expect(deliverNotificationToSubscriptions).toHaveBeenCalledWith({
-      title: "Conversation complete",
-      body: "Build phone notifications is complete.",
+      title: "Build phone notifications — completed",
+      body: "All checks passed.",
       tag: "omniharness-run-1-complete",
       url: "/session/run-1",
     });
@@ -84,10 +86,24 @@ describe("notification lifecycle triggers", () => {
     });
 
     expect(deliverNotificationToSubscriptions).toHaveBeenCalledWith({
-      title: "OmniHarness needs input",
-      body: "Build phone notifications is waiting for your input.",
+      title: "Build phone notifications — answer needed",
+      body: "Which deployment target?",
       tag: "omniharness-run-1-input",
       url: "/session/run-1",
     });
   });
+  it("does not deliver stale completion when the run has resumed", async () => {
+    await createRun("running");
+    await notifyRunLifecycleEvent({ runId: "run-1", eventType: "run_completed", details: { summary: "Old result" } });
+    expect(deliverNotificationToSubscriptions).not.toHaveBeenCalled();
+  });
+
+  it("shows the pending question for grouped clarification events", async () => {
+    await createRun("awaiting_user");
+    const now = new Date();
+    await db.insert(clarifications).values({ id: "question-1", runId: "run-1", question: "Deploy to staging or production?", status: "pending", createdAt: now, updatedAt: now });
+    await notifyRunLifecycleEvent({ runId: "run-1", eventType: "clarifications_requested", details: { count: 1 } });
+    expect(deliverNotificationToSubscriptions).toHaveBeenCalledWith(expect.objectContaining({ body: "Deploy to staging or production?" }));
+  });
+
 });

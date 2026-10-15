@@ -960,5 +960,16 @@
   "settings.publicApi.generate": "Générer une clé API",
   "settings.publicApi.copy": "Copier la clé",
   "settings.publicApi.key": "Clé d’API publique",
-  "settings.publicApi.saveHelp": "Copiez la clé maintenant, puis sélectionnez Enregistrer. La clé complète n’est affichée que jusqu’à la fermeture des paramètres."
+  "settings.publicApi.saveHelp": "Copiez la clé maintenant, puis sélectionnez Enregistrer. La clé complète n’est affichée que jusqu’à la fermeture des paramètres.",
+  "notifications.push.completeTitle": "{title} — terminé",
+  "notifications.push.completeFallback": "Le travail est terminé. Ouvrez la conversation pour consulter le résultat.",
+  "notifications.push.responseTitle": "{title} — réponse disponible",
+  "notifications.push.responseFallback": "L’agent a terminé ce tour. Ouvrez la conversation pour lire sa réponse.",
+  "notifications.push.inputTitle": "{title} — réponse requise",
+  "notifications.push.inputFallback": "Le travail attend votre réponse. Ouvrez la conversation pour répondre.",
+  "notifications.push.permissionTitle": "{title} — autorisation requise",
+  "notifications.push.permissionFallback": "Un outil nécessite votre autorisation. Ouvrez la conversation pour examiner la demande.",
+  "notifications.push.failedTitle": "{title} — échec",
+  "notifications.push.failedFallback": "Le travail s’est arrêté à cause d’une erreur. Ouvrez la conversation pour en savoir plus.",
+  "notifications.push.runnerTitle": "{runner}: {title}"
 }

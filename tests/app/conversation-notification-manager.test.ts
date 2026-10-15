@@ -174,8 +174,8 @@ describe("ConversationNotificationManager", () => {
 
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({
-      title: "OmniHarness needs input",
-      body: "Implement notifications is waiting for your input.",
+      title: "Implement notifications — answer needed",
+      body: "Which deployment target?",
       url: "/session/run-1",
       tag: "omniharness-run-1-input",
     }));
@@ -199,11 +199,51 @@ describe("ConversationNotificationManager", () => {
 
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({
-      title: "Conversation complete",
-      body: "Implement notifications is complete.",
+      title: "Implement notifications — completed",
+      body: "The workflow has finished. Open the conversation to review the result.",
       url: "/session/run-1",
       tag: "omniharness-run-1-complete",
     }));
+  });
+
+  it("ignores historical completion events while a new turn is running", async () => {
+    await manager.requestEnable();
+    manager.handleEventStreamState(createState({ runs: [buildRun("run-1", "running")] }));
+    manager.handleEventStreamState(createState({
+      runs: [buildRun("run-1", "running")],
+      executionEvents: [{ id: "old", runId: "run-1", eventType: "run_completed", createdAt: "2026-05-09T00:00:00.000Z" }],
+    }));
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("waits for the worker and queued follow-ups before announcing completion", async () => {
+    await manager.requestEnable();
+    manager.handleEventStreamState(createState({ runs: [buildRun("run-1", "running")] }));
+    const worker = { id: "worker-1", runId: "run-1", type: "codex", status: "working" };
+    manager.handleEventStreamState(createState({ runs: [buildRun("run-1", "done")], workers: [worker] }));
+    expect(notify).not.toHaveBeenCalled();
+    manager.handleEventStreamState(createState({
+      runs: [buildRun("run-1", "done")], workers: [{ ...worker, status: "idle" }],
+      queuedMessages: [{ id: "q", runId: "run-1", action: "queue", content: "Push too", status: "pending", createdAt: "2026-05-10T00:00:00.000Z", updatedAt: "2026-05-10T00:00:00.000Z" }],
+    }));
+    expect(notify).not.toHaveBeenCalled();
+    manager.handleEventStreamState(createState({ runs: [buildRun("run-1", "done")], workers: [{ ...worker, status: "idle" }] }));
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the conversation title and actual final response for a direct turn", async () => {
+    await manager.requestEnable();
+    const run = { ...buildRun("run-1", "running", "Commit and push"), mode: "commit" as const };
+    manager.handleEventStreamState(createState({ runs: [run] }));
+    manager.handleEventStreamState(createState({
+      runs: [{ ...run, status: "done" }],
+      workers: [{ id: "worker-1", runId: run.id, type: "codex", status: "idle" }],
+      agents: [{ name: "worker-1", state: "idle", outputEntries: [
+        { id: "intro", type: "message",  text: "I’ll inspect the branch.", timestamp: "2026-05-10T00:00:00.000Z" },
+        { id: "final", type: "message",  text: "**Pushed** 10 commits to `origin/master`.", timestamp: "2026-05-10T00:01:00.000Z" },
+      ] }],
+    }));
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ title: "Commit and push — response ready", body: "Pushed 10 commits to origin/master." }));
   });
 
   it("keeps notification history separate per runner and names inactive runner alerts", async () => {
@@ -232,7 +272,7 @@ describe("ConversationNotificationManager", () => {
     }));
 
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({
-      title: "Laptop needs input",
+      title: "Laptop: Implement notifications — answer needed",
       url: "/session/shared-run?runner=laptop",
       tag: "omniharness-runner-laptop-shared-run-input",
     }));
@@ -264,10 +304,44 @@ describe("ConversationNotificationManager", () => {
 
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({
-      title: "OmniHarness needs input",
-      body: "Implement notifications has a permission request waiting.",
+      title: "Implement notifications — approval needed",
+      body: "A tool needs your approval. Open the conversation to review the request.",
       url: "/session/run-1",
       tag: "omniharness-run-1-permission-run-1-worker-1-7",
+    }));
+  });
+
+  it("discards a completion preview if a new turn starts while the stream is loading", async () => {
+    let release: (value: unknown) => void = () => {};
+    const loading = new Promise<unknown>((resolve) => { release = resolve; });
+    const delayedManager = new ConversationNotificationManager({
+      storage, notifier: { notify }, listEntries: () => loading,
+      permissionProvider: { isSupported: () => true, getPermission: () => "granted", requestPermission: async () => "granted" },
+      visibilityProvider: () => "hidden",
+      pushClient: { isSupported: () => false, subscribe, unsubscribe: vi.fn() },
+    });
+    await delayedManager.requestEnable();
+    const run = { ...buildRun("run-1", "running"), mode: "direct" as const };
+    delayedManager.handleEventStreamState(createState({ runs: [run] }));
+    delayedManager.handleEventStreamState(createState({
+      runs: [{ ...run, status: "done" }], workers: [{ id: "worker-1", runId: run.id, type: "codex", status: "idle" }],
+    }));
+    delayedManager.handleEventStreamState(createState({ runs: [run] }));
+    release({ entries: [], latestSeq: 0 });
+    await loading;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("reports failures with the actual error and does not repeat unchanged snapshots", async () => {
+    await manager.requestEnable();
+    manager.handleEventStreamState(createState({ runs: [buildRun("run-1", "running")] }));
+    const failed = createState({ runs: [{ ...buildRun("run-1", "failed"), lastError: "Push rejected: remote contains new commits." }] });
+    manager.handleEventStreamState(failed);
+    manager.handleEventStreamState(failed);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Implement notifications — failed", body: "Push rejected: remote contains new commits.",
     }));
   });
 

@@ -783,6 +783,7 @@ export type ConversationEvent =
       accountId: string | null;
     }
   | { kind: "conversation.awaiting_user"; runId: string; workerId?: string; reason: "worker_requested_input" }
+  | { kind: "notification.suppressed"; runId: string; reason: "run_not_completed"; eventType: string }
   | { kind: "conversation.read"; runId: string; lastReadAt: string }
   | { kind: "conversation.message_delivery_reclaimed"; runId: string; messageId: string }
   | { kind: "conversation.message_restored_from_stream"; runId: string; messageId: string; workerId: string }

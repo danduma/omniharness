@@ -274,6 +274,7 @@ export function RunnerRegistryProvider({
           profileId: connection.profileId,
           runnerInstanceId: connection.runnerInstanceId,
           runnerName: connection.runnerName,
+          listEntries: registry.getConnection(connection.profileId)?.getRuntimeAPIs()?.workers.listEntries,
         }, connection.snapshot as unknown as EventStreamState);
       }
     };

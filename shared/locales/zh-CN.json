@@ -960,5 +960,16 @@
   "settings.publicApi.generate": "生成 API 密钥",
   "settings.publicApi.copy": "复制密钥",
   "settings.publicApi.key": "公共 API 密钥",
-  "settings.publicApi.saveHelp": "现在复制密钥，然后选择保存。完整密钥仅在关闭设置前显示。"
+  "settings.publicApi.saveHelp": "现在复制密钥，然后选择保存。完整密钥仅在关闭设置前显示。",
+  "notifications.push.completeTitle": "{title} — 已完成",
+  "notifications.push.completeFallback": "工作流程已结束。打开对话查看结果。",
+  "notifications.push.responseTitle": "{title} — 回复已就绪",
+  "notifications.push.responseFallback": "智能体已完成本轮操作。打开对话阅读回复。",
+  "notifications.push.inputTitle": "{title} — 需要回答",
+  "notifications.push.inputFallback": "工作已暂停，等待你的回答。打开对话进行回复。",
+  "notifications.push.permissionTitle": "{title} — 需要批准",
+  "notifications.push.permissionFallback": "某个工具需要你的批准。打开对话查看请求。",
+  "notifications.push.failedTitle": "{title} — 失败",
+  "notifications.push.failedFallback": "工作因错误而停止。打开对话查看详情。",
+  "notifications.push.runnerTitle": "{runner}: {title}"
 }
