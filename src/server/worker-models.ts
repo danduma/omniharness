@@ -45,10 +45,6 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
-    { value: "gpt-5.5", label: "GPT-5.5" },
-    { value: "gpt-5.4", label: "GPT-5.4" },
-    { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
-    { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
   ],
   claude: [
     { value: "claude-opus-5-5", label: "Opus 5.5" },
@@ -57,6 +53,7 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "claude-opus-5", label: "Opus 5" },
     { value: "claude-sonnet-5-5", label: "Sonnet 5.5" },
     { value: "claude-sonnet-5", label: "Sonnet 5" },
+    { value: "claude-haiku-5-5", label: "Haiku 5.5" },
   ],
   gemini: [
     { value: "gemini-3", label: "Gemini 3" },
@@ -80,6 +77,7 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
 
 const DEPRECATED_WORKER_MODELS: Partial<Record<SupportedWorkerType, Set<string>>> = {
   gemini: new Set(["gemini-3.5-flash"]),
+  codex: new Set(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"]),
   // Claude models are not discovered from a CLI, so a catalog cache written
   // before these were retired is the only way they can come back.
   claude: new Set([

@@ -1627,9 +1627,6 @@ export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel
 
   if (workerType === "codex") {
     if (OPENAI_NAMED_VARIANT_PATTERN.test(openAiModel)) return openAiModel;
-    if (selectedModel === "GPT-5.4" || normalizedLower === "openai/gpt-5.4") return "gpt-5.4";
-    if (selectedModel === "GPT-5.4 Mini" || normalizedLower === "openai/gpt-5.4-mini") return "gpt-5.4-mini";
-    if (selectedModel === "GPT-5.3 Codex" || normalizedLower === "openai/gpt-5.3-codex") return "gpt-5.3-codex";
     if (isClaudeDisplayLabel(normalizedLower, "sonnet 4") || normalizedLower === "anthropic/claude-sonnet-4") return "claude-sonnet-4";
     if (isClaudeDisplayLabel(normalizedLower, "sonnet 5.5") || normalizedLower === "anthropic/claude-sonnet-5-5") return "claude-sonnet-5-5";
     if (isClaudeDisplayLabel(normalizedLower, "sonnet 5") || normalizedLower === "anthropic/claude-sonnet-5") return "claude-sonnet-5";

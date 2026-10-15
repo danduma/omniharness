@@ -155,10 +155,6 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
     { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
-    { value: "gpt-5.5", label: "GPT-5.5" },
-    { value: "gpt-5.4", label: "GPT-5.4" },
-    { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
-    { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
   ],
   claude: [
     { value: "claude-opus-5-5", label: "Opus 5.5" },
@@ -167,6 +163,7 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
     { value: "claude-opus-5", label: "Opus 5" },
     { value: "claude-sonnet-5-5", label: "Sonnet 5.5" },
     { value: "claude-sonnet-5", label: "Sonnet 5" },
+    { value: "claude-haiku-5-5", label: "Haiku 5.5" },
   ],
   gemini: [
     { value: "gemini-3", label: "Gemini 3" },
@@ -223,6 +220,7 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
     { value: "claude-opus-5", label: "Opus 5" },
     { value: "claude-sonnet-5-5", label: "Sonnet 5.5" },
     { value: "claude-sonnet-5", label: "Sonnet 5" },
+    { value: "claude-haiku-5-5", label: "Haiku 5.5" },
     { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
   ],
   openai: [
@@ -244,9 +242,6 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
     { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
-    { value: "gpt-5.5", label: "GPT-5.5" },
-    { value: "gpt-5.4", label: "GPT-5.4" },
-    { value: "o3-mini", label: "o3-mini" },
   ],
   openrouter: [
     { value: "anthropic/claude-opus-5-5", label: "Opus 5.5" },
@@ -255,6 +250,7 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
     { value: "anthropic/claude-opus-5", label: "Opus 5" },
     { value: "anthropic/claude-sonnet-5-5", label: "Sonnet 5.5" },
     { value: "anthropic/claude-sonnet-5", label: "Sonnet 5" },
+    { value: "anthropic/claude-haiku-5-5", label: "Haiku 5.5" },
     { value: "openai/gpt-6-sol", label: "GPT-6 Sol" },
     { value: "openai/gpt-6-luna", label: "GPT-6 Luna" },
     { value: "openai/gpt-5.5", label: "GPT-5.5" },
