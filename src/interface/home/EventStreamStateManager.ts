@@ -375,6 +375,27 @@ function mergeDegradedAgentHumanInput(current: EventStreamState, incoming: Event
   return changed ? { ...incoming, agents: mergedAgents } : incoming;
 }
 
+type HumanInputKind = "permission" | "elicitation";
+type HumanInputRequest = { requestId: number; requestedAt: string };
+
+// Long enough to outlast any snapshot build that was already in flight when
+// the answer was sent; short enough that the set cannot grow without bound.
+const ANSWERED_HUMAN_INPUT_TTL_MS = 2 * 60_000;
+
+// `requestedAt` is part of the key because ACP request ids restart at 0 with
+// a new runtime connection, so the id alone cannot tell a fresh question from
+// the one the user just answered.
+function humanInputKey(kind: HumanInputKind, workerId: string, request: HumanInputRequest) {
+  return `${kind}\u0000${workerId}\u0000${request.requestId}\u0000${request.requestedAt}`;
+}
+
+function agentHumanInputKeys(agent: EventStreamState["agents"][number]) {
+  return [
+    ...(agent.pendingPermissions ?? []).map((request) => humanInputKey("permission", agent.name, request)),
+    ...(agent.pendingElicitations ?? []).map((request) => humanInputKey("elicitation", agent.name, request)),
+  ];
+}
+
 function mergeScopedCachedState(current: EventStreamState, cached: EventStreamState): EventStreamState {
   // hydrateFromCacheScope swaps scopes (e.g. on session switch). The cached
   // payload for the newly-selected scope only contains data that was
@@ -424,6 +445,11 @@ export class EventStreamStateManager {
   // result until the server confirms a terminal state; otherwise an in-flight
   // quota_waiting snapshot can reopen the recovery notice for one frame.
   private readonly pendingOptimisticStopRunIds = new Set<string>();
+  // Permission/elicitation requests the user answered, keyed by
+  // humanInputKey → answeredAt. A live frame whose build began before the
+  // answer reached the runtime still lists the request; without this, that
+  // frame put the submitted form back on screen until the next build.
+  private readonly answeredHumanInputs = new Map<string, number>();
   private readonly snapshotCache: EventStreamSnapshotCacheManager;
   private snapshotCacheScope: string | null;
 
@@ -554,7 +580,9 @@ export class EventStreamStateManager {
         };
       }
     }
-    const incomingWithAgents = mergeDegradedAgentHumanInput(this.state, incomingWithRuns);
+    const incomingWithAgents = this.withoutAnsweredHumanInput(
+      mergeDegradedAgentHumanInput(this.state, incomingWithRuns),
+    );
     const nextState = {
       ...mergeScopedMessages(this.state, incomingWithAgents),
       goalsByRunId: mergeGoalSnapshots(this.state, incomingWithAgents, snapshotSource === "server"),
@@ -601,6 +629,7 @@ export class EventStreamStateManager {
         this.pendingOptimisticStopRunIds.delete(runId);
       }
     }
+    this.trackAnsweredHumanInput(incoming);
     const nextState = {
       ...incoming,
       snapshotSource: this.state.snapshotSource,
@@ -612,6 +641,61 @@ export class EventStreamStateManager {
     this.snapshotCache.rememberState(nextState, this.snapshotCacheScope);
     this.listeners.forEach((listener) => listener(this.state));
     return this.state;
+  }
+
+  /**
+   * A local update that drops a request from an agent that is still present
+   * is the answer path's optimistic clear; one that brings a request back is
+   * a failed answer restoring its captured state.
+   */
+  private trackAnsweredHumanInput(incoming: EventStreamState) {
+    const now = Date.now();
+    const incomingAgentsByName = new Map((incoming.agents ?? []).map((agent) => [agent.name, agent]));
+    for (const currentAgent of this.state.agents ?? []) {
+      const incomingAgent = incomingAgentsByName.get(currentAgent.name);
+      if (!incomingAgent) {
+        continue;
+      }
+      const incomingKeys = new Set(agentHumanInputKeys(incomingAgent));
+      for (const key of agentHumanInputKeys(currentAgent)) {
+        if (!incomingKeys.has(key)) {
+          this.answeredHumanInputs.set(key, now);
+        }
+      }
+      for (const key of incomingKeys) {
+        this.answeredHumanInputs.delete(key);
+      }
+    }
+  }
+
+  private withoutAnsweredHumanInput(incoming: EventStreamState): EventStreamState {
+    if (this.answeredHumanInputs.size === 0 || !incoming.agents?.length) {
+      return incoming;
+    }
+    const now = Date.now();
+    for (const [key, answeredAt] of this.answeredHumanInputs) {
+      if (now - answeredAt > ANSWERED_HUMAN_INPUT_TTL_MS) {
+        this.answeredHumanInputs.delete(key);
+      }
+    }
+
+    let changed = false;
+    const agents = incoming.agents.map((agent) => {
+      const isOpen = (kind: HumanInputKind) => (request: HumanInputRequest) =>
+        !this.answeredHumanInputs.has(humanInputKey(kind, agent.name, request));
+      const pendingPermissions = agent.pendingPermissions?.filter(isOpen("permission"));
+      const pendingElicitations = agent.pendingElicitations?.filter(isOpen("elicitation"));
+      if (
+        pendingPermissions?.length === agent.pendingPermissions?.length
+        && pendingElicitations?.length === agent.pendingElicitations?.length
+      ) {
+        return agent;
+      }
+      changed = true;
+      return { ...agent, pendingPermissions, pendingElicitations };
+    });
+
+    return changed ? { ...incoming, agents } : incoming;
   }
 
   updateFromServer(action: EventStreamStateAction) {
