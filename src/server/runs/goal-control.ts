@@ -476,6 +476,70 @@ export class GoalControlService {
     return result.rowsAffected === 1;
   }
 
+  /**
+   * Park a pursued goal on the user once the agent has stopped pursuing it.
+   *
+   * Control is left unsettled on purpose: the dispatch that follows disarms the
+   * goal in the agent, which would otherwise keep re-arming it on every turn.
+   */
+  async markWaitingForUser(snapshot: GoalSnapshot): Promise<GoalMutationResult> {
+    return retryGoalBusy(() => this.markWaitingForUserOnce(snapshot));
+  }
+
+  private async markWaitingForUserOnce(snapshot: GoalSnapshot): Promise<GoalMutationResult> {
+    const transaction = await this.client.transaction("write");
+    try {
+      const current = await selectGoal(transaction, snapshot.runId);
+      if (!current) {
+        await transaction.commit();
+        return goalFailure("not_found", "The goal does not exist.", null);
+      }
+      if (
+        current.goalId !== snapshot.goalId
+        || current.revision !== snapshot.revision
+        || current.leaseGeneration !== snapshot.leaseGeneration
+        || current.workerId !== snapshot.workerId
+        || current.acpSessionId !== snapshot.acpSessionId
+      ) {
+        await transaction.commit();
+        return goalFailure("stale_lease", "The goal changed before it could wait for the user.", current);
+      }
+      if (current.status !== "pursuing") {
+        await transaction.commit();
+        return goalFailure("invalid_transition", `Cannot park a ${current.status} goal on the user.`, current);
+      }
+      const revision = current.revision + 1;
+      const now = this.now().getTime();
+      await transaction.execute({
+        sql: `UPDATE run_goals SET status = 'waiting_user', revision = ?, control_method = NULL,
+                transition_source = 'reconciliation', updated_at = ?
+              WHERE run_id = ? AND goal_id = ? AND revision = ? AND lease_generation = ?
+                AND worker_id = ? AND acp_session_id = ? AND status = 'pursuing'`,
+        args: [
+          revision,
+          now,
+          snapshot.runId,
+          snapshot.goalId,
+          snapshot.revision,
+          snapshot.leaseGeneration,
+          snapshot.workerId,
+          snapshot.acpSessionId,
+        ],
+      });
+      const next = await selectGoal(transaction, snapshot.runId);
+      if (!next || next.revision !== revision) {
+        await transaction.rollback();
+        return goalFailure("stale_lease", "The goal changed before it could wait for the user.", next);
+      }
+      await enqueueGoalEvent(transaction, next, "goal.updated", now, this.randomId);
+      await transaction.commit();
+      return { ok: true, snapshot: next, replayed: false };
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  }
+
   async recordControlFailure(
     snapshot: GoalSnapshot,
     kind: "unsupported" | "transport",

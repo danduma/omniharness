@@ -29,6 +29,12 @@ function sameFence(left: GoalSnapshot, right: GoalSnapshot) {
 export function recoveryAction(snapshot: GoalSnapshot): GoalMutationAction {
   if (snapshot.status === "cleared") return "clear";
   if (snapshot.status === "paused") return "pause";
+  // A goal waiting on the user must not be pursued by the agent. Re-setting it
+  // re-armed Claude's `/goal` Stop hook, and every later turn then ended with
+  // the agent repeating that it was blocked until the hook cap overrode it.
+  // Claude cannot pause a goal, so clearing it in the agent is the only way to
+  // stand it down; resuming sends the objective again.
+  if (snapshot.status === "waiting_user") return snapshot.capabilities.pause ? "pause" : "clear";
   return "set";
 }
 

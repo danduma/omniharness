@@ -12,6 +12,7 @@ import { trackArmedWake } from "./armed-wakes";
 import { TerminalService } from "./terminal-service";
 import { McpService, registeredAcpMcpHandlersSnapshot, type AcpMcpHandler } from "./mcp-service";
 import { emitNamedEvent } from "@/server/events/named-events";
+import { redactGoalErrorMessage } from "@/server/runs/goal-errors";
 import {
   bufferWorkerPlanStartupUpdate,
   handleAcpSessionUpdateForWorker,
@@ -21,6 +22,8 @@ import {
 import {
   handleAcpGoalSessionUpdateForWorker,
   isAcpGoalNotification,
+  isStopHookBlockCapNotice,
+  parkGoalAfterStopHookBlockCap,
 } from "./goal-state";
 
 export type AcpExtensionHandler = {
@@ -558,6 +561,19 @@ export class RuntimeClient implements acp.Client {
         agentCapabilities: record?.agentCapabilities,
         sessionId: params.sessionId,
         update: params.update,
+      });
+    }
+    if (goalWorkerId && isStopHookBlockCapNotice(params.update)) {
+      // Not awaited: disarming the goal sends the agent a prompt, and that must
+      // not hold up the rest of the turn it is ending.
+      void parkGoalAfterStopHookBlockCap({ workerId: goalWorkerId, sessionId: params.sessionId }).catch((error) => {
+        emitNamedEvent({
+          kind: "goal.park_skipped",
+          runId: null,
+          goalId: null,
+          workerId: goalWorkerId,
+          reason: redactGoalErrorMessage(error),
+        });
       });
     }
     if (this.startupPlanContext && isAcpPlanNotification(params.update)) {

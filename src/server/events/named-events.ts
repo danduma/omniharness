@@ -334,6 +334,7 @@ export type RuntimeEvent =
     };
 
 export type AuthEvent =
+  | { kind: "auth.session_touch_deferred"; sessionId: string; reason: "database_busy" }
   | {
       kind: "auth.session_revoked";
       sessionId: string;
@@ -658,6 +659,8 @@ export type GoalEvent =
   | { kind: "worker.armed_wake_continuation.completed"; runId: string; workerId: string; wakeAt: number }
   | { kind: "worker.armed_wake_continuation.failed"; runId: string; workerId: string; wakeAt: number; reason: string }
   | { kind: "goal.stale_lease_ignored"; runId: string; goalId: string; workerId: string; leaseGeneration: number; currentLeaseGeneration: number }
+  | { kind: "goal.parked_on_user"; runId: string; goalId: string; workerId: string; reason: "stop_hook_block_cap"; revision: number }
+  | { kind: "goal.park_skipped"; runId: string | null; goalId: string | null; workerId: string; reason: string }
   | { kind: "goal.payload_rejected"; runId: string; goalId: string; workerId: string; reason: string }
   | {
       kind: "goal.plan.derived";
@@ -782,6 +785,8 @@ export type ConversationEvent =
   | { kind: "conversation.awaiting_user"; runId: string; workerId?: string; reason: "worker_requested_input" }
   | { kind: "conversation.read"; runId: string; lastReadAt: string }
   | { kind: "conversation.message_delivery_reclaimed"; runId: string; messageId: string }
+  | { kind: "conversation.message_restored_from_stream"; runId: string; messageId: string; workerId: string }
+  | { kind: "conversation.message_restore_failed"; runId: string; messageId: string; workerId: string; reason: string }
   | { kind: "conversation.message_delivery_resumed"; runId: string; messageId: string }
   | { kind: "conversation.message_delivery_resume_failed"; runId: string; messageId: string; reason: string }
   | { kind: "conversation.queued_delivery_recovered"; runId: string; messageId: string; workerId: string }
