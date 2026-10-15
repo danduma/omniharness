@@ -808,6 +808,81 @@ describe("reconcileRunRecovery", () => {
     expect(incident?.status).toBe("resolved");
   });
 
+  // Regression (run fc8d9cb681ef): every sweep re-observed the incident and
+  // stamped `updatedAt = now`, which is what the backoff is measured from, so
+  // the retry was always five seconds away. Recovery never retried — not even
+  // after the disk-space failure that parked it had cleared — and each sweep
+  // logged another `recovery_backoff_scheduled` row.
+  it("retries a parked incident once its backoff elapses, logging the window once", async () => {
+    const { runId, workerId } = await createDirectRun();
+    await db.update(runs).set({ status: "needs_recovery" }).where(eq(runs.id, runId));
+    await db.update(workers).set({ status: "lost", currentText: "" }).where(eq(workers.id, workerId));
+    const parkedAt = new Date(Date.now() - 1_000);
+    const incidentId = randomUUID();
+    await db.insert(recoveryIncidents).values({
+      id: incidentId,
+      runId,
+      workerId,
+      queuedMessageId: null,
+      kind: "session_missing",
+      status: "needs_user",
+      autoAttemptCount: 1,
+      lastError: "Spawn failed: Cannot spawn worker because system resources are low",
+      details: null,
+      detectedAt: parkedAt,
+      updatedAt: parkedAt,
+      resolvedAt: null,
+    });
+    mockSpawnAgent.mockResolvedValue({
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "session-direct-1",
+      sessionMode: "full-access",
+      lastText: "",
+      currentText: "",
+      stderrBuffer: [],
+      stopReason: null,
+    });
+    mockAskAgent.mockResolvedValue({ state: "idle", response: "Back on it." });
+    mockGetAgent.mockResolvedValue({
+      name: workerId,
+      type: "claude",
+      cwd: process.cwd(),
+      state: "idle",
+      sessionId: "session-direct-1",
+      sessionMode: "full-access",
+      lastText: "Back on it.",
+      currentText: "",
+      outputEntries: [],
+      stderrBuffer: [],
+      stopReason: "end_turn",
+    });
+
+    const first = await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+    const second = await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+
+    expect(first.action).toBe("wait_for_backoff");
+    expect(second.action).toBe("wait_for_backoff");
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    const backoffEvents = await db.select().from(executionEvents).where(eq(executionEvents.eventType, "recovery_backoff_scheduled"));
+    expect(backoffEvents).toHaveLength(1);
+    const waiting = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.id, incidentId)).get();
+    expect(waiting?.updatedAt.getTime()).toBe(Math.floor(parkedAt.getTime() / 1000) * 1000);
+
+    // Past the window, the next sweep makes the attempt.
+    await db.update(recoveryIncidents).set({ updatedAt: new Date(Date.now() - 60_000) }).where(eq(recoveryIncidents.id, incidentId));
+    const third = await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
+    await waitForConversationBackgroundTasksForTests();
+
+    expect(third.action).toBe("resume_session");
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      name: workerId,
+      resumeSessionId: "session-direct-1",
+    }));
+  });
+
   it("moves exhausted recovery to needs_recovery", async () => {
     const { runId, workerId } = await createImplementationRun();
     await db.insert(settings).values({

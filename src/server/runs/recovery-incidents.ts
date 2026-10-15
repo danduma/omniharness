@@ -85,17 +85,19 @@ export async function openRecoveryIncident(args: {
     if (existing) {
       const details = { ...parseDetails(existing.details), ...(args.details ?? {}) };
       const serializedDetails = serializeDetails(details);
+      // Re-observing an incident is not a transition, so `updatedAt` stays put.
+      // It anchors the retry backoff and the stale-claim check; bumping it on
+      // every reconcile slid the backoff window forward forever, so recovery
+      // never retried and logged `recovery_backoff_scheduled` every few seconds.
       await tx.update(recoveryIncidents).set({
         details: serializedDetails,
         lastError: args.lastError ?? existing.lastError,
-        updatedAt: now,
       }).where(eq(recoveryIncidents.id, existing.id));
       return {
         incident: {
           ...existing,
           details: serializedDetails,
           lastError: args.lastError ?? existing.lastError,
-          updatedAt: now,
         },
         opened: false,
       };
