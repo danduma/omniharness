@@ -15,6 +15,7 @@ type Overrides = {
   agent?: { state: string } | Error;
   undelivered?: boolean;
   quotaIncident?: boolean;
+  recoveryIncident?: boolean;
   send?: () => Promise<unknown>;
   now?: () => number;
 };
@@ -40,6 +41,7 @@ function dependencies(overrides: Overrides = {}) {
     }) as never),
     hasUndeliveredMessages: vi.fn(async () => overrides.undelivered ?? false),
     hasResumableQuotaIncident: vi.fn(async () => overrides.quotaIncident ?? false),
+    hasOpenRecoveryIncident: vi.fn(async () => overrides.recoveryIncident ?? false),
     getAgent: vi.fn(async () => {
       const agent = overrides.agent ?? new Error("Get agent failed: 404 Agent not found: worker-1");
       if (agent instanceof Error) throw agent;
@@ -102,6 +104,9 @@ describe("continueStalledGoals", () => {
     ["a worker without a session", { worker: { bridgeSessionId: null } }],
     ["a message already on its way", { undelivered: true }],
     ["an open quota incident", { quotaIncident: true }],
+    // Recovery owns the run; a continuation queued past it can only fail.
+    ["an open recovery incident", { recoveryIncident: true }],
+    ["a conversation waiting on recovery", { run: { status: "needs_recovery" } }],
     ["a conversation idle for over a day", {
       run: { lastActivityAt: new Date(NOW - 25 * 60 * 60_000) },
       worker: { updatedAt: new Date(NOW - 25 * 60 * 60_000) },

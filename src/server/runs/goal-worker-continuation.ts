@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db, dbClient } from "@/server/db";
-import { messages, queuedConversationMessages, runs, workers } from "@/server/db/schema";
+import { messages, queuedConversationMessages, recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { redactGoalErrorMessage } from "@/server/runs/goal-errors";
 import { isRuntimeAgentMissingError } from "@/server/workers/runtime-agent-adoption";
@@ -17,6 +17,8 @@ export type GoalContinuationDependencies = {
   /** True while a message for the run is still on its way to the worker. */
   hasUndeliveredMessages(runId: string): Promise<boolean>;
   hasResumableQuotaIncident(runId: string): Promise<boolean>;
+  /** True while recovery owns the run: an incident that is not yet resolved. */
+  hasOpenRecoveryIncident(runId: string): Promise<boolean>;
   /** Resolves with the runtime agent; rejects when the runtime has none. */
   getAgent(workerId: string): Promise<{ state: string }>;
   sendContinuation(runId: string, content: string): Promise<unknown>;
@@ -84,6 +86,13 @@ const defaultDependencies: GoalContinuationDependencies = {
   async hasResumableQuotaIncident(runId) {
     const { hasResumableQuotaIncident } = await import("@/server/quota/worker-resume");
     return hasResumableQuotaIncident(runId);
+  },
+  async hasOpenRecoveryIncident(runId) {
+    const incident = await db.select({ id: recoveryIncidents.id }).from(recoveryIncidents).where(and(
+      eq(recoveryIncidents.runId, runId),
+      inArray(recoveryIncidents.status, ["open", "recovering", "needs_user", "failed"]),
+    )).limit(1).get();
+    return Boolean(incident);
   },
   async getAgent(workerId) {
     const { getAgent } = await import("@/server/bridge-client");
@@ -161,13 +170,18 @@ async function isStoppedAndContinuable(
   if (run.archivedAt) return false;
   if (run.mode !== "direct" && run.mode !== "commit") return false;
   const runStatus = normalizedStatus(run.status);
-  if (runStatus === "cancelled" || runStatus === "canceled" || runStatus === "quota_waiting") return false;
+  if (runStatus === "cancelled" || runStatus === "canceled" || runStatus === "quota_waiting" || runStatus === "needs_recovery") return false;
   const workerStatus = normalizedStatus(worker.status);
   if (BUSY_WORKER_STATUSES.has(workerStatus) || SKIPPED_WORKER_STATUSES.has(workerStatus)) return false;
   if (!worker.bridgeSessionId?.trim()) return false;
   if (now - lastActivityMs(run, worker) > MAX_IDLE_MS) return false;
   if (await dependencies.hasUndeliveredMessages(run.id)) return false;
   if (await dependencies.hasResumableQuotaIncident(run.id)) return false;
+  // Recovery owns a run with an open incident. Sending past it queued a
+  // continuation that could only fail against the missing agent, and each
+  // failure refreshed the worker's activity stamp, so the sweep re-sent one
+  // every cooldown for as long as the incident stayed open.
+  if (await dependencies.hasOpenRecoveryIncident(run.id)) return false;
 
   try {
     const agent = await dependencies.getAgent(worker.id);
@@ -178,7 +192,6 @@ async function isStoppedAndContinuable(
     // dropped connection) is retried on the next sweep.
     if (!isRuntimeAgentMissingError(error)) return false;
   }
-
   return true;
 }
 

@@ -898,6 +898,9 @@ async function restartFromCheckpoint(args: {
   return { action: "restart_from_checkpoint" as const, ...result };
 }
 
+/** incidentId → the backoff deadline already recorded for it. */
+const loggedBackoffWindows = new Map<string, number>();
+
 export async function reconcileRunRecovery(args: {
   runId: string;
   liveAgents: RecoveryLiveAgentLike[];
@@ -1006,13 +1009,19 @@ export async function reconcileRunRecovery(args: {
     })
     : null;
   if (nextAttemptAt && nextAttemptAt.getTime() > Date.now()) {
-    await insertRecoveryExecutionEvent(run.id, state.workerId, "recovery_backoff_scheduled", {
-      summary: "Recovery is waiting for its retry backoff window.",
-      incidentId: incident.id,
-      nextAttemptAt: nextAttemptAt.toISOString(),
-    });
+    // Every sweep inside the window lands here. Record the window once, not
+    // once per sweep: 4,600 identical rows in five hours is noise, not history.
+    if (loggedBackoffWindows.get(incident.id) !== nextAttemptAt.getTime()) {
+      loggedBackoffWindows.set(incident.id, nextAttemptAt.getTime());
+      await insertRecoveryExecutionEvent(run.id, state.workerId, "recovery_backoff_scheduled", {
+        summary: "Recovery is waiting for its retry backoff window.",
+        incidentId: incident.id,
+        nextAttemptAt: nextAttemptAt.toISOString(),
+      });
+    }
     return { action: "wait_for_backoff" as const, runId: run.id, recoveryState: state, nextAttemptAt };
   }
+  loggedBackoffWindows.delete(incident.id);
 
   try {
     if (decision.action === "resume_session") {
