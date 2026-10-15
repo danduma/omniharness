@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
+import { isSqliteBusyError } from "@/server/db/retry";
 import { authSessions } from "@/server/db/schema";
 import {
   AUTH_SESSION_ABSOLUTE_MS,
@@ -218,6 +219,36 @@ export function getSessionCookieValue(request: Request) {
   return null;
 }
 
+async function touchValidSession(session: ActiveAuthSession) {
+  if (!shouldTouchSession(session)) return;
+  const nextLastSeenAt = currentTimestamp();
+  const idleMs = session.clientKind === "native"
+    ? AUTH_NATIVE_SESSION_IDLE_MS
+    : AUTH_SESSION_IDLE_MS;
+  const nextExpiresAt = new Date(Math.min(
+    nextLastSeenAt.getTime() + idleMs,
+    session.absoluteExpiresAt.getTime(),
+  ));
+
+  try {
+    await db.update(authSessions).set({
+      lastSeenAt: nextLastSeenAt,
+      expiresAt: nextExpiresAt,
+      updatedAt: nextLastSeenAt,
+    }).where(eq(authSessions.id, session.id));
+  } catch (error) {
+    if (!isSqliteBusyError(error)) throw error;
+    // Validation already succeeded. Keep the persisted expiry when a
+    // contended housekeeping write must wait for a later request.
+    emitNamedEvent({ kind: "auth.session_touch_deferred", sessionId: session.id, reason: "database_busy" });
+    return;
+  }
+
+  session.lastSeenAt = nextLastSeenAt;
+  session.expiresAt = nextExpiresAt;
+  session.updatedAt = nextLastSeenAt;
+}
+
 export async function getSessionFromTokenValue(
   tokenValue: string | null | undefined,
   options: { touch?: boolean } = {},
@@ -248,26 +279,7 @@ export async function getSessionFromTokenValue(
     return null;
   }
 
-  if (options.touch !== false && shouldTouchSession(session)) {
-    const nextLastSeenAt = currentTimestamp();
-    const idleMs = session.clientKind === "native"
-      ? AUTH_NATIVE_SESSION_IDLE_MS
-      : AUTH_SESSION_IDLE_MS;
-    const nextExpiresAt = new Date(Math.min(
-      nextLastSeenAt.getTime() + idleMs,
-      session.absoluteExpiresAt.getTime(),
-    ));
-
-    await db.update(authSessions).set({
-      lastSeenAt: nextLastSeenAt,
-      expiresAt: nextExpiresAt,
-      updatedAt: nextLastSeenAt,
-    }).where(eq(authSessions.id, session.id));
-
-    session.lastSeenAt = nextLastSeenAt;
-    session.expiresAt = nextExpiresAt;
-    session.updatedAt = nextLastSeenAt;
-  }
+  if (options.touch !== false) await touchValidSession(session);
 
   return session;
 }
@@ -290,24 +302,8 @@ export async function getSessionById(
   ) {
     return null;
   }
-  if (options.touch !== false && shouldTouchSession(session)) {
-    const nextLastSeenAt = currentTimestamp();
-    const idleMs = session.clientKind === "native"
-      ? AUTH_NATIVE_SESSION_IDLE_MS
-      : AUTH_SESSION_IDLE_MS;
-    const nextExpiresAt = new Date(Math.min(
-      nextLastSeenAt.getTime() + idleMs,
-      session.absoluteExpiresAt.getTime(),
-    ));
-    await db.update(authSessions).set({
-      lastSeenAt: nextLastSeenAt,
-      expiresAt: nextExpiresAt,
-      updatedAt: nextLastSeenAt,
-    }).where(eq(authSessions.id, session.id));
-    session.lastSeenAt = nextLastSeenAt;
-    session.expiresAt = nextExpiresAt;
-    session.updatedAt = nextLastSeenAt;
-  }
+  if (options.touch !== false) await touchValidSession(session);
+
   return session;
 }
 

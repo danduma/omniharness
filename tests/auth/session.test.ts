@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { authEvents, authPairTokens, authSessions } from "@/server/db/schema";
 import {
   createAuthSession,
   getSessionFromTokenValue,
+  getSessionById,
   listActiveSessions,
   revokeSession,
 } from "@/server/auth/session";
@@ -104,6 +105,26 @@ describe("auth session persistence", () => {
     expect(browserRow!.absoluteExpiresAt.getTime() - browserRow!.createdAt.getTime()).toBe(AUTH_SESSION_ABSOLUTE_MS);
     expect(nativeRow!.expiresAt.getTime() - nativeRow!.createdAt.getTime()).toBe(AUTH_NATIVE_SESSION_IDLE_MS);
     expect(nativeRow!.absoluteExpiresAt.getTime() - nativeRow!.createdAt.getTime()).toBe(AUTH_NATIVE_SESSION_ABSOLUTE_MS);
+  });
+
+  it.each(["token", "id"])("accepts a valid session when its %s activity refresh hits a busy database", async (lookup) => {
+    const created = await createAuthSession({ label: "Busy refresh", authMethod: "password_login" });
+    await db.update(authSessions).set({ lastSeenAt: new Date(Date.now() - 120_000) });
+    const original = await getSessionById(created.sessionId, { touch: false });
+    const busy = new Error("Failed query: update auth_sessions", { cause: new Error("SQLITE_BUSY: database is locked") });
+    const update = vi.spyOn(db, "update").mockImplementation(() => ({
+      set: () => ({ where: () => Promise.reject(busy) }),
+    }) as unknown as ReturnType<typeof db.update>);
+    try {
+      const result = lookup === "token"
+        ? await getSessionFromTokenValue(created.tokenValue)
+        : await getSessionById(created.sessionId);
+      expect(result?.id).toBe(created.sessionId);
+      expect(result?.lastSeenAt).toEqual(original?.lastSeenAt);
+      expect(result?.expiresAt).toEqual(original?.expiresAt);
+    } finally {
+      update.mockRestore();
+    }
   });
 
   it("keeps at most 50 active sessions and evicts the least recently used old session", async () => {

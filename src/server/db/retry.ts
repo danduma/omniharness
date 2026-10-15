@@ -8,8 +8,15 @@ function delay(ms: number) {
 }
 
 export function isSqliteBusyError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  return /\b(SQLITE_BUSY|database is locked)\b/i.test(message);
+  const visited = new Set<unknown>();
+  let cause = error;
+  while (cause && !visited.has(cause)) {
+    visited.add(cause);
+    const message = cause instanceof Error ? cause.message : String(cause);
+    if (/\b(SQLITE_BUSY|database is locked)\b/i.test(message)) return true;
+    cause = typeof cause === "object" && "cause" in cause ? cause.cause : undefined;
+  }
+  return false;
 }
 
 export async function withSqliteBusyRetry<T>(
