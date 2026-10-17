@@ -236,6 +236,16 @@ function ComposerContainerInner({
     }
   };
 
+  // Both the submit button and the Enter key send through here, so a `/goal`
+  // typed into a conversation always reaches the goals API instead of the chat.
+  const sendConversationMessageOrGoal = (content: string, busyAction?: BusyMessageAction) => {
+    if (selectedRunId && attachments.length === 0) {
+      const goalCommand = parseGoalComposerCommand(content);
+      if (goalCommand && executeGoalComposerCommand(goalCommand)) return;
+    }
+    onSendConversationMessage(content, attachments, busyAction);
+  };
+
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     if (composerBehavior.submitAction === "stop") { onStopConversation(); return; }
@@ -245,12 +255,8 @@ function ComposerContainerInner({
       onStopConversation();
       return;
     }
-    if (selectedRunId && attachments.length === 0) {
-      const goalCommand = parseGoalComposerCommand(command);
-      if (goalCommand && executeGoalComposerCommand(goalCommand)) return;
-    }
     if (selectedRunId) {
-      onSendConversationMessage(command, attachments, resolveBusyMessageActionForSubmitAction(composerBehavior.submitAction));
+      sendConversationMessageOrGoal(command, resolveBusyMessageActionForSubmitAction(composerBehavior.submitAction));
       return;
     }
     onRunCommand(command, attachments);
@@ -307,7 +313,7 @@ function ComposerContainerInner({
         const hasDraft = Boolean(command.trim() || attachments.length > 0);
         onInterruptConversation(hasDraft ? { content: command, attachments } : null);
       }}
-      onSendConversationMessage={(content, busyAction) => onSendConversationMessage(content, attachments, busyAction)}
+      onSendConversationMessage={sendConversationMessageOrGoal}
       onRunCommand={(content) => onRunCommand(content, attachments)}
       onStopConversation={onStopConversation}
       planSurfaceOwner={planSurfaceOwner}
