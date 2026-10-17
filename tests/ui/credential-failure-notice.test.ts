@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCredentialReauthNotice } from "@/interface/home/credential-failure-notice";
+import { buildCredentialReauthNotice, hasCurrentCredentialReauthFailure } from "@/interface/home/credential-failure-notice";
 import { annotateVerifiedDeadCredential } from "@/lib/provider-account-failures";
 import type { AccountRecord } from "@/interface/home/types";
 
@@ -37,6 +37,20 @@ describe("credential re-authentication notice", () => {
         workerLabel: "Claude Code",
       })).toBeNull();
     }
+  });
+
+  it("expires a historical sign-in verdict after a newer successful status check", () => {
+    const args = {
+      lastError: annotateVerifiedDeadCredential(REVOKED, "claude-sub-1"),
+      failedAt: "2026-10-17T12:00:00Z",
+      accounts: [account({ status: "available", statusCheckedAt: "2026-10-17T13:00:00Z" })],
+      workerType: "claude",
+      workerLabel: "Claude Code",
+    };
+    expect(hasCurrentCredentialReauthFailure(args)).toBe(false);
+    expect(buildCredentialReauthNotice(args)).toBeNull();
+    expect(hasCurrentCredentialReauthFailure({ ...args, failedAt: "2026-10-17T14:00:00Z" })).toBe(true);
+    expect(hasCurrentCredentialReauthFailure({ ...args, failedAt: null })).toBe(true);
   });
 
   it("asks for a sign-in instead of a resend, and names the account", () => {

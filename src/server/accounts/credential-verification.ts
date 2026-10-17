@@ -119,10 +119,10 @@ export async function verifyAccountCredentialLiveness(input: {
       });
       applyAccountCredentialEnv(baseEnv, resolved);
     } catch (error) {
-      // Could not even assemble the credential (disabled account, missing key).
-      // That is a real configuration failure, not a provider blip.
+      // A local configuration failure does not prove the provider rejected a
+      // credential: no provider request ran. Keep the verdict inconclusive.
       return {
-        liveness: "dead" as const,
+        liveness: "unknown" as const,
         detail: `Credential could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
       };
     }

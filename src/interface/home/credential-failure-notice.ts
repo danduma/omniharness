@@ -46,6 +46,20 @@ function reauthSuggestion(args: {
     : t("conversation.failure.reauth.hint.cli", { worker: args.workerLabel });
 }
 
+/** A newer successful status check supersedes a historical credential verdict. */
+export function hasCurrentCredentialReauthFailure(args: {
+  lastError: string | null | undefined;
+  failedAt?: string | null;
+  accounts: readonly AccountRecord[];
+}) {
+  if (!hasVerifiedDeadCredentialMarker(args.lastError)) return false;
+  const accountId = readVerifiedDeadCredentialAccountId(args.lastError);
+  const account = args.accounts.find((candidate) => candidate.id === accountId);
+  const failedAt = Date.parse(args.failedAt ?? "");
+  const checkedAt = Date.parse(account?.statusCheckedAt ?? "");
+  return !(account?.status === "available" && Number.isFinite(failedAt) && checkedAt > failedAt);
+}
+
 /**
  * Build the failure notice for a credential the provider rejected twice.
  * Returns null for every other failure so the caller keeps its normal copy.
@@ -53,10 +67,11 @@ function reauthSuggestion(args: {
 export function buildCredentialReauthNotice(args: {
   lastError: string | null | undefined;
   accounts: readonly AccountRecord[];
+  failedAt?: string | null;
   workerType: string | null | undefined;
   workerLabel: string | null | undefined;
 }): NoticeDescriptor | null {
-  if (!hasVerifiedDeadCredentialMarker(args.lastError)) {
+  if (!hasCurrentCredentialReauthFailure(args)) {
     return null;
   }
 
