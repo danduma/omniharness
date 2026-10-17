@@ -349,6 +349,9 @@ const MESSAGE_RUN_PASSTHROUGH_TYPES = new Set([
 ]);
 
 export function appendOutputEntry(record: AgentRecord, input: OutputEntryInput) {
+  if (input.type === "available_commands") {
+    record.advertisedCommands = (input.text ?? "").split("\n").map((name) => name.trim()).filter(Boolean);
+  }
   const archiveEntry = record.outputArchive.append(input);
   if (!MESSAGE_RUN_PASSTHROUGH_TYPES.has(input.type)) {
     record.activeOutputEntryId = null;

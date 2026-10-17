@@ -7,6 +7,7 @@ import type { GoalMutationAction, GoalSnapshot } from "@/shared/goal-plan";
 interface GoalAcpAgentSnapshot {
   agentCapabilities?: unknown;
   outputEntries?: Array<{ type?: unknown; raw?: unknown }>;
+  advertisedCommands?: unknown;
 }
 
 interface GoalAcpDependencies {
@@ -59,8 +60,16 @@ function metadataGoal(agentCapabilities: unknown) {
   return isRecord(agentCapabilities._meta.goal) ? agentCapabilities._meta.goal : null;
 }
 
-function advertisedCommands(entries: GoalAcpAgentSnapshot["outputEntries"]) {
+function advertisedCommands(agent: GoalAcpAgentSnapshot) {
   const commands = new Set<string>();
+  // The runtime keeps the latest advertised list beside the live window, so it
+  // survives the window pruning the `available_commands` frame.
+  if (Array.isArray(agent.advertisedCommands)) {
+    for (const name of agent.advertisedCommands) {
+      if (typeof name === "string") commands.add(name.trim().replace(/^\//, "").toLowerCase());
+    }
+  }
+  const entries = agent.outputEntries;
   if (!entries) return commands;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
@@ -141,7 +150,7 @@ export class GoalAcpDispatcher {
     // output, and after a session resume it never reappears — so scanning it
     // alone reported `fallback_not_advertised_for_*` for workers that do
     // advertise `/goal`.
-    const commands = advertisedCommands(agent.outputEntries);
+    const commands = advertisedCommands(agent);
     const slashSupported = recordedFallbackSupports(snapshot.capabilities, action)
       || (action === "pause" || action === "resume"
         ? commands.has(`goal ${action}`) || commands.has(`${action}-goal`)

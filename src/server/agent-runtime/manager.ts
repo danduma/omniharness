@@ -1428,6 +1428,7 @@ export class AgentRuntimeManager {
       currentText: record.currentText,
       renderedOutput: renderOutputEntries(outputEntries),
       outputEntries,
+      advertisedCommands: record.advertisedCommands ?? [],
       outputArchive: record.outputArchive.stats(outputEntries.length),
       stopReason: record.stopReason,
       pendingPermissions: record.pendingPermissions.map((item) => ({

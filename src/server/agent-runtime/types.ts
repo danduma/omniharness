@@ -123,6 +123,12 @@ export type AgentRecord = {
   outputEntries: OutputEntry[];
   outputArchive: AgentOutputArchiveHandle;
   stopReason: string | null;
+  /**
+   * Command names from the agent's latest `available_commands_update`. Kept off
+   * `outputEntries` because that live window prunes the frame long before a
+   * goal action needs to know whether `/goal` exists.
+   */
+  advertisedCommands?: string[];
   /** True while `askAgent` awaits a prompt; that call owns `state` for its turn. */
   promptInFlight?: boolean;
   /** Last thread status the provider reported; true while it runs any turn, prompted or not. */

@@ -351,6 +351,26 @@ describe("goal ACP control dispatch", () => {
     expect(sendSlashCommand).toHaveBeenCalledWith("worker-1", "/goal Ship it", expect.anything());
   });
 
+  it("uses the runtime's advertised commands when the goal was set after the command frame was pruned", async () => {
+    const sendSlashCommand = vi.fn(async () => ({ ok: true }));
+    const dispatcher = createGoalAcpDispatcher({
+      getAgent: vi.fn(async () => ({
+        agentCapabilities: {},
+        outputEntries: [{ type: "message", raw: {} }],
+        advertisedCommands: ["review", "goal"],
+      })),
+      invokeExtension: vi.fn(),
+      sendSlashCommand,
+    });
+
+    const unrecorded = snapshot({
+      capabilities: { set: false, edit: false, pause: false, resume: false, clear: false, fallbackMethod: null },
+    });
+    expect(await dispatcher.dispatch(unrecorded, "set")).toMatchObject({ kind: "dispatched", method: "slash" });
+    expect(await dispatcher.dispatch(unrecorded, "retry")).toMatchObject({ kind: "dispatched", method: "slash" });
+    expect(sendSlashCommand).toHaveBeenCalledWith("worker-1", "/goal Ship it", expect.anything());
+  });
+
   it("still refuses an action the recorded fallback capabilities do not cover", async () => {
     const sendSlashCommand = vi.fn();
     const dispatcher = createGoalAcpDispatcher({
