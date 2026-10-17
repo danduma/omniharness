@@ -7,6 +7,10 @@ import type { OmniRouteDescriptor } from "@/runtime/http/registry";
 const ALLOWED_REQUEST_HEADERS = new Set(["authorization", "content-type"]);
 const PREFLIGHT_MAX_AGE_SECONDS = 600;
 
+function supportsBearerCors(auth: OmniRouteDescriptor["auth"]) {
+  return auth === "session" || auth === "same-origin-session";
+}
+
 function bearerToken(request: Request) {
   const header = request.headers.get("authorization")?.trim() ?? "";
   const match = header.match(/^Bearer\s+(.+)$/i);
@@ -57,7 +61,7 @@ export async function buildBearerCorsPreflight(
     return null;
   }
   const eligible = descriptors.some(
-    (descriptor) => descriptor.auth === "session" && descriptor.method === requestedMethod,
+    (descriptor) => supportsBearerCors(descriptor.auth) && descriptor.method === requestedMethod,
   );
   if (!eligible) {
     return null;
@@ -87,7 +91,7 @@ export async function buildBearerCorsPreflight(
   const headers = corsHeaders(origin);
   headers.set("access-control-allow-methods", [
     ...new Set(descriptors
-      .filter((descriptor) => descriptor.auth === "session")
+      .filter((descriptor) => supportsBearerCors(descriptor.auth))
       .map((descriptor) => descriptor.method)
       .concat("OPTIONS")),
   ].sort().join(", "));
@@ -106,7 +110,7 @@ export async function attachBearerCors(
   response: Response,
   descriptor: OmniRouteDescriptor,
 ) {
-  if (descriptor.auth !== "session") {
+  if (!supportsBearerCors(descriptor.auth)) {
     return response;
   }
   const origin = request.headers.get("origin")?.trim();
