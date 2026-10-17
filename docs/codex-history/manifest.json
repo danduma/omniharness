@@ -1,7 +1,7 @@
 {
   "version": 2,
   "projectRoot": "/Users/masterman/NLP/omniharness",
-  "generatedAt": "2026-10-15T10:01:07.210Z",
+  "generatedAt": "2026-10-16T22:01:06.516Z",
   "conversations": [
     {
       "provider": "claude",
@@ -731,7 +731,7 @@
       "updatedAt": "2026-09-16T16:42:53.132Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "b6e97df80633fe952102d816209826b91359714100eb5be1f623c6e11cdc42d5",
       "parts": [
