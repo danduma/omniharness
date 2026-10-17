@@ -971,5 +971,11 @@
   "notifications.push.permissionFallback": "Ein Werkzeug benötigt deine Freigabe. Öffne die Unterhaltung, um die Anfrage zu prüfen.",
   "notifications.push.failedTitle": "{title} — fehlgeschlagen",
   "notifications.push.failedFallback": "Die Arbeit wurde wegen eines Fehlers angehalten. Öffne die Unterhaltung für Details.",
-  "notifications.push.runnerTitle": "{runner}: {title}"
+  "notifications.push.runnerTitle": "{runner}: {title}",
+  "conversation.agentCommunication.sent": "An {peer} gesendet",
+  "conversation.agentCommunication.sending": "Wird an {peer} gesendet…",
+  "conversation.agentCommunication.failed": "Nachricht an {peer} fehlgeschlagen",
+  "conversation.agentCommunication.received": "Von {peer} empfangen",
+  "conversation.agentCommunication.unknownAgent": "Unbekannter Agent",
+  "conversation.agentCommunication.details": "Technische Details"
 }

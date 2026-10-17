@@ -971,5 +971,11 @@
   "notifications.push.permissionFallback": "Una herramienta necesita tu aprobación. Abre la conversación para revisar la solicitud.",
   "notifications.push.failedTitle": "{title} — error",
   "notifications.push.failedFallback": "El trabajo se detuvo por un error. Abre la conversación para ver los detalles.",
-  "notifications.push.runnerTitle": "{runner}: {title}"
+  "notifications.push.runnerTitle": "{runner}: {title}",
+  "conversation.agentCommunication.sent": "Enviado a {peer}",
+  "conversation.agentCommunication.sending": "Enviando a {peer}…",
+  "conversation.agentCommunication.failed": "Error al enviar el mensaje a {peer}",
+  "conversation.agentCommunication.received": "Recibido de {peer}",
+  "conversation.agentCommunication.unknownAgent": "Agente desconocido",
+  "conversation.agentCommunication.details": "Detalles técnicos"
 }

@@ -971,5 +971,11 @@
   "notifications.push.permissionFallback": "ツールの実行に承認が必要です。会話を開いてリクエストを確認してください。",
   "notifications.push.failedTitle": "{title} — 失敗",
   "notifications.push.failedFallback": "エラーにより作業が停止しました。会話を開いて詳細を確認してください。",
-  "notifications.push.runnerTitle": "{runner}: {title}"
+  "notifications.push.runnerTitle": "{runner}: {title}",
+  "conversation.agentCommunication.sent": "{peer} に送信済み",
+  "conversation.agentCommunication.sending": "{peer} に送信中…",
+  "conversation.agentCommunication.failed": "{peer} への送信に失敗しました",
+  "conversation.agentCommunication.received": "{peer} から受信",
+  "conversation.agentCommunication.unknownAgent": "不明なエージェント",
+  "conversation.agentCommunication.details": "技術的な詳細"
 }

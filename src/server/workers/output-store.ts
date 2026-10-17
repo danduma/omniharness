@@ -5,6 +5,7 @@ import { createInterface } from "node:readline";
 import { brotliDecompressSync, gzipSync, gunzipSync } from "node:zlib";
 import AdmZip from "adm-zip";
 import { eq } from "drizzle-orm";
+import { incomingAgentCommunication, outgoingAgentCommunication } from "@/lib/agent-communication";
 import type { AgentOutputEntry } from "@/lib/agent-output";
 import type { AgentRecord } from "@/server/bridge-client";
 import { getAppDataPath } from "@/server/app-root";
@@ -434,15 +435,24 @@ export function compactEntryForHistory<T extends CompactableEntry>(entry: T): T 
   if (entry.raw === undefined && text === entry.text) {
     return entry;
   }
+  let compactedRaw = entry.raw === undefined
+    ? undefined
+    : preserveInlineImageContentData(entry.type, entry.raw, compactHistoryRawValue(entry.raw));
+  // Messages are conversation content, even when a provider embeds them in
+  // tool arguments or usage metadata. Do not shorten their body as diagnostics.
+  if (isPlainRecord(entry.raw) && isPlainRecord(compactedRaw)) {
+    if (outgoingAgentCommunication(entry.raw)) {
+      compactedRaw = { ...compactedRaw, rawInput: entry.raw.rawInput };
+    } else if (entry.type === "usage" && incomingAgentCommunication("usage", "", entry.raw)) {
+      const originalMeta = entry.raw._meta as Record<string, unknown>;
+      const compactedMeta = isPlainRecord(compactedRaw._meta) ? compactedRaw._meta : {};
+      compactedRaw = { ...compactedRaw, _meta: { ...compactedMeta, "_claude/origin": originalMeta["_claude/origin"] } };
+    }
+  }
   return {
     ...entry,
     text,
-    raw: entry.raw === undefined
-      ? undefined
-      // An inline image payload is the content itself, not a diagnostic blob;
-      // the generic per-string truncator would leave the transcript holding an
-      // undecodable prefix of every image the worker produced.
-      : preserveInlineImageContentData(entry.type, entry.raw, compactHistoryRawValue(entry.raw)),
+    raw: compactedRaw,
   };
 }
 

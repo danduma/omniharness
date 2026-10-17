@@ -85,6 +85,22 @@ export function sanitizeIncomingMessage(message: unknown): unknown {
     return message;
   }
 
+  // Newer providers emit session_message before this SDK knows the variant.
+  // Tunnel the complete delivery through an SDK-supported envelope; normalization
+  // restores it before persistence. Never flatten it into a human prompt.
+  const update = isRecord(params.update) ? params.update : null;
+  if (update?.sessionUpdate === "session_message" && Array.isArray(update.content)
+    && typeof update.messageId === "string") {
+    const text = update.content.flatMap((block: unknown) => (
+      isRecord(block) && block.type === "text" && typeof block.text === "string" ? [block.text] : []
+    )).join("\n");
+    params.update = {
+      sessionUpdate: "user_message_chunk",
+      content: { type: "text", text },
+      _meta: { "omniharness/session-message": update },
+    };
+  }
+
   // Cheap targeted pass first — fixes the known ToolCallLocation.line
   // tuple shape without needing to walk the zod tree.
   fastPathRepairs(params);

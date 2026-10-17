@@ -25,6 +25,12 @@ function planUpdateText(update: Extract<acp.SessionUpdate, { sessionUpdate: "pla
 }
 
 export function normalizeSessionUpdate(update: acp.SessionUpdate): NormalizedSessionUpdate {
+  const delivery = update._meta?.["omniharness/session-message"];
+  if (delivery && typeof delivery === "object" && !Array.isArray(delivery)
+    && (delivery as Record<string, unknown>).sessionUpdate === "session_message"
+    && update.sessionUpdate === "user_message_chunk") {
+    return { kind: "entry", entry: { type: "session_message", text: contentText(update.content) ?? "", raw: delivery } };
+  }
   switch (update.sessionUpdate) {
     case "user_message_chunk": {
       const text = contentText(update.content);

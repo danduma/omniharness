@@ -32,7 +32,7 @@ export type PendingElicitation = {
 export type OutputEntry = {
   id: string;
   type: "message" | "thought" | "tool_call" | "tool_call_update" | "permission" | "elicitation"
-    | "user_message_chunk" | "plan" | "plan_update" | "plan_removed" | "available_commands"
+    | "session_message" | "user_message_chunk" | "plan" | "plan_update" | "plan_removed" | "available_commands"
     | "current_mode" | "config_option" | "session_info" | "usage" | "agent_content" | "user_content";
   text: string;
   timestamp: string;

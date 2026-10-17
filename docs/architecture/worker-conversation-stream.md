@@ -8,6 +8,19 @@ replaces an earlier design where worker content was split between the
 files; reconciling those three surfaces on the frontend was the source
 of a long-running class of bugs.
 
+Inter-agent communication uses this same stream. Outgoing `SendMessage` tool
+calls render their destination and complete message outside collapsed tool
+activity, with the provider status and expandable technical details. Incoming
+`session_message` deliveries are preserved through the SDK compatibility
+boundary and stored as bridge entries. Claude's cross-session receive metadata
+(`usage_update._meta["_claude/origin"]` with `kind: "peer"` and `body`) stays
+on the canonical usage entry and projects as a received message in the UI,
+including for saved history. History compaction preserves the message bodies
+in tool arguments and receipt metadata. This receipt may arrive only when the receiving
+agent finishes its turn. Missing origin/body metadata never implies receipt.
+Legacy complete `teammate-message` user-chunk envelopes render as agent
+communication instead of human input. No parallel message store is used.
+
 The plan that introduced this surface is at
 `docs/superpowers/plans/2026-05-16-unified-worker-conversation-stream.md`.
 

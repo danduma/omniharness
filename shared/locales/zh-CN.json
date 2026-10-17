@@ -971,5 +971,11 @@
   "notifications.push.permissionFallback": "某个工具需要你的批准。打开对话查看请求。",
   "notifications.push.failedTitle": "{title} — 失败",
   "notifications.push.failedFallback": "工作因错误而停止。打开对话查看详情。",
-  "notifications.push.runnerTitle": "{runner}: {title}"
+  "notifications.push.runnerTitle": "{runner}: {title}",
+  "conversation.agentCommunication.sent": "已发送给 {peer}",
+  "conversation.agentCommunication.sending": "正在发送给 {peer}…",
+  "conversation.agentCommunication.failed": "发送给 {peer} 的消息失败",
+  "conversation.agentCommunication.received": "收到来自 {peer} 的消息",
+  "conversation.agentCommunication.unknownAgent": "未知智能体",
+  "conversation.agentCommunication.details": "技术详情"
 }

@@ -29,6 +29,7 @@ export type BridgeWorkerEntryType =
   | "tool_call_update"
   | "permission"
   | "elicitation"
+  | "session_message"
   | "user_message_chunk"
   | "plan"
   | "plan_update"
@@ -146,6 +147,7 @@ const BRIDGE_TYPES: ReadonlySet<WorkerEntryType> = new Set<WorkerEntryType>([
   "tool_call_update",
   "permission",
   "elicitation",
+  "session_message",
   "user_message_chunk",
   "plan",
   "plan_update",

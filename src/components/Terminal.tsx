@@ -2,6 +2,8 @@
 
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { ALargeSmall, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, ExternalLink, LoaderCircle, Menu } from "lucide-react";
+import { incomingAgentCommunication } from "@/lib/agent-communication";
+import { AgentCommunicationCard } from "@/components/terminal/AgentCommunicationCard";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { ProjectFileContextMenu } from "@/components/ProjectFileContextMenu";
 import { conversationCopyNoticeManager, terminalUiManager } from "@/components/component-state-managers";
@@ -187,8 +189,10 @@ export function getTerminalActivityVersion(activity: TerminalActivityItem[]) {
         return `${item.id}:${item.kind}:${item.status}`;
       case "thinking":
         return `${item.id}:${item.kind}:${item.timestamp}:${item.inProgress}:${item.thoughts.join("\n").length}`;
+      case "agent_communication":
+        return `${item.id}:${item.kind}:${item.timestamp}:${item.peer}:${item.text}`;
       case "tool":
-        return `${item.id}:${item.kind}:${item.timestamp}:${item.status}:${item.title.length}:${item.inputPane?.text.length ?? 0}:${item.outputPane?.text.length ?? 0}`;
+        return `${item.communication?.peer ?? ""}:${item.communication?.text ?? ""}:${item.id}:${item.kind}:${item.timestamp}:${item.status}:${item.title.length}:${item.inputPane?.text.length ?? 0}:${item.outputPane?.text.length ?? 0}`;
       case "tool_group":
         return `${item.id}:${item.kind}:${item.timestamp}:${item.status}:${item.tools.length}:${item.tools.map((tool) => `${tool.id}:${tool.status}:${tool.title.length}:${tool.inputPane?.text.length ?? 0}:${tool.outputPane?.text.length ?? 0}`).join(",")}`;
       case "permission":
@@ -643,7 +647,7 @@ function summarizeWorkIntervals(items: TerminalActivityItemWithOrder[]): Termina
   };
 
   for (const item of items) {
-    if (item.kind === "thinking" || item.kind === "tool" || item.kind === "tool_group" || item.kind === "permission" || item.kind === "generated_images") {
+    if (item.kind === "thinking" || (item.kind === "tool" && !item.communication) || item.kind === "tool_group" || item.kind === "permission" || item.kind === "generated_images") {
       workBlock.push(item);
     } else {
       flushWorkBlock(item);
@@ -1360,6 +1364,11 @@ function ToolActivity({
   const outputIsDiff = activity.outputPane?.kind === "diff";
   const outputExpanded = outputExpandedOverride ?? outputIsDiff;
   const hasToolPanes = Boolean(activity.inputPane || activity.outputPane);
+
+  if (activity.communication) {
+    return <AgentCommunicationCard communication={activity.communication} direction="outgoing" status={activity.status}
+      details={hasToolPanes ? <>{activity.inputPane ? <pre>{activity.inputPane.text}</pre> : null}{activity.outputPane ? <pre>{activity.outputPane.text}</pre> : null}</> : undefined} />;
+  }
 
   return (
     <div className="space-y-1.5">
@@ -2558,6 +2567,10 @@ const ActivityRow = memo(function ActivityRow({
             ) : null}
           </div>
         ) : null}
+        {activity.kind === "agent_communication" ? (
+          <AgentCommunicationCard communication={activity} direction="incoming"
+            details={activity.raw ? <pre>{JSON.stringify(activity.raw, null, 2)}</pre> : undefined} />
+        ) : null}
         {activity.kind === "thinking" ? (
           <ThoughtActivity
             activity={activity}
@@ -2720,6 +2733,9 @@ export function Terminal({
         .flatMap((entry) => {
           if (
             entry.type === "message"
+            || (entry.type === "usage" && Boolean(incomingAgentCommunication(entry.type, entry.text, entry.raw)))
+            || entry.type === "session_message"
+            || entry.type === "user_message_chunk"
             || entry.type === "thought"
             || entry.type === "tool_call"
             || entry.type === "tool_call_update"
@@ -2849,7 +2865,7 @@ export function Terminal({
     const userActivity: TerminalActivityItemWithOrder[] = usingUnifiedStream
       ? [
         ...(visibleEntries ?? [])
-          .filter((entry) => entry.type === "user_input" || entry.type === "supervisor_input" || entry.type === "user_message_chunk")
+          .filter((entry) => entry.type === "user_input" || entry.type === "supervisor_input" || (entry.type === "user_message_chunk" && !incomingAgentCommunication(entry.type, entry.text, entry.raw)))
           .map((entry) => ({ source: "stream" as const, entry })),
         ...fallbackUserMessages.map((message) => ({ source: "fallback" as const, message })),
       ]
