@@ -464,6 +464,7 @@ export type WorkerEvent =
   // GET /api/workers/:workerId/entries?afterSeq=. See
   // docs/architecture/worker-conversation-stream.md.
   | { kind: "worker.entry_appended"; runId: string; workerId: string; seq: number }
+  | { kind: "worker.response_fallback_skipped"; runId: string; workerId: string; reason: "persisted_message" }
   | {
       kind: "worker.plan_boundary_started";
       runId: string;
