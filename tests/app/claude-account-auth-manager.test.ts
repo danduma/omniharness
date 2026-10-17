@@ -149,6 +149,47 @@ describe("ClaudeAccountAuthManager", () => {
     });
   });
 
+  it.each(["interrupted", "failed", "cancelled"])("starts a new sign-in when the previous operation is %s", async (phase) => {
+    const accounts = api({
+      getAuthOperation: vi.fn().mockResolvedValue(operation("account-existing", phase)),
+      actOnAuthOperation: vi.fn().mockResolvedValue(operation("account-existing")),
+    });
+    const manager = new ClaudeAccountAuthManager(accounts);
+    manager.configureScope("runner-a");
+
+    await manager.resume("account-existing");
+
+    expect(accounts.actOnAuthOperation).toHaveBeenCalledWith({ accountId: "account-existing", action: "retry" });
+    expect(manager.getSnapshot()).toMatchObject({
+      pending: false,
+      phase: "authenticating",
+      terminalId: "terminal-account-existing",
+    });
+  });
+
+  it("does not restart an old runner's sign-in after switching runners", async () => {
+    const response = deferred<ReturnType<typeof operation>>();
+    const accounts = api({ getAuthOperation: vi.fn().mockReturnValue(response.promise) });
+    const manager = new ClaudeAccountAuthManager(accounts);
+    manager.configureScope("runner-a");
+    const resume = manager.resume("account-existing");
+    manager.configureScope("runner-b");
+    response.resolve(operation("account-existing", "interrupted"));
+    await resume;
+    expect(accounts.actOnAuthOperation).not.toHaveBeenCalled();
+    expect(manager.getSnapshot()).toMatchObject({ runnerScope: "runner-b", phase: "idle", accountId: null });
+  });
+
+  it("does not restart a failed login during terminal-exit polling", async () => {
+    const accounts = api({ getAuthOperation: vi.fn().mockResolvedValue(operation("account-a", "failed")) });
+    const manager = new ClaudeAccountAuthManager(accounts);
+    manager.configureScope("runner-a");
+    await manager.begin();
+    await manager.refreshAfterTerminalExit();
+    expect(accounts.actOnAuthOperation).not.toHaveBeenCalled();
+    expect(manager.getSnapshot().phase).toBe("failed");
+  });
+
   it("ignores a stale response after switching runners", async () => {
     const response = deferred<ReturnType<typeof operation>>();
     const accounts = api({ connectClaude: vi.fn().mockReturnValue(response.promise) });

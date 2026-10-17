@@ -142,10 +142,18 @@ export class ClaudeAccountAuthManager extends StateManager<ClaudeAccountAuthStat
   }
 
   async resume(accountId: string) {
+    return this.loadOperation(accountId, true);
+  }
+
+  private async loadOperation(accountId: string, restart: boolean) {
     return this.runRequest(
       async () => {
+        const requestId = this.requestId;
         const current = parseResponse(await this.accounts.getAuthOperation({ accountId }));
-        if (!current.operation && current.account?.status !== "available") {
+        if (requestId !== this.requestId) return current;
+        const retryable = !current.operation
+          || ["interrupted", "failed", "cancelled"].includes(current.operation.phase);
+        if (restart && retryable && current.account?.status !== "available") {
           return this.accounts.actOnAuthOperation({ accountId, action: "retry" });
         }
         return current;
@@ -185,7 +193,7 @@ export class ClaudeAccountAuthManager extends StateManager<ClaudeAccountAuthStat
     if (!accountId) return false;
     for (let attempt = 0; attempt < 40; attempt += 1) {
       if (attempt > 0) await this.wait(250);
-      await this.resume(accountId);
+      await this.loadOperation(accountId, false);
       const phase = this.getSnapshot().phase;
       if (phase !== "authenticating" && phase !== "verifying") return true;
     }

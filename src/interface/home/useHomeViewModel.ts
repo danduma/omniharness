@@ -485,6 +485,7 @@ export function useHomeViewModel({
     // so it takes precedence over every reconnect-flavoured branch below.
     const reauthNotice = buildCredentialReauthNotice({
       lastError: selectedRun.lastError,
+      failedAt: selectedRun.failedAt,
       accounts: state.accounts ?? EMPTY_ACCOUNTS,
       workerType: selectedRun.preferredWorkerType,
       workerLabel: failedWorkerAvailability?.label,

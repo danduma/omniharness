@@ -97,7 +97,8 @@ import { applyHomeBootstrap } from "./home-bootstrap";
 import type { RunnerConnection } from "@/interface/runners/RunnerConnection";
 import { RunnerControls } from "@/interface/runners/RunnerControls";
 import { ClaudeAccountAuthManager } from "./ClaudeAccountAuthManager";
-import { hasVerifiedDeadCredentialMarker, readVerifiedDeadCredentialAccountId } from "@/lib/provider-account-failures";
+import { hasCurrentCredentialReauthFailure } from "./credential-failure-notice";
+import { readVerifiedDeadCredentialAccountId } from "@/lib/provider-account-failures";
 
 const FolderPickerDialog = lazy(
   () => import("@/components/FolderPickerDialog").then((m) => ({ default: m.FolderPickerDialog })),
@@ -619,7 +620,11 @@ export function HomeApp({
     homeUiStateManager.setComposerWorkerSelection(worker, model);
   }, [activeAllowedWorkerTypes, autoSelectedWorkerType, workerCatalogQuery.data?.workerModels]);
 
-  const hasCredentialReauthFailure = hasVerifiedDeadCredentialMarker(selectedRun?.lastError);
+  const hasCredentialReauthFailure = hasCurrentCredentialReauthFailure({
+    lastError: selectedRun?.lastError,
+    failedAt: selectedRun?.failedAt,
+    accounts: state.accounts ?? [],
+  });
   const credentialReauthAccountId = hasCredentialReauthFailure
     ? readVerifiedDeadCredentialAccountId(selectedRun?.lastError)
     : null;

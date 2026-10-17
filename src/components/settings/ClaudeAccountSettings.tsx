@@ -110,11 +110,13 @@ export function ClaudeAccountSettings({
                     <span className="text-sm font-medium">{account.label || account.id}</span>
                     <span className={cn(
                       "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                      account.status === "available"
+                      account.enabled && account.status === "available"
                         ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                         : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
                     )}>
-                      {accountStatusLabel(account.status)}
+                      {!account.enabled && account.status === "available"
+                        ? t("settings.agents.accountDisabled")
+                        : accountStatusLabel(account.status)}
                     </span>
                   </div>
                   <p className="mt-0.5 break-all font-mono text-[10px] text-muted-foreground">{account.id}</p>
