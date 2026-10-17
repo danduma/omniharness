@@ -279,14 +279,18 @@ test("explicit goal commands bypass transcript message submission", () => {
     path.resolve(process.cwd(), "src/interface/home/ComposerContainer.tsx"),
     "utf8"
   );
-  const goalCommandIndex = composerContainerSource.indexOf("parseGoalComposerCommand(command)");
-  const transcriptSendIndex = composerContainerSource.indexOf("onSendConversationMessage(command, attachments");
+  const goalCommandIndex = composerContainerSource.indexOf("parseGoalComposerCommand(content)");
+  const transcriptSendIndex = composerContainerSource.indexOf("onSendConversationMessage(content, attachments");
 
   expect(goalCommandIndex).toBeGreaterThanOrEqual(0);
   expect(transcriptSendIndex).toBeGreaterThan(goalCommandIndex);
   expect(composerContainerSource).toContain("attachments.length === 0");
   expect(composerContainerSource).toContain("executeGoalComposerCommand");
   expect(composerContainerSource).toContain("currentUi.selectedRunId !== selectedRunId");
+  // The Enter key sends through the composer's own prop, so that prop must
+  // run the same goal check as the submit button.
+  expect(composerContainerSource).toContain("onSendConversationMessage={sendConversationMessageOrGoal}");
+  expect(composerContainerSource).not.toContain("onSendConversationMessage(command, attachments");
 });
 
 test("selecting a session preserves its restored composer draft", () => {
