@@ -111,6 +111,22 @@ describe("agent runtime output store", () => {
     expect(JSON.stringify(record.outputEntries[0]?.raw).length).toBeLessThan(20_000);
   });
 
+  it("keeps the advertised command list after the live window prunes its frame", () => {
+    const record = {
+      outputArchive: openAgentOutputArchive({ dataDir: makeTempRoot(), name: "commands-worker" }),
+      outputEntries: [],
+      activeOutputEntryId: null,
+    } as unknown as AgentRecord;
+
+    appendOutputEntry(record, { type: "available_commands", text: "review\ngoal" });
+    for (let index = 0; index < 1_000; index += 1) {
+      appendOutputEntry(record, { type: "tool_call", text: `call ${index}`, toolCallId: `call-${index}` });
+    }
+
+    expect(record.outputEntries.some((entry) => entry.type === "available_commands")).toBe(false);
+    expect(record.advertisedCommands).toEqual(["review", "goal"]);
+  });
+
   describe("appendMessageChunk", () => {
     it("keeps the beginning of a long assistant message", () => {
       const dataDir = makeTempRoot();
