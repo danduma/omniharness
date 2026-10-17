@@ -27,7 +27,7 @@ export const handleAuthLogoutRequest: OmniHttpHandler = async (request) => {
     }
 
     const response = Response.json({ ok: true });
-    clearSessionCookie(response);
+    clearSessionCookie(request, response);
     return response;
   } catch (error) {
     return errorResponse(error, {

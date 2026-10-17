@@ -64,7 +64,7 @@ export const handleAuthPairRedeemRequest: OmniHttpHandler = async (request) => {
       sessionId: pairing.sessionId,
       pairingId: pairing.pairingId,
     });
-    setSessionCookie(response, pairing.tokenValue, pairing.expiresAt);
+    setSessionCookie(request, response, pairing.tokenValue, pairing.expiresAt);
     return response;
   } catch (error) {
     const parsedToken = parseOpaqueTokenValue(pairToken);
