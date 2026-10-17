@@ -1,3 +1,4 @@
+import { incomingAgentCommunication, outgoingAgentCommunication, type AgentCommunication } from "@/lib/agent-communication";
 import type { WorkerEntryChannel, WorkerEntryType } from "@/shared/worker-entries";
 
 export interface AgentOutputEntry {
@@ -35,6 +36,7 @@ export type AgentToolActivity = {
   title: string;
   status: string;
   timestamp: string;
+  communication?: AgentCommunication;
   targetPath?: string | null;
   inputPane?: AgentOutputPane;
   outputPane?: AgentOutputPane;
@@ -51,6 +53,7 @@ export type AgentToolGroupCounts = {
 };
 
 export type AgentActivityItem =
+  | (AgentCommunication & { id: string; kind: "agent_communication"; timestamp: string; raw?: unknown })
   | {
       id: string;
       kind: "message";
@@ -927,6 +930,9 @@ function deriveToolTitle(entry: AgentOutputEntry): string {
 
 function deriveToolInputPane(entry: AgentOutputEntry): AgentOutputPane | undefined {
   const raw = asRecord(entry.raw);
+  if (outgoingAgentCommunication(raw)) {
+    return { label: "IN", text: JSON.stringify(raw?.rawInput, null, 2) };
+  }
   const kind = normalizeToolKindForEntry(entry, asNonEmptyString(raw?.title) || entry.text || "");
   const promptLike = extractCommandLikeInput(raw) || summarizePromptLikeInput(raw);
 
@@ -1075,6 +1081,7 @@ function createToolActivity(entry: AgentOutputEntry): MutableToolActivity {
     status: normalizeStatus(entry.status),
     timestamp: entry.timestamp,
     targetPath: extractToolTargetPath(raw, kind, baseTitle),
+    communication: outgoingAgentCommunication(entry.raw),
     inputPane: deriveToolInputPane(entry),
     outputPane: deriveToolOutputPane(entry),
   };
@@ -1082,6 +1089,7 @@ function createToolActivity(entry: AgentOutputEntry): MutableToolActivity {
 
 function applyToolUpdate(target: MutableToolActivity, entry: AgentOutputEntry): void {
   target.status = mergeToolStatus(target.status, entry.status);
+  target.communication = outgoingAgentCommunication(entry.raw) ?? target.communication;
   const raw = asRecord(entry.raw);
   const baseTitle = asNonEmptyString(raw?.title) || entry.text || "Tool activity";
   const incomingKind = normalizeToolKindForEntry(entry, baseTitle);
@@ -1218,7 +1226,7 @@ function groupConsecutiveTools(items: AgentActivityItem[]): AgentActivityItem[] 
   };
 
   for (const item of items) {
-    if (item.kind === "tool") {
+    if (item.kind === "tool" && !item.communication) {
       pendingTools.push(item);
       continue;
     }
@@ -1368,6 +1376,13 @@ export function buildAgentOutputActivity(snapshot: AgentOutputSnapshot): AgentAc
       continue;
     }
     seenOutputEntryFingerprints.add(fingerprint);
+
+    const communication = incomingAgentCommunication(entry.type, entry.text, entry.raw);
+    if (communication) {
+      finishOpenThinking(entry.timestamp);
+      items.push({ id: entry.id, kind: "agent_communication", timestamp: entry.timestamp, ...communication, raw: entry.raw });
+      continue;
+    }
 
     if (entry.type === "thought") {
       const text = normalizeMultilineText(entry.text || "").trim();

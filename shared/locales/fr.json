@@ -971,5 +971,11 @@
   "notifications.push.permissionFallback": "Un outil nécessite votre autorisation. Ouvrez la conversation pour examiner la demande.",
   "notifications.push.failedTitle": "{title} — échec",
   "notifications.push.failedFallback": "Le travail s’est arrêté à cause d’une erreur. Ouvrez la conversation pour en savoir plus.",
-  "notifications.push.runnerTitle": "{runner}: {title}"
+  "notifications.push.runnerTitle": "{runner}: {title}",
+  "conversation.agentCommunication.sent": "Envoyé à {peer}",
+  "conversation.agentCommunication.sending": "Envoi à {peer}…",
+  "conversation.agentCommunication.failed": "Échec du message à {peer}",
+  "conversation.agentCommunication.received": "Reçu de {peer}",
+  "conversation.agentCommunication.unknownAgent": "Agent inconnu",
+  "conversation.agentCommunication.details": "Détails techniques"
 }

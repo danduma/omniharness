@@ -25,3 +25,25 @@ describe("ACP session update normalization", () => {
     expect(normalized).toMatchObject({ kind: "entry", entry: { type: expectedType } });
   });
 });
+
+it("preserves session_message deliveries through the current SDK compatibility boundary", async () => {
+  const { sanitizeIncomingMessage } = await import("@/server/agent-runtime/acp-stream-sanitizer");
+  const { zSessionNotification } = await import("@agentclientprotocol/sdk/dist/schema/zod.gen.js");
+  const delivery = { sessionUpdate: "session_message", messageId: "msg-1", senderSessionId: "sender", recipientSessionId: "receiver", content: [{ type: "text", text: "Hello" }] };
+  const frame = sanitizeIncomingMessage({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "receiver", update: delivery } }) as { params: unknown };
+  const parsed = zSessionNotification.parse(frame.params);
+  expect(normalizeSessionUpdate(parsed.update)).toMatchObject({ kind: "entry", entry: { type: "session_message", text: "Hello", raw: delivery } });
+});
+
+it("preserves Claude's actual cross-session receipt metadata alongside usage", () => {
+  const update = { sessionUpdate: "usage_update", used: 10, size: 100,
+    _meta: { "_claude/origin": { kind: "peer", from: "sender-address", name: "Reviewer", fromSession: "sender-session", body: "The review is ready." } },
+  } as const;
+  expect(normalizeSessionUpdate(update)).toMatchObject({ kind: "entry", entry: { type: "usage", raw: update } });
+});
+
+it("does not fabricate receipts for peer origins without a decoded body", () => {
+  expect(normalizeSessionUpdate({ sessionUpdate: "usage_update", used: 10, size: 100,
+    _meta: { "_claude/origin": { kind: "peer", from: "sender" } },
+  })).toMatchObject({ kind: "entry", entry: { type: "usage" } });
+});
