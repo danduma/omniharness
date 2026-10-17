@@ -9,7 +9,6 @@ import {
 import type { ActiveAuthSession } from "@/server/auth/session";
 import {
   getRequestNetworkIdentity,
-  isSecureOrLoopbackRequest,
 } from "@/server/auth/trusted-proxy";
 import { subscribeAuthSessionRevocations } from "@/server/auth/session-revocation";
 
@@ -210,10 +209,6 @@ function validateSessionTransport(
   if (!usedBearer) {
     return null;
   }
-  if (!isSecureOrLoopbackRequest(getRequestNetworkIdentity(request))) {
-    return jsonError(403, "Auth", "Validate session", "Bearer sessions require HTTPS for non-loopback clients.");
-  }
-
   const origin = request.headers.get("origin")?.trim() ?? null;
   if (session.clientKind === "native") {
     return origin

@@ -69,7 +69,7 @@ describe("native password login", () => {
     expect(response.headers.get("access-control-allow-origin")).toBeNull();
   });
 
-  it("refuses plaintext login from a non-loopback client", async () => {
+  it("accepts plain HTTP login from a non-loopback client (e.g. a Tailscale IP)", async () => {
     const response = await handleAuthLoginRequest(
       new Request("http://192.168.1.20:3050/api/auth/login", {
         method: "POST",
@@ -81,7 +81,7 @@ describe("native password login", () => {
       }),
       { surface: "test" },
     );
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(200);
   });
 
   it("rejects a native bearer session when a later request carries Origin", async () => {

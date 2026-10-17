@@ -8,8 +8,7 @@ import { setSessionCookie } from "./cookies";
 import {
   getRequestNetworkIdentity,
   hasBrowserProvenanceHeaders,
-  isSecureOrLoopbackRequest,
-} from "@/server/auth/trusted-proxy";
+}from "@/server/auth/trusted-proxy";
 import { verifyPasswordLoginAttempt } from "@/server/auth/login-attempt";
 
 export const handleAuthLoginRequest: OmniHttpHandler = async (request) => {
@@ -40,13 +39,6 @@ export const handleAuthLoginRequest: OmniHttpHandler = async (request) => {
         ? body.label
         : "";
     const networkIdentity = getRequestNetworkIdentity(request);
-    if (!isSecureOrLoopbackRequest(networkIdentity)) {
-      return errorResponse("Password login requires HTTPS for non-loopback clients.", {
-        status: 403,
-        source: "Auth",
-        action: "Log in",
-      });
-    }
 
     if (tokenTransport === "bearer") {
       if (
@@ -129,7 +121,7 @@ export const handleAuthLoginRequest: OmniHttpHandler = async (request) => {
       ...(tokenTransport === "bearer" ? { token: session.tokenValue } : {}),
     });
     if (tokenTransport === "cookie") {
-      setSessionCookie(response, session.tokenValue, session.expiresAt);
+      setSessionCookie(request, response, session.tokenValue, session.expiresAt);
     }
     return response;
   } catch (error) {

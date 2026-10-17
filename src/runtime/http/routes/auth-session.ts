@@ -123,7 +123,7 @@ async function deleteAuthSession(request: Request) {
 
   const response = json({ ok: true });
   if (revokeAll || !targetSessionId || targetSessionId === auth.session?.id) {
-    clearSessionCookie(response);
+    clearSessionCookie(request, response);
   }
   return response;
 }
