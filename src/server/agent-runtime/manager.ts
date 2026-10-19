@@ -4,6 +4,7 @@ import { readFile } from "fs/promises";
 import { request as httpRequest } from "http";
 import { request as httpsRequest } from "https";
 import { homedir } from "os";
+import { lowerWorkerProcessPriority } from "@/server/worker-process-priority";
 import { basename, dirname, isAbsolute, join } from "path";
 import { Readable, Writable } from "stream";
 import * as acp from "@agentclientprotocol/sdk";
@@ -2946,6 +2947,7 @@ export class AgentRuntimeManager {
         throw new RuntimeHttpError(400, `failed to spawn agent process: ${describeUnknownError(error)}`);
       }
       input.onSpawned?.(child);
+      lowerWorkerProcessPriority(child.pid);
       this.memoryTracer.onSpawn(child, input.agentType ?? "unknown", {
         command: input.command,
         cwd: input.cwd,
