@@ -100,6 +100,7 @@ export function coalesceWorkerEntriesById(
   };
 
   const positionByKey = new Map<string, number>();
+  const latestRawTextByKey = new Map<string, string>();
   const placementByKey = new Map<string, { timestamp: string; rank: number }>();
   const result: WorkerEntry[] = [];
   for (const entry of entries) {
@@ -114,9 +115,26 @@ export function coalesceWorkerEntriesById(
       if (entry.timestamp) {
         placementByKey.set(key, { timestamp: entry.timestamp, rank: rankOf(entry) });
       }
+      latestRawTextByKey.set(key, entry.text);
       result.push(entry);
       continue;
     }
+
+    const latestRawText = latestRawTextByKey.get(key);
+    const renderedEntry = entry.type === "message"
+      && result[existingPosition]?.type === "message"
+      && typeof latestRawText === "string"
+      && entry.text.startsWith(latestRawText)
+      ? {
+          ...entry,
+          text: appendReadableMessageRevision(
+            result[existingPosition]!.text,
+            latestRawText,
+            entry.text.slice(latestRawText.length),
+          ),
+        }
+      : entry;
+    latestRawTextByKey.set(key, entry.text);
 
     const held = placementByKey.get(key);
     const candidate = entry.timestamp;
@@ -135,9 +153,33 @@ export function coalesceWorkerEntriesById(
     } else if (candidate) {
       placementByKey.set(key, { timestamp: candidate, rank: candidateRank });
     }
-    result[existingPosition] = { ...entry, timestamp: preservedTimestamp };
+    result[existingPosition] = { ...renderedEntry, timestamp: preservedTimestamp };
   }
   return result;
+}
+
+/**
+ * Bridge message revisions carry the full text seen so far. If a later
+ * revision appends a new sentence directly after sentence-ending punctuation,
+ * retain a paragraph boundary in the rendered copy. This keeps progress
+ * updates readable without changing the append-only source stream.
+ */
+function appendReadableMessageRevision(renderedText: string, previousRawText: string, suffix: string) {
+  if (!suffix) {
+    return renderedText;
+  }
+
+  if (/[.!?]["')\]]?$/.test(previousRawText) && /^[A-Z][a-z]+(?:\s|$)/.test(suffix)) {
+    return `${renderedText}\n\n${suffix}`;
+  }
+
+  // A stream can split exactly between the punctuation and the next sentence.
+  const punctuationAndSentence = suffix.match(/^([.!?]["')\]]?)([A-Z][a-z]+(?:\s|$)[\s\S]*)$/);
+  if (punctuationAndSentence && !/[.!?]["')\]]?$/.test(previousRawText)) {
+    return `${renderedText}${punctuationAndSentence[1]}\n\n${punctuationAndSentence[2]}`;
+  }
+
+  return `${renderedText}${suffix}`;
 }
 
 const BRIDGE_TYPES: ReadonlySet<WorkerEntryType> = new Set<WorkerEntryType>([
