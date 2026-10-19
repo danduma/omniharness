@@ -282,12 +282,15 @@ export function useHomeLifecycle({
       homeUiStateManager.setComposerSelectionField("conversationMode", "direct", { userEdited: false });
     }
     if (savedWorker === "auto" || WORKER_OPTIONS.some((option) => option.value === savedWorker)) {
+      homeUiStateManager.setNewConversationDefaults({ worker: savedWorker as ComposerWorkerOption });
       homeUiStateManager.setComposerSelectionField("worker", savedWorker as ComposerWorkerOption, { userEdited: false });
     }
     if (savedModel) {
+      homeUiStateManager.setNewConversationDefaults({ model: savedModel });
       homeUiStateManager.setComposerSelectionField("model", savedModel, { userEdited: false });
     }
     if (EFFORT_OPTIONS.includes(savedEffort)) {
+      homeUiStateManager.setNewConversationDefaults({ effort: savedEffort });
       homeUiStateManager.setComposerSelectionField("effort", savedEffort, { userEdited: false });
     }
     setRouteReady(true);
@@ -574,21 +577,9 @@ export function useHomeLifecycle({
     safeSetBrowserStorageItem(window.localStorage, COMPOSER_MODE_STORAGE_KEY, selectedConversationMode);
   }, [selectedConversationMode]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    safeSetBrowserStorageItem(window.localStorage, COMPOSER_WORKER_STORAGE_KEY, selectedCliAgent);
-  }, [selectedCliAgent]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    safeSetBrowserStorageItem(window.localStorage, COMPOSER_MODEL_STORAGE_KEY, selectedModel);
-  }, [selectedModel]);
+  // The saved worker and model are written by the launch itself
+  // (`adoptSelectionForCreatedRun`). Mirroring every composer change here let
+  // merely viewing an old conversation overwrite the user's default.
 
   useEffect(() => {
     if (typeof window === "undefined") {

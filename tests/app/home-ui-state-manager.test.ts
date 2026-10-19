@@ -226,3 +226,20 @@ describe("HomeUiStateManager", () => {
     expect(manager.getSnapshot().composerDraftsByRun["run-a"]?.selection.model).toBe("claude-fable-5-1");
   });
 });
+
+it("a new conversation opened from an existing one starts on the last launched worker and model", () => {
+  const manager = new HomeUiStateManager();
+  manager.setComposerWorkerSelection("claude", "claude-opus-5-5");
+  manager.adoptSelectionForCreatedRun("run-1");
+  manager.selectRun("run-1");
+  manager.hydrateComposerSelection({
+    runId: "run-1",
+    selection: { conversationMode: "direct", worker: "codex", accountId: "auto", model: "gpt-5.6-sol", effort: "High" },
+    serverVersion: "v1",
+  });
+
+  manager.selectRun(null);
+
+  expect(manager.getSnapshot().selectedCliAgent).toBe("claude");
+  expect(manager.getSnapshot().selectedModel).toBe("claude-opus-5-5");
+});
