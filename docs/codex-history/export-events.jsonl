@@ -1188,3 +1188,6 @@
 {"at":"2026-10-18T22:01:01.474Z","type":"archive.conversation.written","provider":"claude","threadId":"3b2de752-e51d-4b6e-8090-c702716162b8","parts":1,"redactions":4,"malformedLines":0}
 {"at":"2026-10-18T22:01:01.475Z","type":"archive.conversation.unchanged","count":34}
 {"at":"2026-10-18T22:01:01.475Z","type":"archive.export.completed","conversations":278,"failed":0}
+{"at":"2026-10-19T10:01:08.229Z","type":"archive.export.started","projectRoot":"/Users/masterman/NLP/omniharness"}
+{"at":"2026-10-19T10:01:08.233Z","type":"archive.conversation.unchanged","count":35}
+{"at":"2026-10-19T10:01:08.233Z","type":"archive.export.completed","conversations":278,"failed":0}
