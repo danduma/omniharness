@@ -14,7 +14,8 @@
  * is deleted. When the gzipped stream is expanded back to plaintext
  * the index is rebuilt by a single forward scan.
  */
-import { promises as fs } from "node:fs";
+import { createReadStream, promises as fs } from "node:fs";
+import { createInterface } from "node:readline";
 import type { ArtifactStreamLocation } from "./append-only-store";
 
 /**
@@ -60,6 +61,24 @@ export async function appendIndexEntry(
   } catch {
     // Best-effort — losing the index just means slower tail reads
     // until the next compaction/rebuild.
+  }
+}
+
+/**
+ * Append several (seq, offset) rows in one write. Same best-effort
+ * contract as `appendIndexEntry`; batch appenders use it so a batch that
+ * crosses an INDEX_CADENCE boundary still lands its index point.
+ */
+export async function appendIndexEntries(
+  target: IndexTarget,
+  entries: readonly IndexEntry[],
+): Promise<void> {
+  if (entries.length === 0) return;
+  try {
+    const body = entries.map((entry) => `${JSON.stringify({ seq: entry.seq, offset: entry.offset })}\n`).join("");
+    await fs.appendFile(indexPath(target), body, "utf8");
+  } catch {
+    // Best-effort — readers detect a missing or lagging index and rebuild it.
   }
 }
 
@@ -131,32 +150,37 @@ export async function deleteIndex(target: IndexTarget): Promise<void> {
  */
 export async function rebuildIndex(target: IndexTarget): Promise<number> {
   const filePath = targetFilePath(target);
-  let body: string;
+  const entries: IndexEntry[] = [];
+  // Stream line by line rather than reading the whole file into one string:
+  // long transcripts run to tens of MB, and a single readFile + split +
+  // parse pass blocks the event loop for every other request meanwhile.
+  const stream = createReadStream(filePath, { encoding: "utf8", highWaterMark: 64 * 1024 });
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  let cursor = 0;
   try {
-    body = await fs.readFile(filePath, "utf8");
+    for await (const line of lines) {
+      // The file was appended line-by-line as UTF-8 so cursor advance
+      // must use byte length; +1 for the "\n" delimiter readline strips.
+      const lineStart = cursor;
+      cursor += Buffer.byteLength(line, "utf8") + 1;
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const parsed = JSON.parse(trimmed) as { seq?: unknown };
+        const seq = typeof parsed.seq === "number" && Number.isFinite(parsed.seq) ? Math.floor(parsed.seq) : 0;
+        if (seq > 0 && seq % INDEX_CADENCE === 0) {
+          entries.push({ seq, offset: lineStart });
+        }
+      } catch {
+        // Skip malformed lines; they don't get indexed.
+      }
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
     throw error;
-  }
-  const entries: IndexEntry[] = [];
-  let cursor = 0;
-  // Pre-encode buffer-length for offset accuracy. The file was appended
-  // line-by-line as UTF-8 so cursor advance must use byte length.
-  for (const line of body.split("\n")) {
-    const lineLen = Buffer.byteLength(line, "utf8");
-    const lineStart = cursor;
-    cursor += lineLen + 1; // +1 for the "\n" delimiter we just split on
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const parsed = JSON.parse(trimmed) as { seq?: unknown };
-      const seq = typeof parsed.seq === "number" && Number.isFinite(parsed.seq) ? Math.floor(parsed.seq) : 0;
-      if (seq > 0 && seq % INDEX_CADENCE === 0) {
-        entries.push({ seq, offset: lineStart });
-      }
-    } catch {
-      // Skip malformed lines; they don't get indexed.
-    }
+  } finally {
+    lines.close();
+    stream.destroy();
   }
   // Write atomically: tmp + rename so a concurrent reader never sees a
   // half-written index.
