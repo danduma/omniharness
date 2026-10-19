@@ -1,8 +1,9 @@
 import { chatAttachmentKindFromMimeType, type PendingChatAttachment } from "@/lib/chat-attachments";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
+import { getBrowserLocalStorage, safeSetBrowserStorageItem } from "@/lib/browser-storage";
 import { StateManager, type StateUpdate } from "@/lib/state-manager";
 import { goalPlanManager } from "./GoalPlanManager";
-import { DEFAULT_CONVERSATION_SIDEBAR_WIDTH, DEFAULT_SERVER_SETTINGS, DEFAULT_TERMINAL_PANEL_WIDTH, DEFAULT_WORKERS_SIDEBAR_WIDTH, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "./constants";
+import { COMPOSER_MODEL_STORAGE_KEY, COMPOSER_WORKER_STORAGE_KEY, DEFAULT_CONVERSATION_SIDEBAR_WIDTH, DEFAULT_SERVER_SETTINGS, DEFAULT_TERMINAL_PANEL_WIDTH, DEFAULT_WORKERS_SIDEBAR_WIDTH, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "./constants";
 import type { ComposerWorkerOption, ConversationModeOption, ConversationSidebarTab, EventStreamState, LlmProfileTab, MessageRecord, SettingsTab, SidebarRun } from "./types";
 import type { CreatedConversationSnapshot } from "./utils";
 
@@ -211,6 +212,11 @@ export function pendingChatAttachmentFromFile(file: File, id?: string): PendingC
 
 export class HomeUiStateManager extends StateManager<HomeUiState> {
   private readonly acknowledgedSelectionsByRun = new Map<string, ComposerSelection>();
+  // What a fresh new-conversation composer starts on: the last launch, or the
+  // saved browser choice at startup. Without it, opening a conversation first
+  // and then tapping "New" fell back to the hardcoded EMPTY_COMPOSER_DRAFT
+  // worker and model no matter what the user had been launching.
+  private newConversationSelection: ComposerSelection = { ...EMPTY_COMPOSER_DRAFT.selection };
 
   constructor() {
     super(initialHomeUiState);
@@ -479,7 +485,17 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
    * message went out on Opus 5. Seeding the new run's draft keeps the launch
    * selection attached to the conversation it launched.
    */
+  setNewConversationDefaults(patch: Partial<Pick<ComposerSelection, "worker" | "model" | "effort">>) {
+    this.newConversationSelection = { ...this.newConversationSelection, ...patch };
+  }
+
   adoptSelectionForCreatedRun(runId: string) {
+    const launched = this.activeSelection(this.getSnapshot());
+    this.setNewConversationDefaults({ worker: launched.worker, model: launched.model, effort: launched.effort });
+    const storage = getBrowserLocalStorage();
+    safeSetBrowserStorageItem(storage, COMPOSER_WORKER_STORAGE_KEY, launched.worker);
+    safeSetBrowserStorageItem(storage, COMPOSER_MODEL_STORAGE_KEY, launched.model);
+
     this.update((current) => {
       if (current.composerDraftsByRun[runId]) return current;
 
@@ -506,7 +522,10 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
       if (current.selectedRunId === nextRunId) return current;
       const prevKey = current.selectedRunId ?? NEW_CONVERSATION_DRAFT_KEY;
       const nextKey = nextRunId ?? NEW_CONVERSATION_DRAFT_KEY;
-      const nextDraft = current.composerDraftsByRun[nextKey] ?? EMPTY_COMPOSER_DRAFT;
+      const nextDraft = current.composerDraftsByRun[nextKey]
+        ?? (nextKey === NEW_CONVERSATION_DRAFT_KEY
+          ? { ...EMPTY_COMPOSER_DRAFT, selection: { ...this.newConversationSelection } }
+          : EMPTY_COMPOSER_DRAFT);
       const drafts: Record<string, ComposerDraft> = { ...current.composerDraftsByRun };
       const hasContent = current.command.length > 0
         || current.commandCursor !== 0
@@ -530,7 +549,7 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
       } else {
         delete drafts[prevKey];
       }
-      if (nextDraft === EMPTY_COMPOSER_DRAFT) {
+      if (!current.composerDraftsByRun[nextKey]) {
         delete drafts[nextKey];
       }
       return {

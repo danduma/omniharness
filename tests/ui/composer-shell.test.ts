@@ -119,10 +119,10 @@ test("composer supports auto agent selection while pinning explicit agent choice
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)');
   expect(pageSource).toContain('window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY)');
   expect(pageSource).toContain('const savedModel = resolveSavedComposerModel(savedModelValue)');
-  expect(pageSource).toContain('if (savedModel) {\n      homeUiStateManager.setComposerSelectionField("model", savedModel, { userEdited: false });\n    }');
+  expect(pageSource).toContain('homeUiStateManager.setNewConversationDefaults({ model: savedModel });\n      homeUiStateManager.setComposerSelectionField("model", savedModel, { userEdited: false });');
   expect(pageSource).toContain('window.localStorage.getItem(getEffortStorageKey(savedWorker, savedModel))');
-  expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, COMPOSER_WORKER_STORAGE_KEY, selectedCliAgent)');
-  expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, COMPOSER_MODEL_STORAGE_KEY, selectedModel)');
+  expect(pageSource).toContain('safeSetBrowserStorageItem(storage, COMPOSER_WORKER_STORAGE_KEY, launched.worker)');
+  expect(pageSource).toContain('safeSetBrowserStorageItem(storage, COMPOSER_MODEL_STORAGE_KEY, launched.model)');
   expect(pageSource).toContain('const key = getEffortStorageKey(selectedCliAgent, selectedModel);');
   expect(pageSource).toContain('const nextEffort = resolveComposerEffortForPair(saved);');
   expect(pageSource).toContain('safeSetBrowserStorageItem(window.localStorage, key, selectedEffort)');
