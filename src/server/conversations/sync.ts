@@ -899,10 +899,24 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
     // Codex /goal keeps running turns after the prompted one settled the run,
     // and gating this on the selected run left a goal's output unpersisted
     // for as long as nobody had that conversation open.
+    // A quota resume reattaches the saved session, whose last text is still the
+    // notice that parked it, then claims the worker as `working` with that text
+    // before its prompt lands. Re-admitting that already-persisted notice — or
+    // any notice while an ask turn owns the worker and will surface its own
+    // quota failure — opened a fresh incident a second after the reset and
+    // parked the run until the same clock time the next day.
+    const staleResumedQuotaNotice = Boolean(
+      agent
+      && (
+        hasLiveWorkerTurn(worker.id)
+        || (normalizedStatus(worker.status) === "working" && worker.lastText === agent.lastText)
+      ),
+    );
     const terminalQuotaNotice = isDirectRunMode(run.mode)
       && agent
       && ["idle", "error", "stopped"].includes(normalizedStatus(agent.state))
       && !isCancelledWorkerStatus(worker.status)
+      && !staleResumedQuotaNotice
       ? providerQuotaNoticeText(agent.lastText || agent.currentText)
       : null;
     // A provider-owned background turn can start and finish between polls.

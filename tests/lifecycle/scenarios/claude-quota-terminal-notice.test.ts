@@ -73,4 +73,29 @@ describe("Claude successful terminal quota notice", () => {
     expect(wake).toMatchObject({ reason: "quota_wait", incidentId: incidents[0].id });
     expect(wake!.wakeAt.getTime()).toBeGreaterThan(Date.now());
   });
+
+  it("does not re-admit the parked notice of a session just resumed after the reset", async () => {
+    const { runId } = await seedDirectRun();
+    const workerId = `${runId}-worker-1`;
+    const now = new Date();
+    const notice = "You've hit your session limit · resets 7:10pm (Europe/Madrid)";
+    await db.update(runs).set({ status: "running" }).where(eq(runs.id, runId));
+    // The quota resume claims the worker as `working` and copies the resumed
+    // session's last text — still the notice that parked it — before prompting.
+    await db.insert(workers).values({
+      id: workerId, runId, type: "claude", status: "working", cwd: "/tmp",
+      bridgeSessionId: "saved-claude-session", outputLog: "", outputEntriesJson: "[]",
+      currentText: notice, lastText: notice, createdAt: now, updatedAt: now,
+    });
+    const agent = {
+      name: workerId, type: "claude", cwd: "/tmp", state: "idle", sessionId: "saved-claude-session",
+      currentText: notice, lastText: notice,
+      stopReason: "end_turn", outputEntries: [], pendingPermissions: [], pendingElicitations: [], stderrBuffer: [],
+    };
+    const response = await client.fetch("/snapshot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify([agent]) });
+    expect(response.status).toBe(200);
+    expect(await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId))).toHaveLength(0);
+    expect(await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId))).toHaveLength(0);
+    expect((await db.select().from(runs).where(eq(runs.id, runId)).get())?.status).not.toBe("quota_waiting");
+  });
 });
