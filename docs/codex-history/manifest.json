@@ -1,8 +1,88 @@
 {
   "version": 2,
   "projectRoot": "/Users/masterman/NLP/omniharness",
-  "generatedAt": "2026-10-16T22:01:06.516Z",
+  "generatedAt": "2026-10-18T22:01:01.474Z",
   "conversations": [
+    {
+      "provider": "claude",
+      "id": "3b2de752-e51d-4b6e-8090-c702716162b8",
+      "title": "Automatic image attachment compression",
+      "startedAt": "2026-10-18T10:06:56.015Z",
+      "updatedAt": "2026-10-18T10:09:39.359Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "438cdb6a6b5b25a47228a5afd86f8f43ab32886694faefecd7d7fe199c0f20e3",
+      "parts": [
+        "conversations/2026/10/2026-10-18-claude-automatic-image-attachment-compression-3b2de752-e51d-4b6e-8090-c702716162b8-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 194,
+      "malformedLines": 0,
+      "redactions": 4,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "fa272dac-6ec3-4c7f-8bef-244b0c5f3f32",
+      "title": "Missing /goal in session dc6098ddbf64",
+      "startedAt": "2026-10-17T21:23:18.175Z",
+      "updatedAt": "2026-10-17T21:25:33.268Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "c9200faab29f7fe24a6e6892a0dcfcf8946f738e87117868f2c94eaf3ed8bab7",
+      "parts": [
+        "conversations/2026/10/2026-10-17-claude-missing-goal-in-session-dc6098ddbf64-fa272dac-6ec3-4c7f-8bef-244b0c5f3f32-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 213,
+      "malformedLines": 0,
+      "redactions": 36,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "0ed657e3-c966-4368-b6eb-9b6fb4d1b23c",
+      "title": "HTTP authentication without Tailscale DNS",
+      "startedAt": "2026-10-17T19:46:03.901Z",
+      "updatedAt": "2026-10-17T19:47:43.895Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "8ceeb43ff74128b1b307fb542af6de9a635bd6305ecf16f750e7ce5f3f13c2c2",
+      "parts": [
+        "conversations/2026/10/2026-10-17-claude-http-authentication-without-tailscale-dns-0ed657e3-c966-4368-b6eb-9b6fb4d1b23c-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 178,
+      "malformedLines": 0,
+      "redactions": 3,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "31bbb5e8-e3d5-465c-85c1-6d0eae276153",
+      "title": "Codex usage spike in sessions fea09c0435d7 and 5dc14793e7c6",
+      "startedAt": "2026-10-17T12:56:27.211Z",
+      "updatedAt": "2026-10-17T13:04:54.495Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "0628e73036f9fdda1dfbe04522fd139b6eb9537aad1833994bfd02b1104721c9",
+      "parts": [
+        "conversations/2026/10/2026-10-17-claude-codex-usage-spike-in-sessions-fea09c0435d7-and-5dc14793e7c6-31bbb5e8-e3d5-465c-85c1-6d0eae276153-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 243,
+      "malformedLines": 0,
+      "redactions": 13,
+      "warnings": []
+    },
     {
       "provider": "claude",
       "id": "1b308d67-e98f-42f8-af2d-fea1379a3997",
@@ -71,7 +151,7 @@
       "updatedAt": "2026-10-09T08:48:42.530Z",
       "status": "complete",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "ab9881bd719f0b0f8a8e0135324edb3ad37ffe944dd2e0e1a98931138829cc09",
       "parts": [
@@ -151,7 +231,7 @@
       "updatedAt": "2026-10-06T16:29:46.299Z",
       "status": "complete",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "3beaa44fa5ab964554fdcb49b1f5ea5517f376ffc15b9e165d21f57f99ae1c2e",
       "parts": [
@@ -491,7 +571,7 @@
       "updatedAt": "2026-09-23T12:44:13.510Z",
       "status": "complete",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "b7be71251fdc128e2550fb570d66d52c6e330f7bfc226c2bdcbfee3fbcef80db",
       "parts": [
@@ -691,7 +771,7 @@
       "updatedAt": "2026-09-17T14:49:35.722Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "a91d0791532a97907d4894f74831e27706ab93cd625a04da3c9a2f5d8934df9c",
       "parts": [
@@ -711,7 +791,7 @@
       "updatedAt": "2026-09-17T11:58:15.990Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "3a0748d3f6c5c143d585310d51dc7be59ddf9e8bd1070fd9ec0d32ec80111cef",
       "parts": [
@@ -791,7 +871,7 @@
       "updatedAt": "2026-09-12T12:08:45.086Z",
       "status": "complete",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "c1eaf13f5ace76d92b266334f9f76ec25fab52b17ec6628be2649369790c4eca",
       "parts": [
@@ -831,7 +911,7 @@
       "updatedAt": "2026-09-09T19:03:48.767Z",
       "status": "complete",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "f0538f0ef86a3a941d023784fda0f0b0b274c2ed4e5b8de7b39b063cf96ecb0f",
       "parts": [
@@ -891,7 +971,7 @@
       "updatedAt": "2026-09-09T04:01:05.577Z",
       "status": "complete",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "c2ca88b89f20ad2d9e0e2c8ccb3a50f2a60ab281d194b14e776dc15300db7e67",
       "parts": [
@@ -1071,7 +1151,7 @@
       "updatedAt": "2026-09-02T13:45:21.151Z",
       "status": "complete",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "6d8a1c2f058a39577c94aea87c325451703782114c53611e07b794ea416fd52a",
       "parts": [
@@ -4807,7 +4887,7 @@
       "updatedAt": "2026-06-24T21:04:43.898Z",
       "status": "interrupted",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "25cb0524f3dcb28a338b375847c8a9a52490a6a47af37d975fbb536e713f7190",
       "parts": [
