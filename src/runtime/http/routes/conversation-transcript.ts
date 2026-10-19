@@ -78,6 +78,83 @@ function earliestReturnedSeq(entries: WorkerEntry[]) {
   }, 0);
 }
 
+type WorkerPage = {
+  workerId: string;
+  // Seq-ascending entries the per-worker reader returned for this page.
+  entries: WorkerEntry[];
+  hasOlder: boolean;
+  // `beforeToken` cursor to hand back when none of this worker's entries make
+  // the page: everything at or above it has already been delivered.
+  upperCursor: number;
+};
+
+function isPlainMessage(entry: WorkerEntry | undefined) {
+  return Boolean(entry && entry.type === "message" && !entry.toolCallId && !entry.status);
+}
+
+/**
+ * Keep the newest `limit` entries across *all* workers, not `limit` per worker.
+ *
+ * Each worker is read independently, so a long-dead worker's tail can be days
+ * older than the active worker's. Merging per-worker tails as-is spanned the
+ * window from the dead worker's last entry to now while carrying only the
+ * newest slice of the active worker: every user message in between rendered
+ * with no replies, and scroll-back paged both workers in lockstep so the gap
+ * never closed.
+ *
+ * Each worker keeps a contiguous seq suffix of its page so its `beforeToken`
+ * cursor stays exact, and a cut never splits a run of streamed message
+ * fragments.
+ */
+function takeNewestAcrossWorkers(
+  pages: WorkerPage[],
+  limit: number,
+  workerCreationOrder: Map<string, number>,
+) {
+  const tagged: ConversationTranscriptEntry[] = [];
+  const indexInPage = new Map<ConversationTranscriptEntry, number>();
+  for (const page of pages) {
+    page.entries.forEach((entry, index) => {
+      const taggedEntry = { ...entry, workerId: page.workerId };
+      tagged.push(taggedEntry);
+      indexInPage.set(taggedEntry, index);
+    });
+  }
+  sortTranscriptEntries(tagged, workerCreationOrder);
+
+  const firstKeptIndex = new Map<string, number>();
+  for (const entry of tagged.slice(Math.max(0, tagged.length - limit))) {
+    const index = indexInPage.get(entry) ?? 0;
+    const current = firstKeptIndex.get(entry.workerId);
+    if (current === undefined || index < current) {
+      firstKeptIndex.set(entry.workerId, index);
+    }
+  }
+
+  const kept = new Map<string, WorkerEntry[]>();
+  const oldestCursors: Record<string, number> = {};
+  let hasOlder = false;
+  for (const page of pages) {
+    let start = firstKeptIndex.get(page.workerId) ?? page.entries.length;
+    while (
+      start > 0
+      && start < page.entries.length
+      && isPlainMessage(page.entries[start])
+      && isPlainMessage(page.entries[start - 1])
+    ) {
+      start -= 1;
+    }
+    const workerKept = page.entries.slice(start);
+    kept.set(page.workerId, workerKept);
+    const earliestSeq = earliestReturnedSeq(workerKept);
+    oldestCursors[page.workerId] = earliestSeq > 0 ? earliestSeq : page.upperCursor;
+    if (start > 0 || page.hasOlder) {
+      hasOlder = true;
+    }
+  }
+  return { kept, oldestCursors, hasOlder };
+}
+
 function emptyTranscriptResponse(workerIds: string[] = []) {
   const token = encodeAfterToken({ cursors: {} });
   return {
@@ -170,25 +247,25 @@ export const handleConversationTranscriptRequest: OmniHttpHandler = async (reque
       );
       probe.mark("readBeforeEntries");
 
+      const { kept, oldestCursors: pageOldestCursors, hasOlder: pageHasOlder } = takeNewestAcrossWorkers(
+        perWorkerResults.map(({ workerId, entries, hasOlder: workerHasOlder }) => ({
+          workerId,
+          entries,
+          hasOlder: workerHasOlder || earliestReturnedSeq(entries) > 1,
+          upperCursor: beforeToken.cursors[workerId] ?? 0,
+        })),
+        limit,
+        workerCreationOrder,
+      );
       const merged: ConversationTranscriptEntry[] = [];
       const latestCursors: Record<string, number> = {};
-      const oldestCursors: Record<string, number> = { ...beforeToken.cursors };
-      let hasOlder = false;
+      const oldestCursors: Record<string, number> = { ...beforeToken.cursors, ...pageOldestCursors };
+      const hasOlder = pageHasOlder;
 
-      for (const { workerId, entries, latestSeq, hasOlder: workerHasOlder } of perWorkerResults) {
+      for (const { workerId, latestSeq } of perWorkerResults) {
         latestCursors[workerId] = latestSeq;
-        if (workerHasOlder) {
-          hasOlder = true;
-        }
-        for (const entry of visibleEntriesFor(workerId, entries)) {
+        for (const entry of visibleEntriesFor(workerId, kept.get(workerId) ?? [])) {
           merged.push({ ...entry, workerId });
-        }
-        const earliestSeq = earliestReturnedSeq(entries);
-        if (earliestSeq > 0) {
-          oldestCursors[workerId] = earliestSeq;
-          if (earliestSeq > 1) {
-            hasOlder = true;
-          }
         }
       }
 
@@ -222,19 +299,22 @@ export const handleConversationTranscriptRequest: OmniHttpHandler = async (reque
       );
       probe.mark("readTailEntries");
 
+      const { kept, oldestCursors, hasOlder } = takeNewestAcrossWorkers(
+        perWorkerResults.map(({ workerId, entries, latestSeq, hasOlder: workerHasOlder }) => ({
+          workerId,
+          entries,
+          hasOlder: workerHasOlder,
+          upperCursor: latestSeq + 1,
+        })),
+        limit,
+        workerCreationOrder,
+      );
       const merged: ConversationTranscriptEntry[] = [];
       const latestCursors: Record<string, number> = {};
-      const oldestCursors: Record<string, number> = {};
-      let hasOlder = false;
 
-      for (const { workerId, entries, latestSeq, hasOlder: workerHasOlder } of perWorkerResults) {
+      for (const { workerId, latestSeq } of perWorkerResults) {
         latestCursors[workerId] = latestSeq;
-        const earliestSeq = earliestReturnedSeq(entries);
-        oldestCursors[workerId] = earliestSeq > 0 ? earliestSeq : latestSeq + 1;
-        if (workerHasOlder) {
-          hasOlder = true;
-        }
-        for (const entry of visibleEntriesFor(workerId, entries)) {
+        for (const entry of visibleEntriesFor(workerId, kept.get(workerId) ?? [])) {
           merged.push({ ...entry, workerId });
         }
       }
@@ -300,4 +380,5 @@ export const __testInternals = {
   encodeAfterToken,
   compareTranscriptEntries,
   excludeDiagnosticEntries,
+  takeNewestAcrossWorkers,
 };
