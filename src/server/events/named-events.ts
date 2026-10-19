@@ -521,6 +521,25 @@ export type WorkerEvent =
       workerId: string;
       recoveredEntries: number;
     }
+  // The sparse seq→offset index bounds incremental transcript reads. A
+  // reader that finds it missing, lagging the tail, or pointing at the wrong
+  // line stops trusting it and rebuilds it once on the worker's write chain;
+  // whole-file rewrites rebuild it in place.
+  | {
+      kind: "worker.stream_index_rebuilt";
+      runId: string;
+      workerId: string;
+      reason: WorkerStreamIndexRebuildReason;
+      indexPoints: number;
+      durationMs: number;
+    }
+  | {
+      kind: "worker.stream_index_rebuild_failed";
+      runId: string;
+      workerId: string;
+      reason: WorkerStreamIndexRebuildReason;
+      message: string;
+    }
   | {
       kind: "worker.stream_gap_unrecoverable";
       runId: string;
@@ -927,6 +946,12 @@ export type ConversationEvent =
       source: string;
     };
 
+export type WorkerStreamIndexRebuildReason =
+  | "missing_index"
+  | "stale_index"
+  | "index_mismatch"
+  | "file_rewritten";
+
 export type SessionEvent =
   | { kind: "process.priority_lowered"; pid: number; previousPriority: number; priority: number }
   | { kind: "process.priority_failed"; pid: number; reason: string }
@@ -1186,6 +1211,8 @@ const DELTA_ONLY_EVENT_KINDS = new Set<string>([
   "runtime.output_logs_prune_deferred",
   "runtime.output_logs_prune_failed",
   "worker.entry_appended",
+  "worker.stream_index_rebuilt",
+  "worker.stream_index_rebuild_failed",
   "worker.plan_boundary_started",
   "worker.plan_updated",
   "worker.plan_rejected",

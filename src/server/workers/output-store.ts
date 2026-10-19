@@ -11,12 +11,16 @@ import type { AgentRecord } from "@/server/bridge-client";
 import { getAppDataPath } from "@/server/app-root";
 import { resolveArtifactStreamLocation } from "@/server/artifacts/append-only-store";
 import {
+  INDEX_CADENCE,
+  appendIndexEntries,
   appendIndexEntry,
   findIndexPointForSeq,
   readIndex,
+  rebuildIndex,
   shouldIndex,
+  type IndexEntry,
 } from "@/server/artifacts/stream-index";
-import { emitNamedEvent } from "@/server/events/named-events";
+import { emitNamedEvent, type WorkerStreamIndexRebuildReason } from "@/server/events/named-events";
 import type {
   WorkerEntry,
 } from "@/server/workers/entries-types";
@@ -562,6 +566,84 @@ function runOnChain<T>(runId: string, workerId: string, task: () => Promise<T>):
   });
 }
 
+// A current index has a point within INDEX_CADENCE seqs of the tail. Once it
+// lags by two cadences it can no longer bound a read — seeking from its last
+// point would parse everything since — so readers stop trusting it.
+const STALE_INDEX_SEQ_LAG = 2 * INDEX_CADENCE;
+const pendingIndexRebuildByKey = new Map<string, Promise<void>>();
+
+/** Rebuild the index in place. Callers must already hold the worker chain. */
+async function rebuildWorkerStreamIndex(
+  runId: string,
+  workerId: string,
+  filePath: string,
+  reason: WorkerStreamIndexRebuildReason,
+): Promise<void> {
+  const started = Date.now();
+  try {
+    const indexPoints = await rebuildIndex(filePath);
+    emitNamedEvent({
+      kind: "worker.stream_index_rebuilt",
+      runId,
+      workerId,
+      reason,
+      indexPoints,
+      durationMs: Date.now() - started,
+    });
+  } catch (error) {
+    emitNamedEvent({
+      kind: "worker.stream_index_rebuild_failed",
+      runId,
+      workerId,
+      reason,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * Queue one rebuild on the worker's write chain so it cannot interleave
+ * with an append. Readers call this and fall back for the current request
+ * rather than waiting on it.
+ */
+function scheduleWorkerStreamIndexRebuild(
+  runId: string,
+  workerId: string,
+  filePath: string,
+  reason: WorkerStreamIndexRebuildReason,
+) {
+  const key = chainKey(runId, workerId);
+  if (pendingIndexRebuildByKey.has(key)) return;
+  const task = runOnChain(runId, workerId, () => rebuildWorkerStreamIndex(runId, workerId, filePath, reason))
+    .finally(() => pendingIndexRebuildByKey.delete(key));
+  pendingIndexRebuildByKey.set(key, task);
+}
+
+/**
+ * The on-disk index, or null when it cannot bound a read of a stream whose
+ * tail is at `latestSeq`. A null return for a long stream schedules a rebuild.
+ */
+async function readCurrentIndex(
+  runId: string,
+  workerId: string,
+  filePath: string,
+  latestSeq: number,
+): Promise<IndexEntry[] | null> {
+  const index = await readIndex(filePath);
+  const highest = index?.at(-1);
+  if (!index || !highest) {
+    if (latestSeq >= STALE_INDEX_SEQ_LAG) {
+      scheduleWorkerStreamIndexRebuild(runId, workerId, filePath, "missing_index");
+    }
+    return null;
+  }
+  if (latestSeq - highest.seq >= STALE_INDEX_SEQ_LAG) {
+    scheduleWorkerStreamIndexRebuild(runId, workerId, filePath, "stale_index");
+    return null;
+  }
+  return index;
+}
+
 /**
  * Serialize a worker-state fence with every append to that worker's JSONL.
  * Rewinds advance the turn generation through this boundary, so provider
@@ -985,6 +1067,8 @@ async function healStrandedStreamHead(
     await handle.close();
   }
   await fs.rename(tmpPath, paths.filePath);
+  // Renumbering moved every line; the old offsets now point elsewhere.
+  await rebuildWorkerStreamIndex(runId, workerId, paths.filePath, "file_rewritten");
 
   // Set the cursor directly: the recovered transcript is authoritative, and it
   // is usually SHORTER than the stale cursor (streaming chunks collapse into
@@ -1132,7 +1216,7 @@ export async function backfillWorkerStreamGapFromArchive(
 ): Promise<{ inserted: number; latestSeq: number }> {
   return runOnChain(runId, workerId, async () => {
     return withWorkerFileLock(runId, workerId, async (paths) => {
-      await expandWorkerOutputFileInternal(paths);
+      await expandWorkerOutputFileInternal(runId, workerId, paths);
       const persisted = parseWorkerEntryLines(await fs.readFile(paths.filePath, "utf8"));
       const beforeIndex = persisted.findIndex((entry) => entry.seq === afterSeq);
       const before = persisted[beforeIndex];
@@ -1171,6 +1255,8 @@ export async function backfillWorkerStreamGapFromArchive(
         await handle.close();
       }
       await fs.rename(tmpPath, paths.filePath);
+      // Inserted lines shifted every later offset and seq.
+      await rebuildWorkerStreamIndex(runId, workerId, paths.filePath, "file_rewritten");
 
       const last = repaired.at(-1);
       const latestSeq = last?.seq ?? 0;
@@ -1269,7 +1355,7 @@ export async function appendWorkerEntryWithResult(
       // If a compaction race somehow stranded the plaintext file under .gz,
       // expand it first so cache refresh sees the live transcript rather
       // than the lock-created empty placeholder.
-      await expandWorkerOutputFileInternal(paths);
+      await expandWorkerOutputFileInternal(runId, workerId, paths);
       // Never resume numbering above a head that isn't on disk.
       await healStrandedStreamHead(runId, workerId, paths);
 
@@ -1384,7 +1470,7 @@ export async function writeWorkerOutputEntries(
         });
         return false;
       }
-      await expandWorkerOutputFileInternal(paths);
+      await expandWorkerOutputFileInternal(runId, workerId, paths);
       // Never resume numbering above a head that isn't on disk.
       await healStrandedStreamHead(runId, workerId, paths);
 
@@ -1459,6 +1545,24 @@ export async function writeWorkerOutputEntries(
       }
       const body = lines.join("\n") + "\n";
 
+      // Same sparse index points the single-entry append records; a batch
+      // that skipped them left long transcripts with a lagging index.
+      let sizeBefore = 0;
+      try {
+        sizeBefore = (await fs.stat(target)).size;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      const indexPoints: IndexEntry[] = [];
+      let lineOffset = sizeBefore + (newlineGuard ? 1 : 0);
+      for (let index = 0; index < lines.length; index += 1) {
+        const seq = appendedEntries[index]!.seq;
+        if (shouldIndex(seq)) {
+          indexPoints.push({ seq, offset: lineOffset });
+        }
+        lineOffset += Buffer.byteLength(lines[index]!, "utf8") + 1;
+      }
+
       const handle = await fs.open(target, "a");
       try {
         await handle.appendFile(newlineGuard ? "\n" + body : body, "utf8");
@@ -1466,6 +1570,7 @@ export async function writeWorkerOutputEntries(
       } finally {
         await handle.close();
       }
+      await appendIndexEntries(target, indexPoints);
       nextSeqByKey.set(key, nextSeq);
       await rememberWorkerFileState(runId, workerId);
       const latestEntry = appendedEntries.at(-1);
@@ -2021,7 +2126,7 @@ async function readWorkerEntriesTailJsonl(
   limit: number,
 ): Promise<{ entries: WorkerEntry[]; latestSeq: number; hasOlder: boolean } | null> {
   const { filePath } = await workerStreamPaths(runId, workerId, "read");
-  const viaIndex = await readWorkerEntriesTailViaIndex(filePath, limit);
+  const viaIndex = await readWorkerEntriesTailViaIndex(runId, workerId, filePath, limit);
   if (viaIndex) return viaIndex;
   let size = 0;
   try {
@@ -2148,7 +2253,7 @@ export async function readWorkerEntriesBefore(
 
 /**
  * Read forward from the on-disk seq→offset index. Returns `null` if the
- * index is missing/empty or doesn't cover the requested range — caller
+ * index is missing, lags the tail, or doesn't match the file — caller
  * falls back to the backward tail scan.
  *
  * The index is sparse (one entry per INDEX_CADENCE seqs) so the seek
@@ -2156,26 +2261,31 @@ export async function readWorkerEntriesBefore(
  * from that offset, and obtain the latest sequence separately from the tail.
  */
 async function readWorkerEntriesSinceViaIndex(
+  runId: string,
+  workerId: string,
   filePath: string,
   afterSeq: number,
 ): Promise<{ entries: WorkerEntry[]; latestSeq: number } | null> {
-  const index = await readIndex(filePath);
-  if (!index || index.length === 0) return null;
-  // findIndexPointForSeq returns at-or-before; we want the largest seq
-  // strictly <= afterSeq so the read starts just before the cutoff.
-  // Before the first index point, stream a page from the beginning rather
-  // than falling back to a full transcript allocation.
-  const seek = findIndexPointForSeq(index, afterSeq) ?? { seq: 0, offset: 0 };
   try {
     const handle = await fs.open(filePath, "r");
     try {
       const stat = await handle.stat();
-      if (stat.size <= seek.offset) return null;
       // Obtain the authoritative cursor from the tail, independently of the
       // page. Loading the entire suffix here made each 200-entry plan page
       // reallocate and parse the rest of a long conversation.
       const latestSeq = await readLatestSeqFromJsonlTail(filePath, stat.size);
       if (latestSeq === null) return null;
+      const index = await readCurrentIndex(runId, workerId, filePath, latestSeq);
+      if (!index) return null;
+      // findIndexPointForSeq returns at-or-before; we want the largest seq
+      // strictly <= afterSeq so the read starts just before the cutoff.
+      // Before the first index point, stream a page from the beginning rather
+      // than falling back to a full transcript allocation.
+      const seek = findIndexPointForSeq(index, afterSeq) ?? { seq: 0, offset: 0 };
+      if (stat.size <= seek.offset) {
+        scheduleWorkerStreamIndexRebuild(runId, workerId, filePath, "index_mismatch");
+        return null;
+      }
       const stream = handle.createReadStream({
         start: seek.offset,
         end: stat.size - 1,
@@ -2185,6 +2295,10 @@ async function readWorkerEntriesSinceViaIndex(
       });
       const lines = createInterface({ input: stream, crlfDelay: Infinity });
       const entries: WorkerEntry[] = [];
+      // The seek line must be the record the index names. An offset left
+      // behind by a rewrite can land later in the file, and starting there
+      // would silently skip the entries in between.
+      let seekVerified = seek.seq === 0;
       try {
         for await (const line of lines) {
           const trimmed = line.trim();
@@ -2193,6 +2307,10 @@ async function readWorkerEntriesSinceViaIndex(
           try {
             parsed = JSON.parse(trimmed) as WorkerEntry;
           } catch {
+            if (!seekVerified) {
+              scheduleWorkerStreamIndexRebuild(runId, workerId, filePath, "index_mismatch");
+              return null;
+            }
             // An incomplete final append is not part of the durable page.
             // Fall back if corruption appears before the authoritative tail.
             if (entries.at(-1)?.seq === latestSeq) break;
@@ -2201,6 +2319,13 @@ async function readWorkerEntriesSinceViaIndex(
           const seq = typeof parsed.seq === "number" && Number.isFinite(parsed.seq)
             ? Math.floor(parsed.seq)
             : 0;
+          if (!seekVerified) {
+            if (seq !== seek.seq) {
+              scheduleWorkerStreamIndexRebuild(runId, workerId, filePath, "index_mismatch");
+              return null;
+            }
+            seekVerified = true;
+          }
           if (seq <= 0) return null;
           if (seq > afterSeq) entries.push(parsed);
           if (entries.length >= MAX_FORWARD_ENTRIES) break;
@@ -2221,30 +2346,36 @@ async function readWorkerEntriesSinceViaIndex(
 
 /**
  * Read the last `limit` entries via the seq→offset index. Returns `null`
- * if the index can't help (missing, empty, or doesn't reach the desired
- * range) — caller falls back to backward scan.
+ * if the index can't help (missing, lagging the tail, mismatched, or not
+ * reaching the desired range) — caller falls back to backward scan.
  */
 async function readWorkerEntriesTailViaIndex(
+  runId: string,
+  workerId: string,
   filePath: string,
   limit: number,
 ): Promise<{ entries: WorkerEntry[]; latestSeq: number; hasOlder: boolean } | null> {
-  const index = await readIndex(filePath);
-  if (!index || index.length === 0) return null;
-  // Use the largest indexed seq as a proxy for "near the end" and seek
-  // a bit further back so we have at least `limit` worth of records to
-  // pick from. INDEX_CADENCE=100 so two index points back covers up to
-  // 200 records.
-  const highestIndexed = index[index.length - 1]!;
-  const target = Math.max(1, highestIndexed.seq - Math.max(limit, 100) - 1);
-  const seek = findIndexPointForSeq(index, target);
-  if (!seek) return null;
   let body: string;
+  let seek: IndexEntry;
   try {
     const handle = await fs.open(filePath, "r");
     try {
       const stat = await handle.stat();
+      const tailSeq = await readLatestSeqFromJsonlTail(filePath, stat.size);
+      if (tailSeq === null) return null;
+      const index = await readCurrentIndex(runId, workerId, filePath, tailSeq);
+      if (!index) return null;
+      // Seek far enough back from the tail to cover `limit` records.
+      // INDEX_CADENCE=100 so two index points back covers up to 200 records.
+      const target = Math.max(1, tailSeq - Math.max(limit, 100) - 1);
+      const point = findIndexPointForSeq(index, target);
+      if (!point) return null;
+      seek = point;
       const length = Math.max(0, stat.size - seek.offset);
-      if (length === 0) return null;
+      if (length === 0) {
+        scheduleWorkerStreamIndexRebuild(runId, workerId, filePath, "index_mismatch");
+        return null;
+      }
       const buf = Buffer.alloc(length);
       await handle.read(buf, 0, length, seek.offset);
       body = buf.toString("utf8");
@@ -2266,10 +2397,19 @@ async function readWorkerEntriesTailViaIndex(
       const seq = typeof entry.seq === "number" && Number.isFinite(entry.seq)
         ? Math.floor(entry.seq)
         : 0;
+      if (parsed.length === 0 && seq !== seek.seq) {
+        // The seek line must be the record the index names.
+        scheduleWorkerStreamIndexRebuild(runId, workerId, filePath, "index_mismatch");
+        return null;
+      }
       if (seq <= 0) return null;
       if (seq > latestSeq) latestSeq = seq;
       parsed.push(entry);
     } catch {
+      if (parsed.length === 0) {
+        scheduleWorkerStreamIndexRebuild(runId, workerId, filePath, "index_mismatch");
+        return null;
+      }
       // Trailing partial line is tolerable; mid-stream malformed line
       // means we can't trust the seek window.
       if (i !== lines.length - 1) return null;
@@ -2289,7 +2429,7 @@ async function readWorkerEntriesSinceJsonlTail(
 ): Promise<{ entries: WorkerEntry[]; latestSeq: number; viaIndex: boolean } | null> {
   const { filePath } = await workerStreamPaths(runId, workerId, "read");
   // Index-based seek beats the backward chunk scan when available.
-  const viaIndex = await readWorkerEntriesSinceViaIndex(filePath, afterSeq);
+  const viaIndex = await readWorkerEntriesSinceViaIndex(runId, workerId, filePath, afterSeq);
   if (viaIndex) return { ...viaIndex, viaIndex: true };
   let size = 0;
   try {
@@ -2406,15 +2546,9 @@ export async function readWorkerLatestSeq(
       return cached.latestSeq;
     }
     if (stat.size > 0) {
-      // Prefer the sparse seq→offset index: seek to the last indexed
-      // point (within INDEX_CADENCE records of EOF) and read forward
-      // instead of scanning backward from EOF in 64KB chunks. Falls
-      // back to the backward scan when the index is missing.
-      const seqViaIndex = await readLatestSeqViaIndex(filePath, stat.size);
-      if (seqViaIndex !== null) {
-        readLatestSeqByKey.set(key, { latestSeq: seqViaIndex, size: stat.size, mtimeMs: stat.mtimeMs });
-        return seqViaIndex;
-      }
+      // The backward scan finds the last complete line in its first 64KB
+      // chunk. Do not seek forward from the index here: a lagging index
+      // turns that into a parse of everything after its last point.
       const seq = await readLatestSeqFromJsonlTail(filePath, stat.size);
       if (seq !== null) {
         readLatestSeqByKey.set(key, { latestSeq: seq, size: stat.size, mtimeMs: stat.mtimeMs });
@@ -2438,49 +2572,6 @@ export async function readWorkerLatestSeq(
     readLatestSeqByKey.set(key, { latestSeq, size: statForCache.size, mtimeMs: statForCache.mtimeMs });
   }
   return latestSeq;
-}
-
-/**
- * Read the latest seq by seeking via the sparse index to the highest
- * indexed point and scanning forward from there. Returns `null` if the
- * index is missing or empty (caller falls back to the backward scan).
- *
- * For a 1MB+ transcript with an index covering up to seq N (where N
- * may be up to INDEX_CADENCE-1 records behind the real tail), this
- * reads at most a few KB instead of a 1MB backward chunk.
- */
-async function readLatestSeqViaIndex(filePath: string, size: number): Promise<number | null> {
-  const index = await readIndex(filePath);
-  if (!index || index.length === 0) return null;
-  const highest = index[index.length - 1]!;
-  if (highest.offset >= size) return null;
-  const length = size - highest.offset;
-  const handle = await fs.open(filePath, "r");
-  let body: string;
-  try {
-    const buf = Buffer.alloc(length);
-    await handle.read(buf, 0, length, highest.offset);
-    body = buf.toString("utf8");
-  } finally {
-    await handle.close();
-  }
-  let latestSeq = 0;
-  const lines = body.split("\n");
-  for (let i = 0; i < lines.length; i += 1) {
-    const trimmed = lines[i]!.trim();
-    if (!trimmed) continue;
-    try {
-      const parsed = JSON.parse(trimmed) as { seq?: unknown };
-      const seq = typeof parsed.seq === "number" && Number.isFinite(parsed.seq)
-        ? Math.floor(parsed.seq)
-        : 0;
-      if (seq > 0 && seq > latestSeq) latestSeq = seq;
-    } catch {
-      // Tolerate a trailing partial write but bail on mid-window garbage.
-      if (i !== lines.length - 1) return null;
-    }
-  }
-  return latestSeq > 0 ? latestSeq : null;
 }
 
 async function readLatestSeqFromJsonlTail(filePath: string, size: number): Promise<number | null> {
@@ -2646,7 +2737,11 @@ async function compactWorkerOutputFileInternal(paths: WorkerStreamPaths): Promis
   return true;
 }
 
-async function expandWorkerOutputFileInternal(paths: WorkerStreamPaths): Promise<boolean> {
+async function expandWorkerOutputFileInternal(
+  runId: string,
+  workerId: string,
+  paths: WorkerStreamPaths,
+): Promise<boolean> {
   const source = paths.compressedFilePath;
   let body: Buffer;
   try {
@@ -2670,6 +2765,9 @@ async function expandWorkerOutputFileInternal(paths: WorkerStreamPaths): Promise
   }
   await fs.unlink(source).catch(() => undefined);
   // Caches stay valid: the bytes are the same, only the file shape changed.
+  // The index does not: compaction normalizes lines, so any index left
+  // beside the .gz may describe different bytes.
+  await rebuildWorkerStreamIndex(runId, workerId, target, "file_rewritten");
   return true;
 }
 
@@ -2685,7 +2783,7 @@ export async function compactWorkerOutputFile(runId: string, workerId: string): 
 
 export async function expandWorkerOutputFile(runId: string, workerId: string): Promise<boolean> {
   return runOnChain(runId, workerId, () =>
-    withWorkerFileLock(runId, workerId, (paths) => expandWorkerOutputFileInternal(paths)));
+    withWorkerFileLock(runId, workerId, (paths) => expandWorkerOutputFileInternal(runId, workerId, paths)));
 }
 
 export async function compactRunOutputs(runId: string): Promise<{ compactedWorkerIds: string[] }> {
@@ -2856,7 +2954,13 @@ export function __resetOutputStoreCachesForTests() {
   readEntriesByKey.clear();
   workerStreamPathsCache.clear();
   ensuredForWriteByKey.clear();
+  pendingIndexRebuildByKey.clear();
   chainCacheDiskRefreshesForTests = 0;
+}
+
+/** @internal — vitest only */
+export async function __drainWorkerIndexRebuildsForTests() {
+  await Promise.all(pendingIndexRebuildByKey.values());
 }
 
 /** @internal — vitest only */

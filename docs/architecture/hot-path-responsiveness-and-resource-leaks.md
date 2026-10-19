@@ -762,3 +762,55 @@ boundaries and preserve backpressure, cancellation, and reconnect behavior.
 When SSE provides ids, replay/resync, and cursor wake-ups, polling is not the
 primary transport. Poll at a low validation cadence and use fast polling only
 after the stream actually fails.
+
+## October 19, 2026 — Stale Stream Index Under Memory Pressure
+
+The runner stopped answering while the host was deep in swap: snapshot
+requests took 569 seconds and a worker-entries request took 1,062 seconds.
+Other interactive tools on the same host stayed usable with an equally
+compressed heap, so swap alone did not explain the stall.
+
+### Root cause: a lagging seq→offset index made every poll parse half a transcript
+
+The long worker's 25 MB, 9,511-entry transcript had one index point, seq 3700.
+Every incremental read seeked there and parsed 12.5 MB (about 5,800 entries)
+forward to return at most 200. With free memory that cost about 95 ms. Under
+compression, each request's allocations forced fresh paging, and the single
+event loop serialized every other request behind it — the slow-probe `auth`
+segment of 320 seconds was queueing, not authentication.
+
+The index lagged because:
+
+- `writeWorkerOutputEntries` (the batch append) never wrote index points;
+  only `appendWorkerEntryWithResult` did.
+- Head healing and gap backfill rewrite the whole file and renumber it, and
+  expansion restores normalized compacted bytes, without rebuilding the index.
+- Every reader trusted any index it found. `readLatestSeqViaIndex` and the
+  tail reader scanned forward from the last point; the forward reader also
+  started at a recorded offset without checking it, so an offset shifted by a
+  rewrite silently skipped entries.
+
+### Fixes landed
+
+- Batch appends record the same index points as single appends.
+- Head healing, gap backfill, and expansion rebuild the index in place
+  (`worker.stream_index_rebuilt`, reason `file_rewritten`).
+- `readCurrentIndex` refuses an index whose last point lags the tail by two
+  cadences, and readers verify that the seek line holds the indexed seq. A
+  refused index falls back to the bounded tail scan for that request and queues
+  one rebuild on the worker's write chain (reasons `missing_index`,
+  `stale_index`, `index_mismatch`; failures emit
+  `worker.stream_index_rebuild_failed`).
+- `readWorkerLatestSeq` uses the backward tail scan directly.
+- `rebuildIndex` streams line by line instead of loading the file into one
+  string.
+
+Guarded by `tests/server/workers/output-store-index.test.ts`.
+
+#### Rule 18: An Index Must Prove It Is Current Before It Bounds A Read
+
+A secondary index is a speed-up only while it is current and accurate. Every
+reader checks how far it lags the authoritative tail and that the seek target
+holds the record it names; every whole-file rewrite rebuilds it. An index that
+cannot prove both is not used, because a stale bound turns a page read into a
+history read.
