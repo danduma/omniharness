@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -93,3 +93,7 @@ run-data/
 # Project-local append-only artifact streams (kept explicit for
 # older Git clients and tests that probe this path directly).
 **/.omniharness/run-data/
+
+# Local runner process locks
+/bridge.lock.json
+/runner.lock.json
