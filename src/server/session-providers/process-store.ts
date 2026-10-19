@@ -5,6 +5,7 @@ import { eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
 import { processSessions, runs, workers } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
+import { lowerWorkerProcessPriority } from "@/server/worker-process-priority";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { getAppRoot } from "@/server/app-root";
 import {
@@ -249,6 +250,7 @@ export async function spawnProcessSession(args: {
     return;
   }
 
+  lowerWorkerProcessPriority(child.pid);
   const handle: ProcessHandle = {
     runId: args.runId,
     workerId: args.workerId,

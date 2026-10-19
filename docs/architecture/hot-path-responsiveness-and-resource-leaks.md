@@ -203,6 +203,24 @@ FDs and returned steady hot-path requests in under a second.
 
 ## Permanent Rules
 
+### Worker CPU Scheduling
+
+The HTTP runner and ACP bridge retain their host-assigned priority. Worker
+processes (including prewarmed agents), process sessions, and ACP terminal tools
+are assigned nice 10 immediately after spawning. An existing lower priority is
+preserved. Subsequent descendants inherit this scheduling priority, so builds
+and devices launched by agents compete below the control plane. The helper must
+never target PID 0 or the current process. Scheduling decisions and failures
+emit `process.priority_lowered` and `process.priority_failed`; a failed scheduling
+syscall must not abandon ownership of an already spawned child.
+
+This is CPU protection, not a memory reservation. It does not reclaim existing
+descendants' RAM, limit device counts, or prevent swap pressure. Worker admission
+alone cannot bound the resource use of tools launched later by an active agent.
+Host-wide memory pressure and concurrent heavy jobs still require separate
+capacity controls. Raising the runner above normal priority requires host
+permission and must not be assumed to succeed.
+
 ### Rule 1: The Page Shell Must Be Cheap
 
 The root page may parse route params and produce a minimal shell bootstrap. It

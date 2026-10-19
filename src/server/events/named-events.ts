@@ -928,6 +928,8 @@ export type ConversationEvent =
     };
 
 export type SessionEvent =
+  | { kind: "process.priority_lowered"; pid: number; previousPriority: number; priority: number }
+  | { kind: "process.priority_failed"; pid: number; reason: string }
   | { kind: "session.created"; runId: string; sessionType: string; actorIds: string[] }
   | { kind: "session.starting"; runId: string; sessionType: string }
   | { kind: "session.status"; runId: string; sessionType: string; prev: string | null; next: string; reason?: string }

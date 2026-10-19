@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import * as acp from "@agentclientprotocol/sdk";
+import { lowerWorkerProcessPriority } from "@/server/worker-process-priority";
 
 const DEFAULT_OUTPUT_BYTE_LIMIT = 50 * 1024;
 const MAX_OUTPUT_BYTE_LIMIT = 50 * 1024;
@@ -65,6 +66,7 @@ export class TerminalService {
       env,
       stdio: ["pipe", "pipe", "pipe"],
     }) as ChildProcessWithoutNullStreams;
+    lowerWorkerProcessPriority(child.pid);
     let resolveExit!: (status: acp.TerminalExitStatus) => void;
     const exited = new Promise<acp.TerminalExitStatus>((resolve) => {
       resolveExit = resolve;
