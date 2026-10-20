@@ -814,3 +814,65 @@ reader checks how far it lags the authoritative tail and that the seek target
 holds the record it names; every whole-file rewrite rebuilds it. An index that
 cannot prove both is not used, because a stale bound turns a page read into a
 history read.
+
+## October 20, 2026 — Sync Queue Frozen For An Hour
+
+### Symptom
+
+Conversation `3bc18173239a` looked frozen at 20:10 although its Claude worker
+kept working until 21:17. From 20:14:32 the runner served HTTP normally but
+wrote nothing to the database for any conversation: no worker rows, no
+execution events, no transcript entries. The bridge held the live output the
+whole time (`agent-runtime-output` grew to 86 MB). A runner restart backfilled
+the hour of output from the bridge archive.
+
+### What hung, and what is known
+
+Conversation sync passes run one at a time on `liveSyncQueue`, and the bridge
+sweep shares a single in-flight promise (`bridgeSyncInFlight`). No await in a
+pass had a timeout, and `listAgents` had none either. One await stopped
+resolving, so every later pass queued behind it, and the stuck-worker reaper,
+which is chained after the sweep, never ran. The runner was at 0% CPU with one
+half-closed (`CLOSE_WAIT`) connection to the bridge. Nothing recorded which
+await had hung, so the root cause was not established.
+
+The plan view was also slow on this transcript: with the plan session's
+boundary about 40 MB back, every `view=plan` poll rescanned back to it
+(0.5–1.6 s per request). The slow-probe mark was placed before the read, so
+the time was not attributed to it.
+
+### Fixes landed
+
+- `runSyncPassWithStallGuard` (`src/server/conversations/sync-pass-guard.ts`)
+  releases the queue when a pass outlives `OMNIHARNESS_SYNC_PASS_STALL_MS`
+  (default 60 s) and emits `sync.pass_stalled` plus `error.surfaced`
+  (`sync.pass_stalled`, surface `log`) naming the pass's current step, run and
+  worker. When the abandoned pass settles, `sync.stalled_pass_settled` records
+  its total duration. Passes mark their step with `progress.at(...)` before
+  each await that can block.
+- The bridge sweep's `listAgents` call times out after 15 s and emits
+  `bridge.agent_list_failed` instead of failing silently. The reaper's
+  `getAgent` read has the same bound.
+- The reaper defers to the bridge: a worker whose live agent is working and
+  produced output within the stuck timeout is skipped
+  (`worker.stuck_reap_skipped`, reason `bridge_streaming`). Without this, a
+  sync that falls behind makes a productive worker look silent and the reaper
+  cancels its turn. The newest output entry's timestamp counts as activity,
+  because streamed messages and thoughts do not bump the agent's `updatedAt`.
+- The plan reader caches the deep scan's projection per worker. Polls are
+  served from the bounded tail while every newer entry is inside the tail
+  window; a new inode, a seq regression, or entries the scan never saw force a
+  rescan. The slow-probe `readPlan` mark now follows the read.
+
+Guarded by `tests/server/conversations/sync-pass-guard.test.ts`,
+`tests/server/workers/stuck-worker-reaper.test.ts` and
+`tests/server/workers/output-store-plan.test.ts`.
+
+#### Rule 19: A Serial Queue Needs A Stall Bound That Names The Stuck Step
+
+Any queue that serializes work across the whole runner turns one unresolved
+await into a global outage that looks like health from the outside. Bound
+every such queue's item duration, report the step it was in when the bound
+fires, and let the queue continue. A watchdog that judges progress from
+derived state must check the authoritative source before acting, since the
+derived state is exactly what a stall stops updating.

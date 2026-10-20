@@ -154,8 +154,9 @@ export const handleWorkerEntriesRequest: OmniHttpHandler = async (request, conte
   }
   if (url.searchParams.get("view") === "plan") {
     try {
+      const plan = await readWorkerPlan(runId, workerId);
       probe.mark("readPlan");
-      return Response.json(await readWorkerPlan(runId, workerId));
+      return Response.json(plan);
     } catch (error) {
       emitNamedEvent({
         kind: "error.surfaced",

@@ -37,6 +37,7 @@ import {
 import { markAccountLoginRequired } from "@/server/accounts/login-required";
 import { drainQueuedWorkerMessages } from "./queued-messages";
 import { hasLiveWorkerTurn, trackConversationBackgroundTask } from "./worker-turn-gate";
+import { runSyncPassWithStallGuard, type SyncPassProgress } from "./sync-pass-guard";
 import {
   directWorkerOutputHasPendingHumanInput,
   resolveDirectRunStatusFromWorkerOutput,
@@ -661,6 +662,7 @@ async function clearMatchingRunFailureMessage(run: typeof runs.$inferSelect) {
 }
 
 let bridgeSyncInFlight: Promise<void> | null = null;
+const BRIDGE_AGENT_LIST_TIMEOUT_MS = 15_000;
 
 /**
  * Watchdog-driven reconciliation between the bridge runtime and persisted
@@ -681,10 +683,19 @@ export function syncConversationSessionsFromBridge(): Promise<void> {
   bridgeSyncInFlight = (async () => {
     let rawAgents: unknown[];
     try {
-      rawAgents = await listAgents({ retryIndefinitely: false });
-    } catch {
+      // Bounded: this promise is shared by every sweep until it settles, so a
+      // bridge request that never answers would stall all of them.
+      rawAgents = await listAgents({ retryIndefinitely: false, timeoutMs: BRIDGE_AGENT_LIST_TIMEOUT_MS });
+    } catch (error) {
       // Bridge down or unreachable — there is no live state to reconcile
       // against; the next sweep will retry.
+      // The bridge client rewraps errors, so the abort survives only in the text.
+      const message = error instanceof Error ? error.message : String(error);
+      emitNamedEvent({
+        kind: "bridge.agent_list_failed",
+        reason: /aborted|timeout/i.test(message) ? "timeout" : "unreachable",
+        message,
+      });
       return;
     }
     await syncConversationSessions(rawAgents);
@@ -706,13 +717,19 @@ export function __resetSyncConversationSessionsQueueForTests() {
 }
 
 export async function syncConversationSessions(rawAgents: unknown[], options: SyncConversationSessionsOptions = {}) {
-  const runSync = () => syncConversationSessionsUnlocked(rawAgents, options);
+  const runSync = () => runSyncPassWithStallGuard((progress) => (
+    syncConversationSessionsUnlocked(rawAgents, options, progress)
+  ));
   const nextSync = liveSyncQueue.then(runSync, runSync);
   liveSyncQueue = nextSync.catch(() => undefined);
   return nextSync;
 }
 
-async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: SyncConversationSessionsOptions = {}) {
+async function syncConversationSessionsUnlocked(
+  rawAgents: unknown[],
+  options: SyncConversationSessionsOptions,
+  progress: SyncPassProgress,
+) {
   const agents = rawAgents.map((agent) => normalizeAgentRecord(agent));
   const selectedRunId = options.selectedRunId?.trim() || null;
   const refreshPlanningArtifacts = options.refreshPlanningArtifacts !== false;
@@ -743,6 +760,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
     if (isCancelledWorkerStatus(run.status)) {
       continue;
     }
+    progress.at("live_run", run.id);
 
     const quotaIncident = activeQuotaIncidents.find((incident) => incident.runId === run.id);
     const quotaWorker = allWorkers.find((candidate) => candidate.id === quotaIncident?.workerId);
@@ -813,6 +831,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
           continue;
         }
 
+        progress.at("persist_worker_output", run.id, implementationWorker.id);
         await writeWorkerOutputEntries(run.id, implementationWorker.id, implementationAgent.outputEntries);
         await withSqliteBusyRetry(() => db.update(workers).set({
           status: implementationAgent.state,
@@ -865,6 +884,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
         continue;
       }
 
+      progress.at("persist_worker_output", run.id, implementationWorker.id);
       await writeWorkerOutputEntries(run.id, implementationWorker.id, implementationAgent.outputEntries);
       await withSqliteBusyRetry(() => db.update(workers).set({
         status: implementationAgent.state,
@@ -888,6 +908,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
     if (!worker) {
       continue;
     }
+    progress.at("live_worker", run.id, worker.id);
 
     if (await clearStaleDirectCurrentText(run, worker)) {
       continue;
@@ -952,6 +973,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
       // whole sync body, which would rewrite run and worker state as a side
       // effect of what should only be a queue flush.
       if (agent) {
+        progress.at("drain_queue", run.id, worker.id);
         await drainQueuedWorkerMessagesWithObservation({
           runId: run.id,
           workerId: worker.id,
@@ -993,6 +1015,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
       continue;
     }
 
+    progress.at("persist_worker_output", run.id, worker.id);
     const outputPersisted = await writeWorkerOutputEntries(
       run.id,
       worker.id,
@@ -1006,6 +1029,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
     // terminal quota notice before normal completion can settle this run.
     const quotaNotice = terminalQuotaNotice;
     if (quotaNotice) {
+      progress.at("quota_notice", run.id, worker.id);
       await handleWorkerQuotaExhaustion({
         runId: run.id,
         workerId: worker.id,
@@ -1028,6 +1052,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
       || worker.lastText !== agent.lastText;
     const workerUpdatedAt = new Date();
     if (workerChanged) {
+      progress.at("update_worker_row", run.id, worker.id);
       const workerUpdated = await withSqliteBusyRetry(() => db.update(workers).set({
         status: nextWorkerStatus,
         cwd: nextWorkerCwd,
@@ -1078,6 +1103,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
       && workingPeriodStartedAt
       && runsWithUnsettledIncidents.has(run.id)
     ) {
+      progress.at("resolve_disproved_incidents", run.id, worker.id);
       await resolveRecoveryIncidentsDisprovedByActiveWork({
         runId: run.id,
         workerId: worker.id,
@@ -1087,6 +1113,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
 
     if (run.mode === "planning") {
       if (refreshPlanningArtifacts) {
+        progress.at("refresh_planning_artifacts", run.id, worker.id);
         const result = await refreshPlanningArtifactsForRun({
           run,
           worker,
@@ -1107,6 +1134,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
     }
 
     if (isDirectRunMode(run.mode) && (nextRunState === "awaiting_user" || nextRunState === "done")) {
+      progress.at("update_direct_run_status", run.id, worker.id);
       await updateDirectRunStatusFromWorkerOutput({
         runId: run.id,
         workerId: worker.id,
@@ -1121,11 +1149,14 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
       // The turn has settled, so any plan file the goal names has stopped
       // moving. Re-derive it here to pick up checklist items the turn ticked
       // off; the call is a no-op when the goal has no derivable plan.
+      progress.at("refresh_goal_plan", run.id, worker.id);
       await refreshDerivedGoalPlan(run.id, "turn_settled");
       // A goal control the agent refused mid-turn ("Agent is busy") can land
       // now. No-op unless this run has one parked.
+      progress.at("retry_goal_control", run.id, worker.id);
       await retryDeferredGoalControl(run.id);
     } else {
+      progress.at("update_run_status", run.id, worker.id);
       await withWorkerOutputWriteFence(run.id, worker.id, async () => {
         const current = await db.select({ turnGeneration: workers.turnGeneration })
           .from(workers)
@@ -1148,6 +1179,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
     if (staleBusyFailure && nextRunState !== "failed") {
       await clearMatchingRunFailureMessage(run);
     }
+    progress.at("drain_queue", run.id, worker.id);
     await drainQueuedWorkerMessagesWithObservation({
       runId: run.id,
       workerId: worker.id,
@@ -1167,6 +1199,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
     if (!worker || agents.some((agent) => agent.name === worker.id)) {
       continue;
     }
+    progress.at("persisted_run", run.id, worker.id);
 
     if (
       isRecoverableMissingDirectWorkerStatus(worker.status)
@@ -1175,6 +1208,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
         || normalizedStatus(worker.status) === "lost"
       )
     ) {
+      progress.at("reconcile_recovery", run.id, worker.id);
       const recoveryResult = await reconcileRunRecoveryInPass(run.id, agents);
       // `null` means this run could not be reconciled on this pass — it was
       // deleted underneath us, a handoff owns it, or recovery itself failed.
@@ -1207,6 +1241,7 @@ async function syncConversationSessionsUnlocked(rawAgents: unknown[], options: S
       continue;
     }
 
+    progress.at("resolve_persisted_state", run.id, worker.id);
     const nextRunState = await resolvePersistedRunState(run, worker);
     if (run.mode === "planning") {
       if (refreshPlanningArtifacts) {

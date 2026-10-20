@@ -76,9 +76,11 @@ type ReaperOutcome =
   | { ok: true; recovered: number; skipped: number }
   | { ok: false; error: string };
 
+const BRIDGE_READ_TIMEOUT_MS = 15_000;
+
 async function readLiveAgent(workerId: string): Promise<AgentRecord | null> {
   try {
-    return (await getAgent(workerId, { retryIndefinitely: false })) ?? null;
+    return (await getAgent(workerId, { retryIndefinitely: false, timeoutMs: BRIDGE_READ_TIMEOUT_MS })) ?? null;
   } catch {
     return null;
   }
@@ -91,6 +93,20 @@ function readAgentUpdatedAtMs(agent: AgentRecord | null): number | null {
   }
   const parsed = new Date(raw).getTime();
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * The newest moment the bridge saw this agent do anything. `updatedAt` alone
+ * is not enough: streamed messages and thoughts land in `outputEntries`
+ * without bumping it.
+ */
+function readLatestBridgeActivityMs(agent: AgentRecord): number | null {
+  let latest = readAgentUpdatedAtMs(agent);
+  for (const entry of agent.outputEntries ?? []) {
+    const ts = typeof entry.timestamp === "string" ? new Date(entry.timestamp).getTime() : NaN;
+    if (Number.isFinite(ts) && (latest === null || ts > latest)) latest = ts;
+  }
+  return latest;
 }
 
 function isActiveAgentState(state: string) {
@@ -426,6 +442,29 @@ export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<Re
       // re-runs already-completed work — and did so in an endless loop,
       // since the raw redelivery below never persisted its result either.
       const liveAgent = await readLiveAgent(worker.id);
+
+      // The persisted stream is only as current as the last sync that wrote
+      // it. When syncs fall behind (a stalled pass, a restart), a worker that
+      // is still producing output looks silent here; reaping it cancels a
+      // productive turn. The bridge holds the live output, so it decides.
+      const bridgeActivityMs = liveAgent ? readLatestBridgeActivityMs(liveAgent) : null;
+      if (
+        liveAgent
+        && isActiveAgentState(normalizeStatus(liveAgent.state))
+        && bridgeActivityMs !== null
+        && nowMs - bridgeActivityMs < timeoutMs
+      ) {
+        emitNamedEvent({
+          kind: "worker.stuck_reap_skipped",
+          runId: worker.runId,
+          workerId: worker.id,
+          reason: "bridge_streaming",
+          streamIdleMs: idleMs,
+          bridgeIdleMs: Math.max(0, nowMs - bridgeActivityMs),
+        });
+        skipped++;
+        continue;
+      }
 
       // Quiet + 'working' can also mean "blocked on the user", and the user is
       // allowed to take longer than the stuck timeout to answer. It looks

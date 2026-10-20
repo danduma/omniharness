@@ -1896,6 +1896,33 @@ export async function readWorkerEntriesTail(
 
 const PLAN_BOUNDARY_TAIL_WINDOW = 200;
 const PLAN_BOUNDARY_SCAN_CHUNK_BYTES = 64 * 1024;
+const PLAN_PROJECTION_CACHE_MAX = 500;
+
+/**
+ * The deep plan scan's result for a stream, valid through `scannedThroughSeq`.
+ * A plan session that outlives the tail window is the normal case for a long
+ * conversation, and the plan view is polled: rescanning back to its boundary
+ * on every poll parsed ~40MB of a long transcript per request. The scan
+ * result stays exact while every entry after it is inside the tail window,
+ * which the reader checks again on each poll.
+ */
+type PlanProjectionCacheEntry = {
+  filePath: string;
+  ino: number;
+  scannedThroughSeq: number;
+  projection: WorkerEntry[];
+};
+const planProjectionCacheByKey = new Map<string, PlanProjectionCacheEntry>();
+let planBoundaryScanCount = 0;
+
+function rememberPlanProjection(key: string, entry: PlanProjectionCacheEntry) {
+  planProjectionCacheByKey.delete(key);
+  planProjectionCacheByKey.set(key, entry);
+  if (planProjectionCacheByKey.size > PLAN_PROJECTION_CACHE_MAX) {
+    const oldest = planProjectionCacheByKey.keys().next().value;
+    if (oldest !== undefined) planProjectionCacheByKey.delete(oldest);
+  }
+}
 
 function latestPlanBoundary(entries: readonly WorkerEntry[]): WorkerEntry | null {
   let latest: WorkerEntry | null = null;
@@ -2024,10 +2051,43 @@ export async function readLatestWorkerPlanEntries(
   }
   if (tail) {
     if (!tail.hasOlder) return { entries: [], latestSeq: tail.latestSeq };
+    const key = chainKey(runId, workerId);
+    const ino = await fs.stat(paths.filePath).then((stat) => stat.ino, () => null);
+    const cached = planProjectionCacheByKey.get(key);
+    const firstTailSeq = tail.entries[0]?.seq;
+    // The tail holds no boundary, so a boundary newer than the cached one
+    // would have to sit between the scan and the tail. None can when the
+    // tail starts at or before the first entry the scan did not see. A
+    // rewrite (new inode) or a renumbered stream (seq went backwards)
+    // invalidates the scan outright.
+    if (
+      cached
+      && ino !== null
+      && cached.filePath === paths.filePath
+      && cached.ino === ino
+      && typeof firstTailSeq === "number"
+      && firstTailSeq <= cached.scannedThroughSeq + 1
+      && tail.latestSeq >= cached.scannedThroughSeq
+    ) {
+      const boundary = cached.projection[0];
+      return {
+        entries: boundary ? retainCurrentPlanProjection(boundary, [...cached.projection, ...tail.entries]) : [],
+        latestSeq: tail.latestSeq,
+      };
+    }
     // Collect the newest accepted plan while scanning back to its boundary.
     // Paging forward again would repeatedly revisit the same long history.
+    planBoundaryScanCount += 1;
     const projection = await scanLatestPlanBoundaryFromJsonl(paths.filePath);
     if (projection !== undefined) {
+      if (ino !== null) {
+        rememberPlanProjection(key, {
+          filePath: paths.filePath,
+          ino,
+          scannedThroughSeq: tail.latestSeq,
+          projection: projection ?? [],
+        });
+      }
       return { entries: projection ?? [], latestSeq: tail.latestSeq };
     }
   }
@@ -2955,12 +3015,19 @@ export function __resetOutputStoreCachesForTests() {
   workerStreamPathsCache.clear();
   ensuredForWriteByKey.clear();
   pendingIndexRebuildByKey.clear();
+  planProjectionCacheByKey.clear();
+  planBoundaryScanCount = 0;
   chainCacheDiskRefreshesForTests = 0;
 }
 
 /** @internal — vitest only */
 export async function __drainWorkerIndexRebuildsForTests() {
   await Promise.all(pendingIndexRebuildByKey.values());
+}
+
+/** @internal — vitest only */
+export function __getPlanBoundaryScanCountForTests() {
+  return planBoundaryScanCount;
 }
 
 /** @internal — vitest only */

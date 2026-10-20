@@ -5,6 +5,7 @@ import { getAppDataPath } from "@/server/app-root";
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 import {
   __getOutputStoreCacheStatsForTests,
+  __drainWorkerIndexRebuildsForTests,
   __resetOutputStoreCachesForTests,
   appendWorkerEntry,
   compactWorkerOutputFile,
@@ -25,6 +26,9 @@ function uniqueId(prefix: string) {
 }
 
 async function cleanupRun(runId: string) {
+  // A read can queue a background index rebuild; let it finish writing
+  // before its directory is removed.
+  await __drainWorkerIndexRebuildsForTests();
   await fs.rm(path.join(getAppDataPath("run-data"), runId), { recursive: true, force: true });
 }
 
