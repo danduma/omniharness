@@ -1,8 +1,28 @@
 {
   "version": 2,
   "projectRoot": "/Users/masterman/NLP/omniharness",
-  "generatedAt": "2026-10-18T22:01:01.474Z",
+  "generatedAt": "2026-10-20T10:01:08.589Z",
   "conversations": [
+    {
+      "provider": "claude",
+      "id": "81912ba7-019b-457a-b9f1-af69624c3e3f",
+      "title": "Default agent model setting stuck on old Codex",
+      "startedAt": "2026-10-19T17:16:05.436Z",
+      "updatedAt": "2026-10-19T17:18:19.015Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "e271fc0be1619974c7b2d66ea0de2d317646e414b50cb01ecbf45f1b9931b0e1",
+      "parts": [
+        "conversations/2026/10/2026-10-19-claude-default-agent-model-setting-stuck-on-old-codex-81912ba7-019b-457a-b9f1-af69624c3e3f-part-001.md"
+      ],
+      "attachmentCount": 0,
+      "eventCount": 162,
+      "malformedLines": 0,
+      "redactions": 0,
+      "warnings": []
+    },
     {
       "provider": "claude",
       "id": "3b2de752-e51d-4b6e-8090-c702716162b8",
@@ -731,7 +751,7 @@
       "updatedAt": "2026-09-19T21:01:45.667Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "bb18215d7cdbc389bdffae2fe086e85a955863815af442bdf3c9731b300d2d7e",
       "parts": [
@@ -751,7 +771,7 @@
       "updatedAt": "2026-09-19T21:00:39.207Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "b3d8c712323d1ddbf3332cfc9c9ab254f4f6982a397e797ffce75a4cc3380712",
       "parts": [
