@@ -786,13 +786,23 @@ export async function askAgent(
   }
 }
 
-export async function getAgent(name: string, options: { retryIndefinitely?: boolean } = {}) {
-  const agent = await requestBridge<unknown>(`/agents/${name}`, {}, "Get agent", options);
+type BridgeReadOptions = {
+  retryIndefinitely?: boolean;
+  /** Abort the request (and any retries) once this much time has passed. */
+  timeoutMs?: number;
+};
+
+function bridgeReadInit(options: BridgeReadOptions): RequestInit {
+  return options.timeoutMs ? { signal: AbortSignal.timeout(options.timeoutMs) } : {};
+}
+
+export async function getAgent(name: string, options: BridgeReadOptions = {}) {
+  const agent = await requestBridge<unknown>(`/agents/${name}`, bridgeReadInit(options), "Get agent", options);
   return normalizeAgentRecord(agent);
 }
 
-export async function listAgents(options: { retryIndefinitely?: boolean } = {}) {
-  const agents = await requestBridge<unknown>("/agents", {}, "List agents", options);
+export async function listAgents(options: BridgeReadOptions = {}) {
+  const agents = await requestBridge<unknown>("/agents", bridgeReadInit(options), "List agents", options);
   return Array.isArray(agents) ? agents : [];
 }
 

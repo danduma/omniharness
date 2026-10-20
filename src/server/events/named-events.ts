@@ -58,6 +58,7 @@ export type SurfacedErrorCode =
   | "recovery.needs_user"
   | "recovery.run_failed"
   | "runtime.resource_pressure"
+  | "sync.pass_stalled"
   | "runtime.output_logs_prune_failed"
   | "runtime.settings_apply_failed"
   | "runtime.start_failed"
@@ -411,6 +412,31 @@ export type WorkerEvent =
   | { kind: "worker.recovery_continuation_completed"; runId: string; workerId: string }
   | { kind: "worker.recovery_continuation_superseded"; runId: string; workerId: string }
   | { kind: "worker.recovery_redelivery_skipped"; runId: string; workerId: string; reason: "already_answered" }
+  | {
+      kind: "worker.stuck_reap_skipped";
+      runId: string;
+      workerId: string;
+      reason: "bridge_streaming";
+      streamIdleMs: number;
+      bridgeIdleMs: number;
+    }
+  | {
+      kind: "sync.pass_stalled";
+      step: string;
+      runId: string | null;
+      workerId: string | null;
+      stepElapsedMs: number;
+      passElapsedMs: number;
+    }
+  | {
+      kind: "sync.stalled_pass_settled";
+      step: string;
+      runId: string | null;
+      workerId: string | null;
+      passElapsedMs: number;
+      outcome: "resolved" | "rejected";
+    }
+  | { kind: "bridge.agent_list_failed"; reason: "timeout" | "unreachable"; message: string }
   | {
       kind: "worker.human_input_reconciled";
       runId: string;

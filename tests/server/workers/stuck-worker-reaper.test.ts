@@ -176,6 +176,64 @@ describe("reapStuckDirectWorkers", () => {
     );
   });
 
+  it("leaves a worker alone while the bridge shows it streaming output the stream has not caught up on", async () => {
+    // Shape of 2026-10-20: syncs stopped persisting output, so the durable
+    // stream went quiet while the agent kept working for an hour. Reaping on
+    // the stale stream cancels the productive turn.
+    const TEN_MIN_AGO = new Date(Date.now() - 10 * 60_000);
+    const { runId, workerId } = await setupRun({
+      mode: "direct",
+      workerStatus: "working",
+      workerUpdatedAt: TEN_MIN_AGO,
+    });
+    const userMessageId = randomUUID();
+    await db.insert(messages).values({
+      id: userMessageId,
+      runId,
+      role: "user",
+      kind: "checkpoint",
+      content: "continue",
+      createdAt: TEN_MIN_AGO,
+    });
+    await writeUserInputEntry(runId, workerId, {
+      id: userMessageId,
+      text: "continue",
+      timestamp: TEN_MIN_AGO,
+    });
+
+    // `updatedAt` is as stale as the stream; only the streamed entry is fresh.
+    mockGetAgent.mockResolvedValue({
+      name: workerId,
+      state: "working",
+      updatedAt: TEN_MIN_AGO.toISOString(),
+      outputEntries: [
+        { id: "thought-live", type: "thought", text: "still going", timestamp: new Date(Date.now() - 5_000).toISOString() },
+      ],
+      pendingPermissions: [],
+      pendingElicitations: [],
+    });
+
+    const outcome = await reapStuckDirectWorkers();
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.recovered).toBe(0);
+    }
+    expect(mockCancelAgent).not.toHaveBeenCalled();
+    expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
+    expect(mockAskAgent).not.toHaveBeenCalled();
+    const skips = getNamedEventsSince(0).events
+      .map((entry) => entry.event)
+      .filter((event) => event.kind === "worker.stuck_reap_skipped");
+    expect(skips).toEqual([
+      expect.objectContaining({ runId, workerId, reason: "bridge_streaming" }),
+    ]);
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(worker?.status).toBe("working");
+    // Later sweeps in this file scan every direct worker; settle this one.
+    await db.update(workers).set({ status: "idle" }).where(eq(workers.id, workerId));
+  });
+
   it("persists the recovered turn as active before awaiting the re-delivered prompt", async () => {
     const TEN_MIN_AGO = new Date(Date.now() - 10 * 60_000);
     const { runId, workerId } = await setupRun({
