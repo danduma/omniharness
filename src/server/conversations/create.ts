@@ -56,6 +56,7 @@ import {
 import { homedir } from "os";
 import { join } from "path";
 import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
+import { readInitialGoalObjective, startInitialGoal } from "./initial-goal";
 import { allocateWorkerAccount, validateExplicitWorkerAccount } from "@/server/accounts/account-allocator";
 import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
@@ -479,6 +480,8 @@ async function runInitialWorkerTurn(args: {
   agent: AgentRecord;
   mode: "direct" | "planning" | "commit";
   command: string;
+  /** Sent verbatim instead of the mode's wrapped prompt, e.g. an opening `/goal`. */
+  rawPrompt?: string;
   imageAttachments?: ResolvedImageAttachment[];
 }) {
   try {
@@ -498,7 +501,7 @@ async function runInitialWorkerTurn(args: {
     }
     notifyEventStreamSubscribers();
 
-    const initialPrompt = buildInitialWorkerPrompt(args.mode, args.command, args.cwd);
+    const initialPrompt = args.rawPrompt ?? buildInitialWorkerPrompt(args.mode, args.command, args.cwd);
     const onAccepted = async () => {
       await appendLifecycleEntry({
         runId: args.runId,
@@ -685,6 +688,7 @@ async function startDirectWorkerConversation(args: {
   command: string;
   imageAttachments?: ResolvedImageAttachment[];
   externalClaudeSessionId?: string | null;
+  goalObjective?: string | null;
 }) {
   if (await shouldCancelInitialWorkerStartup(args.runId, args.workerId)) {
     return;
@@ -776,6 +780,10 @@ async function startDirectWorkerConversation(args: {
     return;
   }
 
+  const initialGoal = args.goalObjective
+    ? await startInitialGoal({ runId: args.runId, workerId: args.workerId, agent, objective: args.goalObjective })
+    : null;
+
   try {
     await runWorkerTurn(args.workerId, () => runInitialWorkerTurn({
       runId: args.runId,
@@ -785,6 +793,7 @@ async function startDirectWorkerConversation(args: {
       agent,
       mode: "direct",
       command: args.command,
+      ...(initialGoal?.kind === "started" ? { rawPrompt: initialGoal.prompt } : {}),
       imageAttachments: args.imageAttachments,
     }));
   } catch (error) {
@@ -1122,6 +1131,9 @@ export async function createConversation(args: {
           command: workerPrompt,
           imageAttachments: workerImageAttachments,
           externalClaudeSessionId: args.externalClaudeSessionId,
+          goalObjective: mode === "direct" && !args.externalClaudeSessionId
+            ? readInitialGoalObjective(command, attachments.length > 0)
+            : null,
         });
         trackConversationBackgroundTask(initialDirectTurn, { runId }).catch((error) => {
           console.error("Initial direct conversation worker failed:", error);
