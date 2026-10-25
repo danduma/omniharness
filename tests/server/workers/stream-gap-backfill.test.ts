@@ -15,6 +15,7 @@ import { eq } from "drizzle-orm";
 import { artifactStreams, plans, runs, workers } from "@/server/db/schema";
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 import { readArtifactStreamMetadata } from "@/server/artifacts/stream-metadata";
+import type { WorkerEntryType } from "@/shared/worker-entries";
 import {
   __resetOutputStoreCachesForTests,
   appendWorkerEntry,
@@ -53,7 +54,7 @@ async function seedRun() {
   return { runId, workerId };
 }
 
-function entry(id: string, type = "tool_call") {
+function entry(id: string, type: WorkerEntryType = "tool_call") {
   return { id, type, text: `body-${id}`, timestamp: "2026-10-01T05:41:00.000Z" };
 }
 
@@ -67,7 +68,7 @@ async function writeRuntimeArchive(workerId: string, ids: string[]) {
 
 const archiveMarker = {
   id: "output-archive-marker",
-  type: "message",
+  type: "message" as WorkerEntryType,
   text: "3 older raw worker activity records are only in archived history, not in the current terminal output.",
   timestamp: "2026-10-01T05:41:00.000Z",
   status: "archived",

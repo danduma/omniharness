@@ -1,3 +1,4 @@
+import type { SpawnSyncReturns } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { buildStartupCommands, runStartupChecks } from "../../scripts/ensure-startup.mjs";
 
@@ -42,7 +43,7 @@ describe("startup checks", () => {
       platform: "darwin",
       run: (command, args) => {
         calls.push([command, ...args].join(" "));
-        return { status: 17 };
+        return { status: 17 } as SpawnSyncReturns<string>;
       },
     });
 
