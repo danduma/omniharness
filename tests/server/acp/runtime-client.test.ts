@@ -72,6 +72,7 @@ describe("ACP runtime client", () => {
         lastText: "",
         stopReason: null as string | null,
         activeOutputEntryId: null,
+        providerTurnActive: undefined as boolean | undefined,
         outputEntries: [] as unknown[],
         outputArchive: {
           append: (input: Record<string, unknown>) => ({ ...input, id: `entry-${(nextId += 1)}`, timestamp: "2026-01-01T00:00:00.000Z" }),

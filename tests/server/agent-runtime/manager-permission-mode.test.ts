@@ -133,7 +133,7 @@ describe("AgentRuntimeManager prompt cancellation", () => {
     try {
       await startAgent(manager, dir, "cancel-settlement");
       const record = manager.agents.get("cancel-settlement")!;
-      let finish!: (value: { stopReason: string }) => void;
+      let finish!: (value: { stopReason: "cancelled" }) => void;
       vi.spyOn(record.connection, "prompt").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
       vi.spyOn(record.connection, "cancel").mockResolvedValue();
       const original = manager.askAgent(record.name, "original");
@@ -158,7 +158,7 @@ describe("AgentRuntimeManager prompt cancellation", () => {
   it("refuses a stuck cancellation instead of admitting an overlapping prompt", async () => {
     const dir = createTempDir("omni-cancel-timeout-");
     const manager = new AgentRuntimeManager({ env: { ...process.env, OMNIHARNESS_MEMORY_TRACE: "0" } });
-    let finish!: (value: { stopReason: string }) => void;
+    let finish!: (value: { stopReason: "cancelled" }) => void;
     try {
       await startAgent(manager, dir, "cancel-timeout");
       const record = manager.agents.get("cancel-timeout")!;
