@@ -4,6 +4,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useSyncExternalStore,
   type PropsWithChildren,
 } from "react";
@@ -33,6 +34,7 @@ import { RunnerProfileStore } from "./RunnerProfileStore";
 import { RunnerRegistry } from "./RunnerRegistry";
 import type { RunnerProfile } from "./RunnerProfile";
 import { RunnerUiManager } from "./RunnerUiManager";
+import { PinnedItemsManager } from "./PinnedItemsManager";
 import { conversationNotificationManager } from "@/interface/home/ConversationNotificationManager";
 import type { EventStreamState } from "@/interface/home/types";
 
@@ -41,6 +43,7 @@ type RunnerRegistryContextValue = {
   profileStore: RunnerProfileStore;
   credentialStore: RunnerCredentialStore;
   uiManager: RunnerUiManager;
+  pins: PinnedItemsManager;
 };
 
 const RunnerRegistryContext = createContext<RunnerRegistryContextValue | null>(null);
@@ -238,6 +241,15 @@ export function RunnerRegistryProvider({
     ? registry.getConnection(snapshot.activeRunnerId)
     : null;
   const queryClient = activeConnection?.getQueryClient() ?? fallbackQueryClient;
+  const pins = useMemo(
+    () => new PinnedItemsManager({ registry, profileStore }),
+    [profileStore, registry],
+  );
+
+  useEffect(() => {
+    pins.start();
+    return () => pins.stop();
+  }, [pins]);
 
   useEffect(() => {
     let cancelled = false;
@@ -295,6 +307,7 @@ export function RunnerRegistryProvider({
       profileStore,
       credentialStore,
       uiManager,
+      pins,
     }}>
       <QueryClientProvider client={queryClient}>
         {children}

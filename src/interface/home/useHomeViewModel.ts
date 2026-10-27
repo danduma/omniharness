@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
-import { buildConversationGroups } from "@/lib/conversations";
+import { buildConversationGroups, filterConversationGroupsBySearch } from "@/lib/conversations";
 import { buildActiveConversationGroups, filterActiveConversationGroups } from "./sidebar-activity";
 import { sidebarWorkerActivityManager } from "./SidebarWorkerActivityManager";
 import { isTerminalRunStatus, normalizeRunStatus } from "@/lib/run-status";
@@ -205,19 +205,10 @@ export function useHomeViewModel({
     runs,
   }), [explicitProjects, plans, runs]);
 
-  const filteredProjects = useMemo(() => {
-    if (!searchQuery) return groupedProjects;
-    const normalizedSearchQuery = searchQuery.toLowerCase();
-    return groupedProjects.map((group) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const groupRuns = (group.runs as any[]).filter((run: { path: string; title: string }) =>
-        run.path.toLowerCase().includes(normalizedSearchQuery) ||
-        run.title.toLowerCase().includes(normalizedSearchQuery) ||
-        group.name.toLowerCase().includes(normalizedSearchQuery),
-      );
-      return { ...group, runs: groupRuns };
-    }).filter((group) => group.runs.length > 0 || group.name.toLowerCase().includes(normalizedSearchQuery));
-  }, [groupedProjects, searchQuery]);
+  const filteredProjects = useMemo(
+    () => filterConversationGroupsBySearch(groupedProjects, searchQuery),
+    [groupedProjects, searchQuery],
+  );
 
   const activeProjects = useMemo(() => {
     const activeFilterNowMs = Date.now();

@@ -182,3 +182,19 @@ export function buildConversationGroups(args: {
 
   return explicitGroups;
 }
+
+export function filterConversationGroupsBySearch<TGroup extends ConversationGroup>(
+  groups: TGroup[],
+  searchQuery: string,
+): TGroup[] {
+  if (!searchQuery) return groups;
+  const normalizedSearchQuery = searchQuery.toLowerCase();
+  return groups.map((group) => {
+    const groupRuns = group.runs.filter((run) =>
+      run.path.toLowerCase().includes(normalizedSearchQuery) ||
+      run.title.toLowerCase().includes(normalizedSearchQuery) ||
+      group.name.toLowerCase().includes(normalizedSearchQuery),
+    );
+    return { ...group, runs: groupRuns };
+  }).filter((group) => group.runs.length > 0 || group.name.toLowerCase().includes(normalizedSearchQuery));
+}

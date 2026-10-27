@@ -94,7 +94,7 @@ test("conversation rows expose a move-to-project dialog action", () => {
 
 test("double clicking a conversation row starts sidebar renaming for that row", () => {
   const sidebarSource = readSource("src/components/home/ConversationSidebar.tsx");
-  const rowIndex = sidebarSource.indexOf("key={run.id}");
+  const rowIndex = sidebarSource.indexOf("function ConversationRunRow(");
   const doubleClickIndex = sidebarSource.indexOf("onDoubleClick={(event) => {", rowIndex);
   const renameIndex = sidebarSource.indexOf("startRenamingRun(run);", doubleClickIndex);
 
@@ -108,7 +108,7 @@ test("conversation rows expose archive in the overflow menu and commit rows expo
 
   expect(sidebarSource).toContain("Archive");
   expect(sidebarSource).toContain("isCommitConversation");
-  expect(sidebarSource).toContain("const canArchiveConversation = isArchivableRunStatus(run.status);");
+  expect(sidebarSource).toContain("const canArchiveConversation = !remote && isArchivableRunStatus(run.status);");
   expect(sidebarSource).toContain('className: "border-[#c88b45]/30 bg-[#c88b45]/12 text-[#9e5f18] dark:border-[#f0b15d]/25 dark:bg-[#f0b15d]/10 dark:text-[#f0b15d]",');
   expect(sidebarSource).toContain('t("conversation.sidebar.archiveConversation", { title: run.title })');
   expect(sidebarSource).toContain("archiveRun(run)");
@@ -127,10 +127,10 @@ test("conversation rows show left-side status attention indicators", () => {
   expect(sidebarSource).toContain("TriangleAlert");
   expect(sidebarSource).toContain("normalizeRunStatus");
   expect(sidebarSource).toContain('const normalizedRunStatus = normalizeRunStatus(run.status);');
-  expect(sidebarSource).toContain("const runIsUnread = isRunUnread({");
-  expect(sidebarSource).toContain('const showCompletedAttentionIndicator = normalizedRunStatus === "done" && runIsUnread;');
+  expect(sidebarSource).toContain("return isRunUnread({");
+  expect(sidebarSource).toContain('const showCompletedAttentionIndicator = normalizedRunStatus === "done" && unread;');
   expect(sidebarSource).toContain('const showAwaitingUserIndicator = normalizedRunStatus === "awaiting_user";');
-  expect(sidebarSource).toContain('const showUnreadIndicator = runIsUnread && !showAwaitingUserIndicator;');
+  expect(sidebarSource).toContain('const showUnreadIndicator = unread && !showAwaitingUserIndicator;');
   expect(sidebarSource).toContain('conversation.sidebar.status.completedAttention');
   expect(sidebarSource).toContain('conversation.sidebar.status.awaitingUser');
   expect(sidebarSource).toContain('conversation.sidebar.status.unread');
