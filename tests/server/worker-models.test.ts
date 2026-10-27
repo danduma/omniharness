@@ -95,8 +95,9 @@ describe("worker model catalog", () => {
   it("uses GPT-6.1 Sol as the first Codex fallback when discovery is unavailable", async () => {
     const catalog = await buildWorkerModelCatalog({ runCommand: async () => "" });
 
-    expect(catalog.codex.slice(0, 4)).toEqual([
+    expect(catalog.codex.slice(0, 5)).toEqual([
       { value: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
+      { value: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
       { value: "gpt-6-sol", label: "GPT-6 Sol" },
       { value: "gpt-6-luna", label: "GPT-6 Luna" },
       { value: "gpt-6-astra", label: "GPT-6 Astra" },

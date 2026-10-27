@@ -149,6 +149,7 @@ DEFAULT_SERVER_SETTINGS.WORKER_ALLOWED_TYPES = DEFAULT_ALLOWED_WORKER_TYPES;
 export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
   codex: [
     { value: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
+    { value: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
     { value: "gpt-6-sol", label: "GPT-6 Sol" },
     { value: "gpt-6-luna", label: "GPT-6 Luna" },
     { value: "gpt-6-astra", label: "GPT-6 Astra" },
@@ -171,6 +172,7 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
   ],
   opencode: [
     { value: "openai/gpt-6.1-sol", label: "GPT-6.1 Sol" },
+    { value: "openai/gpt-6.1-terra", label: "GPT-6.1 Terra" },
     { value: "openai/gpt-6-sol", label: "GPT-6 Sol" },
     { value: "openai/gpt-6-luna", label: "GPT-6 Luna" },
     { value: "openai/gpt-5.6-sol", label: "GPT-5.6 Sol" },
@@ -236,6 +238,7 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
   ],
   codex: [
     { value: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
+    { value: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
     { value: "gpt-6-sol", label: "GPT-6 Sol" },
     { value: "gpt-6-luna", label: "GPT-6 Luna" },
     { value: "gpt-6-astra", label: "GPT-6 Astra" },
