@@ -1,8 +1,48 @@
 {
   "version": 2,
   "projectRoot": "/Users/masterman/NLP/omniharness",
-  "generatedAt": "2026-10-23T22:01:11.465Z",
+  "generatedAt": "2026-10-27T11:01:13.746Z",
   "conversations": [
+    {
+      "provider": "claude",
+      "id": "90c0ca2e-6cee-4e1b-bef7-fbaa7927268f",
+      "title": "Pinned projects across servers",
+      "startedAt": "2026-10-26T18:04:22.746Z",
+      "updatedAt": "2026-10-27T10:45:42.111Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "df83424b9d8b7d16459e906bbb1499c95b2e3495f9ccc428ef75709e76b5d4ba",
+      "parts": [
+        "conversations/2026/10/2026-10-26-claude-pinned-projects-across-servers-90c0ca2e-6cee-4e1b-bef7-fbaa7927268f-part-001.md"
+      ],
+      "attachmentCount": 1,
+      "eventCount": 1130,
+      "malformedLines": 0,
+      "redactions": 11,
+      "warnings": []
+    },
+    {
+      "provider": "claude",
+      "id": "a9827f6b-ad74-47d9-8939-c53f05135fff",
+      "title": "Session 7148c3db8136 goal display",
+      "startedAt": "2026-10-25T09:23:54.554Z",
+      "updatedAt": "2026-10-25T09:48:58.956Z",
+      "status": "unknown",
+      "workingDirectory": "/Users/masterman/NLP/omniharness",
+      "sourcePresent": true,
+      "resolution": "repository",
+      "sourceFingerprint": "821a5b2c8eea34c3ecf2075e3d4247b1413803a30c8d5a8947d4ec822c84984a",
+      "parts": [
+        "conversations/2026/10/2026-10-25-claude-session-7148c3db8136-goal-display-a9827f6b-ad74-47d9-8939-c53f05135fff-part-001.md"
+      ],
+      "attachmentCount": 1,
+      "eventCount": 359,
+      "malformedLines": 0,
+      "redactions": 14,
+      "warnings": []
+    },
     {
       "provider": "claude",
       "id": "81912ba7-019b-457a-b9f1-af69624c3e3f",
@@ -571,7 +611,7 @@
       "updatedAt": "2026-09-26T20:51:36.321Z",
       "status": "unknown",
       "workingDirectory": "/Users/masterman/NLP/omniharness",
-      "sourcePresent": true,
+      "sourcePresent": false,
       "resolution": "repository",
       "sourceFingerprint": "9e37040e7214843fe11b0412e9330055bc6e15f446f6ae8d1e3ebeede4ccbfbd",
       "parts": [
