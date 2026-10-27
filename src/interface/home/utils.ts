@@ -1596,7 +1596,7 @@ function isClaudeDisplayLabel(normalizedLower: string, bareLabel: string) {
 
 // Named-variant OpenAI models are spelled the same on both sides; only the
 // `openai/` prefix differs between the Codex and OpenCode catalogs.
-const OPENAI_NAMED_VARIANT_PATTERN = /^gpt-(?:5\.6-(?:sol|terra|luna)|6-(?:sol|luna)|6\.1-sol)$/;
+const OPENAI_NAMED_VARIANT_PATTERN = /^gpt-(?:5\.6-(?:sol|terra|luna)|6-(?:sol|luna)|6\.1-(?:sol|terra))$/;
 
 export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel: string) {
   const normalized = selectedModel.trim();
@@ -1612,6 +1612,7 @@ export function resolveSelectedWorkerModel(workerType: WorkerType, selectedModel
     "gpt-6 sol": "gpt-6-sol",
     "gpt-6 luna": "gpt-6-luna",
     "gpt-6.1 sol": "gpt-6.1-sol",
+    "gpt-6.1 terra": "gpt-6.1-terra",
   };
   const openAiModel = openAiDisplayAliases[normalizedLower]
     ?? normalizedLower.replace(/^openai\//, "");
