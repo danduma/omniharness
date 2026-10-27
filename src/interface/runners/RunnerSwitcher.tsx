@@ -18,7 +18,7 @@ import {
   type RunnerUiDialog,
 } from "./RunnerUiManager";
 
-function statusTone(status: RunnerConnectionStatus) {
+export function runnerStatusTone(status: RunnerConnectionStatus) {
   if (status === "online") return "bg-emerald-500";
   if (status === "connecting" || status === "resync") return "bg-amber-500";
   if (status === "deferred" || status === "runner-stopping") return "bg-sky-500";
@@ -62,7 +62,7 @@ export function RunnerSwitcherButton({
       onClick={onClick}
     >
       <span
-        className={cn("h-2 w-2 shrink-0 rounded-full", statusTone(status))}
+        className={cn("h-2 w-2 shrink-0 rounded-full", runnerStatusTone(status))}
         aria-hidden="true"
       />
       <span className="min-w-0 truncate text-sm font-semibold">{runnerName}</span>

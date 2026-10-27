@@ -1,6 +1,6 @@
 import type React from "react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { Archive, Bug, ChevronDown, Folder, FolderInput, FolderPlus, GitCommitHorizontal, GripVertical, ListChevronsDownUp, LoaderCircle, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pencil, Play, Plus, Search, Settings, Smartphone, SquareTerminal, Sun, Trash2, TriangleAlert, Wand2, X } from "lucide-react";
+import { Archive, Bug, ChevronDown, Folder, FolderInput, FolderPlus, GitCommitHorizontal, GripVertical, ListChevronsDownUp, LoaderCircle, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pencil, Pin, PinOff, Play, Plus, Search, Settings, Smartphone, SquareTerminal, Sun, Trash2, TriangleAlert, Wand2, X } from "lucide-react";
 import type { ConversationSidebarTab } from "@/interface/home/types";
 import type { ProjectDropPlacement } from "@/interface/home/utils";
 import { Button } from "@/components/ui/button";
@@ -17,13 +17,20 @@ import { centeredScrollTop, clampScrollTop } from "@/components/home/conversatio
 import { PRODUCT_NAME, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "@/interface/home/constants";
 import { mobileConversationSwipeManager } from "@/interface/home/MobileConversationSwipeManager";
 import { RunnerControls } from "@/interface/runners/RunnerControls";
+import type { RunnerConnectionStatus } from "@/interface/runners/RunnerConnection";
+import type { PinnedItemsSnapshot } from "@/interface/runners/PinnedItemsManager";
+import { useOptionalRunnerRegistryContext } from "@/interface/runners/RunnerRegistryProvider";
+import type { RunnerRegistrySnapshot } from "@/interface/runners/RunnerRegistry";
+import { runnerStatusMessageKey } from "@/interface/runners/RunnerUiManager";
+import { runnerStatusTone } from "@/interface/runners/RunnerSwitcher";
+import { filterConversationGroupsBySearch } from "@/lib/conversations";
 import { isRunUnread, resolveRunLatestUnreadTimestamp } from "@/lib/conversation-state";
 import { getConversationVisualKind, type ConversationVisualKind } from "@/lib/conversation-visuals";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { isArchivableRunStatus, isTerminalRunStatus, normalizeRunStatus } from "@/lib/run-status";
 import { cn } from "@/lib/utils";
 import { StateManager } from "@/lib/state-manager";
-import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { SidebarGroup, SidebarRun } from "@/interface/home/types";
 
 export type ProjectPresetCommandMenuItem = { id: string; name: string };
@@ -41,6 +48,14 @@ class ConversationSidebarHydrationManager extends StateManager<boolean> {
 const conversationSidebarHydrationManager = new ConversationSidebarHydrationManager();
 
 type ConversationSidebarSurface = "desktop" | "mobile";
+
+/**
+ * The mobile drawer renders in a portal outside `#root`, so it misses the
+ * root's safe-area padding and would draw under the status bar and gesture bar
+ * of an edge-to-edge installed app. The sidebar pads itself instead of the
+ * sheet so the inset strips keep the sidebar's own background.
+ */
+const MOBILE_DRAWER_SAFE_AREA_CLASS = "pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] pl-[env(safe-area-inset-left,0px)]";
 
 class ConversationSidebarScrollManager extends StateManager<{
   scrollTopBySurface: Partial<Record<ConversationSidebarSurface, number>>;
@@ -176,11 +191,393 @@ function OmniHarnessLogoGlyph({ className, ...props }: ConversationVisualIconPro
   );
 }
 
+type PinnedMachine = {
+  name: string;
+  status: RunnerConnectionStatus;
+};
+
+/**
+ * Hover actions normally sit invisible but still take their width, which on a
+ * pinned row leaves no room for both the name and the machine. On desktop the
+ * machine label and the actions trade places instead: the label shows at rest,
+ * the actions on hover, keyboard focus, or while a row menu is open.
+ */
+const PINNED_MACHINE_AT_REST_CLASS = "lg:group-hover:hidden lg:group-has-focus-visible:hidden lg:group-has-data-popup-open:hidden";
+const PINNED_ACTIONS_ON_HOVER_CLASS = "lg:hidden lg:group-hover:flex lg:group-has-focus-visible:flex lg:group-has-data-popup-open:flex";
+
+function PinnedMachineLabel({ machine, className }: { machine: PinnedMachine; className?: string }) {
+  const statusLabel = t(runnerStatusMessageKey(machine.status));
+  return (
+    <span
+      data-pinned-machine={machine.name}
+      className={cn("flex min-w-0 max-w-[45%] shrink items-center gap-1.5 text-xs font-normal text-muted-foreground", className)}
+      title={t("conversation.sidebar.pinnedMachine", { server: machine.name, status: statusLabel })}
+    >
+      <span className="truncate">{machine.name}</span>
+      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", runnerStatusTone(machine.status))} aria-hidden="true" />
+      <span className="sr-only">{statusLabel}</span>
+    </span>
+  );
+}
+
+const ROW_MENU_TRIGGER_CLASS = "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-sm font-medium text-muted-foreground opacity-100 transition-colors ring-offset-background hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 lg:opacity-0 lg:group-hover:opacity-100";
+
+/**
+ * Touch has no hover, so on the mobile drawer pinning lives in the row's
+ * overflow menu instead of a button that would always be on screen.
+ */
+function PinMenuItem({ pinned, label, onToggle }: { pinned: boolean; label: string; onToggle: () => void }) {
+  return (
+    <DropdownMenuItem
+      className="cursor-pointer whitespace-nowrap"
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle();
+      }}
+    >
+      {pinned ? <PinOff className="mr-2 h-4 w-4" /> : <Pin className="mr-2 h-4 w-4" />} {label}
+    </DropdownMenuItem>
+  );
+}
+
+function PinOnlyMenu({ pinned, label, onToggle, triggerLabel }: { pinned: boolean; label: string; onToggle: () => void; triggerLabel?: string }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        onClick={(event) => event.stopPropagation()}
+        className={ROW_MENU_TRIGGER_CLASS}
+        aria-label={triggerLabel}
+      >
+        <MoreHorizontal className="h-3.5 w-3.5" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-28">
+        <PinMenuItem pinned={pinned} label={label} onToggle={onToggle} />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function PinToggleButton({ pinned, label, onToggle }: { pinned: boolean; label: string; onToggle: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex" />}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 shrink-0 text-muted-foreground opacity-100 hover:text-foreground lg:opacity-0 lg:group-hover:opacity-100"
+          aria-label={label}
+          aria-pressed={pinned}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggle();
+          }}
+        >
+          {pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="top">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function isSidebarRunUnread(run: SidebarRun, latestMessageAt: string | null, lastReadAt: string | null) {
+  return isRunUnread({
+    latestMessageAt: resolveRunLatestUnreadTimestamp(run, latestMessageAt),
+    lastReadAt,
+  });
+}
+
+type RunRowActions = {
+  /** True on the touch drawer, where pinning moves into the overflow menu. */
+  pinsInMenu: boolean;
+  selectRun: (runId: string) => void;
+  renamingRunId: string | null;
+  renameValue: string;
+  renameSource: "sidebar" | "topbar" | null;
+  setRenameValue: (value: string) => void;
+  startRenamingRun: (run: SidebarRun) => void;
+  startMovingRun: (run: SidebarRun) => void;
+  commitRenamingRun: (runId: string) => void;
+  cancelRenamingRun: () => void;
+  archiveRun: (run: SidebarRun) => void;
+  deleteRun: (run: SidebarRun) => void;
+};
+
+interface ConversationRunRowProps {
+  run: SidebarRun;
+  selected: boolean;
+  unread: boolean;
+  /**
+   * Set for a session on another server: opening it switches servers, and the
+   * per-conversation actions are left out because they would otherwise act on
+   * the server on screen.
+   */
+  openRemote: (() => void) | null;
+  pin: { pinned: boolean; toggle: () => void } | null;
+  machine: PinnedMachine | null;
+  actions: RunRowActions;
+}
+
+function ConversationRunRow({ run, selected, unread, openRemote, pin, machine, actions }: ConversationRunRowProps) {
+  const {
+    pinsInMenu,
+    selectRun,
+    renamingRunId,
+    renameValue,
+    renameSource,
+    setRenameValue,
+    startRenamingRun,
+    startMovingRun,
+    commitRenamingRun,
+    cancelRenamingRun,
+    archiveRun,
+    deleteRun,
+  } = actions;
+  const remote = openRemote !== null;
+  const visualKind = getConversationVisualKind(run);
+  const isCommitConversation = visualKind === "commit";
+  const canArchiveConversation = !remote && isArchivableRunStatus(run.status);
+  const canMoveConversation = isTerminalRunStatus(run.status);
+  const normalizedRunStatus = normalizeRunStatus(run.status);
+  const showCompletedAttentionIndicator = normalizedRunStatus === "done" && unread;
+  const showAwaitingUserIndicator = normalizedRunStatus === "awaiting_user";
+  const showUnreadIndicator = unread && !showAwaitingUserIndicator;
+  const statusIndicatorLabel = showAwaitingUserIndicator
+    ? t("conversation.sidebar.status.awaitingUser")
+    : showCompletedAttentionIndicator
+      ? t("conversation.sidebar.status.completedAttention")
+      : unread
+        ? t("conversation.sidebar.status.unread")
+        : null;
+  const visualConfig = CONVERSATION_VISUAL_CONFIG[visualKind];
+  const ConversationIcon = visualConfig.Icon;
+  const pinLabel = pin ? t(pin.pinned ? "conversation.sidebar.unpinSession" : "conversation.sidebar.pinSession") : "";
+
+  return (
+    <div
+      data-conversation-run-id={run.id}
+      onClick={() => (openRemote ? openRemote() : selectRun(run.id))}
+      onDoubleClick={(event) => {
+        if (remote) return;
+        const target = event.target;
+        if (target instanceof Element && target.closest("button,input,textarea,select,a")) {
+          return;
+        }
+        event.preventDefault();
+        startRenamingRun(run);
+      }}
+      className={cn(
+        "group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-2.5 pr-2 text-sm transition-colors",
+        selected
+          ? "bg-[#e2e1df] text-[#1f1f1f] dark:bg-white/[0.08] dark:text-zinc-100"
+          : "text-[#424242] hover:bg-[#e8e7e5] hover:text-[#1f1f1f] dark:text-zinc-300 dark:hover:bg-white/[0.045] dark:hover:text-zinc-100",
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="inline-flex h-5 w-3 shrink-0 items-center justify-center">
+              {showAwaitingUserIndicator && statusIndicatorLabel ? (
+                <span
+                  className="inline-flex h-4 w-4 items-center justify-center text-amber-500"
+                  aria-label={statusIndicatorLabel}
+                  role="img"
+                  title={statusIndicatorLabel}
+                >
+                  <TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />
+                </span>
+              ) : null}
+              {showUnreadIndicator && statusIndicatorLabel ? (
+                <span
+                  className="h-2 w-2 rounded-full bg-sky-300"
+                  aria-label={statusIndicatorLabel}
+                  role="img"
+                  title={statusIndicatorLabel}
+                />
+              ) : null}
+            </span>
+            <span
+              className={cn("inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border", visualConfig.className)}
+              title={t("conversation.sidebar.conversationVisual", { kind: visualConfig.label })}
+              aria-label={t("conversation.sidebar.conversationVisual", { kind: visualConfig.label })}
+            >
+              {visualKind === "direct" ? (
+                <CliBrandIcon workerType={run.preferredWorkerType ?? null} className={run.preferredWorkerType === "opencode" ? "h-3 w-3" : "h-3.5 w-3.5"} />
+              ) : (
+                <ConversationIcon className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+            </span>
+            {!remote && renamingRunId === run.id && renameSource !== "topbar" ? (
+              <Input
+                value={renameValue}
+                onChange={(event) => setRenameValue(event.target.value)}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    commitRenamingRun(run.id);
+                  } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    cancelRenamingRun();
+                  }
+                }}
+                onBlur={() => commitRenamingRun(run.id)}
+                autoFocus
+                className="h-7 min-w-0 text-[13px]"
+              />
+            ) : (
+              <span className="truncate text-[13px]">{run.title}</span>
+            )}
+          </div>
+          <div className="flex min-w-0 shrink-0 items-center gap-1">
+            {machine ? <PinnedMachineLabel machine={machine} className={cn("max-w-[7rem]", PINNED_MACHINE_AT_REST_CLASS)} /> : null}
+            {run.status === "running" ? (
+              <LoaderCircle className="h-3.5 w-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" />
+            ) : null}
+            <span className={cn("flex shrink-0 items-center gap-1", machine && PINNED_ACTIONS_ON_HOVER_CLASS)}>
+            {pin && !pinsInMenu ? (
+              <PinToggleButton pinned={pin.pinned} label={pinLabel} onToggle={pin.toggle} />
+            ) : null}
+            {canArchiveConversation && isCommitConversation ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 shrink-0 text-muted-foreground opacity-100 hover:text-foreground lg:opacity-0 lg:group-hover:opacity-100"
+                aria-label={t("conversation.sidebar.archiveConversation", { title: run.title })}
+                title={t("conversation.sidebar.archiveConversation", { title: run.title })}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  archiveRun(run);
+                }}
+              >
+                <Archive className="h-3.5 w-3.5" />
+              </Button>
+            ) : null}
+            {remote ? (
+              pin && pinsInMenu ? (
+                <PinOnlyMenu
+                  pinned={pin.pinned}
+                  label={pinLabel}
+                  onToggle={pin.toggle}
+                  triggerLabel={t("conversation.sidebar.conversationActions", { title: run.title })}
+                />
+              ) : null
+            ) : (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  onClick={(event) => event.stopPropagation()}
+                  className={ROW_MENU_TRIGGER_CLASS}
+                  aria-label={t("conversation.sidebar.conversationActions", { title: run.title })}
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-28">
+                  {pin && pinsInMenu ? (
+                    <PinMenuItem pinned={pin.pinned} label={pinLabel} onToggle={pin.toggle} />
+                  ) : null}
+                  <DropdownMenuItem
+                    className="cursor-pointer whitespace-nowrap"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      startRenamingRun(run);
+                    }}
+                  >
+                    <Pencil className="mr-2 h-4 w-4" /> {t("conversation.sidebar.rename")}
+                  </DropdownMenuItem>
+                  {canMoveConversation ? (
+                    <DropdownMenuItem
+                      className="cursor-pointer whitespace-nowrap"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        startMovingRun(run);
+                      }}
+                    >
+                      <FolderInput className="mr-2 h-4 w-4" /> {t("conversation.sidebar.moveToProject")}
+                    </DropdownMenuItem>
+                  ) : null}
+                  {canArchiveConversation ? (
+                    <DropdownMenuItem
+                      className="cursor-pointer whitespace-nowrap"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        archiveRun(run);
+                      }}
+                    >
+                      <Archive className="mr-2 h-4 w-4" /> {t("conversation.sidebar.archive")}
+                    </DropdownMenuItem>
+                  ) : null}
+                  <DropdownMenuItem
+                    variant="destructive"
+                    className="cursor-pointer whitespace-nowrap"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      deleteRun(run);
+                    }}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" /> {t("conversation.sidebar.delete")}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type PinnedSessionRowItem = Omit<ConversationRunRowProps, "actions"> & { key: string };
+
+/**
+ * A pinned project that lives on a server other than the one on screen. Its
+ * rows open by switching servers.
+ */
+type RemoteProjectSource = {
+  readMarkers: Record<string, string>;
+  openRun: (runId: string) => void;
+  beginConversation: () => void;
+};
+
+type SessionPinControl = {
+  isPinned: (runId: string) => boolean;
+  toggle: (runId: string) => void;
+};
+
+type ProjectGroupListItem = {
+  key: string;
+  group: SidebarGroup;
+  pinned: boolean;
+  togglePin: (() => void) | null;
+  remote: RemoteProjectSource | null;
+  machine: PinnedMachine | null;
+  sessionPin: SessionPinControl | null;
+};
+
+const NO_PINS = new StateManager<PinnedItemsSnapshot>({ projects: [], sessions: [], serverCount: 0 });
+const NO_RUNNER_REGISTRY = new StateManager<RunnerRegistrySnapshot>({ activeRunnerId: null, connections: [], identityCollisions: [] });
+const selectActiveRunnerId = (snapshot: RunnerRegistrySnapshot) => snapshot.activeRunnerId;
+const NO_PINNED_RUN_IDS: ReadonlySet<string> = new Set();
+
+function withoutPinnedRuns(group: SidebarGroup, pinnedRunIds: ReadonlySet<string>): SidebarGroup {
+  if (pinnedRunIds.size === 0 || !group.runs.some((run) => pinnedRunIds.has(run.id))) {
+    return group;
+  }
+  return { ...group, runs: group.runs.filter((run) => !pinnedRunIds.has(run.id)) };
+}
+
+function matchesSidebarSearch(run: SidebarRun, searchQuery: string) {
+  if (!searchQuery) return true;
+  const query = searchQuery.toLowerCase();
+  return run.title.toLowerCase().includes(query) || run.path.toLowerCase().includes(query);
+}
+
 interface ConversationProjectGroupListProps {
-  groups: SidebarGroup[];
+  items: ProjectGroupListItem[];
   isHydratingConversations: boolean;
   selectedRunId: string | null;
-  messages: Array<{ runId: string; role?: string | null; kind?: string | null; content?: string | null; createdAt: string }> | undefined;
+  latestMessageAtByRunId: ReadonlyMap<string, string>;
   readMarkers: Record<string, string>;
   collapsedProjectPaths: Set<string>;
   visibleProjectSessionCounts: Record<string, number>;
@@ -193,25 +590,15 @@ interface ConversationProjectGroupListProps {
   runPresetCommand: (projectPath: string, presetCommandId: string) => void;
   isPresetCommandPending: boolean;
   handleRemoveProject: (pathToRemove: string) => void;
-  selectRun: (runId: string) => void;
-  renamingRunId: string | null;
-  renameValue: string;
-  renameSource: "sidebar" | "topbar" | null;
-  setRenameValue: (value: string) => void;
-  startRenamingRun: (run: SidebarRun) => void;
-  startMovingRun: (run: SidebarRun) => void;
-  commitRenamingRun: (runId: string) => void;
-  cancelRenamingRun: () => void;
-  archiveRun: (run: SidebarRun) => void;
-  deleteRun: (run: SidebarRun) => void;
+  runRowActions: RunRowActions;
   emptyState: React.ReactNode;
 }
 
 function ConversationProjectGroupList({
-  groups,
+  items,
   isHydratingConversations,
   selectedRunId,
-  messages,
+  latestMessageAtByRunId,
   readMarkers,
   collapsedProjectPaths,
   visibleProjectSessionCounts,
@@ -224,37 +611,12 @@ function ConversationProjectGroupList({
   runPresetCommand,
   isPresetCommandPending,
   handleRemoveProject,
-  selectRun,
-  renamingRunId,
-  renameValue,
-  renameSource,
-  setRenameValue,
-  startRenamingRun,
-  startMovingRun,
-  commitRenamingRun,
-  cancelRenamingRun,
-  archiveRun,
-  deleteRun,
+  runRowActions,
   emptyState,
 }: ConversationProjectGroupListProps) {
   const projectDrag = useManagerSnapshot(projectDragManager);
 
-  // Roll the message list up per run once. The unread check below runs inside
-  // `visibleRuns.map`, and it used to scan the entire cross-run message array
-  // for every row — including rows inside collapsed projects, which are still
-  // mounted because the collapse is CSS-only.
-  const latestMessageAtByRunId = useMemo(() => {
-    const latest = new Map<string, string>();
-    for (const message of messages ?? []) {
-      const existing = latest.get(message.runId);
-      if (!existing || new Date(message.createdAt).getTime() > new Date(existing).getTime()) {
-        latest.set(message.runId, message.createdAt);
-      }
-    }
-    return latest;
-  }, [messages]);
-
-  if (groups.length === 0) {
+  if (items.length === 0) {
     return <>{emptyState}</>;
   }
 
@@ -300,18 +662,20 @@ function ConversationProjectGroupList({
 
   return (
     <>
-      {groups.map((group) => {
+      {items.map(({ key: itemKey, group, pinned, togglePin, remote, machine, sessionPin }) => {
         const projectOpen = !collapsedProjectPaths.has(group.path);
-        const canDragProject = canReorderProjects && group.path !== "other";
+        const canDragProject = canReorderProjects && !remote && group.path !== "other";
         const visibleSessionCount = visibleProjectSessionCounts[group.path] ?? PROJECT_SESSION_DISPLAY_BATCH_SIZE;
         const visibleRuns = group.runs.slice(0, visibleSessionCount);
         const hiddenSessionCount = Math.max(0, group.runs.length - visibleRuns.length);
         const nextSessionBatchCount = Math.min(PROJECT_SESSION_DISPLAY_BATCH_SIZE, hiddenSessionCount);
         const dropIndicatorPlacement = projectDrag.dropPath === group.path ? projectDrag.dropPlacement : null;
+        const projectPinLabel = t(pinned ? "conversation.sidebar.unpinProject" : "conversation.sidebar.pinProject", { project: group.name });
+        const pinsInMenu = runRowActions.pinsInMenu;
 
         return (
           <Collapsible
-            key={group.path}
+            key={itemKey}
             open={projectOpen}
             onOpenChange={(open) => onProjectOpenChange(group.path, open)}
           >
@@ -366,31 +730,53 @@ function ConversationProjectGroupList({
                   <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
                 </span>
               ) : null}
-              <CollapsibleTrigger className="flex flex-1 items-center gap-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
+              <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
                 <Folder className="h-4 w-4 shrink-0 text-primary/70" />
                 <span className="truncate">{group.name}</span>
+                {machine ? <PinnedMachineLabel machine={machine} className={cn("ml-auto", PINNED_MACHINE_AT_REST_CLASS)} /> : null}
                 <ChevronDown
-                  className={cn("ml-auto h-3.5 w-3.5 shrink-0 transition-transform duration-150 ease-out", projectOpen && "rotate-180")}
+                  className={cn(
+                    "h-3.5 w-3.5 shrink-0 transition-transform duration-150 ease-out",
+                    // Follows the machine label, and takes over its spacing when hover hides it.
+                    machine ? "lg:group-hover:ml-auto lg:group-has-focus-visible:ml-auto lg:group-has-data-popup-open:ml-auto" : "ml-auto",
+                    projectOpen && "rotate-180",
+                  )}
                   aria-hidden="true"
                 />
               </CollapsibleTrigger>
 
               {group.path !== "other" ? (
-                <div className="flex shrink-0 items-center gap-0.5">
+                <div className={cn("flex shrink-0 items-center gap-0.5", machine && PINNED_ACTIONS_ON_HOVER_CLASS)}>
+                  {togglePin && !pinsInMenu ? (
+                    <PinToggleButton pinned={pinned} label={projectPinLabel} onToggle={togglePin} />
+                  ) : null}
                   <Button
                     variant="ghost"
                     size="icon"
                     className="h-6 w-6 text-muted-foreground opacity-100 hover:text-foreground lg:opacity-0 lg:group-hover:opacity-100"
                     title={t("conversation.sidebar.newConversationInProject", { project: group.name })}
-                    onClick={() => beginConversationInProject(group.path)}
+                    onClick={() => (remote ? remote.beginConversation() : beginConversationInProject(group.path))}
                   >
                     <Plus className="h-3.5 w-3.5" />
                   </Button>
+                  {remote ? (
+                    togglePin && pinsInMenu ? (
+                      <PinOnlyMenu pinned={pinned} label={projectPinLabel} onToggle={togglePin} />
+                    ) : (
+                      <div className="h-6 w-6 shrink-0" aria-hidden="true" />
+                    )
+                  ) : (
                   <DropdownMenu>
-                    <DropdownMenuTrigger className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-sm font-medium text-muted-foreground opacity-100 transition-colors ring-offset-background hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 lg:opacity-0 lg:group-hover:opacity-100">
+                    <DropdownMenuTrigger className={ROW_MENU_TRIGGER_CLASS}>
                       <MoreHorizontal className="h-3.5 w-3.5" />
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="max-w-[min(20rem,calc(100vw-2rem))]">
+                      {togglePin && pinsInMenu ? (
+                        <>
+                          <PinMenuItem pinned={pinned} label={projectPinLabel} onToggle={togglePin} />
+                          <DropdownMenuSeparator />
+                        </>
+                      ) : null}
                       {presetCommands.map((preset) => (
                         <DropdownMenuItem
                           key={preset.id}
@@ -409,9 +795,10 @@ function ConversationProjectGroupList({
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
+                  )}
                 </div>
               ) : (
-                <div className="h-6 w-[3.875rem] shrink-0" aria-hidden="true" />
+                <div className="h-6 w-[5.5rem] shrink-0" aria-hidden="true" />
               )}
             </div>
 
@@ -434,183 +821,24 @@ function ConversationProjectGroupList({
                   )
                 ) : null}
                 {visibleRuns.map((run) => {
-                  const visualKind = getConversationVisualKind(run);
-                  const isCommitConversation = visualKind === "commit";
-                  const canArchiveConversation = isArchivableRunStatus(run.status);
-                  const canMoveConversation = isTerminalRunStatus(run.status);
-                  const normalizedRunStatus = normalizeRunStatus(run.status);
-                  const runIsUnread = isRunUnread({
-                    latestMessageAt: resolveRunLatestUnreadTimestamp(
-                      run,
-                      latestMessageAtByRunId.get(run.id) ?? null,
-                    ),
-                    lastReadAt: readMarkers[run.id] ?? null,
-                  });
-                  const showCompletedAttentionIndicator = normalizedRunStatus === "done" && runIsUnread;
-                  const showAwaitingUserIndicator = normalizedRunStatus === "awaiting_user";
-                  const showUnreadIndicator = runIsUnread && !showAwaitingUserIndicator;
-                  const statusIndicatorLabel = showAwaitingUserIndicator
-                    ? t("conversation.sidebar.status.awaitingUser")
-                    : showCompletedAttentionIndicator
-                      ? t("conversation.sidebar.status.completedAttention")
-                      : runIsUnread
-                        ? t("conversation.sidebar.status.unread")
-                        : null;
-                  const visualConfig = CONVERSATION_VISUAL_CONFIG[visualKind];
-                  const ConversationIcon = visualConfig.Icon;
-
+                  const runPinned = sessionPin?.isPinned(run.id) ?? false;
                   return (
-                    <div
+                    <ConversationRunRow
                       key={run.id}
-                      data-conversation-run-id={run.id}
-                      onClick={() => selectRun(run.id)}
-                      onDoubleClick={(event) => {
-                        const target = event.target;
-                        if (target instanceof Element && target.closest("button,input,textarea,select,a")) {
-                          return;
-                        }
-                        event.preventDefault();
-                        startRenamingRun(run);
-                      }}
-                      className={cn(
-                        "group flex min-w-0 cursor-pointer overflow-hidden rounded-xl py-1.5 pl-2.5 pr-2 text-sm transition-colors",
-                        selectedRunId === run.id
-                          ? "bg-[#e2e1df] text-[#1f1f1f] dark:bg-white/[0.08] dark:text-zinc-100"
-                          : "text-[#424242] hover:bg-[#e8e7e5] hover:text-[#1f1f1f] dark:text-zinc-300 dark:hover:bg-white/[0.045] dark:hover:text-zinc-100",
+                      run={run}
+                      selected={!remote && selectedRunId === run.id}
+                      // Another server's messages are not loaded here, so its
+                      // rows judge unread state from the run's own timestamps.
+                      unread={isSidebarRunUnread(
+                        run,
+                        remote ? null : latestMessageAtByRunId.get(run.id) ?? null,
+                        (remote ? remote.readMarkers : readMarkers)[run.id] ?? null,
                       )}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="min-w-0 flex items-center justify-between gap-2">
-                          <div className="flex min-w-0 flex-1 items-center gap-2">
-                            <span className="inline-flex h-5 w-3 shrink-0 items-center justify-center">
-                              {showAwaitingUserIndicator && statusIndicatorLabel ? (
-                                <span
-                                  className="inline-flex h-4 w-4 items-center justify-center text-amber-500"
-                                  aria-label={statusIndicatorLabel}
-                                  role="img"
-                                  title={statusIndicatorLabel}
-                                >
-                                  <TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />
-                                </span>
-                              ) : null}
-                              {showUnreadIndicator && statusIndicatorLabel ? (
-                                <span
-                                  className="h-2 w-2 rounded-full bg-sky-300"
-                                  aria-label={statusIndicatorLabel}
-                                  role="img"
-                                  title={statusIndicatorLabel}
-                                />
-                              ) : null}
-                            </span>
-                            <span
-                              className={cn("inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border", visualConfig.className)}
-                              title={t("conversation.sidebar.conversationVisual", { kind: visualConfig.label })}
-                              aria-label={t("conversation.sidebar.conversationVisual", { kind: visualConfig.label })}
-                            >
-                              {visualKind === "direct" ? (
-                                <CliBrandIcon workerType={run.preferredWorkerType ?? null} className={run.preferredWorkerType === "opencode" ? "h-3 w-3" : "h-3.5 w-3.5"} />
-                              ) : (
-                                <ConversationIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                              )}
-                            </span>
-                            {renamingRunId === run.id && renameSource !== "topbar" ? (
-                              <Input
-                                value={renameValue}
-                                onChange={(event) => setRenameValue(event.target.value)}
-                                onClick={(event) => event.stopPropagation()}
-                                onKeyDown={(event) => {
-                                  event.stopPropagation();
-                                  if (event.key === "Enter") {
-                                    event.preventDefault();
-                                    commitRenamingRun(run.id);
-                                  } else if (event.key === "Escape") {
-                                    event.preventDefault();
-                                    cancelRenamingRun();
-                                  }
-                                }}
-                                onBlur={() => commitRenamingRun(run.id)}
-                                autoFocus
-                                className="h-7 min-w-0 text-[13px]"
-                              />
-                            ) : (
-                              <span className="truncate text-[13px]">{run.title}</span>
-                            )}
-                          </div>
-                          <div className="flex shrink-0 items-center gap-1">
-                            {run.status === "running" ? (
-                              <LoaderCircle className="h-3.5 w-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" />
-                            ) : null}
-                            {canArchiveConversation && isCommitConversation ? (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-6 w-6 shrink-0 text-muted-foreground opacity-100 hover:text-foreground lg:opacity-0 lg:group-hover:opacity-100"
-                                aria-label={t("conversation.sidebar.archiveConversation", { title: run.title })}
-                                title={t("conversation.sidebar.archiveConversation", { title: run.title })}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  archiveRun(run);
-                                }}
-                              >
-                                <Archive className="h-3.5 w-3.5" />
-                              </Button>
-                            ) : null}
-                            <DropdownMenu>
-                              <DropdownMenuTrigger
-                                onClick={(event) => event.stopPropagation()}
-                                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-sm font-medium text-muted-foreground opacity-100 transition-colors ring-offset-background hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 lg:opacity-0 lg:group-hover:opacity-100"
-                                aria-label={t("conversation.sidebar.conversationActions", { title: run.title })}
-                              >
-                                <MoreHorizontal className="h-3.5 w-3.5" />
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="min-w-28">
-                                <DropdownMenuItem
-                                  className="cursor-pointer whitespace-nowrap"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    startRenamingRun(run);
-                                  }}
-                                >
-                                  <Pencil className="mr-2 h-4 w-4" /> {t("conversation.sidebar.rename")}
-                                </DropdownMenuItem>
-                                {canMoveConversation ? (
-                                  <DropdownMenuItem
-                                    className="cursor-pointer whitespace-nowrap"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      startMovingRun(run);
-                                    }}
-                                  >
-                                    <FolderInput className="mr-2 h-4 w-4" /> {t("conversation.sidebar.moveToProject")}
-                                  </DropdownMenuItem>
-                                ) : null}
-                                {canArchiveConversation ? (
-                                  <DropdownMenuItem
-                                    className="cursor-pointer whitespace-nowrap"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      archiveRun(run);
-                                    }}
-                                  >
-                                    <Archive className="mr-2 h-4 w-4" /> {t("conversation.sidebar.archive")}
-                                  </DropdownMenuItem>
-                                ) : null}
-                                <DropdownMenuItem
-                                  variant="destructive"
-                                  className="cursor-pointer whitespace-nowrap"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    deleteRun(run);
-                                  }}
-                                >
-                                  <Trash2 className="mr-2 h-4 w-4" /> {t("conversation.sidebar.delete")}
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+                      openRemote={remote ? () => remote.openRun(run.id) : null}
+                      pin={sessionPin ? { pinned: runPinned, toggle: () => sessionPin.toggle(run.id) } : null}
+                      machine={null}
+                      actions={runRowActions}
+                    />
                   );
                 })}
                 {hiddenSessionCount > 0 ? (
@@ -832,8 +1060,198 @@ const ConversationSidebar = memo(function ConversationSidebar({
 }: ConversationSidebarProps) {
   useI18nSnapshot();
   const themeModeLabel = t(themeMode === "night" ? "theme.mode.switchDay" : "theme.mode.switchNight");
-  const visibleProjectGroups = conversationSidebarTab === "projects" ? filteredProjects : activeProjects;
-  const hasExpandedVisibleProjectGroup = visibleProjectGroups.some((group) => !collapsedProjectPaths.has(group.path));
+  const runnerContext = useOptionalRunnerRegistryContext();
+  const pins = runnerContext?.pins ?? null;
+  const pinSnapshot = useManagerSnapshot<PinnedItemsSnapshot>(pins ?? NO_PINS);
+  const activeRunnerId = useManagerSelector(runnerContext?.registry ?? NO_RUNNER_REGISTRY, selectActiveRunnerId);
+  // Naming the machine only helps once there is more than one to tell apart.
+  const showPinnedMachines = pinSnapshot.serverCount > 1;
+  const showPinnedSection = pins !== null && conversationSidebarTab === "projects";
+  const latestMessageAtByRunId = useMemo(() => {
+    // Rolled up once per message list: the unread check runs for every row,
+    // including rows inside collapsed projects, which stay mounted.
+    const latest = new Map<string, string>();
+    for (const message of messages ?? []) {
+      const existing = latest.get(message.runId);
+      if (!existing || new Date(message.createdAt).getTime() > new Date(existing).getTime()) {
+        latest.set(message.runId, message.createdAt);
+      }
+    }
+    return latest;
+  }, [messages]);
+  const activePinnedPaths = useMemo(
+    () => new Set(pinSnapshot.projects.filter((entry) => entry.active).map((entry) => entry.path)),
+    [pinSnapshot.projects],
+  );
+  const pinnedRunIdsByProfile = useMemo(() => {
+    const byProfile = new Map<string, Set<string>>();
+    for (const entry of pinSnapshot.sessions) {
+      const runIds = byProfile.get(entry.profileId) ?? new Set<string>();
+      runIds.add(entry.runId);
+      byProfile.set(entry.profileId, runIds);
+    }
+    return byProfile;
+  }, [pinSnapshot.sessions]);
+  const activePinnedRunIds = (activeRunnerId ? pinnedRunIdsByProfile.get(activeRunnerId) : null) ?? NO_PINNED_RUN_IDS;
+  const sessionPinFor = useCallback((profileId: string | null): SessionPinControl | null => {
+    if (!pins || !profileId) return null;
+    const pinnedRunIds = pinnedRunIdsByProfile.get(profileId) ?? NO_PINNED_RUN_IDS;
+    return {
+      isPinned: (runId) => pinnedRunIds.has(runId),
+      toggle: (runId) => { void pins.setSessionPinned(profileId, runId, !pinnedRunIds.has(runId)); },
+    };
+  }, [pinnedRunIdsByProfile, pins]);
+  const closeMobileDrawer = useCallback(() => {
+    if (runnerControlsMode === "mobile") onCollapse?.();
+  }, [onCollapse, runnerControlsMode]);
+  const pinnedSessionRows = useMemo<PinnedSessionRowItem[]>(() => {
+    if (!pins || !showPinnedSection) {
+      return [];
+    }
+    const localRunsById = new Map(filteredProjects.flatMap((group) => group.runs.map((run) => [run.id, run] as const)));
+    const rows: PinnedSessionRowItem[] = [];
+    for (const entry of pinSnapshot.sessions) {
+      // The active server's runs come from local state, which search has
+      // already filtered; another server's run is matched here.
+      const run = entry.active
+        ? localRunsById.get(entry.runId)
+        : entry.run && matchesSidebarSearch(entry.run as SidebarRun, searchQuery) ? entry.run as SidebarRun : undefined;
+      if (!run) continue;
+      rows.push({
+        key: entry.key,
+        run,
+        selected: entry.active && selectedRunId === run.id,
+        unread: isSidebarRunUnread(
+          run,
+          entry.active ? latestMessageAtByRunId.get(run.id) ?? null : null,
+          (entry.active ? readMarkers : entry.readMarkers)[run.id] ?? null,
+        ),
+        openRemote: entry.active
+          ? null
+          : () => {
+            closeMobileDrawer();
+            pins.openRun(entry.profileId, run.id);
+          },
+        pin: { pinned: true, toggle: () => { void pins.setSessionPinned(entry.profileId, run.id, false); } },
+        machine: showPinnedMachines ? { name: entry.runnerName, status: entry.status } : null,
+      });
+    }
+    return rows;
+  }, [closeMobileDrawer, filteredProjects, latestMessageAtByRunId, pinSnapshot.sessions, pins, readMarkers, searchQuery, selectedRunId, showPinnedMachines, showPinnedSection]);
+  const pinnedProjectItems = useMemo<ProjectGroupListItem[]>(() => {
+    if (!pins || !showPinnedSection) {
+      return [];
+    }
+    const items: ProjectGroupListItem[] = [];
+    for (const entry of pinSnapshot.projects) {
+      const unpin = () => { void pins.setProjectPinned(entry.profileId, entry.path, false); };
+      const machine = showPinnedMachines ? { name: entry.runnerName, status: entry.status } : null;
+      const pinnedRunIds = pinnedRunIdsByProfile.get(entry.profileId) ?? NO_PINNED_RUN_IDS;
+      if (entry.active) {
+        // A pinned project with nothing left on this server still shows, so the
+        // pin stays visible and removable rather than silently lingering.
+        const group = filteredProjects.find((candidate) => candidate.path === entry.path)
+          ?? (searchQuery ? null : { path: entry.path, name: entry.path.split(/[/\\]/).pop() || entry.path, runs: [] });
+        if (group) {
+          items.push({
+            key: entry.key,
+            group: withoutPinnedRuns(group, pinnedRunIds),
+            pinned: true,
+            togglePin: unpin,
+            remote: null,
+            machine,
+            sessionPin: sessionPinFor(entry.profileId),
+          });
+        }
+        continue;
+      }
+      const [group] = entry.group ? filterConversationGroupsBySearch([entry.group], searchQuery) : [];
+      if (!group) continue;
+      items.push({
+        key: entry.key,
+        group: withoutPinnedRuns(group as SidebarGroup, pinnedRunIds),
+        pinned: true,
+        togglePin: unpin,
+        remote: {
+          readMarkers: entry.readMarkers,
+          openRun: (runId) => {
+            closeMobileDrawer();
+            pins.openRun(entry.profileId, runId);
+          },
+          beginConversation: () => {
+            closeMobileDrawer();
+            pins.beginConversation(entry.profileId, entry.path);
+          },
+        },
+        machine,
+        sessionPin: sessionPinFor(entry.profileId),
+      });
+    }
+    return items;
+  }, [closeMobileDrawer, filteredProjects, pinSnapshot.projects, pinnedRunIdsByProfile, pins, searchQuery, sessionPinFor, showPinnedMachines, showPinnedSection]);
+  const listItems = useMemo<ProjectGroupListItem[]>(() => {
+    const sessionPin = sessionPinFor(activeRunnerId);
+    // Pinned items move to the top of the projects tab rather than showing twice;
+    // the recent tab keeps everything in place.
+    const hidePinned = showPinnedSection;
+    return (conversationSidebarTab === "projects" ? filteredProjects : activeProjects)
+      .filter((group) => !(hidePinned && activePinnedPaths.has(group.path)))
+      .map((group) => {
+        const pinned = activePinnedPaths.has(group.path);
+        return {
+          key: group.path,
+          group: hidePinned ? withoutPinnedRuns(group, activePinnedRunIds) : group,
+          pinned,
+          togglePin: pins && activeRunnerId && group.path !== "other"
+            ? () => { void pins.setProjectPinned(activeRunnerId, group.path, !pinned); }
+            : null,
+          remote: null,
+          machine: null,
+          sessionPin,
+        };
+      });
+  }, [activePinnedPaths, activePinnedRunIds, activeProjects, activeRunnerId, conversationSidebarTab, filteredProjects, pins, sessionPinFor, showPinnedSection]);
+  // A removed project or a deleted or archived session that stayed pinned would
+  // linger in the pinned section.
+  const removeProject = useCallback((projectPath: string) => {
+    handleRemoveProject(projectPath);
+    if (pins && activeRunnerId && activePinnedPaths.has(projectPath)) {
+      void pins.setProjectPinned(activeRunnerId, projectPath, false);
+    }
+  }, [activePinnedPaths, activeRunnerId, handleRemoveProject, pins]);
+  const runRowActions = useMemo<RunRowActions>(() => {
+    const unpinSession = (run: SidebarRun) => {
+      if (pins && activeRunnerId && activePinnedRunIds.has(run.id)) {
+        void pins.setSessionPinned(activeRunnerId, run.id, false);
+      }
+    };
+    return {
+      pinsInMenu: runnerControlsMode === "mobile",
+      selectRun,
+      renamingRunId,
+      renameValue,
+      renameSource,
+      setRenameValue,
+      startRenamingRun,
+      startMovingRun,
+      commitRenamingRun,
+      cancelRenamingRun,
+      archiveRun: (run) => {
+        archiveRun(run);
+        unpinSession(run);
+      },
+      deleteRun: (run) => {
+        deleteRun(run);
+        unpinSession(run);
+      },
+    };
+  }, [activePinnedRunIds, activeRunnerId, archiveRun, cancelRenamingRun, commitRenamingRun, deleteRun, pins, renameSource, renameValue, renamingRunId, runnerControlsMode, selectRun, setRenameValue, startMovingRun, startRenamingRun]);
+  const visibleProjectItems = useMemo(
+    () => [...pinnedProjectItems, ...listItems],
+    [listItems, pinnedProjectItems],
+  );
+  const hasPinnedItems = pinnedSessionRows.length > 0 || pinnedProjectItems.length > 0;
+  const hasExpandedVisibleProjectGroup = visibleProjectItems.some((item) => !collapsedProjectPaths.has(item.group.path));
   const mounted = useSyncExternalStore(
     useCallback((listener) => conversationSidebarHydrationManager.subscribe(listener), []),
     useCallback(() => conversationSidebarHydrationManager.getSnapshot(), []),
@@ -859,10 +1277,11 @@ const ConversationSidebar = memo(function ConversationSidebar({
     }
   }, [onCollapse]);
   const sidebarContentKey = useMemo(
-    () => visibleProjectGroups
-      .map((group) => `${group.path}:${group.runs.map((run) => run.id).join(",")}`)
-      .join("|"),
-    [visibleProjectGroups],
+    () => [
+      pinnedSessionRows.map((row) => row.key).join(","),
+      ...visibleProjectItems.map((item) => `${item.key}:${item.group.runs.map((run) => run.id).join(",")}`),
+    ].join("|"),
+    [pinnedSessionRows, visibleProjectItems],
   );
   const getScrollViewport = useCallback(
     () => scrollAreaRef.current?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]') ?? null,
@@ -957,7 +1376,10 @@ const ConversationSidebar = memo(function ConversationSidebar({
     // every DropdownMenuTrigger in the sidebar.
     return (
       <div
-        className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f1f1f0] dark:bg-muted/30"
+        className={cn(
+          "relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f1f1f0] dark:bg-muted/30",
+          runnerControlsMode === "mobile" && MOBILE_DRAWER_SAFE_AREA_CLASS,
+        )}
         aria-hidden="true"
       />
     );
@@ -966,7 +1388,10 @@ const ConversationSidebar = memo(function ConversationSidebar({
   return (
     <div
       data-conversation-sidebar-surface={runnerControlsMode}
-      className="relative flex h-full min-h-0 w-full touch-pan-y touch-pinch-zoom flex-col overflow-hidden bg-[#f1f1f0] dark:bg-muted/30 lg:touch-auto"
+      className={cn(
+        "relative flex h-full min-h-0 w-full touch-pan-y touch-pinch-zoom flex-col overflow-hidden bg-[#f1f1f0] dark:bg-muted/30 lg:touch-auto",
+        runnerControlsMode === "mobile" && MOBILE_DRAWER_SAFE_AREA_CLASS,
+      )}
       onPointerDown={handleSidebarPointerDown}
       onPointerMove={handleSidebarPointerMove}
       onPointerUp={handleSidebarPointerUp}
@@ -1091,7 +1516,7 @@ const ConversationSidebar = memo(function ConversationSidebar({
                     disabled={!hasExpandedVisibleProjectGroup}
                     aria-label={t("conversation.sidebar.collapseAllProjects")}
                     title={t("conversation.sidebar.collapseAllProjects")}
-                    onClick={() => onCollapseAllProjects(visibleProjectGroups.map((group) => group.path))}
+                    onClick={() => onCollapseAllProjects(visibleProjectItems.map((item) => item.group.path))}
                   >
                     <ListChevronsDownUp className="h-3.5 w-3.5" />
                   </Button>
@@ -1120,12 +1545,51 @@ const ConversationSidebar = memo(function ConversationSidebar({
             </div>
           </div>
 
+          {hasPinnedItems ? (
+            <section
+              aria-label={t("conversation.sidebar.pinned")}
+              className="space-y-1 border-b border-border/60 pb-2"
+            >
+              <div className="ml-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                <Pin className="h-3 w-3" aria-hidden="true" />
+                <span>{t("conversation.sidebar.pinned")}</span>
+              </div>
+              {pinnedSessionRows.length > 0 ? (
+                <div className="space-y-0.5" data-pinned-sessions="true">
+                  {pinnedSessionRows.map(({ key, ...row }) => (
+                    <ConversationRunRow key={key} {...row} actions={runRowActions} />
+                  ))}
+                </div>
+              ) : null}
+              <ConversationProjectGroupList
+                items={pinnedProjectItems}
+                isHydratingConversations={isHydratingConversations}
+                selectedRunId={selectedRunId}
+                latestMessageAtByRunId={latestMessageAtByRunId}
+                readMarkers={readMarkers}
+                collapsedProjectPaths={collapsedProjectPaths}
+                visibleProjectSessionCounts={visibleProjectSessionCounts}
+                canReorderProjects={false}
+                onProjectOpenChange={onProjectOpenChange}
+                onReorderProjects={onReorderProjects}
+                onShowMoreProjectSessions={onShowMoreProjectSessions}
+                beginConversationInProject={beginConversationInProject}
+                presetCommands={presetCommands}
+                runPresetCommand={runPresetCommand}
+                isPresetCommandPending={isPresetCommandPending}
+                handleRemoveProject={removeProject}
+                runRowActions={runRowActions}
+                emptyState={null}
+              />
+            </section>
+          ) : null}
+
           {conversationSidebarTab === "projects" ? (
             <ConversationProjectGroupList
-              groups={filteredProjects}
+              items={listItems}
               isHydratingConversations={isHydratingConversations}
               selectedRunId={selectedRunId}
-              messages={messages}
+              latestMessageAtByRunId={latestMessageAtByRunId}
               readMarkers={readMarkers}
               collapsedProjectPaths={collapsedProjectPaths}
               visibleProjectSessionCounts={visibleProjectSessionCounts}
@@ -1137,26 +1601,18 @@ const ConversationSidebar = memo(function ConversationSidebar({
               presetCommands={presetCommands}
               runPresetCommand={runPresetCommand}
               isPresetCommandPending={isPresetCommandPending}
-              handleRemoveProject={handleRemoveProject}
-              selectRun={selectRun}
-              renamingRunId={renamingRunId}
-              renameValue={renameValue}
-              renameSource={renameSource}
-              setRenameValue={setRenameValue}
-              startMovingRun={startMovingRun}
-              startRenamingRun={startRenamingRun}
-              commitRenamingRun={commitRenamingRun}
-              cancelRenamingRun={cancelRenamingRun}
-              archiveRun={archiveRun}
-              deleteRun={deleteRun}
-              emptyState={<p className="pl-2 text-sm text-muted-foreground">{t("conversation.sidebar.empty.projects")}</p>}
+              handleRemoveProject={removeProject}
+              runRowActions={runRowActions}
+              emptyState={hasPinnedItems
+                ? null
+                : <p className="pl-2 text-sm text-muted-foreground">{t("conversation.sidebar.empty.projects")}</p>}
             />
           ) : (
             <ConversationProjectGroupList
-              groups={activeProjects}
+              items={listItems}
               isHydratingConversations={false}
               selectedRunId={selectedRunId}
-              messages={messages}
+              latestMessageAtByRunId={latestMessageAtByRunId}
               readMarkers={readMarkers}
               collapsedProjectPaths={collapsedProjectPaths}
               visibleProjectSessionCounts={visibleProjectSessionCounts}
@@ -1168,18 +1624,8 @@ const ConversationSidebar = memo(function ConversationSidebar({
               presetCommands={presetCommands}
               runPresetCommand={runPresetCommand}
               isPresetCommandPending={isPresetCommandPending}
-              handleRemoveProject={handleRemoveProject}
-              selectRun={selectRun}
-              renamingRunId={renamingRunId}
-              renameValue={renameValue}
-              renameSource={renameSource}
-              setRenameValue={setRenameValue}
-              startMovingRun={startMovingRun}
-              startRenamingRun={startRenamingRun}
-              commitRenamingRun={commitRenamingRun}
-              cancelRenamingRun={cancelRenamingRun}
-              archiveRun={archiveRun}
-              deleteRun={deleteRun}
+              handleRemoveProject={removeProject}
+              runRowActions={runRowActions}
               emptyState={<p className="pl-2 text-sm text-muted-foreground">{t("conversation.sidebar.empty.active")}</p>}
             />
           )}

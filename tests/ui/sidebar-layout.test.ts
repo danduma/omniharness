@@ -942,7 +942,7 @@ test("project group collapsed state survives page reloads", () => {
   expect(pageSource).toContain('t("conversation.sidebar.addProject")');
   expect(pageSource).toContain("ListChevronsDownUp");
   expect(pageSource).toContain("<TooltipContent side=\"bottom\" align=\"end\">");
-  expect(pageSource).toContain("onClick={() => onCollapseAllProjects(visibleProjectGroups.map((group) => group.path))}");
+  expect(pageSource).toContain("onClick={() => onCollapseAllProjects(visibleProjectItems.map((item) => item.group.path))}");
   expect(pageSource).toContain("const projectOpen = !collapsedProjectPaths.has(group.path);");
   expect(pageSource).toContain("open={projectOpen}");
   expect(pageSource).toContain("COLLAPSIBLE_PANEL_TRANSITION_CLASS");
@@ -953,7 +953,7 @@ test("project groups can be reordered from the projects tab without replacing th
   expect(pageSource).toContain("reorderExplicitProjectPaths");
   expect(pageSource).toContain("onReorderProjects: actions.handleReorderProjects,");
   expect(pageSource).toContain("onReorderProjects={onReorderProjects}");
-  expect(pageSource).toContain('const canDragProject = canReorderProjects && group.path !== "other";');
+  expect(pageSource).toContain('const canDragProject = canReorderProjects && !remote && group.path !== "other";');
   expect(pageSource).toContain('data-project-drag-row="true"');
   expect(pageSource).toContain("draggable={canDragProject}");
   expect(pageSource).toContain("event.dataTransfer.setData(PROJECT_DRAG_DATA_TYPE, group.path);");
@@ -1087,9 +1087,8 @@ test("empty state centers the composer with the welcome stack instead of docking
 test("live event updates reuse sidebar project derivations while typing stays responsive", () => {
   expect(pageSource).toContain("const groupedProjects = useMemo(() => buildConversationGroups({");
   expect(pageSource).toContain("}), [explicitProjects, plans, runs]);");
-  expect(pageSource).toContain("const filteredProjects = useMemo(() => {");
-  expect(pageSource).toContain("const normalizedSearchQuery = searchQuery.toLowerCase();");
-  expect(pageSource).toContain("}, [groupedProjects, searchQuery]);");
+  expect(pageSource).toContain("() => filterConversationGroupsBySearch(groupedProjects, searchQuery),");
+  expect(pageSource).toContain("[groupedProjects, searchQuery],");
   expect(pageSource).toContain("buildActiveConversationGroups({");
   expect(pageSource).toContain("}, [groupedProjects, state.messages, state.workers, state.agents, state.queuedMessages, readMarkers, searchQuery, selectedRunId]);");
 });
