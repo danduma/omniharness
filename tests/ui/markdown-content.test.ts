@@ -526,3 +526,19 @@ describe("MarkdownContent - Table rendering", () => {
     expect(preNodes.length).toBe(3); // ASCII art + 2 code blocks
   });
 });
+
+describe("MarkdownContent - per-block copy buttons", () => {
+  it("gives quote and code blocks their own copy target holding only that block's text", () => {
+    const tree = renderMarkdownContent({
+      content: "Intro\n\n> this is a text box\n> is rendered as a box\n\n```\npnpm test\n```\n\nOutro",
+    });
+
+    const copyBlocks = findReactNodes(tree, (n) => typeof n.props?.copyText === "string");
+    expect(copyBlocks.map((block) => block.props.copyText)).toEqual([
+      "this is a text box\nis rendered as a box",
+      "pnpm test",
+    ]);
+    expect(findReactNodes(copyBlocks[0], (n) => n.type === "blockquote")).toHaveLength(1);
+    expect(findReactNodes(copyBlocks[1], (n) => n.type === "pre")).toHaveLength(1);
+  });
+});

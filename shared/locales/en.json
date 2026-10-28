@@ -543,6 +543,8 @@
   "conversation.message.actionsAria": "Message actions",
   "conversation.message.copyAria": "Copy message",
   "conversation.message.copiedNotice": "Copied to clipboard",
+  "markdown.block.copyAria": "Copy block",
+  "markdown.block.copiedAria": "Copied",
   "conversation.message.modelEffort": "{model} ({effort})",
   "conversation.message.action.resumeFromHere": "Resume from here",
   "conversation.message.action.retryFromHere": "Retry from here",
