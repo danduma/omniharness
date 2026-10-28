@@ -88,8 +88,8 @@ export function RunRecoveryNotice({
             {description}
           </p>
           {showQuotaControls ? (
-            <div className="mt-3 flex flex-col gap-2 rounded-md border border-border/60 bg-background/70 p-2 sm:flex-row sm:items-center sm:justify-between">
-              <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-foreground">
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-background/70 p-2">
+              <label className="flex min-w-0 flex-[1_1_16rem] items-center gap-2 text-xs font-medium text-foreground">
                 <Switch
                   checked
                   disabled={!onStop || isStopping}
@@ -102,7 +102,7 @@ export function RunRecoveryNotice({
                 />
                 <span className="min-w-0 break-words">{autoResumeLabel}</span>
               </label>
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
                 {onHandoff ? (
                   <Button type="button" size="sm" variant="outline" disabled={isResuming || isStopping} onClick={onHandoff}>
                     <ArrowLeftRight className="mr-2 h-3.5 w-3.5" />
