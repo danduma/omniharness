@@ -1,6 +1,10 @@
-import React, { memo, useMemo } from "react";
+import React, { memo, useCallback, useId, useMemo } from "react";
+import { Check, Copy } from "lucide-react";
+import { markdownBlockCopyManager } from "@/components/component-state-managers";
 import { ProjectFileContextMenu } from "@/components/ProjectFileContextMenu";
+import { t, useI18nSnapshot } from "@/lib/i18n";
 import { parseProjectFileReference, type ProjectFileReference } from "@/lib/project-file-links";
+import { useManagerSelector } from "@/lib/use-manager-snapshot";
 import { cn } from "@/lib/utils";
 
 function isSafeHref(href: string) {
@@ -45,6 +49,43 @@ function parseAlignments(delimiterLine: string): Alignment[] {
     if (starts) return "left";
     return null;
   });
+}
+
+/**
+ * Wraps a quote or code block with a top-right button that copies only that
+ * block's own text, not the whole message.
+ */
+function CopyableMarkdownBlock({ copyText, children }: { copyText: string; children: React.ReactNode }) {
+  useI18nSnapshot();
+  const blockId = useId();
+  const copied = useManagerSelector(
+    markdownBlockCopyManager,
+    useCallback((state) => state.copiedBlockId === blockId, [blockId]),
+  );
+  const label = copied ? t("markdown.block.copiedAria") : t("markdown.block.copyAria");
+
+  return (
+    <div className="group/copy-block relative">
+      {children}
+      <button
+        type="button"
+        className={cn(
+          "absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-md bg-background/80 text-muted-foreground opacity-0 shadow-sm backdrop-blur-sm transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 group-hover/copy-block:opacity-100 [@media(hover:none)]:opacity-100",
+          copied && "opacity-100",
+        )}
+        aria-label={label}
+        title={label}
+        onClick={(event) => {
+          event.stopPropagation();
+          void markdownBlockCopyManager.copyBlock(blockId, copyText);
+        }}
+      >
+        {copied
+          ? <Check className="h-3.5 w-3.5" aria-hidden="true" />
+          : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+      </button>
+    </div>
+  );
 }
 
 interface MarkdownContentProps {
@@ -657,16 +698,18 @@ function parseMarkdownBlocks({ content, inheritTextColor, projectRoot, onOpenPro
         index += 1;
       }
 
+      const code = codeLines.join("\n");
       blocks.push(
-        <pre
-          key={`code-${start}`}
-          className={cn(
-            "overflow-x-auto rounded-md border border-border/60 bg-muted/40 p-3 text-xs leading-5",
-            inheritTextColor ? "text-current" : "text-foreground",
-          )}
-        >
-          <code>{codeLines.join("\n")}</code>
-        </pre>,
+        <CopyableMarkdownBlock key={`code-${start}`} copyText={code}>
+          <pre
+            className={cn(
+              "overflow-x-auto rounded-md border border-border/60 bg-muted/40 p-3 pr-9 text-xs leading-5",
+              inheritTextColor ? "text-current" : "text-foreground",
+            )}
+          >
+            <code>{code}</code>
+          </pre>
+        </CopyableMarkdownBlock>,
       );
       continue;
     }
@@ -711,15 +754,16 @@ function parseMarkdownBlocks({ content, inheritTextColor, projectRoot, onOpenPro
       }
 
       blocks.push(
-        <blockquote
-          key={`quote-${start}`}
-          className={cn(
-            "rounded-md border border-border/60 bg-muted/30 px-3 py-2",
-            inheritTextColor ? "text-current" : "text-muted-foreground",
-          )}
-        >
-          {renderInlineMarkdown(quoteLines.join(" "), `quote-${start}`, inheritTextColor, projectRoot, onOpenProjectFile)}
-        </blockquote>,
+        <CopyableMarkdownBlock key={`quote-${start}`} copyText={quoteLines.join("\n")}>
+          <blockquote
+            className={cn(
+              "rounded-md border border-border/60 bg-muted/30 py-2 pl-3 pr-9",
+              inheritTextColor ? "text-current" : "text-muted-foreground",
+            )}
+          >
+            {renderInlineMarkdown(quoteLines.join(" "), `quote-${start}`, inheritTextColor, projectRoot, onOpenProjectFile)}
+          </blockquote>
+        </CopyableMarkdownBlock>,
       );
       continue;
     }

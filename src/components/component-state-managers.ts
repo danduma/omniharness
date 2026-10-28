@@ -332,6 +332,36 @@ export class ConversationCopyNoticeManager extends StateManager<{ copiedMessageI
 
 export const conversationCopyNoticeManager = new ConversationCopyNoticeManager();
 
+/** Which rendered markdown block (quote or code) last had its own text copied. */
+export class MarkdownBlockCopyManager extends StateManager<{ copiedBlockId: string | null }> {
+  private clearTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor() {
+    super({ copiedBlockId: null });
+  }
+
+  copyBlock = async (blockId: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (error) {
+      console.error("Copy markdown block failed:", error);
+      return;
+    }
+
+    if (this.clearTimer) {
+      clearTimeout(this.clearTimer);
+    }
+    this.setKey("copiedBlockId", blockId);
+    this.clearTimer = setTimeout(() => {
+      if (this.getSnapshot().copiedBlockId === blockId) {
+        this.setKey("copiedBlockId", null);
+      }
+    }, 1_800);
+  };
+}
+
+export const markdownBlockCopyManager = new MarkdownBlockCopyManager();
+
 export const workersSidebarManager = new class extends StateManager<{
   activeTab: "active" | "finished";
   focusedWorkerId: string | null;
