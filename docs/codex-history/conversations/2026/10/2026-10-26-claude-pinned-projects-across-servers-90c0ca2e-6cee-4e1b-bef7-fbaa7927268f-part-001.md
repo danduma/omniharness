@@ -7927,6 +7927,47 @@ parts: 1
 
 <!-- /codex-event -->
 
+<!-- codex-event:{"kind":"state","timestamp":"","phase":null} -->
+## Claude record: cost-state
+
+```text
+{
+  "type": "cost-state",
+  "sessionId": "90c0ca2e-6cee-4e1b-bef7-fbaa7927268f",
+  "totalCostUSD": 14.300392999999996,
+  "totalAPIDuration": 1168578,
+  "totalAPIDurationWithoutRetries": 1168464,
+  "totalToolDuration": 705073,
+  "totalLinesAdded": 1066,
+  "totalLinesRemoved": 63,
+  "totalDuration": 7323099,
+  "startTime": 1793037862222,
+  "modelUsage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 1706,
+      "outputTokens": 18,
+      "thinkingTokens": 0,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.00017960000000000003
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 1800,
+      "outputTokens": 133912,
+      "thinkingTokens": 44717,
+      "cacheReadInputTokens": 26737187,
+      "cacheCreationInputTokens": 783417,
+      "webSearchRequests": 0,
+      "costUSD": 14.300213399999997
+    }
+  },
+  "hasUnknownModelCost": false
+}
+```
+
+<!-- /codex-event -->
+
 <!-- codex-event:{"kind":"state","timestamp":"2026-10-26T18:04:22.436Z","phase":null} -->
 ## Claude attachment · 2026-10-26T18:04:22.436Z
 
