@@ -2,6 +2,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db, dbClient } from "@/server/db";
 import { messages, queuedConversationMessages, recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
+import { providerQuotaNoticeText } from "@/server/quota/reset-parser";
 import { redactGoalErrorMessage } from "@/server/runs/goal-errors";
 import { isRuntimeAgentMissingError } from "@/server/workers/runtime-agent-adoption";
 
@@ -100,7 +101,12 @@ const defaultDependencies: GoalContinuationDependencies = {
   },
   async sendContinuation(runId, content) {
     const { sendConversationMessage } = await import("@/server/conversations/send-message");
-    return sendConversationMessage({ runId, content, busyAction: "queue" });
+    // A plain send, not a queued one: the continuation only goes to a stopped
+    // or errored agent, and the queue never drains into an errored worker, so
+    // a queued continuation sat `pending` forever (6ddc42267f3d). A plain send
+    // resumes the saved session and still falls back to the queue if the agent
+    // turns out to be busy.
+    return sendConversationMessage({ runId, content, busyAction: null });
   },
   now: () => Date.now(),
 };
@@ -174,6 +180,10 @@ async function isStoppedAndContinuable(
   const workerStatus = normalizedStatus(worker.status);
   if (BUSY_WORKER_STATUSES.has(workerStatus) || SKIPPED_WORKER_STATUSES.has(workerStatus)) return false;
   if (!worker.bridgeSessionId?.trim()) return false;
+  // An agent that ended on a provider quota notice did not crash; quota
+  // recovery resumes it at the reset. The sweep can run before that incident
+  // is recorded, and a continuation sent then can only hit the same limit.
+  if (providerQuotaNoticeText(worker.lastText)) return false;
   if (now - lastActivityMs(run, worker) > MAX_IDLE_MS) return false;
   if (await dependencies.hasUndeliveredMessages(run.id)) return false;
   if (await dependencies.hasResumableQuotaIncident(run.id)) return false;

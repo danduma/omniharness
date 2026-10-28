@@ -3,6 +3,7 @@ import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events
 import {
   __resetGoalContinuationForTests,
   continueStalledGoals,
+  defaultContinuationDependencies,
   GOAL_CONTINUATION_PROMPT,
   type GoalContinuationDependencies,
 } from "@/server/runs/goal-worker-continuation";
@@ -102,6 +103,11 @@ describe("continueStalledGoals", () => {
     ["a cancelled worker", { worker: { status: "cancelled" } }],
     ["a quota-blocked worker", { worker: { status: "cred-exhausted" } }],
     ["a worker without a session", { worker: { bridgeSessionId: null } }],
+    // 6ddc42267f3d: the sweep ran before the quota incident was recorded.
+    ["a worker parked on a quota notice", {
+      agent: { state: "error" },
+      worker: { lastText: "You've hit your session limit · resets 2:10am (Europe/Madrid)" },
+    }],
     ["a message already on its way", { undelivered: true }],
     ["an open quota incident", { quotaIncident: true }],
     // Recovery owns the run; a continuation queued past it can only fail.
@@ -130,6 +136,23 @@ describe("continueStalledGoals", () => {
     now += 6 * 60_000;
     await continueStalledGoals(deps);
     expect(deps.sendContinuation).toHaveBeenCalledTimes(2);
+  });
+
+  // 6ddc42267f3d: a queued continuation never drains into an errored worker.
+  it("sends the continuation directly instead of queueing it", async () => {
+    const sendConversationMessage = vi.fn(async () => ({ ok: true }));
+    vi.doMock("@/server/conversations/send-message", () => ({ sendConversationMessage }));
+    try {
+      await defaultContinuationDependencies.sendContinuation("run-1", GOAL_CONTINUATION_PROMPT);
+    } finally {
+      vi.doUnmock("@/server/conversations/send-message");
+    }
+
+    expect(sendConversationMessage).toHaveBeenCalledWith({
+      runId: "run-1",
+      content: GOAL_CONTINUATION_PROMPT,
+      busyAction: null,
+    });
   });
 
   it("surfaces a failed continuation instead of failing silently", async () => {
