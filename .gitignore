@@ -97,3 +97,6 @@ run-data/
 # Local runner process locks
 /bridge.lock.json
 /runner.lock.json
+
+# Local conversation archive
+/docs/codex-history/
