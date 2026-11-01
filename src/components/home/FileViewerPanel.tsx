@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, BookOpen, Copy, Ellipsis, FileText, Image as ImageIcon, LoaderCircle, Maximize2, RefreshCw, WrapText } from "lucide-react";
+import { AlertTriangle, BookOpen, Copy, Download, Ellipsis, FileText, Globe, Image as ImageIcon, LoaderCircle, Maximize2, RefreshCw, WrapText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -15,9 +15,11 @@ import {
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { fileViewerPanelManager } from "@/components/component-state-managers";
 import { formatBytes } from "@/lib/chat-attachments";
-import { isImagePath } from "@/lib/file-media";
+import { ProjectVideoViewer } from "./ProjectVideoViewer";
+import { isImagePath, isVideoPath } from "@/lib/file-media";
 import { t, useI18nSnapshot } from "@/lib/i18n";
-import { buildProjectFileFullPath } from "@/lib/project-file-links";
+import { useOpenProjectHtml } from "@/lib/use-open-project-html";
+import { buildProjectFileFullPath, isHtmlProjectFile } from "@/lib/project-file-links";
 import { detectSyntaxLanguage, highlightCodeLine } from "@/lib/syntax-highlighting";
 import { runtimeErrorMessage } from "@/runtime-api/request";
 import { cn } from "@/lib/utils";
@@ -36,9 +38,11 @@ export function FileViewerPanel({
   line?: number;
   className?: string;
 }) {
+  const openInBrowser = useOpenProjectHtml();
   const targetLineRef = useRef<HTMLDivElement | null>(null);
   const { wordWrap, renderMarkdown, actualSize, imageByKey } = useManagerSnapshot(fileViewerPanelManager);
   const isImage = isImagePath(relativePath);
+  const isVideo = isVideoPath(relativePath);
   const isMarkdown = /\.(md|mdx|markdown)$/i.test(relativePath);
   const renderAsMarkdown = isMarkdown && renderMarkdown;
   useI18nSnapshot();
@@ -51,7 +55,7 @@ export function FileViewerPanel({
       root,
       file: relativePath,
     }) as Promise<ProjectFileContentResponse>,
-    enabled: Boolean(root && relativePath) && !isImage,
+    enabled: Boolean(root && relativePath) && !isImage && !isVideo,
     staleTime: 30_000,
   });
   const imageQuery = useQuery<Blob>({
@@ -124,7 +128,7 @@ export function FileViewerPanel({
                   <Maximize2 className="h-4 w-4" />
                   <span>{t("fileViewer.menu.actualSize")}</span>
                 </DropdownMenuCheckboxItem>
-              ) : (
+              ) : !isVideo ? (
                 <>
                   {isMarkdown ? (
                     <DropdownMenuCheckboxItem
@@ -143,6 +147,18 @@ export function FileViewerPanel({
                     <span>{t("fileViewer.menu.wordWrap")}</span>
                   </DropdownMenuCheckboxItem>
                 </>
+              ) : null}
+              {(isHtmlProjectFile({ relativePath }) || isVideo) && (
+                <DropdownMenuItem onClick={() => openInBrowser({ root, relativePath })}>
+                  <Globe className="h-4 w-4" />
+                  <span>{t("projectFile.menu.openInBrowser")}</span>
+                </DropdownMenuItem>
+              )}
+              {isVideo && (
+                <DropdownMenuItem onClick={() => openInBrowser({ root, relativePath }, true)}>
+                  <Download className="h-4 w-4" />
+                  <span>{t("fileViewer.video.download")}</span>
+                </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
               <DropdownMenuItem
@@ -153,7 +169,7 @@ export function FileViewerPanel({
                 <Copy className="h-4 w-4" />
                 <span>{t("fileViewer.menu.copyFullPath")}</span>
               </DropdownMenuItem>
-              {isImage ? null : (
+              {isImage || isVideo ? null : (
                 <DropdownMenuItem
                   disabled={!fileQuery.data}
                   onClick={() => {
@@ -164,7 +180,7 @@ export function FileViewerPanel({
                   <span>{t("fileViewer.menu.copyContents")}</span>
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem
+              {!isVideo && <DropdownMenuItem
                 onClick={() => {
                   if (isImage) {
                     fileViewerPanelManager.forgetImage(imageKey);
@@ -174,7 +190,7 @@ export function FileViewerPanel({
               >
                 <RefreshCw className={cn("h-4 w-4", activeQuery.isFetching && "animate-spin")} />
                 <span>{t("fileViewer.menu.refresh")}</span>
-              </DropdownMenuItem>
+              </DropdownMenuItem>}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -204,7 +220,9 @@ export function FileViewerPanel({
         ) : null}
       </div>
 
-      {activeQuery.isLoading ? (
+      {isVideo ? (
+        <ProjectVideoViewer key={`${root}:${relativePath}`} root={root} relativePath={relativePath} />
+      ) : activeQuery.isLoading ? (
         <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
           <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
           {t("fileViewer.loading")}

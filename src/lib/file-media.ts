@@ -27,3 +27,27 @@ export function imageMimeTypeForPath(filePath: string): string | null {
 export function isImagePath(filePath: string) {
   return imageMimeTypeForPath(filePath) !== null;
 }
+
+const VIDEO_MIME_TYPES_BY_EXTENSION: Record<string, string> = {
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  mov: "video/quicktime",
+  webm: "video/webm",
+  ogv: "video/ogg",
+  ogg: "video/ogg",
+  mkv: "video/x-matroska",
+  avi: "video/x-msvideo",
+  wmv: "video/x-ms-wmv",
+  flv: "video/x-flv",
+  mpg: "video/mpeg",
+  mpeg: "video/mpeg",
+};
+
+export function videoMimeTypeForPath(filePath: string): string | null {
+  const extension = /\.([a-z0-9]+)$/i.exec(filePath)?.[1]?.toLowerCase();
+  return extension ? VIDEO_MIME_TYPES_BY_EXTENSION[extension] ?? null : null;
+}
+
+export function isVideoPath(filePath: string) {
+  return videoMimeTypeForPath(filePath) !== null;
+}

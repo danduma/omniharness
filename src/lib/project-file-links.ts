@@ -1,3 +1,5 @@
+import { isVideoPath } from "./file-media";
+
 export type ProjectFileReference = {
   root: string;
   relativePath: string;
@@ -46,6 +48,7 @@ function extractCandidatePath(value: string): string | null {
 
   try {
     const url = new URL(trimmed);
+    if (url.protocol === "file:" && (!url.hostname || LOCALHOST_NAMES.has(url.hostname))) return url.pathname;
     if (!["http:", "https:"].includes(url.protocol) || !LOCALHOST_NAMES.has(url.hostname)) {
       return null;
     }
@@ -82,7 +85,7 @@ function isSafeRelativeProjectPath(value: string) {
   const normalized = value.replace(/^\.\//, "");
   return Boolean(
     normalized
-    && normalized.includes("/")
+    && (normalized.includes("/") || /\.html?$/i.test(normalized) || isVideoPath(normalized))
     && !normalized.startsWith("../")
     && normalized !== ".."
     && !normalized.includes("/../")
@@ -126,4 +129,20 @@ export function parseProjectFileReference(value: string, projectRoot: string | n
     ...(line ? { line } : {}),
     ...(column ? { column } : {}),
   };
+}
+
+export function isHtmlProjectFile(reference: Pick<ProjectFileReference, "relativePath">) {
+  return /\.html?$/i.test(reference.relativePath);
+}
+
+export function buildProjectHtmlBrowserUrl(reference: ProjectFileReference, origin: string) {
+  const url = new URL("/api/fs/files", origin);
+  url.search = new URLSearchParams({ root: reference.root, file: reference.relativePath, browser: "1" }).toString();
+  return url.toString();
+}
+
+export function buildProjectVideoBrowserUrl(reference: ProjectFileReference, origin: string, download = false) {
+  const url = new URL("/api/fs/files", origin);
+  url.search = new URLSearchParams({ root: reference.root, file: reference.relativePath, video: "1", ...(download ? { download: "1" } : {}) }).toString();
+  return url.toString();
 }

@@ -152,6 +152,7 @@ export type SurfacedErrorCode =
   | "goal.plan.derivation_failed"
   | "goal.not_found"
   | "goal.rate_limited"
+  | "filesystem.video_read_failed"
   | "filesystem.directory_create_failed"
   | "codex_auth_missing"
   | "codex_auth_refresh_failed"
@@ -1007,6 +1008,7 @@ export type ErrorSurfacedEvent = {
 };
 
 export type FilesystemEvent =
+  | { kind: "filesystem.video_read_failed"; path: string | null; reason: string }
   | { kind: "filesystem.directory_created"; parentPath: string; path: string }
   | {
       kind: "filesystem.directory_create_failed";
@@ -1231,6 +1233,7 @@ function append(event: NamedEvent | SnapshotMarker, runIdOverride?: string | nul
  * from afterSeq" — the snapshot carries cursors, not bodies.
  */
 const DELTA_ONLY_EVENT_KINDS = new Set<string>([
+  "filesystem.video_read_failed",
   "filesystem.directory_created",
   "filesystem.directory_create_failed",
   "runtime.output_logs_pruned",

@@ -1,5 +1,7 @@
 import fs from "fs";
 import path from "path";
+import { Readable } from "stream";
+import { videoMimeTypeForPath } from "@/lib/file-media";
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { emitNamedEvent } from "@/server/events/named-events";
@@ -212,6 +214,29 @@ export const handleProjectFilesRequest: OmniHttpHandler = async (request) => {
     const filePath = url.searchParams.get("file");
     if (filePath) {
       action = "Read project file";
+      if (url.searchParams.get("video") === "1") {
+        return serveProjectVideo(request, projectPath, filePath);
+      }
+      if (url.searchParams.get("browser") === "1") {
+        if (!/\.html?$/i.test(filePath)) throw new Error("Browser preview requires an HTML file.");
+        const root = fs.realpathSync(projectPath);
+        const absolutePath = path.resolve(root, filePath);
+        if (!isPathInside(root, absolutePath)) throw new Error("File path is outside the project root.");
+        const canonicalPath = fs.realpathSync(absolutePath);
+        if (!isPathInside(root, canonicalPath)) throw new Error("File path is outside the project root.");
+        const stat = fs.statSync(canonicalPath);
+        if (!stat.isFile()) throw new Error("Project path is not a file.");
+        if (stat.size > 24 * 1024 * 1024) throw new Error("HTML file exceeds the 24 MB browser preview limit.");
+        return new Response(new Uint8Array(fs.readFileSync(canonicalPath)), {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "content-security-policy": "sandbox allow-scripts allow-forms allow-popups",
+            "cache-control": "no-store",
+            "x-content-type-options": "nosniff",
+            "referrer-policy": "no-referrer",
+          },
+        });
+      }
       return Response.json(readProjectTextFile(projectPath, filePath));
     }
 
@@ -220,6 +245,10 @@ export const handleProjectFilesRequest: OmniHttpHandler = async (request) => {
       files: listProjectFiles(projectPath),
     });
   } catch (error) {
+    const url = new URL(request.url);
+    if (url.searchParams.get("video") === "1") {
+      reportVideoFailure(url.searchParams.get("file"), error);
+    }
     return errorResponse(error, {
       status: 400,
       source: "Filesystem",
@@ -291,3 +320,63 @@ export const handleProjectImageRequest: OmniHttpHandler = async (request) => {
     });
   }
 };
+
+/** Stream media and byte ranges without loading the whole video into memory. */
+function serveProjectVideo(request: Request, projectPath: string, filePath: string) {
+  const mimeType = videoMimeTypeForPath(filePath);
+  if (!mimeType) throw new Error("Project file is not a supported video type.");
+  const root = fs.realpathSync(projectPath);
+  const absolutePath = path.resolve(root, filePath.replace(/\\/g, path.sep));
+  if (!isPathInside(root, absolutePath)) throw new Error("File path is outside the project root.");
+  const canonicalPath = fs.realpathSync(absolutePath);
+  if (!isPathInside(root, canonicalPath)) throw new Error("File path is outside the project root.");
+  const stat = fs.statSync(canonicalPath);
+  if (!stat.isFile()) throw new Error("Project path is not a file.");
+  const headers = new Headers({
+    "content-type": mimeType,
+    "accept-ranges": "bytes",
+    "cache-control": "private, no-store",
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "default-src 'none'; media-src 'self' blob:; sandbox",
+    "content-disposition": new URL(request.url).searchParams.get("download") === "1"
+      ? `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(canonicalPath))}`
+      : "inline",
+  });
+  let start = 0;
+  let end = stat.size - 1;
+  const range = request.headers.get("range");
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (match && (match[1] || match[2])) {
+      start = match[1] ? Number(match[1]) : Math.max(0, stat.size - Number(match[2]));
+      end = match[1] && match[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
+    } else {
+      start = -1;
+    }
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end || start >= stat.size) {
+      reportVideoFailure(filePath, new Error("Requested video byte range is not satisfiable."));
+      headers.set("content-range", `bytes */${stat.size}`);
+      return new Response(null, { status: 416, headers });
+    }
+    headers.set("content-range", `bytes ${start}-${end}/${stat.size}`);
+  }
+  headers.set("content-length", String(Math.max(0, end - start + 1)));
+  if (!stat.size) return new Response(null, { headers });
+  const stream = fs.createReadStream(canonicalPath, { start, end, signal: request.signal });
+  stream.on("error", (error) => {
+    if (!request.signal.aborted) reportVideoFailure(filePath, error);
+  });
+  return new Response(Readable.toWeb(stream) as ReadableStream<Uint8Array>, { status: range ? 206 : 200, headers });
+}
+
+function reportVideoFailure(filePath: string | null, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  emitNamedEvent({ kind: "filesystem.video_read_failed", path: filePath, reason: message });
+  emitNamedEvent({
+    kind: "error.surfaced",
+    code: "filesystem.video_read_failed",
+    message,
+    surface: "banner",
+    path: filePath ?? undefined,
+  });
+}

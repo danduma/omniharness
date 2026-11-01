@@ -17,6 +17,7 @@ export function buildInterfaceSecurityHeaders({
       "style-src 'self' 'unsafe-inline'",
       "font-src 'self' data:",
       "img-src 'self' data: blob:",
+      `media-src ${mode === "packaged" ? "'self' blob:" : "'self' http: https: blob:"}`,
       `connect-src ${connectSource}`,
       "worker-src 'self' blob:",
       "frame-ancestors 'none'",

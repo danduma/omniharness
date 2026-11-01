@@ -222,9 +222,10 @@ export class FileViewerPanelManager extends StateManager<{
   renderMarkdown: boolean;
   actualSize: boolean;
   imageByKey: Record<string, FileViewerImageState>;
+  videoFailedByKey: Record<string, boolean>;
 }> {
   constructor() {
-    super({ wordWrap: true, renderMarkdown: true, actualSize: false, imageByKey: {} });
+    super({ wordWrap: true, renderMarkdown: true, actualSize: false, imageByKey: {}, videoFailedByKey: {} });
   }
 
   hydrateFromLocalStorage() {
@@ -252,6 +253,10 @@ export class FileViewerPanelManager extends StateManager<{
   };
 
   toggleActualSize = () => this.setKey("actualSize", (current) => !current);
+
+  markVideoFailed = (key: string) => this.setKey("videoFailedByKey", (current) => (
+    current[key] ? current : { ...current, [key]: true }
+  ));
 
   markImageLoaded = (key: string, width: number, height: number) => this.setKey("imageByKey", (current) => (
     current[key]?.width === width && current[key]?.height === height && !current[key]?.failed

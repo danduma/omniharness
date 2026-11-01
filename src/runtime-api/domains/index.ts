@@ -296,6 +296,12 @@ export function createRuntimeDomains({
           file: input.file,
         })}`, options);
       },
+      video(input, options) {
+        return request("GET", `/api/fs/files${buildRuntimeQuery({ root: input.root, file: input.file, video: "1" })}`, {
+          responseType: "blob",
+          signal: options?.signal,
+        }) as Promise<Blob>;
+      },
       image(input, options) {
         return request("GET", `/api/fs/files/image${buildRuntimeQuery({
           root: input.root,
