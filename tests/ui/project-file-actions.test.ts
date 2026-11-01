@@ -33,6 +33,6 @@ test("session file links expose Open and Copy path in a context menu", () => {
   expect(menuSource).toContain('t("projectFile.menu.copyPath")');
   expect(menuSource).toContain("buildProjectFileFullPath");
   expect(menuSource).toContain("navigator.clipboard.writeText");
-  expect(markdownSource.match(/<ProjectFileContextMenu/g)?.length).toBe(2);
+  expect(markdownSource.match(/<ProjectFileContextMenu/g)?.length).toBe(3);
   expect(terminalSource).toContain("<ProjectFileContextMenu");
 });

@@ -174,6 +174,7 @@ export interface RuntimeAPIs {
       root: string;
       file?: string;
     }, options?: RuntimeCallOptions): Promise<unknown>;
+    video(input: { root: string; file: string }, options?: RuntimeCallOptions): Promise<Blob>;
     image(input: {
       root: string;
       file: string;

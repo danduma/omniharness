@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Copy, FolderOpen } from "lucide-react";
+import { Copy, Download, FolderOpen, Globe } from "lucide-react";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -9,6 +9,9 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { buildProjectFileFullPath, type ProjectFileReference } from "@/lib/project-file-links";
+import { isVideoPath } from "@/lib/file-media";
+import { isHtmlProjectFile } from "@/lib/project-file-links";
+import { useOpenProjectHtml } from "@/lib/use-open-project-html";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 
 export function ProjectFileContextMenu({
@@ -21,6 +24,7 @@ export function ProjectFileContextMenu({
   onOpen: (reference: ProjectFileReference) => void;
 }) {
   useI18nSnapshot();
+  const openInBrowser = useOpenProjectHtml();
 
   return (
     <ContextMenu>
@@ -32,6 +36,18 @@ export function ProjectFileContextMenu({
           <FolderOpen />
           <span>{t("projectFile.menu.open")}</span>
         </ContextMenuItem>
+        {(isHtmlProjectFile(reference) || isVideoPath(reference.relativePath)) && (
+          <ContextMenuItem onClick={() => openInBrowser(reference)}>
+            <Globe />
+            <span>{t("projectFile.menu.openInBrowser")}</span>
+          </ContextMenuItem>
+        )}
+        {isVideoPath(reference.relativePath) && (
+          <ContextMenuItem onClick={() => openInBrowser(reference, true)}>
+            <Download />
+            <span>{t("fileViewer.video.download")}</span>
+          </ContextMenuItem>
+        )}
         <ContextMenuItem
           onClick={() => {
             void navigator.clipboard.writeText(buildProjectFileFullPath(reference));

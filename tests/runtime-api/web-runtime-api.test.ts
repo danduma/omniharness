@@ -190,3 +190,15 @@ describe("createWebRuntimeAPIs", () => {
     expect(urls[1]).toContain("ticket=ticket-2");
   });
 });
+
+it("fetches video bytes through the authenticated runtime with cancellation", async () => {
+  const controller = new AbortController();
+  const fetchImpl = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response("video-bytes", { headers: { "content-type": "video/mp4" } }));
+  const apis = createWebRuntimeAPIs({ baseUrl: "http://runner.test", bearerToken: "test-token", fetchImpl });
+  const blob = await apis.files.video({ root: "/project", file: "clip.mp4" }, { signal: controller.signal });
+  expect(await blob.text()).toBe("video-bytes");
+  const [url, init] = fetchImpl.mock.calls[0];
+  expect(String(url)).toContain("/api/fs/files?root=%2Fproject&file=clip.mp4&video=1");
+  expect(new Headers(init?.headers).get("authorization")).toBe("Bearer test-token");
+  expect(init?.signal).toBe(controller.signal);
+});

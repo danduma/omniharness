@@ -3,7 +3,8 @@ import { Check, Copy } from "lucide-react";
 import { markdownBlockCopyManager } from "@/components/component-state-managers";
 import { ProjectFileContextMenu } from "@/components/ProjectFileContextMenu";
 import { t, useI18nSnapshot } from "@/lib/i18n";
-import { parseProjectFileReference, type ProjectFileReference } from "@/lib/project-file-links";
+import { useOpenProjectHtml } from "@/lib/use-open-project-html";
+import { isHtmlProjectFile, parseProjectFileReference, type ProjectFileReference } from "@/lib/project-file-links";
 import { useManagerSelector } from "@/lib/use-manager-snapshot";
 import { cn } from "@/lib/utils";
 
@@ -105,6 +106,22 @@ function linkClassName(inheritTextColor: boolean) {
   );
 }
 
+function ProjectHtmlLink({ reference, label, className, onOpen }: {
+  reference: ProjectFileReference;
+  label: string;
+  className: string;
+  onOpen: (reference: ProjectFileReference) => void;
+}) {
+  const openInBrowser = useOpenProjectHtml();
+  return (
+    <ProjectFileContextMenu reference={reference} onOpen={onOpen}>
+      <button type="button" className={className} onClick={() => openInBrowser(reference)}>
+        {label}
+      </button>
+    </ProjectFileContextMenu>
+  );
+}
+
 function renderLink({
   href,
   label,
@@ -122,6 +139,10 @@ function renderLink({
 }) {
   const reference = projectRoot ? parseProjectFileReference(href, projectRoot) : null;
   if (reference && onOpenProjectFile) {
+    if (isHtmlProjectFile(reference)) {
+      return <ProjectHtmlLink key={keyValue} reference={reference} label={label}
+        className={cn("inline text-left", linkClassName(inheritTextColor))} onOpen={onOpenProjectFile} />;
+    }
     return (
       <ProjectFileContextMenu
         key={keyValue}

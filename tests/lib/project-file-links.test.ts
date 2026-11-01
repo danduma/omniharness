@@ -83,3 +83,29 @@ describe("buildProjectFileFullPath", () => {
     })).toBe("/Users/masterman/NLP/omniharness/src/components/Terminal.tsx");
   });
 });
+
+describe("HTML browser links", () => {
+  it.each(["file:///project/report.html", "/project/report.html", "report.html", "./report.htm"])("recognizes %s", (href) => {
+    expect(parseProjectFileReference(href, "/project")).toMatchObject({ root: "/project", relativePath: expect.stringMatching(/\.html?$/) });
+  });
+
+  it("encodes the project and file without exposing query separators", () => {
+    const url = new URL(projectFileLinks.buildProjectHtmlBrowserUrl({ root: "/project with spaces", relativePath: "a&b.html" }, "http://localhost:3050"));
+    expect(url.searchParams.get("root")).toBe("/project with spaces");
+    expect(url.searchParams.get("file")).toBe("a&b.html");
+    expect(url.searchParams.get("browser")).toBe("1");
+  });
+});
+
+describe("video file links", () => {
+  it.each(["clip.mp4", "clip.MOV", "file:///project/clip.webm"])("recognizes %s", (href) => {
+    expect(parseProjectFileReference(href, "/project")).toMatchObject({ root: "/project" });
+  });
+  it("builds video preview and external download URLs", () => {
+    const reference = { root: "/project", relativePath: "clips/a & b.mp4" };
+    const url = new URL(projectFileLinks.buildProjectVideoBrowserUrl(reference, "http://localhost:3050", true));
+    expect(url.searchParams.get("video")).toBe("1");
+    expect(url.searchParams.get("download")).toBe("1");
+    expect(url.searchParams.get("file")).toBe(reference.relativePath);
+  });
+});

@@ -12,6 +12,7 @@ describe("interface security headers", () => {
     expect(csp).toContain("default-src 'self'");
     expect(csp).toContain("script-src 'self' 'sha256-abc123'");
     expect(csp).toContain("connect-src 'self' http: https:");
+    expect(csp).toContain("media-src 'self' http: https: blob:");
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).toContain("base-uri 'none'");
     expect(csp).not.toContain("bugdrop");
@@ -29,5 +30,6 @@ describe("interface security headers", () => {
       themeScriptSha256: "abc123",
     });
     expect(headers.get("content-security-policy")).toContain("connect-src 'none'");
+    expect(headers.get("content-security-policy")).toContain("media-src 'self' blob:");
   });
 });
