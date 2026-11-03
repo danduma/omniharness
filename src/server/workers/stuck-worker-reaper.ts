@@ -49,6 +49,14 @@ import {
 } from "@/server/conversations/worker-turn-gate";
 
 const DEFAULT_STUCK_TIMEOUT_MS = 5 * 60_000;
+/**
+ * Silence ceiling for an agent the bridge still reports mid-turn. A model
+ * writing one large file streams nothing until the tool call lands, so a
+ * healthy turn can sit silent well past the stream timeout. In session
+ * 2a9e6b370488 a codex worker drafting a plan was reaped at 300s on every
+ * attempt and never finished.
+ */
+const DEFAULT_ACTIVE_TURN_STUCK_TIMEOUT_MS = 30 * 60_000;
 const DIRECT_MODE_NAMES = ["direct"];
 const STUCK_CANDIDATE_STATUSES = new Set(["working", "starting"]);
 /** Stream entries only the agent writes, i.e. evidence it acted on a prompt. */
@@ -374,6 +382,10 @@ async function persistRecoveredRedeliveryFailure(args: {
 export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<ReaperOutcome> {
   try {
     const timeoutMs = readPositiveIntegerEnv("OMNIHARNESS_WORKER_STUCK_TIMEOUT_MS", DEFAULT_STUCK_TIMEOUT_MS);
+    const activeTurnTimeoutMs = Math.max(
+      timeoutMs,
+      readPositiveIntegerEnv("OMNIHARNESS_WORKER_ACTIVE_TURN_STUCK_TIMEOUT_MS", DEFAULT_ACTIVE_TURN_STUCK_TIMEOUT_MS),
+    );
     const nowMs = now.getTime();
 
     const candidates = await db
@@ -447,12 +459,14 @@ export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<Re
       // it. When syncs fall behind (a stalled pass, a restart), a worker that
       // is still producing output looks silent here; reaping it cancels a
       // productive turn. The bridge holds the live output, so it decides.
+      // A turn the bridge still holds open gets the longer active-turn
+      // ceiling: silent generation (one big file write) is not a hang.
       const bridgeActivityMs = liveAgent ? readLatestBridgeActivityMs(liveAgent) : null;
+      const lastActivityMs = Math.max(bridgeActivityMs ?? -1, lastEntryTs);
       if (
         liveAgent
         && isActiveAgentState(normalizeStatus(liveAgent.state))
-        && bridgeActivityMs !== null
-        && nowMs - bridgeActivityMs < timeoutMs
+        && nowMs - lastActivityMs < activeTurnTimeoutMs
       ) {
         emitNamedEvent({
           kind: "worker.stuck_reap_skipped",
@@ -460,7 +474,7 @@ export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<Re
           workerId: worker.id,
           reason: "bridge_streaming",
           streamIdleMs: idleMs,
-          bridgeIdleMs: Math.max(0, nowMs - bridgeActivityMs),
+          bridgeIdleMs: Math.max(0, nowMs - lastActivityMs),
         });
         skipped++;
         continue;
