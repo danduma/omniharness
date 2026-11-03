@@ -744,7 +744,7 @@ async function syncConversationSessionsUnlocked(
     : await db.select().from(recoveryIncidents);
   const activeQuotaIncidents = allIncidents.filter((incident) => (
     incident.kind === "quota_exhausted"
-    && (incident.status === "open" || incident.status === "recovering")
+    && (incident.status === "open" || incident.status === "recovering" || incident.status === "needs_user")
   ));
   const quotaOwnedRunIds = new Set<string>();
   const runsWithUnsettledIncidents = new Set(
@@ -767,17 +767,18 @@ async function syncConversationSessionsUnlocked(
     const quotaRecoveryOwnsPersistedState = Boolean(
       quotaIncident
       && (
-        run.status === "quota_waiting"
+        quotaIncident.status === "needs_user"
+        || run.status === "quota_waiting"
         || normalizedStatus(quotaWorker?.status) === "cred-exhausted"
       ),
     );
     if (quotaIncident && quotaRecoveryOwnsPersistedState) {
       quotaOwnedRunIds.add(run.id);
-      if (run.status !== "quota_waiting" || run.lastError || run.failedAt) {
+      const quotaRunStatus = quotaIncident.status === "needs_user" ? "needs_recovery" : "quota_waiting";
+      if (run.status !== quotaRunStatus || (quotaRunStatus === "quota_waiting" && (run.lastError || run.failedAt))) {
         const updated = await withSqliteBusyRetry(() => db.update(runs).set({
-          status: "quota_waiting",
-          failedAt: null,
-          lastError: null,
+          status: quotaRunStatus,
+          ...(quotaRunStatus === "quota_waiting" ? { failedAt: null, lastError: null } : {}),
           updatedAt: new Date(),
         }).where(and(
           eq(runs.id, run.id),

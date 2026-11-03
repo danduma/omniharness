@@ -357,8 +357,12 @@ export async function resolveRecoveryIncidentsAfterHealthyTurn(args: {
   // Scope to the worker that just proved itself, plus run-level incidents that
   // name no worker. A healthy worker in a multi-worker implementation run says
   // nothing about a sibling that is still lost.
+  // Callers that only reattached or classified the runtime have not observed
+  // a successful provider turn and cannot disprove a quota block.
+  const runtimeEvidenceOnly = args.reason === "worker_session_resumed" || args.reason === "run_reconciled_healthy";
   const stale = records.filter((record) => (
-    !record.workerId || !args.workerId || record.workerId === args.workerId
+    (!runtimeEvidenceOnly || record.kind !== "quota_exhausted")
+    && (!record.workerId || !args.workerId || record.workerId === args.workerId)
   ));
 
   for (const incident of stale) {
@@ -380,8 +384,9 @@ export async function resolveRecoveryIncidentsAfterHealthyTurn(args: {
 
 /**
  * A worker that has *begun a new working period* since an incident was recorded
- * has disproved it just as conclusively as a completed turn: the session
- * exists, the runtime answers, the credentials work, quota is not exhausted.
+ * disproves stale missing-session evidence: the session exists and the runtime
+ * answers. It does not prove quota availability; the working claim precedes
+ * the provider response, so only a healthy turn may settle quota exhaustion.
  *
  * `resolveRecoveryIncidentsAfterHealthyTurn` only fires when a turn *finishes*,
  * which is too late whenever the code that opens an incident then awaits a full
@@ -410,7 +415,8 @@ export async function resolveRecoveryIncidentsDisprovedByActiveWork(args: {
     ));
 
   const stale = records.filter((record) => (
-    (!record.workerId || record.workerId === args.workerId)
+    record.kind !== "quota_exhausted"
+    && (!record.workerId || record.workerId === args.workerId)
     && record.detectedAt.getTime() < args.since.getTime()
   ));
 
