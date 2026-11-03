@@ -234,6 +234,40 @@ describe("reapStuckDirectWorkers", () => {
     await db.update(workers).set({ status: "idle" }).where(eq(workers.id, workerId));
   });
 
+  it("leaves a mid-turn agent alone through a long silent generation (session 2a9e6b370488)", async () => {
+    // A codex worker drafting a large plan file streams nothing until the
+    // write lands. Reaping it at the 5-minute stream timeout restarted the
+    // draft on every attempt, so it never finished.
+    const TEN_MIN_AGO = new Date(Date.now() - 10 * 60_000);
+    const { runId, workerId } = await setupRun({
+      mode: "direct",
+      workerStatus: "working",
+      workerUpdatedAt: TEN_MIN_AGO,
+    });
+    await writeUserInputEntry(runId, workerId, {
+      id: randomUUID(),
+      text: "write the plan",
+      timestamp: TEN_MIN_AGO,
+    });
+    mockGetAgent.mockResolvedValue({
+      name: workerId,
+      state: "working",
+      updatedAt: TEN_MIN_AGO.toISOString(),
+      outputEntries: [],
+      pendingPermissions: [],
+      pendingElicitations: [],
+    });
+
+    await reapStuckDirectWorkers();
+
+    expect(mockCancelAgent).not.toHaveBeenCalled();
+    expect(mockResumeMissingDirectWorker).not.toHaveBeenCalled();
+    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
+    expect(worker?.status).toBe("working");
+    // Later sweeps in this file scan every direct worker; settle this one.
+    await db.update(workers).set({ status: "idle" }).where(eq(workers.id, workerId));
+  });
+
   it("persists the recovered turn as active before awaiting the re-delivered prompt", async () => {
     const TEN_MIN_AGO = new Date(Date.now() - 10 * 60_000);
     const { runId, workerId } = await setupRun({
@@ -490,11 +524,12 @@ describe("reapStuckDirectWorkers", () => {
   });
 
   it("closes an orphaned question row the bridge no longer holds, then reaps", async () => {
-    const TEN_MIN_AGO = new Date(Date.now() - 10 * 60_000);
+    // Past the active-turn ceiling, so the bridge's 'working' is a hang.
+    const FORTY_MIN_AGO = new Date(Date.now() - 40 * 60_000);
     const { runId, workerId } = await setupRun({
       mode: "direct",
       workerStatus: "working",
-      workerUpdatedAt: TEN_MIN_AGO,
+      workerUpdatedAt: FORTY_MIN_AGO,
     });
 
     const userMessageId = randomUUID();
@@ -504,12 +539,12 @@ describe("reapStuckDirectWorkers", () => {
       role: "user",
       kind: "checkpoint",
       content: "continue",
-      createdAt: TEN_MIN_AGO,
+      createdAt: FORTY_MIN_AGO,
     });
     await writeUserInputEntry(runId, workerId, {
       id: userMessageId,
       text: "continue",
-      timestamp: TEN_MIN_AGO,
+      timestamp: FORTY_MIN_AGO,
     });
     // A `pending` row whose turn was torn down without ever writing a terminal
     // row. Left alone it exempts this worker from the watchdog forever while
@@ -520,7 +555,7 @@ describe("reapStuckDirectWorkers", () => {
         type: "elicitation",
         text: "Question for user: orphaned",
         status: "pending",
-        timestamp: TEN_MIN_AGO.toISOString(),
+        timestamp: FORTY_MIN_AGO.toISOString(),
         raw: { requestId: 11 },
         seq: 2,
       },
@@ -539,7 +574,7 @@ describe("reapStuckDirectWorkers", () => {
       stderrBuffer: [],
       outputEntries: [],
       pendingElicitations: [],
-      updatedAt: TEN_MIN_AGO.toISOString(),
+      updatedAt: FORTY_MIN_AGO.toISOString(),
     });
     mockCancelAgent.mockResolvedValue({ ok: true });
     mockResumeMissingDirectWorker.mockResolvedValue({ name: workerId, state: "idle" });
@@ -890,12 +925,13 @@ describe("reapStuckDirectWorkers", () => {
     // went quiet. Five minutes later the reaper re-sent the answered message
     // and the agent took it as fresh consent to implement.
     async function seedAnsweredConversation() {
-      const THIRTY_MIN_AGO = new Date(Date.now() - 30 * 60_000);
-      const TEN_MIN_AGO = new Date(Date.now() - 10 * 60_000);
+      // Silent past the active-turn ceiling, so a 'working' bridge is hung.
+      const HOUR_AGO = new Date(Date.now() - 60 * 60_000);
+      const FORTY_MIN_AGO = new Date(Date.now() - 40 * 60_000);
       const { runId, workerId } = await setupRun({
         mode: "direct",
         workerStatus: "working",
-        workerUpdatedAt: TEN_MIN_AGO,
+        workerUpdatedAt: FORTY_MIN_AGO,
       });
       const userMessageId = randomUUID();
       await db.insert(messages).values({
@@ -904,12 +940,12 @@ describe("reapStuckDirectWorkers", () => {
         role: "user",
         kind: "checkpoint",
         content: "yes go ahead with plan",
-        createdAt: THIRTY_MIN_AGO,
+        createdAt: HOUR_AGO,
       });
       await writeUserInputEntry(runId, workerId, {
         id: userMessageId,
         text: "yes go ahead with plan",
-        timestamp: THIRTY_MIN_AGO,
+        timestamp: HOUR_AGO,
       });
       await writeWorkerOutputEntries(runId, workerId, [
         {
@@ -917,18 +953,18 @@ describe("reapStuckDirectWorkers", () => {
           type: "tool_call",
           text: "Edit",
           status: "pending",
-          timestamp: new Date(TEN_MIN_AGO.getTime() - 1000).toISOString(),
+          timestamp: new Date(FORTY_MIN_AGO.getTime() - 1000).toISOString(),
           seq: 2,
         },
         {
           id: randomUUID(),
           type: "message",
           text: "Say the word and I'll start on Task 0.",
-          timestamp: TEN_MIN_AGO.toISOString(),
+          timestamp: FORTY_MIN_AGO.toISOString(),
           seq: 3,
         },
       ]);
-      return { runId, workerId, lastEntryAt: TEN_MIN_AGO };
+      return { runId, workerId, lastEntryAt: FORTY_MIN_AGO };
     }
 
     it("settles a quiesced agent without re-sending or tearing anything down", async () => {
@@ -977,7 +1013,7 @@ describe("reapStuckDirectWorkers", () => {
         outputEntries: [],
         pendingPermissions: [],
         pendingElicitations: [],
-        updatedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+        updatedAt: new Date(Date.now() - 40 * 60_000).toISOString(),
       });
       mockCancelAgent.mockResolvedValue({ ok: true });
       mockResumeMissingDirectWorker.mockResolvedValue({ name: workerId, state: "idle" });
