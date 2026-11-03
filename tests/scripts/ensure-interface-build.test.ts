@@ -11,13 +11,39 @@ const helper = await import(pathToFileURL(
 ).href) as {
   ensureInterfaceBuild: (options: {
     root: string;
+    preferExisting?: boolean;
     run: (command: string, args: string[]) => { status: number | null };
   }) => number;
 };
 
 describe("production interface start freshness", () => {
-  it("runs the freshness gate before the production runner", () => {
-    expect(packageJson.scripts.prestart).toBe("node ./scripts/ensure-interface-build.mjs");
+  it("runs the local startup gate before the production runner", () => {
+    expect(packageJson.scripts.prestart).toBe("node ./scripts/ensure-startup.mjs");
+  });
+
+  it("checks only existing compiled assets for automatic startup", () => {
+    const actions: string[][] = [];
+    expect(helper.ensureInterfaceBuild({
+      root: "/repo",
+      preferExisting: true,
+      run: (_command, args) => { actions.push(args); return { status: 0 }; },
+    })).toBe(0);
+    expect(actions).toEqual([["/repo/scripts/interface-build-state.mjs", "--check-output"]]);
+  });
+
+  it("repairs missing compiled assets even when startup prefers existing output", () => {
+    const actions: string[][] = [];
+    expect(helper.ensureInterfaceBuild({
+      root: "/repo",
+      preferExisting: true,
+      run: (_command, args) => {
+        actions.push(args);
+        return { status: args.includes("--check-output") ? 10 : 0 };
+      },
+    })).toBe(0);
+    expect(actions[0]).toContain("--check-output");
+    expect(actions[1]).toContain("build");
+    expect(actions[2]).toContain("--write");
   });
 
   it("does not rebuild when the interface fingerprint is current", () => {

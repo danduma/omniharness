@@ -9,28 +9,10 @@ function pathApiFor(platform) {
 export function buildStartupCommands({ root = process.cwd(), platform = process.platform } = {}) {
   const pathApi = pathApiFor(platform);
   const scriptsDir = pathApi.join(root, "scripts");
-  const agentInstaller = platform === "win32"
-    ? {
-      command: "powershell.exe",
-      args: [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        pathApi.join(scriptsDir, "install-agent-acp.ps1"),
-        "-EnsureOnly",
-      ],
-    }
-    : {
-      command: "/bin/bash",
-      args: [pathApi.join(scriptsDir, "install-agent-acp.sh"), "--ensure-only"],
-    };
-
   return [
-    agentInstaller,
     {
       command: process.execPath,
-      args: [pathApi.join(scriptsDir, "ensure-interface-build.mjs")],
+      args: [pathApi.join(scriptsDir, "ensure-interface-build.mjs"), "--prefer-existing"],
     },
   ];
 }
@@ -41,16 +23,10 @@ export function runStartupChecks({
   env = process.env,
   run = (command, args, options) => spawnSync(command, args, options),
 } = {}) {
-  const commands = buildStartupCommands({ root, platform });
-  const [agentSetup, interfaceBuild] = commands;
+  // Startup must never depend on an agent registry, download, or update.
+  // The runner checks for adapter updates in the background after listening.
+  const [interfaceBuild] = buildStartupCommands({ root, platform });
   const options = { cwd: root, env, stdio: "inherit" };
-
-  if (env.OMNIHARNESS_AGENT_ACP_SETUP_COMPLETE !== "1") {
-    const agentResult = run(agentSetup.command, agentSetup.args, options);
-    if (agentResult.status !== 0) {
-      return agentResult.status ?? 1;
-    }
-  }
 
   const interfaceResult = run(interfaceBuild.command, interfaceBuild.args, options);
   return interfaceResult.status ?? 1;

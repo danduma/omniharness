@@ -194,10 +194,8 @@ fi
 AUTH_PASSWORD_NOTICE_FILE="$(mktemp "${TMPDIR:-/tmp}/omniharness-auth-password.XXXXXX")"
 OMNIHARNESS_AUTH_PASSWORD_NOTICE_FILE="$AUTH_PASSWORD_NOTICE_FILE" node ./scripts/setup-auth.mjs
 
-if [ "${OMNIHARNESS_SKIP_AGENT_ACP_SETUP:-0}" != "1" ]; then
-  ./scripts/install-agent-acp.sh --ensure-only || echo "[omniharness] Agent ACP adapter setup reported issues; continuing." >&2
-  export OMNIHARNESS_AGENT_ACP_SETUP_COMPLETE=1
-fi
+# The runner checks agent updates in the background after listening. Never let
+# registry access or an adapter update block launching the local server.
 
 WEB_PORT="$(node --env-file-if-exists="$ROOT_DIR/.env" --input-type=module -e '
   const value = process.env.OMNIHARNESS_RUNNER_PORT || process.env.PORT || "3050";

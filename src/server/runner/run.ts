@@ -1,4 +1,5 @@
 import path from "node:path";
+import { AgentUpdatesManager } from "./agent-updates";
 import { dbReady } from "@/server/db";
 import { emitNamedEvent } from "@/server/events/named-events";
 import {
@@ -80,6 +81,7 @@ export async function startRunnerProcess(
       startedAt: Date.now(),
     },
   });
+  const agentUpdates = new AgentUpdatesManager({ repositoryRoot: config.repositoryRoot });
   let server: OmniServerHandle | null = null;
   let stopped = false;
   const releaseLockOnExit = () => runnerLock.release();
@@ -182,6 +184,7 @@ export async function startRunnerProcess(
           includeInitialData: false,
         }),
     });
+    agentUpdates.start();
     emitRunnerStaticUiStatus(config, server.staticUiEnabled);
     readiness.markHttpListening(server.origin);
     emitNamedEvent({
@@ -206,6 +209,7 @@ export async function startRunnerProcess(
         ? { name: error.name, message: error.message }
         : null,
     });
+    await agentUpdates.stop();
     await bridgeEventForwarder.stop().catch(() => undefined);
     await bridge.stop().catch(() => undefined);
     stopGoalOutboxDelivery();
@@ -224,6 +228,7 @@ export async function startRunnerProcess(
       }
       stopped = true;
       readiness.markStopping();
+      await agentUpdates.stop();
       try {
         await server?.stop();
       } finally {

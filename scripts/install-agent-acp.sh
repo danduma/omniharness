@@ -4,6 +4,7 @@ set -euo pipefail
 
 DRY_RUN=0
 ENSURE_ONLY=0
+INSTALL_FAILED=0
 CODEX_ACP_INSTALL_MODE="${OMNIHARNESS_CODEX_ACP_INSTALL:-auto}"
 CODEX_ACP_NPM_PACKAGE="${OMNIHARNESS_CODEX_ACP_NPM_PACKAGE:-@agentclientprotocol/codex-acp}"
 CODEX_ACP_NPM_ROOT="${OMNIHARNESS_CODEX_ACP_NPM_ROOT:-}"
@@ -209,8 +210,8 @@ run_install_codex_acp_npm() {
 
   mkdir -p "$CODEX_ACP_NPM_ROOT" "$CODEX_ACP_WRAPPER_DIR"
   echo "  -> installing the latest official Codex ACP adapter and Codex CLI"
-  npm install --prefix "$CODEX_ACP_NPM_ROOT" "$CODEX_ACP_NPM_PACKAGE@latest" "@openai/codex@latest"
-  install -m 0755 "$launcher_path" "$install_path"
+  npm install --prefix "$CODEX_ACP_NPM_ROOT" "$CODEX_ACP_NPM_PACKAGE@latest" "@openai/codex@latest" || return $?
+  install -m 0755 "$launcher_path" "$install_path" || return $?
   local acp_version
   local codex_version
   acp_version="$(installed_npm_package_version "$CODEX_ACP_NPM_PACKAGE" || echo unknown)"
@@ -439,9 +440,9 @@ run_install_codex_acp_binary() {
 
   echo "  -> downloading prebuilt \`codex-acp\` for $target"
   if have_command curl; then
-    curl -fL "$download_url" -o "$tmp_path"
+    curl -fL "$download_url" -o "$tmp_path" || return $?
   else
-    wget -O "$tmp_path" "$download_url"
+    wget -O "$tmp_path" "$download_url" || return $?
   fi
 
   expected_checksum="$(remote_codex_acp_checksum "$target" || true)"
@@ -453,8 +454,8 @@ run_install_codex_acp_binary() {
     fi
   fi
 
-  chmod +x "$tmp_path"
-  mv "$tmp_path" "$install_path"
+  chmod +x "$tmp_path" || return $?
+  mv "$tmp_path" "$install_path" || return $?
   build_metadata_path="$install_path.build.json"
   tmp_build_metadata_path="$build_metadata_path.tmp"
   if have_command curl; then
@@ -668,7 +669,10 @@ echo "Detecting local coding agents and ACP adapters..."
 
 try_install() {
   if [ "$ENSURE_ONLY" -eq 1 ]; then
-    "$@" || echo "  -> install step failed; continuing because --ensure-only was set" >&2
+    if ! "$@"; then
+      INSTALL_FAILED=1
+      echo "  -> install step failed; continuing because --ensure-only was set" >&2
+    fi
   else
     "$@"
   fi
@@ -773,3 +777,8 @@ for tool in pnpm npm python3 python zsh sed awk grep find xargs mkdir rm cp mv j
 done
 
 echo "Done."
+
+# Background callers need an honest exit status while still checking all agents.
+if [ "${OMNIHARNESS_AGENT_UPDATE_STRICT:-0}" = "1" ]; then
+  exit "$INSTALL_FAILED"
+fi

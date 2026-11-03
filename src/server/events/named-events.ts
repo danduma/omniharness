@@ -36,6 +36,7 @@ export type { RuntimeStopReason, RuntimeSurface } from "@/shared/runtime";
 // ---------------------------------------------------------------------------
 
 export type SurfacedErrorCode =
+  | "agent.update_failed"
   | "plan.review.leftover_state"
   | "plan.review.failed"
   | "conversation.delete.foreign_key"
@@ -1145,7 +1146,15 @@ export type ClaudeModelGatewayEvent =
   | { kind: "claude_gateway.models_refresh_failed"; operationId: string; reason: string }
   | { kind: "claude_gateway.spawn_refused"; runId?: string; workerId?: string; reason: string };
 
+export type AgentUpdateEvent =
+  | { kind: "agent.update_started"; path: string; pid: number }
+  | { kind: "agent.update_completed"; path: string }
+  | { kind: "agent.update_failed"; path: string; reason: string }
+  | { kind: "agent.update_cancelled"; path: string; reason: "shutdown" }
+  | { kind: "agent.update_skipped"; path: string; reason: "another_updater_running" };
+
 export type NamedEvent =
+  | AgentUpdateEvent
   | RuntimeEvent
   | AuthEvent
   | WorkerEvent

@@ -19,7 +19,7 @@ function createFixture() {
   return root;
 }
 
-function run(root: string, flag: "--check" | "--write") {
+function run(root: string, flag: "--check" | "--write" | "--check-output") {
   return spawnSync(process.execPath, [scriptPath, flag, "--root", root], {
     encoding: "utf8",
   });
@@ -42,6 +42,28 @@ afterEach(() => {
 });
 
 describe("interface build state", () => {
+  it("accepts complete built assets for boot without a source fingerprint or registry", () => {
+    const root = createFixture();
+    writeBuiltInterface(root);
+    expect(run(root, "--check-output").status).toBe(0);
+    fs.writeFileSync(path.join(root, "src", "interface", "main.ts"), "changed source");
+    expect(run(root, "--check-output").status).toBe(0);
+  });
+
+  it("rejects a built page referencing absent assets during boot", () => {
+    const root = createFixture();
+    writeBuiltInterface(root);
+    fs.writeFileSync(path.join(root, "dist", "interface", "index.html"),
+      '<script src="/assets/missing.js"></script>');
+    const result = run(root, "--check-output");
+    expect(result.status).toBe(10);
+    expect(result.stdout).toContain("referenced asset is missing");
+  });
+
+  it("rejects missing output during the boot asset check", () => {
+    expect(run(createFixture(), "--check-output").status).toBe(10);
+  });
+
   it("requires a build when the interface output is missing", () => {
     const result = run(createFixture(), "--check");
     expect(result.status).toBe(10);

@@ -28,8 +28,8 @@ function readArgs(argv) {
   let root = process.cwd();
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === "--check" || arg === "--write") {
-      if (mode) throw new TypeError("Use exactly one of --check or --write.");
+    if (arg === "--check" || arg === "--write" || arg === "--check-output") {
+      if (mode) throw new TypeError("Use exactly one of --check, --check-output, or --write.");
       mode = arg;
       continue;
     }
@@ -42,7 +42,7 @@ function readArgs(argv) {
     }
     throw new TypeError(`Unknown interface build-state option: ${arg}`);
   }
-  if (!mode) throw new TypeError("Use --check or --write.");
+  if (!mode) throw new TypeError("Use --check, --check-output, or --write.");
   return { mode, root };
 }
 
@@ -159,12 +159,15 @@ async function main() {
     await write(root);
     return;
   }
-  const reason = await check(root);
+  const output = mode === "--check-output" ? await validateOutput(root) : null;
+  const reason = output ? (output.ok ? null : output.reason) : await check(root);
   if (reason) {
     process.stdout.write(`[omniharness] Interface build required: ${reason}.\n`);
     process.exit(BUILD_REQUIRED_EXIT);
   }
-  process.stdout.write("[omniharness] Production interface is current.\n");
+  process.stdout.write(mode === "--check-output"
+    ? "[omniharness] Using existing production interface; run pnpm build to publish source changes.\n"
+    : "[omniharness] Production interface is current.\n");
 }
 
 main().catch((error) => {

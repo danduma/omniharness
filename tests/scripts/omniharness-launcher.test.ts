@@ -8,6 +8,10 @@ const packageJson = JSON.parse(readFileSync(path.resolve(process.cwd(), "package
 };
 
 describe("omniharness launcher", () => {
+  it("does not run agent installation before launching the server", () => {
+    expect(launcherSource).not.toContain("./scripts/install-agent-acp.sh --ensure-only");
+  });
+
   it("passes pnpm's package-manager mismatch policy through nested git dependency installs", () => {
     expect(launcherSource).toContain("pnpm_config_pm_on_fail=warn");
   });
