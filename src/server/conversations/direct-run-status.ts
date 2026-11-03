@@ -6,7 +6,7 @@ import { emitNamedEvent } from "@/server/events/named-events";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { runMilestoneAutoCommit } from "@/server/git/run-auto-commit";
 
-const ACTIVE_QUOTA_INCIDENT_STATUSES = ["open", "recovering"] as const;
+const ACTIVE_QUOTA_INCIDENT_STATUSES = ["open", "recovering", "needs_user"] as const;
 
 type OutputEntryLike = {
   type?: string | null;
@@ -232,7 +232,7 @@ export async function updateDirectRunStatusFromWorkerOutput(args: WorkerOutputSo
     }
   }
 
-  const quotaIncident = await db.select({ id: recoveryIncidents.id })
+  const quotaIncident = await db.select({ id: recoveryIncidents.id, status: recoveryIncidents.status })
     .from(recoveryIncidents)
     .where(and(
       eq(recoveryIncidents.runId, args.runId),
@@ -247,7 +247,8 @@ export async function updateDirectRunStatusFromWorkerOutput(args: WorkerOutputSo
   const quotaRecoveryOwnsPersistedState = Boolean(
     quotaIncident
     && (
-      run.status === "quota_waiting"
+      quotaIncident.status === "needs_user"
+      || run.status === "quota_waiting"
       || normalizeWorkerStatus(quotaWorker?.status) === "cred-exhausted"
     ),
   );
@@ -257,11 +258,11 @@ export async function updateDirectRunStatusFromWorkerOutput(args: WorkerOutputSo
       return run.status;
     }
 
-    if (run.status !== "quota_waiting" || run.failedAt || run.lastError) {
+    const quotaRunStatus = quotaIncident.status === "needs_user" ? "needs_recovery" : "quota_waiting";
+    if (run.status !== quotaRunStatus || (quotaRunStatus === "quota_waiting" && (run.failedAt || run.lastError))) {
       const updated = await db.update(runs).set({
-        status: "quota_waiting",
-        failedAt: null,
-        lastError: null,
+        status: quotaRunStatus,
+        ...(quotaRunStatus === "quota_waiting" ? { failedAt: null, lastError: null } : {}),
         updatedAt: new Date(),
       }).where(and(
         eq(runs.id, args.runId),
@@ -288,7 +289,7 @@ export async function updateDirectRunStatusFromWorkerOutput(args: WorkerOutputSo
         notifyEventStreamSubscribers();
       }
     }
-    return "quota_waiting";
+    return quotaRunStatus;
   }
 
   const nextStatus = resolveDirectRunStatusFromWorkerOutput(args);

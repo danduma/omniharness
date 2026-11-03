@@ -1671,12 +1671,9 @@ describe("syncConversationSessions", () => {
     ]));
   });
 
-  it("clears stale recovery incidents when a worker starts working again", async () => {
-    // Safety net for the whole bug family: recovery bookkeeping is otherwise
-    // only written when a turn *ends*, so any path that opens an incident and
-    // then awaits a full turn leaves the banner up for the turn's duration —
-    // or forever. A worker that begins a new working period has disproved
-    // anything recorded before it.
+  it("keeps quota recovery incidents when a worker merely starts working again", async () => {
+    // A working claim is made before the provider responds. It cannot prove
+    // credits are available, even when the quota incident predates this turn.
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;
@@ -1755,8 +1752,8 @@ describe("syncConversationSessions", () => {
       .from(recoveryIncidents)
       .where(eq(recoveryIncidents.id, "stale-quota-incident"))
       .get();
-    expect(incident?.status).toBe("resolved");
-    expect(incident?.resolvedAt).not.toBeNull();
+    expect(incident?.status).toBe("open");
+    expect(incident?.resolvedAt).toBeNull();
   });
 
   it("clears a stale incident on a worker that was already working when sync looked", async () => {
