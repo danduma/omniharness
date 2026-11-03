@@ -22,6 +22,22 @@ describe("install-agent-acp.sh", () => {
     }
   });
 
+  it("reports background installation failures instead of claiming success", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
+    tempDirs.push(tempDir);
+    const binDir = path.join(tempDir, "bin");
+    fs.mkdirSync(binDir);
+    createFakeBin("npm", binDir, '#!/bin/sh\nexit 17\n');
+    const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh", "--ensure-only", "--codex-acp=npm"], {
+      cwd: process.cwd(),
+      env: { ...process.env, HOME: tempDir, CARGO_HOME: path.join(tempDir, ".cargo"),
+        PATH: `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin`, OMNIHARNESS_AGENT_UPDATE_STRICT: "1" },
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).not.toContain("installed `@agentclientprotocol/codex-acp`");
+  });
+
   it("reports Codex and Claude adapter installs in dry-run mode", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
     const binDir = path.join(tempDir, "bin");

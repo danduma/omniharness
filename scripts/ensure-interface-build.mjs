@@ -23,10 +23,11 @@ function packageManagerCommand() {
 
 export function ensureInterfaceBuild({
   root = process.cwd(),
+  preferExisting = process.argv.includes("--prefer-existing"),
   run = (command, args) => defaultRun(command, args, root),
 } = {}) {
   const stateScript = path.join(root, "scripts", "interface-build-state.mjs");
-  const check = run(process.execPath, [stateScript, "--check"]);
+  const check = run(process.execPath, [stateScript, preferExisting ? "--check-output" : "--check"]);
 
   if (check.status === 0) {
     return 0;

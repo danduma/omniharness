@@ -142,6 +142,7 @@ function Install-CodexAcpNpm {
   }
   New-Item -ItemType Directory -Force -Path $NpmRoot, $InstallDir | Out-Null
   npm install --prefix $NpmRoot "@agentclientprotocol/codex-acp@latest" "@openai/codex@latest"
+  if ($LASTEXITCODE -ne 0) { throw "Codex ACP npm installation failed (exit $LASTEXITCODE)" }
   Copy-Item -LiteralPath $launcherSource -Destination $launcherPath -Force
   Write-Host "  -> installed official codex-acp $(Get-InstalledNpmVersion '@agentclientprotocol\codex-acp') with Codex $(Get-InstalledNpmVersion '@openai\codex')"
 }
@@ -182,6 +183,7 @@ function Install-ClaudeAcp {
     return
   }
   npm install -g "@agentclientprotocol/claude-agent-acp@latest"
+  if ($LASTEXITCODE -ne 0) { throw "Claude ACP npm installation failed (exit $LASTEXITCODE)" }
   Write-Host "  -> installed `@agentclientprotocol/claude-agent-acp`"
 }
 
