@@ -209,6 +209,25 @@ describe("agent runtime tool environment diagnostics", () => {
       .toBe(join(npmBin, "claude-agent-acp.cmd"));
   });
 
+  it("finds the codex-acp launcher installed by install-agent-acp.ps1 without a PATH edit", () => {
+    if (process.platform !== "win32") return;
+    const localAppData = createTempDir("omni-tool-env-localappdata-");
+    const installBin = join(localAppData, "OmniHarness", "bin");
+    mkdirSync(installBin, { recursive: true });
+    createExecutable(installBin, "codex-acp.cmd");
+
+    const env = {
+      HOME: createTempDir("omni-tool-env-home-"),
+      LOCALAPPDATA: localAppData,
+      PATH: "",
+      OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+    };
+
+    const managedPath = buildManagedPath({ env });
+    expect(resolveCommand("codex-acp", { env: { ...env, PATH: managedPath } }))
+      .toBe(join(installBin, "codex-acp.cmd"));
+  });
+
   it("adds OmniHarness's Node executable directory when PATH was not inherited", () => {
     if (process.platform !== "win32") return;
     const env = {

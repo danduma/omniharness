@@ -278,6 +278,11 @@ function projectBinDirs(cwd: string | undefined, home: string): string[] {
     .map((dir) => join(dir, "node_modules", ".bin"));
 }
 
+/** Root of OmniHarness-managed installs on Windows; must match scripts/install-agent-acp.ps1. */
+function windowsManagedRoot(env: EnvLike, home: string) {
+  return env.LOCALAPPDATA ? join(env.LOCALAPPDATA, "OmniHarness") : join(home, ".omniharness");
+}
+
 function envBinDirs(env: EnvLike, home: string): string[] {
   const dirs = [
     env.NVM_BIN,
@@ -295,6 +300,9 @@ function envBinDirs(env: EnvLike, home: string): string[] {
     join(home, ".pyenv", "shims"),
     ...(platform() === "win32" ? [
       env.APPDATA ? join(env.APPDATA, "npm") : join(home, "AppData", "Roaming", "npm"),
+      // Where scripts/install-agent-acp.ps1 puts the codex-acp launcher. It
+      // only edits the user PATH with -AddToPath, so look here regardless.
+      env.OMNIHARNESS_CODEX_ACP_INSTALL_DIR?.trim() || join(windowsManagedRoot(env, home), "bin"),
     ] : []),
   ];
 
@@ -627,7 +635,7 @@ export function withCodexStandardTooling<T extends EnvLike>(env: T): T {
 function codexManagedExecutableCandidates(env: EnvLike): string[] {
   const packageRoot = env.CODEX_MANAGED_PACKAGE_ROOT?.trim();
   const defaultNpmRoot = platform() === "win32"
-    ? join(env.LOCALAPPDATA || join(env.HOME || homedir(), ".omniharness"), "codex-acp")
+    ? join(windowsManagedRoot(env, env.HOME || homedir()), "codex-acp")
     : join(env.HOME || homedir(), ".local", "share", "omniharness", "codex-acp");
   const codexLauncherName = platform() === "win32" ? "codex.cmd" : "codex";
   const npmRoots = [
