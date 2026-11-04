@@ -98,7 +98,7 @@ function compactExecutionEventDetails(details: string | null) {
 
 type CompactWorkerRecord = Pick<
   typeof workers.$inferSelect,
-  "id" | "runId" | "type" | "status" | "workerNumber" | "title" | "initialPrompt" | "createdAt" | "updatedAt"
+  "id" | "runId" | "type" | "status" | "workerNumber" | "workerRole" | "title" | "initialPrompt" | "createdAt" | "updatedAt"
 >;
 
 const WORKER_SNAPSHOT_COLUMNS = {
@@ -107,6 +107,7 @@ const WORKER_SNAPSHOT_COLUMNS = {
   type: workers.type,
   status: workers.status,
   workerNumber: workers.workerNumber,
+  workerRole: workers.workerRole,
   title: workers.title,
   initialPrompt: workers.initialPrompt,
   activeWorkStartedAt: workers.activeWorkStartedAt,
@@ -122,6 +123,7 @@ function compactWorkerRecord(worker: CompactWorkerRecord) {
     type: worker.type,
     status: worker.status,
     workerNumber: worker.workerNumber,
+    workerRole: worker.workerRole ?? null,
     title: worker.title,
     initialPrompt: truncateText(worker.initialPrompt, WORKER_INITIAL_PROMPT_PREVIEW_LIMIT),
     createdAt: worker.createdAt.toISOString(),

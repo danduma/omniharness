@@ -31,7 +31,7 @@ import { applyCodexBridgeEnv, buildCodexAcpConfig, buildCodexConfigArgs, resolve
 import { normalizeReasoningEffort } from "@/shared/reasoning-effort";
 import { buildGeminiArgs, isFullAccessAgentMode, resolveFullGeminiUuid } from "./gemini";
 import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
-import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, stripAmbientCodexSessionEnv, stripRunnerControlEnv, withCodexStandardTooling, withManagedPath } from "./tool-env";
+import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, resolveCommand, stripAmbientCodexSessionEnv, stripRunnerControlEnv, withCodexStandardTooling, withManagedPath } from "./tool-env";
 import {
   appendOutputEntry,
   openAgentOutputArchive,
@@ -664,6 +664,26 @@ function executableExists(filePath: string) {
 function commandExists(command: string, env: EnvLike): boolean {
   const expanded = expandHomePath(command, env);
   return expanded.includes("/") ? executableExists(expanded) : commandAvailable(expanded, { env });
+}
+
+function npmCommandInvocation(command: string, args: string[]) {
+  if (process.platform !== "win32" || !/\.cmd$/i.test(command)) {
+    return { command, args };
+  }
+
+  try {
+    const source = readFileSync(command, "utf8");
+    const scriptMatch = source.match(/"%dp0%\\([^\"]+\.js)"/i);
+    if (!scriptMatch) {
+      return { command, args };
+    }
+    const script = join(dirname(command), scriptMatch[1]);
+    return existsSync(script)
+      ? { command: process.execPath, args: [script, ...args] }
+      : { command, args };
+  } catch {
+    return { command, args };
+  }
 }
 
 function pushStderrLine(buffer: string[], line: string) {
@@ -1767,7 +1787,10 @@ export class AgentRuntimeManager {
           : useGeminiDefault
             ? [{ command: "gemini", args: buildGeminiArgs({ model: requestedModel, mode: requestedMode }) }]
             : [{ command: defaultCommand, args: defaultArgsList }])
-        .filter((candidate) => commandExists(candidate.command, finalEnv));
+        .flatMap((candidate) => {
+          const command = resolveCommand(candidate.command, { env: finalEnv });
+          return command ? [{ ...candidate, command }] : [];
+        });
 
       if (candidates.length === 0) {
         if (type === "codex" && !input.command && !configuredAgent?.command) {
@@ -1787,7 +1810,7 @@ export class AgentRuntimeManager {
         try {
           const result = await this.spawnAgentConnection({
             cwd,
-            command: expandHomePath(candidate.command, finalEnv),
+            command: candidate.command,
             args: candidate.args,
             env: agentProcessEnv as NodeJS.ProcessEnv,
             startupTimeoutMs: readPositiveInteger(
@@ -2750,7 +2773,8 @@ export class AgentRuntimeManager {
     if (!candidate) {
       throw new RuntimeHttpError(400, `Worker type "${type}" has no default ACP command; cannot prewarm`);
     }
-    if (!commandExists(candidate.command, finalEnv)) {
+    const command = resolveCommand(candidate.command, { env: finalEnv });
+    if (!command) {
       throw new RuntimeHttpError(400, `${candidate.command} binary not found on PATH; cannot prewarm`);
     }
 
@@ -2780,7 +2804,7 @@ export class AgentRuntimeManager {
 
       const result = await this.spawnAgentConnection({
         cwd,
-        command: expandHomePath(candidate.command, finalEnv),
+        command,
         args: candidate.args,
         env: agentProcessEnv as NodeJS.ProcessEnv,
         startupTimeoutMs: readPositiveInteger(
@@ -2938,7 +2962,8 @@ export class AgentRuntimeManager {
     try {
       let child: ChildProcessWithoutNullStreams;
       try {
-        child = spawn(input.command, input.args, {
+        const invocation = npmCommandInvocation(input.command, input.args);
+        child = spawn(invocation.command, invocation.args, {
           cwd: input.cwd,
           stdio: ["pipe", "pipe", "pipe"],
           env: input.env,
@@ -3192,7 +3217,8 @@ export class AgentRuntimeManager {
           : type === "gemini"
             ? "gemini"
             : "opencode";
-    const binary = commandExists(commandHint, env);
+    const command = resolveCommand(commandHint, { env });
+    const binary = command !== null;
     let endpoint: boolean | null = null;
     let message = binary ? undefined : `${commandHint} binary not found on PATH`;
     const keyRequirement = getApiKeyRequirement(type);
@@ -3213,6 +3239,7 @@ export class AgentRuntimeManager {
       type,
       status: binary && (endpoint !== false) ? "ok" : "warning",
       binary,
+      ...(command ? { command } : {}),
       apiKey,
       endpoint,
       tools,

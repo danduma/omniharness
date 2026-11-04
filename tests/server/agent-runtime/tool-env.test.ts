@@ -181,6 +181,47 @@ describe("agent runtime tool environment diagnostics", () => {
     expect(resolveCommand("nvm-only-tool", { env: managedEnv })).toBe(join(staleNvmBin, "nvm-only-tool"));
   });
 
+  it("prefers the Windows command shim over an extensionless npm shim", () => {
+    if (process.platform !== "win32") return;
+    const binDir = createTempDir("omni-tool-env-windows-shim-");
+    createExecutable(binDir, "claude");
+    createExecutable(binDir, "claude.cmd");
+
+    expect(resolveCommand("claude", { env: { PATH: binDir } })).toBe(join(binDir, "claude.cmd"));
+  });
+
+  it("adds the Windows user npm bin directory when PATH was not inherited", () => {
+    if (process.platform !== "win32") return;
+    const appData = createTempDir("omni-tool-env-appdata-");
+    const npmBin = join(appData, "npm");
+    mkdirSync(npmBin, { recursive: true });
+    createExecutable(npmBin, "claude-agent-acp.cmd");
+
+    const env = {
+      HOME: createTempDir("omni-tool-env-home-"),
+      APPDATA: appData,
+      PATH: "",
+      OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+    };
+
+    const managedPath = buildManagedPath({ env });
+    expect(resolveCommand("claude-agent-acp", { env: { ...env, PATH: managedPath } }))
+      .toBe(join(npmBin, "claude-agent-acp.cmd"));
+  });
+
+  it("adds OmniHarness's Node executable directory when PATH was not inherited", () => {
+    if (process.platform !== "win32") return;
+    const env = {
+      HOME: createTempDir("omni-tool-env-home-"),
+      PATH: "",
+      OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+    };
+
+    const managedPath = buildManagedPath({ env });
+    expect(resolveCommand("node", { env: { ...env, PATH: managedPath } }))
+      .toBe(process.execPath);
+  });
+
   it("prefers the managed Codex executable exported by the ACP launcher", () => {
     const staleBin = createTempDir("omni-tool-env-stale-codex-");
     const managedBin = createTempDir("omni-tool-env-managed-codex-");

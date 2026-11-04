@@ -1219,6 +1219,14 @@ describe("Supervisor worker spawn flow", () => {
     expect(supervisorInputIndex).toBeGreaterThanOrEqual(0);
     expect(bridgeOutputIndex).toBeGreaterThanOrEqual(0);
     expect(supervisorInputIndex).toBeLessThan(bridgeOutputIndex);
+    expect(getNamedEventsSince(null, { runId }).events.map((entry) => entry.event)).toContainEqual({
+      kind: "supervisor.delegated",
+      runId,
+      toWorkerId: workerId,
+      mode: "spawn",
+      interventionType: null,
+      intentPreview: "Main implementation",
+    });
   });
 
   it("blocks a second main implementation worker while another active main worker exists", async () => {
@@ -2067,6 +2075,17 @@ describe("Supervisor worker spawn flow", () => {
       interventionType: "completion_gap",
       prompt: "The plan is not fully implemented yet. Continue and finish the remaining checklist items.",
     });
+    const delegated = getNamedEventsSince(null, { runId }).events
+      .map((entry) => entry.event)
+      .filter((event) => event.kind === "supervisor.delegated");
+    expect(delegated).toEqual([{
+      kind: "supervisor.delegated",
+      runId,
+      toWorkerId: "worker-needs-steering",
+      mode: "continue",
+      interventionType: "completion_gap",
+      intentPreview: "The plan is not fully implemented yet. Continue and finish the remaining checklist items.",
+    }]);
   });
 
   it("records supervisor continue prompts before waiting for the worker response", async () => {

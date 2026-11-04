@@ -115,6 +115,42 @@ describe("/api/settings", () => {
     expect(payload.resourceSnapshot).toHaveProperty("diskTotalMb");
   });
 
+  it("refuses to store the AI Gateway key and never echoes its value", async () => {
+    // Placeholder only; never a real key.
+    const placeholder = "vck_TESTONLY_placeholder_0000";
+    const response = await POST(await makeAuthenticatedRequest("http://localhost/api/settings", {
+      method: "POST",
+      body: JSON.stringify({ AI_GATEWAY_API_KEY: placeholder, DECISION_LAYER_ENABLED: "true" }),
+    }));
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body).toMatchObject({ error: { code: "env_only_setting" } });
+    expect(JSON.stringify(body)).not.toContain(placeholder);
+    // The whole request is refused, so nothing from it is stored.
+    expect(await db.select().from(settings)).toEqual([]);
+  });
+
+  it("reports decision layer key status from the environment and hides stray key rows", async () => {
+    const previous = process.env.AI_GATEWAY_API_KEY;
+    try {
+      delete process.env.AI_GATEWAY_API_KEY;
+      await db.insert(settings).values({ key: "AI_GATEWAY_API_KEY", value: "stray-row", updatedAt: new Date() });
+      let payload = await (await GET(await makeAuthenticatedRequest("http://localhost/api/settings"))).json();
+      expect(payload.decisionLayer).toEqual({ gatewayKeyConfigured: false, gatewayKeySource: "none" });
+      expect(payload.values.AI_GATEWAY_API_KEY).toBeUndefined();
+      expect(payload.secrets.AI_GATEWAY_API_KEY).toBeUndefined();
+
+      process.env.AI_GATEWAY_API_KEY = "vck_TESTONLY_placeholder_0000";
+      payload = await (await GET(await makeAuthenticatedRequest("http://localhost/api/settings"))).json();
+      expect(payload.decisionLayer).toEqual({ gatewayKeyConfigured: true, gatewayKeySource: "env" });
+      expect(JSON.stringify(payload)).not.toContain("vck_TESTONLY");
+    } finally {
+      if (previous === undefined) delete process.env.AI_GATEWAY_API_KEY;
+      else process.env.AI_GATEWAY_API_KEY = previous;
+    }
+  });
+
   it("stores the project preset commands", async () => {
     const value = serializePresetCommands([releaseNotesPreset]);
     const response = await POST(await makeAuthenticatedRequest("http://localhost/api/settings", {

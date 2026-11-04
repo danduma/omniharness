@@ -432,6 +432,117 @@ describe("LiveEventConnectionManager", () => {
     vi.useRealTimers();
   });
 
+  it("routes worker.activity frames to the worker activity manager", () => {
+    MockEventSource.instances = [];
+    const workerActivity = { onActivityEvent: vi.fn() };
+    const manager = new LiveEventConnectionManager({
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestJson: vi.fn().mockResolvedValue(createState("persisted-initial")),
+      applyUpdate: vi.fn(),
+      reportError: vi.fn(),
+      workerEntries: createWorkerEntriesNotifier(),
+      planManager: createPlanNotifier(),
+      workerActivity,
+    });
+
+    manager.start();
+    const payload = {
+      kind: "worker.activity",
+      runId: "run-1",
+      workerId: "worker-1",
+      activity: "testing",
+      prev: "writing",
+      source: "command_pattern",
+      entrySeq: 9,
+    };
+    MockEventSource.instances[0]?.emit("worker.activity", payload, "41");
+
+    expect(workerActivity.onActivityEvent).toHaveBeenCalledTimes(1);
+    expect(workerActivity.onActivityEvent).toHaveBeenCalledWith(payload);
+    manager.stop();
+  });
+
+  it("routes supervisor activity frames and resets them on resync", () => {
+    MockEventSource.instances = [];
+    const supervisorActivity = { onSupervisorEvent: vi.fn(), reset: vi.fn() };
+    const manager = new LiveEventConnectionManager({
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestJson: vi.fn().mockResolvedValue(createState("persisted-initial")),
+      applyUpdate: vi.fn(),
+      reportError: vi.fn(),
+      workerEntries: createWorkerEntriesNotifier(),
+      planManager: createPlanNotifier(),
+      supervisorActivity,
+    });
+
+    manager.start();
+    const source = MockEventSource.instances[0]!;
+    source.emit("supervisor.wake_lease_acquired", { kind: "supervisor.wake_lease_acquired", runId: "run-1", source: "insert" }, "80");
+    source.emit("supervisor.wake_scheduled", { kind: "supervisor.wake_scheduled", runId: "run-1", delayMs: 1000, source: "volatile" }, "81");
+    source.emit("supervisor.wake_lease_released", { kind: "supervisor.wake_lease_released", runId: "run-1" }, "82");
+    source.emit("supervisor.stopped", { kind: "supervisor.stopped", runId: "run-1", reason: "explicit" }, "83");
+    expect(supervisorActivity.onSupervisorEvent).toHaveBeenCalledTimes(4);
+
+    source.emit("stream.resync_required", { reason: "test" });
+    expect(supervisorActivity.reset).toHaveBeenCalledTimes(1);
+    manager.stop();
+  });
+
+  it("routes code review frames to the code review manager", () => {
+    MockEventSource.instances = [];
+    const codeReviews = { onCodeReviewEvent: vi.fn() };
+    const manager = new LiveEventConnectionManager({
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestJson: vi.fn().mockResolvedValue(createState("persisted-initial")),
+      applyUpdate: vi.fn(),
+      reportError: vi.fn(),
+      workerEntries: createWorkerEntriesNotifier(),
+      planManager: createPlanNotifier(),
+      codeReviews,
+    });
+
+    manager.start();
+    const source = MockEventSource.instances[0]!;
+    source.emit("code_review.started", { kind: "code_review.started", runId: "run-1", reviewId: "r1" }, "70");
+    source.emit("code_review.finished", { kind: "code_review.finished", runId: "run-1", reviewId: "r1", outcome: "approved", reason: "approved" }, "71");
+
+    expect(codeReviews.onCodeReviewEvent.mock.calls.map(([payload]) => (payload as { kind: string }).kind))
+      .toEqual(["code_review.started", "code_review.finished"]);
+    manager.stop();
+  });
+
+  it("routes office relation frames and drops relations on resync", () => {
+    MockEventSource.instances = [];
+    const officeRelations = { onNamedEvent: vi.fn(), reset: vi.fn() };
+    const manager = new LiveEventConnectionManager({
+      EventSourceConstructor: MockEventSource as unknown as typeof EventSource,
+      requestJson: vi.fn().mockResolvedValue(createState("persisted-initial")),
+      applyUpdate: vi.fn(),
+      reportError: vi.fn(),
+      workerEntries: createWorkerEntriesNotifier(),
+      planManager: createPlanNotifier(),
+      workerActivity: { onActivityEvent: vi.fn() },
+      officeRelations,
+    });
+
+    manager.start();
+    const source = MockEventSource.instances[0]!;
+    const frames = [
+      ["supervisor.delegated", { kind: "supervisor.delegated", runId: "run-1", toWorkerId: "w1", mode: "spawn", interventionType: null, intentPreview: "x" }],
+      ["worker.failover_completed", { kind: "worker.failover_completed", runId: "run-1", outgoingWorkerId: "w1", newWorkerId: "w2", newType: "claude" }],
+      ["worker.review_started", { kind: "worker.review_started", runId: "run-1", reviewerWorkerId: "w3", subjectWorkerId: "w1", reviewKind: "plan", round: 1 }],
+      ["worker.review_finished", { kind: "worker.review_finished", runId: "run-1", reviewerWorkerId: "w3", subjectWorkerId: "w1", reviewKind: "plan", outcome: "findings" }],
+      ["worker.activity", { kind: "worker.activity", runId: "run-1", workerId: "w2", activity: "writing", prev: null, source: "tool_kind", entrySeq: 2 }],
+    ] as const;
+    frames.forEach(([event, payload], index) => source.emit(event, payload, String(50 + index)));
+
+    expect(officeRelations.onNamedEvent.mock.calls.map(([payload]) => (payload as { kind: string }).kind)).toEqual(frames.map(([event]) => event));
+
+    source.emit("stream.resync_required", { reason: "test" });
+    expect(officeRelations.reset).toHaveBeenCalledTimes(1);
+    manager.stop();
+  });
+
   it("routes worker entry wake-ups and resync controls through the worker stream manager", () => {
     MockEventSource.instances = [];
     const workerEntries = createWorkerEntriesNotifier();

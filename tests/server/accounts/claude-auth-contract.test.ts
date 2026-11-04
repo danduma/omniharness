@@ -61,6 +61,7 @@ describe("Claude authentication contract", () => {
       LANG: "C",
       LC_ALL: "C",
       HTTPS_PROXY: "http://proxy.invalid",
+      NODE_OPTIONS: "--use-system-ca",
       ANTHROPIC_API_KEY: "secret",
       UNRELATED_SECRET: "secret",
     }, "/tmp/claude-config");
@@ -71,11 +72,67 @@ describe("Claude authentication contract", () => {
       LANG: "C",
       LC_ALL: "C",
       HTTPS_PROXY: "http://proxy.invalid",
+      NODE_OPTIONS: "--use-system-ca",
       CLAUDE_CONFIG_DIR: "/tmp/claude-config",
       TERM: "xterm-256color",
     });
     expect(child).not.toHaveProperty("ANTHROPIC_API_KEY");
     expect(child).not.toHaveProperty("UNRELATED_SECRET");
+  });
+
+  it("preserves the Windows environment required by Claude's interactive login", () => {
+    const child = buildClaudeAuthChildEnv({
+      PATH: "C:\\Windows\\System32",
+      HOME: "C:\\Users\\tester",
+      USERPROFILE: "C:\\Users\\tester",
+      APPDATA: "C:\\Users\\tester\\AppData\\Roaming",
+      LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local",
+      SYSTEMROOT: "C:\\Windows",
+      WINDIR: "C:\\Windows",
+      COMSPEC: "C:\\Windows\\System32\\cmd.exe",
+      PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      ANTHROPIC_AUTH_TOKEN: "secret",
+    }, "C:\\Users\\tester\\.claude");
+
+    expect(child).toMatchObject({
+      USERPROFILE: "C:\\Users\\tester",
+      APPDATA: "C:\\Users\\tester\\AppData\\Roaming",
+      LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local",
+      SYSTEMROOT: "C:\\Windows",
+      WINDIR: "C:\\Windows",
+      COMSPEC: "C:\\Windows\\System32\\cmd.exe",
+      PATHEXT: ".COM;.EXE;.BAT;.CMD",
+    });
+    expect(child).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+  });
+
+  it("preserves Windows environment keys regardless of their source casing", () => {
+    const child = buildClaudeAuthChildEnv({
+      Path: "C:\\Windows\\System32",
+      Home: "C:\\Users\\tester",
+      SystemRoot: "C:\\Windows",
+      ComSpec: "C:\\Windows\\System32\\cmd.exe",
+      ANTHROPIC_API_KEY: "secret",
+    }, "C:\\Users\\tester\\.claude");
+
+    expect(child).toMatchObject({
+      PATH: "C:\\Windows\\System32",
+      HOME: "C:\\Users\\tester",
+      SYSTEMROOT: "C:\\Windows",
+      COMSPEC: "C:\\Windows\\System32\\cmd.exe",
+    });
+    expect(child).not.toHaveProperty("ANTHROPIC_API_KEY");
+  });
+
+  it("uses the Windows certificate store for managed Claude authentication", () => {
+    const child = buildClaudeAuthChildEnv({
+      Path: "C:\\Windows\\System32",
+      SystemRoot: "C:\\Windows",
+    }, "C:\\Users\\tester\\.claude");
+
+    if (process.platform === "win32") {
+      expect(child.NODE_OPTIONS).toContain("--use-system-ca");
+    }
   });
 
   it("constructs official Claude auth arguments without a shell", () => {

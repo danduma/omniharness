@@ -1,4 +1,5 @@
 import { and, desc, eq, gt, inArray } from "drizzle-orm";
+import { gateSupervisorWake, noteSupervisorWoken, shadowSupervisorWake } from "@/server/decisions/points/supervisor-wake";
 import { recordExecutionEvent, listExecutionEventsForRun } from "@/server/events/execution-event-store";
 import { hashArtifactPayload } from "@/server/artifacts/stream-metadata";
 import path from "path";
@@ -83,6 +84,13 @@ export interface DerivedWorkerEvent {
   summary: string;
   shouldWakeSupervisor: boolean;
   updatesActivity: boolean;
+  /**
+   * "heuristic" marks a wake inferred from timing or text shape rather than a
+   * protocol signal. Only such wakes may ever be suppressed by the decision
+   * layer; permission, question, error, stop, stuck and clean turn-end wakes
+   * never carry this flag.
+   */
+  wakeCertainty?: "heuristic";
 }
 
 const TERMINAL_WORKER_STATUSES = new Set([
@@ -619,6 +627,7 @@ export function deriveWorkerEvents(args: {
         : `${args.workerId} produced a long final-looking text turn`,
       shouldWakeSupervisor: true,
       updatesActivity: false,
+      ...(completedByAcpState ? {} : { wakeCertainty: "heuristic" as const }),
     });
     completionHintNotified = true;
   }
@@ -653,6 +662,7 @@ export function deriveWorkerEvents(args: {
       summary: `${args.workerId} has been idle for ${Math.round(silenceMs / 1000)} seconds`,
       shouldWakeSupervisor: true,
       updatesActivity: false,
+      wakeCertainty: "heuristic",
     });
     idleNotified = true;
   }
@@ -1304,6 +1314,23 @@ export async function pollRunWorkers(
         // snapshot rebuild every 5s even when nothing had changed.
       }
 
+      const wakeInput = {
+        runId,
+        workerId: worker.id,
+        runStatus: latestRun.status,
+        workerState: snapshot.state ?? null,
+        stopReason: snapshot.stopReason ?? null,
+        events: filteredEvents,
+        recentOutput: snapshot.currentText || snapshot.lastText || "",
+      };
+      // Decision layer (rollout B2): only when this point may act and every
+      // wake reason is heuristic can the wake be suppressed; anything else
+      // wakes exactly as before. See decisions/points/supervisor-wake.ts.
+      const wakeGate = latestRun.status === "awaiting_user"
+        ? { delayMs: 0, consulted: false }
+        : await gateSupervisorWake(wakeInput);
+      let wokeSupervisor = false;
+      const deferredWakeTypes: string[] = [];
       for (const event of filteredEvents) {
         const eventText = (snapshot.currentText || snapshot.lastText || "").slice(-500);
         const insertedEvent = await insertExecutionEvent(runId, worker.id, event.type, {
@@ -1313,8 +1340,31 @@ export async function pollRunWorkers(
           ...(eventText ? { text: eventText } : {}),
         });
         if (insertedEvent && event.shouldWakeSupervisor && latestRun.status !== "awaiting_user") {
-          wakeSupervisor(runId, 0);
+          if (wakeGate.delayMs === 0) {
+            wakeSupervisor(runId, 0);
+            wokeSupervisor = true;
+          } else {
+            deferredWakeTypes.push(event.type);
+          }
         }
+      }
+      if (wokeSupervisor) {
+        noteSupervisorWoken(runId, worker.id);
+      }
+      if (deferredWakeTypes.length > 0) {
+        // Deferred, not dropped: the durable schedule keeps the earliest
+        // deadline, so any real event still wakes the supervisor at once.
+        wakeSupervisor(runId, wakeGate.delayMs);
+        await insertExecutionEvent(runId, worker.id, "supervisor_wake_deferred", {
+          summary: `Decision layer judged that ${worker.id} needs no supervisor action yet (${deferredWakeTypes.join(", ")}); checking again in ${Math.round(wakeGate.delayMs / 1000)}s.`,
+          eventTypes: deferredWakeTypes,
+          delayMs: wakeGate.delayMs,
+        });
+      }
+      if (!wakeGate.consulted) {
+        // Shadow (rollout B1): record what the decision layer would have
+        // decided next to what the observer did. Fire-and-forget; never acts.
+        shadowSupervisorWake({ ...wakeInput, woke: wokeSupervisor });
       }
     } catch (error) {
       if (!isObserverPollCurrent(runId, options.observerGeneration)) {

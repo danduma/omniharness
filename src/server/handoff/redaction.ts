@@ -5,8 +5,12 @@ const SECRET_PATTERNS: RegExp[] = [
   /\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|COOKIE|CREDENTIALS?)\s*=\s*)[^\s]+/gi,
   /\b(DATABASE_URL|REDIS_URL|MONGODB_URI|AMQP_URL)\s*=\s*[^\s]+/gi,
   /\b((?:cookie|set-cookie|x-api-key|api-key)\s*:\s*)[^\r\n]+/gi,
-  /\b(sk-(?:proj|ant|live|test|or)-[A-Za-z0-9_-]{8,})\b/g,
-  /\b(gh[opusr]_[A-Za-z0-9]{20,})\b/g,
+  // Bare tokens must not use a capture group: the replacer keeps group 1 as
+  // a "prefix", so capturing the token itself would leave it in the output.
+  /\bsk-(?:proj|ant|live|test|or)-[A-Za-z0-9_-]{8,}\b/g,
+  /\bgh[opusr]_[A-Za-z0-9]{20,}\b/g,
+  // Vercel AI Gateway API keys.
+  /\bvck_[A-Za-z0-9_-]{8,}\b/g,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
 ];
 
@@ -18,7 +22,9 @@ const MACHINE_PATH_PATTERNS: RegExp[] = [
 export function redactHandoffText(value: string | null | undefined, maxCharacters = 4_000): string {
   let result = String(value ?? "").normalize("NFC").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
   for (const pattern of SECRET_PATTERNS) {
-    result = result.replace(pattern, (_match, prefix?: string) => `${prefix ?? ""}[REDACTED]`);
+    // Without a capture group, the second replacer argument is the match
+    // offset (a number), not a prefix; only a captured string is kept.
+    result = result.replace(pattern, (_match, prefix?: unknown) => `${typeof prefix === "string" ? prefix : ""}[REDACTED]`);
   }
   for (const pattern of MACHINE_PATH_PATTERNS) result = result.replace(pattern, "[REDACTED_PATH]");
   return result.slice(0, Math.max(0, maxCharacters));

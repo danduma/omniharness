@@ -1,4 +1,6 @@
 import { createOmniHttpRegistry } from "@/runtime/http/registry";
+import { handleCodeReviewsRequest } from "./code-reviews";
+import { handleOrchestrationPolicyRequest, handleOrchestrationPreflightRequest, handleRunOrchestrationRequest } from "./orchestration";
 import { handleAuthSessionRequest } from "./auth-session";
 import { handleAuthLoginRequest } from "./auth-login";
 import { handleAuthLogoutRequest } from "./auth-logout";
@@ -161,6 +163,13 @@ export function createOmniRuntimeHttpRegistry() {
     .route("GET", "/api/attachments", handleAttachmentsRequest)
     .route("POST", "/api/attachments", handleAttachmentsRequest)
     .route("POST", "/api/planning/:id/review", handlePlanningReviewRequest)
+    .route("GET", "/api/runs/:id/code-reviews", handleCodeReviewsRequest)
+    .route("POST", "/api/runs/:id/code-reviews", handleCodeReviewsRequest)
+    .route("GET", "/api/orchestration/policy", handleOrchestrationPolicyRequest)
+    .route("PUT", "/api/orchestration/policy", handleOrchestrationPolicyRequest)
+    .route("POST", "/api/orchestration/preflight", handleOrchestrationPreflightRequest)
+    .route("GET", "/api/runs/:id/orchestration", handleRunOrchestrationRequest)
+    .route("POST", "/api/runs/:id/orchestration", handleRunOrchestrationRequest)
     .route("POST", "/api/planning/:id/promote", handlePlanningPromoteRequest)
     .route("GET", "/api/fs", handleBrowseFilesystemRequest)
     .route("POST", "/api/fs/directories", handleCreateDirectoryRequest, {

@@ -136,9 +136,10 @@ async function runPromptTexts(runId: string) {
 }
 
 /**
- * Why this title cannot be shown, or null when it can be.
+ * Why this title cannot be shown, or null when it can be. Shared by every
+ * title source that did not come from the user (agent session, fast text lane).
  */
-async function agentSessionTitleRejection(
+export async function agentSessionTitleRejection(
   runId: string,
   title: string,
 ): Promise<AgentSessionTitleRejection | null> {

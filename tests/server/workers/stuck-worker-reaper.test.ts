@@ -174,6 +174,13 @@ describe("reapStuckDirectWorkers", () => {
       undefined,
       { expectedTurnGeneration: 0 },
     );
+    const stuck = getNamedEventsSince(null, { runId }).events
+      .map((entry) => entry.event)
+      .filter((event) => event.kind === "worker.stuck_detected");
+    expect(stuck).toEqual([
+      expect.objectContaining({ runId, workerId, reason: "no_output", willRedeliver: true }),
+    ]);
+    expect((stuck[0] as { sinceMs: number }).sinceMs).toBeGreaterThanOrEqual(5 * 60_000);
   });
 
   it("leaves a worker alone while the bridge shows it streaming output the stream has not caught up on", async () => {
@@ -805,6 +812,9 @@ describe("reapStuckDirectWorkers", () => {
     expect(outcome.ok).toBe(true);
     expect(mockResumeMissingDirectWorker).toHaveBeenCalledTimes(1);
     expect(mockAskAgent).not.toHaveBeenCalled(); // no user_input to redeliver
+    expect(getNamedEventsSince(null).events.map((entry) => entry.event)).toContainEqual(
+      expect.objectContaining({ kind: "worker.stuck_detected", workerId, reason: "no_output", willRedeliver: false }),
+    );
   });
 
   it("reconciles a lost completion instead of re-delivering when the bridge agent already finished the turn", async () => {
@@ -860,6 +870,9 @@ describe("reapStuckDirectWorkers", () => {
     expect(workerAfter?.status).toBe("idle");
     const runAfter = await db.select().from(runs).where(eq(runs.id, runId)).get();
     expect(runAfter?.status).toBe("done");
+    // A lost completion is not a stuck worker.
+    expect(getNamedEventsSince(null, { runId }).events.map((entry) => entry.event.kind))
+      .not.toContain("worker.stuck_detected");
   });
 
   it("re-asks a live idle agent directly when the prompt was dropped before reaching it", async () => {

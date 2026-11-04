@@ -333,6 +333,8 @@ export type WorkerCatalogResponse = {
 };
 export type SettingsResponse = {
   values: Record<string, string>;
+  /** Decision layer key status; the key itself lives only in the runner environment. */
+  decisionLayer?: import("./decision-layer").DecisionLayerStatus;
   secrets?: Record<string, { configured: boolean; updatedAt: string; preview?: string }>;
   diagnostics?: AppErrorDescriptor[];
   resourceSnapshot?: {

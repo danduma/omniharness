@@ -293,6 +293,9 @@ function envBinDirs(env: EnvLike, home: string): string[] {
     join(home, ".yarn", "bin"),
     join(home, ".opencode", "bin"),
     join(home, ".pyenv", "shims"),
+    ...(platform() === "win32" ? [
+      env.APPDATA ? join(env.APPDATA, "npm") : join(home, "AppData", "Roaming", "npm"),
+    ] : []),
   ];
 
   return dirs.filter((entry): entry is string => Boolean(entry));
@@ -562,6 +565,7 @@ export function buildManagedPath(input: BuildManagedPathInput = {}): string {
 
   return mergePathEntries([
     createCodexArgv0ShimDir(env),
+    dirname(process.execPath),
     ...projectBinDirs(input.cwd, home),
     ...inherited,
     ...splitPath(loginPath || undefined),
@@ -663,15 +667,20 @@ export function resolveCommand(command: string, input: CommandLookupInput = {}):
     ? join(env.HOME || homedir(), command.slice(2))
     : command;
 
-  if (expanded.includes("/")) {
+  if (isAbsolute(expanded) || expanded.includes("/") || expanded.includes("\\")) {
     return executableExists(expanded) ? expanded : null;
   }
 
   const pathEntries = splitPath(env.PATH);
   for (const dir of pathEntries) {
-    const candidate = join(dir, expanded);
-    if (executableExists(candidate)) {
-      return candidate;
+    const suffixes = platform() === "win32" && !/\.(?:cmd|com|exe|bat)$/i.test(expanded)
+      ? [".cmd", ".exe", ".bat", ".com", ""]
+      : [""];
+    for (const suffix of suffixes) {
+      const candidate = join(dir, `${expanded}${suffix}`);
+      if (executableExists(candidate)) {
+        return candidate;
+      }
     }
   }
 

@@ -5,9 +5,11 @@ import { decryptSettingValue, shouldEncryptSetting } from "@/server/settings/cry
 import { canonicalizePersistedProjectRoots } from "@/server/projects/canonicalize";
 import { readSystemResourceSnapshot } from "@/server/agent-runtime/resource-admission";
 import type { SettingsResponse } from "@/shared/home-types";
+import { readDecisionLayerStatus } from "@/server/decisions/config";
+import { isEnvOnlySecretKey } from "@/shared/decision-layer";
 
 function isInternalSettingKey(key: string) {
-  return key.startsWith("__");
+  return key.startsWith("__") || isEnvOnlySecretKey(key);
 }
 
 function buildSecretPreview(value: string): string {
@@ -74,5 +76,5 @@ export async function readSettingsState(): Promise<SettingsResponse> {
 
   const resourceSnapshot = normalizeResourceSnapshot(await readSystemResourceSnapshot(process.cwd()));
 
-  return { values, secrets, diagnostics, resourceSnapshot };
+  return { values, secrets, diagnostics, resourceSnapshot, decisionLayer: readDecisionLayerStatus() };
 }

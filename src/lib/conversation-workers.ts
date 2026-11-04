@@ -4,6 +4,8 @@ export type ConversationWorkerRecord = {
   type: string;
   status: string;
   workerNumber?: number | null;
+  /** Allocation role: "implementation", "validation", "plan_review", or null for the main worker. */
+  workerRole?: string | null;
   title?: string | null;
   initialPrompt?: string | null;
   activeWorkStartedAt?: string | Date | null;
