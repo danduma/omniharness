@@ -2,14 +2,18 @@
 
 import { ArrowDownLeft, ArrowUpRight, LoaderCircle } from "lucide-react";
 import type { ReactNode } from "react";
+import { MarkdownContent } from "@/components/MarkdownContent";
 import type { AgentCommunication } from "@/lib/agent-communication";
 import { t, useI18nSnapshot } from "@/lib/i18n";
+import type { ProjectFileReference } from "@/lib/project-file-links";
 
-export function AgentCommunicationCard({ communication, direction, status, details }: {
+export function AgentCommunicationCard({ communication, direction, status, details, projectRoot, onOpenProjectFile }: {
   communication: AgentCommunication;
   direction: "incoming" | "outgoing";
   status?: string;
   details?: ReactNode;
+  projectRoot?: string | null;
+  onOpenProjectFile?: (file: ProjectFileReference) => void;
 }) {
   useI18nSnapshot();
   const failed = ["failed", "error", "cancelled", "canceled"].includes(status ?? "");
@@ -25,7 +29,12 @@ export function AgentCommunicationCard({ communication, direction, status, detai
         })}</span>
         {pending ? <LoaderCircle className="mt-0.5 h-4 w-4 shrink-0 animate-spin" aria-hidden="true" /> : null}
       </div>
-      <p className="mt-2 whitespace-pre-wrap text-[length:var(--terminal-message-size)] leading-[1.55] [overflow-wrap:anywhere]">{communication.text}</p>
+      <MarkdownContent
+        content={communication.text}
+        projectRoot={projectRoot}
+        onOpenProjectFile={onOpenProjectFile}
+        className="mt-2 text-[length:var(--terminal-message-size)] leading-[1.55] text-foreground [&_code]:bg-muted/70 [&_pre]:bg-muted/35"
+      />
       {details ? (
         <details className="mt-2 text-xs text-muted-foreground">
           <summary className="cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{t("conversation.agentCommunication.details")}</summary>
