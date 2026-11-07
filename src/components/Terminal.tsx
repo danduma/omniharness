@@ -1367,6 +1367,7 @@ function ToolActivity({
 
   if (activity.communication) {
     return <AgentCommunicationCard communication={activity.communication} direction="outgoing" status={activity.status}
+      projectRoot={projectRoot} onOpenProjectFile={onOpenProjectFile}
       details={hasToolPanes ? <>{activity.inputPane ? <pre>{activity.inputPane.text}</pre> : null}{activity.outputPane ? <pre>{activity.outputPane.text}</pre> : null}</> : undefined} />;
   }
 
@@ -2569,6 +2570,7 @@ const ActivityRow = memo(function ActivityRow({
         ) : null}
         {activity.kind === "agent_communication" ? (
           <AgentCommunicationCard communication={activity} direction="incoming"
+            projectRoot={projectRoot} onOpenProjectFile={onOpenProjectFile}
             details={activity.raw ? <pre>{JSON.stringify(activity.raw, null, 2)}</pre> : undefined} />
         ) : null}
         {activity.kind === "thinking" ? (

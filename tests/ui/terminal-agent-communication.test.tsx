@@ -51,3 +51,13 @@ test("incoming provider envelopes render without becoming human messages", () =>
   expect(html).toContain("Looks good.");
   expect(html).not.toContain("&lt;teammate-message");
 });
+
+test("received message bodies render as markdown", () => {
+  const html = render([{ id: "incoming", seq: 1, type: "user_message_chunk", timestamp,
+    text: '<teammate-message teammate_id="general-purpose">## Findings\n\n- **Root cause** in `foo.ts`</teammate-message>' }]);
+  expect(html).toContain("Received from general-purpose");
+  expect(html).toContain("<strong");
+  expect(html).toContain("<code");
+  expect(html).toContain("<li");
+  expect(html).not.toContain("**Root cause**");
+});
