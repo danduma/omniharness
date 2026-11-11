@@ -1424,7 +1424,6 @@ const ConversationSidebar = memo(function ConversationSidebar({
         <RunnerControls
           placement="sidebar"
           controlId={runnerControlsMode === "mobile" ? "runner-switcher-mobile" : "runner-switcher"}
-          renderDialogs={runnerControlsMode === "desktop"}
         />
         <div className="flex items-stretch gap-0">
           <Button variant="ghost" className="h-9 min-w-0 flex-1 justify-start px-2 text-sm text-[#333333] hover:bg-[#deddda] hover:text-[#1f1f1f] dark:text-zinc-200 dark:hover:bg-muted/70 dark:hover:text-zinc-100" onClick={startNewPlan}>
