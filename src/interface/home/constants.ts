@@ -159,6 +159,7 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
   ],
   claude: [
     { value: "claude-opus-5-5", label: "Opus 5.5" },
+    { value: "claude-fable-5-2", label: "Fable 5.2" },
     { value: "claude-fable-5-1", label: "Fable 5.1" },
     { value: "claude-fable-5", label: "Fable 5" },
     { value: "claude-opus-5", label: "Opus 5" },
@@ -217,6 +218,7 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
   ],
   anthropic: [
     { value: "claude-opus-5-5", label: "Opus 5.5" },
+    { value: "claude-fable-5-2", label: "Fable 5.2" },
     { value: "claude-fable-5-1", label: "Fable 5.1" },
     { value: "claude-fable-5", label: "Fable 5" },
     { value: "claude-opus-5", label: "Opus 5" },
@@ -248,6 +250,7 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
   ],
   openrouter: [
     { value: "anthropic/claude-opus-5-5", label: "Opus 5.5" },
+    { value: "anthropic/claude-fable-5-2", label: "Fable 5.2" },
     { value: "anthropic/claude-fable-5-1", label: "Fable 5.1" },
     { value: "anthropic/claude-fable-5", label: "Fable 5" },
     { value: "anthropic/claude-opus-5", label: "Opus 5" },

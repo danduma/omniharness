@@ -83,8 +83,9 @@ describe("useHomeViewModel", () => {
     expect(getWorkerModelOptions(undefined, "claude")[0]).toEqual(
       { value: "claude-opus-5-5", label: "Opus 5.5" },
     );
-    expect(getWorkerModelOptions(undefined, "claude").slice(0, 4)).toEqual([
+    expect(getWorkerModelOptions(undefined, "claude").slice(0, 5)).toEqual([
       { value: "claude-opus-5-5", label: "Opus 5.5" },
+      { value: "claude-fable-5-2", label: "Fable 5.2" },
       { value: "claude-fable-5-1", label: "Fable 5.1" },
       { value: "claude-fable-5", label: "Fable 5" },
       { value: "claude-opus-5", label: "Opus 5" },
