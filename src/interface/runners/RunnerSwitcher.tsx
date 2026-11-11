@@ -50,7 +50,7 @@ export function RunnerSwitcherButton({
       id={id}
       variant="ghost"
       className={cn(
-        "h-9 min-w-0 max-w-[15rem] justify-start gap-2 px-2 motion-reduce:transition-none",
+        "h-12 min-w-0 max-w-[15rem] justify-start gap-2 px-3 lg:h-9 lg:px-2 motion-reduce:transition-none",
         className,
       )}
       aria-label={t("runner.switcher.aria", {

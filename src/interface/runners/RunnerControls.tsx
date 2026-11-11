@@ -35,6 +35,7 @@ import {
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
+import { cn } from "@/lib/utils";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { isRuntimeTransportFailure } from "@/runtime-api/request";
 import { createWebRuntimeAPIs } from "@/runtime-api/web";
@@ -422,7 +423,15 @@ function ConnectedRunnerControls({
               : undefined}
           />
         )} />
-        <DropdownMenuContent align="start" className="w-[min(22rem,calc(100vw-1rem))]">
+        <DropdownMenuContent
+          align="start"
+          className={cn(
+            "w-[min(22rem,calc(100vw-1rem))] p-2 lg:p-1",
+            "max-lg:[&_[data-slot=dropdown-menu-item]]:min-h-12 max-lg:[&_[data-slot=dropdown-menu-item]]:gap-3",
+            "max-lg:[&_[data-slot=dropdown-menu-item]]:px-3 max-lg:[&_[data-slot=dropdown-menu-item]]:text-base",
+            "max-lg:[&_[data-slot=dropdown-menu-item]_svg]:size-5",
+          )}
+        >
           <DropdownMenuGroup>
             <DropdownMenuLabel>{t("runner.switcher.label")}</DropdownMenuLabel>
             {connections.map((connection) => {
@@ -564,7 +573,12 @@ function RunnerDialog({
   const descriptionKey = `runner.${ui.dialog}.description`;
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className={cn(
+        "max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md",
+        "max-lg:[&_[data-slot=button]]:min-h-12 max-lg:[&_[data-slot=input]]:min-h-12",
+        "max-lg:[&_[data-slot=dialog-close]]:size-12 max-lg:[&_[data-slot=dialog-close]]:top-0 max-lg:[&_[data-slot=dialog-close]]:right-0",
+        "max-lg:[&_[data-slot=dialog-header]]:pr-8",
+      )}>
         <DialogHeader>
           <DialogTitle>{t(runnerDialogTitleKey(ui.dialog))}</DialogTitle>
           <DialogDescription>{t(descriptionKey)}</DialogDescription>
