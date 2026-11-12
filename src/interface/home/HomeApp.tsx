@@ -1588,6 +1588,8 @@ export function HomeApp({
           selectedRunId={selectedRunId}
           selectedRun={selectedRun}
           welcomeRepoName={welcomeRepoName}
+          loadedProjects={explicitProjects}
+          onSelectWelcomeProject={actions.beginConversationInProject}
           isDirectConversation={isDirectConversation}
           isPlanningConversation={isPlanningConversation}
           isImplementationConversation={isImplementationConversation}

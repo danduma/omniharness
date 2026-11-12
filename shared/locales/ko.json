@@ -1,4 +1,8 @@
 {
+  "conversation.welcome.beforeProject": "",
+  "conversation.welcome.afterProject": "에서 무엇을 만들까요?",
+  "conversation.welcome.selectProject": "프로젝트 선택 (현재: {project})",
+  "conversation.welcome.noProjects": "불러온 프로젝트가 없습니다",
   "product.name": "OmniHarness",
   "authorization.title": "이 인터페이스 승인",
   "authorization.description": "{origin}에서 이 러너에 연결하도록 허용합니다.",

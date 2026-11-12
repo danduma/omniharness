@@ -22,7 +22,7 @@ import { extractLatestPlainTextTurn } from "@/lib/agent-output";
 import { shouldShowPlanningTerminalActivity } from "@/lib/planning-output";
 import type { AgentSnapshot, ExecutionEventRecord, MessageRecord, NoticeDescriptor, RunRecord, PlanningReviewRunRecord, PlanningReviewRoundRecord, PlanningReviewFindingRecord } from "@/interface/home/types";
 import type { RecoveryIncidentRecord, RunRecoveryState } from "@/interface/home/types";
-import { formatExecutionTimestamp, formatExecutionEventType, getExecutionEventDetailRows, shouldShowLatestRecoveryAction, summarizeExecutionEvent, type ConversationTimelineItem } from "@/interface/home/utils";
+import { formatExecutionTimestamp, formatExecutionEventType, getExecutionEventDetailRows, shouldShowLatestRecoveryAction, summarizeExecutionEvent, resolveRepoName, type ConversationTimelineItem } from "@/interface/home/utils";
 import { buildSupervisorActivityCard, type SupervisorActivityWorker } from "@/interface/home/supervisor-activity";
 import { cn } from "@/lib/utils";
 import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
@@ -638,6 +638,8 @@ interface ConversationMainProps {
   selectedRunId: string | null;
   selectedRun: RunRecord | null;
   welcomeRepoName: string;
+  loadedProjects: string[];
+  onSelectWelcomeProject: (projectPath: string) => void;
   isDirectConversation: boolean;
   isPlanningConversation: boolean;
   isImplementationConversation: boolean;
@@ -808,6 +810,8 @@ const ConversationMain = memo(function ConversationMain({
   selectedRunId,
   selectedRun,
   welcomeRepoName,
+  loadedProjects,
+  onSelectWelcomeProject,
   isDirectConversation,
   isPlanningConversation,
   isImplementationConversation,
@@ -1628,7 +1632,29 @@ const ConversationMain = memo(function ConversationMain({
         ) : null}
         {/* Lift the heading on compact layouts so the gap above the composer is
             visible without changing the composer's position. */}
-        <h1 className="mx-auto mb-8 w-full max-w-3xl -translate-y-8 px-6 text-[1.7rem] font-semibold leading-tight sm:mb-14 sm:translate-y-0">What shall we build in {welcomeRepoName}?</h1>
+        <h1 className="mx-auto mb-8 w-full max-w-3xl -translate-y-8 px-6 text-[1.7rem] font-semibold leading-tight sm:mb-14 sm:translate-y-0">
+          {t("conversation.welcome.beforeProject")}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className="cursor-pointer rounded-sm text-primary underline decoration-primary/40 underline-offset-4 hover:decoration-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={t("conversation.welcome.selectProject", { project: welcomeRepoName })}
+            >
+              {welcomeRepoName}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="center" className="max-h-80 max-w-[calc(100vw-2rem)] overflow-y-auto">
+              {loadedProjects.map((projectPath) => (
+                <DropdownMenuItem key={projectPath} onClick={() => onSelectWelcomeProject(projectPath)} className="min-h-11 cursor-pointer">
+                  <span className="flex min-w-0 flex-col text-left">
+                    <span>{resolveRepoName(projectPath)}</span>
+                    <span className="truncate text-xs text-muted-foreground">{projectPath}</span>
+                  </span>
+                </DropdownMenuItem>
+              ))}
+              {loadedProjects.length === 0 ? <DropdownMenuItem disabled>{t("conversation.welcome.noProjects")}</DropdownMenuItem> : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {t("conversation.welcome.afterProject")}
+        </h1>
         {emptyComposer}
       </div>
     )}
