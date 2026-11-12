@@ -203,6 +203,7 @@ export type DoctorResult = {
   type: string;
   status: "ok" | "warning" | "error";
   binary: boolean;
+  command?: string;
   apiKey: boolean | null;
   endpoint: boolean | null;
   tools?: import("./tool-env").ToolDiagnostics;

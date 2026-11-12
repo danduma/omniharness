@@ -18,8 +18,12 @@
  */
 import { notifyEventStreamSubscribers } from "./live-updates";
 import type { HandoffEvent } from "./handoff-events";
+import type { EventListenerFailedEvent, OrchestrationEvent } from "./orchestration-events";
+export type { OrchestrationEvent, OrchestrationFailureCode, OrchestrationRefusalReason } from "./orchestration-events";
 import type { ClaudeSessionModelReason } from "@/lib/claude-session-model";
 import type { GoalAction, GoalMutationAction, GoalPublishedEventKind, GoalSnapshot } from "@/shared/goal-plan";
+import type { AgentActivitySource, StreamAgentActivity } from "@/shared/agent-activity";
+import type { DecisionPointId, DecisionTarget } from "@/shared/decision-layer";
 import { randomBytes } from "node:crypto";
 import {
   formatEventStreamId,
@@ -164,6 +168,20 @@ export type SurfacedErrorCode =
   | "claude_gateway.not_ready"
   | "claude_gateway.unsupported_platform"
   | "claude_gateway.invalid_configuration"
+  | "decision.auth_failed"
+  | "decision.budget_exceeded"
+  | "review.code.refused"
+  | "review.code.needs_user"
+  | "review.code.failed"
+  | "orchestration.binding_unavailable"
+  | "orchestration.identity_mismatch"
+  | "orchestration.budget_exceeded"
+  | "orchestration.dispatch_conflict"
+  | "orchestration.handoff_failed"
+  | "orchestration.stage_failed"
+  | "orchestration.needs_recovery"
+  | "orchestration.profile_locked"
+  | "orchestration.invalid_policy"
   | "internal";
 
 export type FailoverStage = "selection" | "handoff" | "spawn";
@@ -494,6 +512,29 @@ export type WorkerEvent =
   | { kind: "worker.entry_appended"; runId: string; workerId: string; seq: number }
   | { kind: "worker.response_fallback_skipped"; runId: string; workerId: string; reason: "persisted_message" }
   | {
+      /**
+       * The worker's stream-derived activity changed (researching, writing,
+       * testing, ...). Emitted once per transition at the append boundary so
+       * clients never re-derive it by diffing transcripts.
+       */
+      kind: "worker.activity";
+      runId: string;
+      workerId: string;
+      activity: StreamAgentActivity;
+      prev: StreamAgentActivity | null;
+      source: AgentActivitySource;
+      entrySeq: number;
+    }
+  | {
+      /** The stuck-worker watchdog decided a working worker has gone silent and is recovering it. */
+      kind: "worker.stuck_detected";
+      runId: string;
+      workerId: string;
+      reason: "no_output";
+      sinceMs: number;
+      willRedeliver: boolean;
+    }
+  | {
       kind: "worker.plan_boundary_started";
       runId: string;
       workerId: string;
@@ -613,6 +654,17 @@ export type SupervisorStopReason =
 
 export type SupervisorEvent =
   | { kind: "supervisor.stopped"; runId: string; reason: SupervisorStopReason }
+  /** The supervisor recorded the run's terminal outcome (mark_complete / mark_failed). */
+  | { kind: "supervisor.run_finished"; runId: string; outcome: "completed" | "failed" }
+  | {
+      /** The supervisor handed work to a worker: a new spawn or a follow-up prompt. */
+      kind: "supervisor.delegated";
+      runId: string;
+      toWorkerId: string;
+      mode: "spawn" | "continue";
+      interventionType: string | null;
+      intentPreview: string;
+    }
   | { kind: "supervisor.watchdog_sweep_failed"; reason: string }
   | {
       kind: "supervisor.wake_lease_acquired";
@@ -666,6 +718,146 @@ export type PlanEvent =
   | { kind: "plan.review.started"; runId: string; reviewRunId: string }
   | { kind: "plan.review.finished"; runId: string; reviewRunId: string; status: string }
   | { kind: "plan.review.blocked"; runId: string; reason: string };
+
+export type DecisionFallbackReason =
+  | "timeout"
+  | "rate_limited"
+  | "budget_exceeded"
+  | "auth_failed"
+  | "provider_error"
+  | "invalid_response"
+  | "state_too_large";
+
+export type DecisionSkipReason = "disabled" | "point_disabled" | "unconfigured" | "auth_blocked" | "config_error";
+
+/**
+ * Decision layer lifecycle. Every call ends in exactly one of answered /
+ * fallback / skipped; on fallback or skip the caller keeps today's behavior.
+ * Events carry ids, timing and cost only, never state, prompts, or keys.
+ */
+export type DecisionEvent =
+  | {
+      kind: "decision.requested";
+      requestId: string;
+      point: DecisionTarget;
+      runId: string | null;
+      workerId: string | null;
+      shadow: boolean;
+    }
+  | {
+      kind: "decision.answered";
+      requestId: string;
+      point: DecisionTarget;
+      runId: string | null;
+      model: string;
+      escalated: boolean;
+      latencyMs: number;
+      costUsd: number | null;
+      shadow: boolean;
+    }
+  | {
+      kind: "decision.fallback";
+      requestId: string;
+      point: DecisionTarget;
+      runId: string | null;
+      reason: DecisionFallbackReason;
+      latencyMs: number;
+    }
+  | {
+      /** Emitted when the skip reason for a point changes, not on every call, so a disabled layer does not flood the ring. */
+      kind: "decision.skipped";
+      point: DecisionTarget;
+      reason: DecisionSkipReason;
+    }
+  | {
+      /**
+       * Shadow comparison: what the existing heuristic did versus what the
+       * decision layer would have done. Never acted on. `sampledOut` counts
+       * calls skipped by sampling since the previous comparison for this key.
+       */
+      kind: "decision.shadow_compared";
+      requestId: string;
+      point: DecisionPointId;
+      runId: string | null;
+      workerId: string | null;
+      heuristic: string;
+      decided: string;
+      agree: boolean;
+      confidence: number | null;
+      sampledOut: number;
+    }
+  | { kind: "decision.log_failed"; point: DecisionPointId; reason: string }
+  | {
+      /** An acting decision point changed behavior on a confident answer. */
+      kind: "decision.acted";
+      requestId: string;
+      point: DecisionPointId;
+      runId: string | null;
+      workerId: string | null;
+      action: "deferred_wake" | "refined_activity";
+      from: string;
+      to: string;
+      confidence: number | null;
+    }
+  | {
+      /** A guardrail took over from the decision layer (e.g. the deferral ceiling forced an immediate wake). */
+      kind: "decision.overridden";
+      point: DecisionPointId;
+      runId: string | null;
+      workerId: string | null;
+      by: "watchdog";
+      reason: string;
+    };
+
+export type ReviewKind = "plan" | "code";
+
+export type CodeReviewRefusalReason = import("@/shared/code-review").CodeReviewRefusal;
+
+export type CodeReviewOutcome = "approved" | "escalated" | "cap_reached" | "failed";
+
+/** Code cross-review lifecycle (rollout B4). Ids and counts only; never diffs or findings text. */
+export type CodeReviewEvent =
+  | {
+      kind: "code_review.started";
+      runId: string;
+      reviewId: string;
+      implementerWorkerId: string;
+      implementerType: string;
+      reviewerType: string;
+      maxRounds: number;
+    }
+  | { kind: "code_review.refused"; runId: string; reason: CodeReviewRefusalReason }
+  | {
+      kind: "code_review.round_finished";
+      runId: string;
+      reviewId: string;
+      round: number;
+      verdict: "approve" | "request_changes" | "blocked" | "inconclusive";
+      blockers: number;
+      majors: number;
+      evidenceOk: boolean;
+    }
+  | { kind: "code_review.findings_disputed"; runId: string; reviewId: string; round: number; count: number }
+  | { kind: "code_review.finished"; runId: string; reviewId: string; outcome: CodeReviewOutcome; reason: string };
+
+export type WorkerReviewEvent =
+  | {
+      /** A reviewer worker started reviewing another worker's output (the planner, for plan review). */
+      kind: "worker.review_started";
+      runId: string;
+      reviewerWorkerId: string;
+      subjectWorkerId: string | null;
+      reviewKind: ReviewKind;
+      round: number;
+    }
+  | {
+      kind: "worker.review_finished";
+      runId: string;
+      reviewerWorkerId: string;
+      subjectWorkerId: string | null;
+      reviewKind: ReviewKind;
+      outcome: "findings" | "no_findings" | "failed";
+    };
 
 export type GoalEvent =
   | {
@@ -880,8 +1072,8 @@ export type ConversationEvent =
   | {
       kind: "conversation.title_rejected";
       runId: string;
-      source: "agent_session" | "agent_transcript" | "agent_thread_index" | "provider_custom" | "provider_generated";
-      reason: "prompt_leak" | "too_long" | "prompt_echo";
+      source: "agent_session" | "agent_transcript" | "agent_thread_index" | "provider_custom" | "provider_generated" | "decision_text_lane";
+      reason: "prompt_leak" | "too_long" | "prompt_echo" | "empty";
       titleLength: number;
       titlePreview: string;
     }
@@ -1160,6 +1352,9 @@ export type NamedEvent =
   | WorkerEvent
   | SupervisorEvent
   | PlanEvent
+  | WorkerReviewEvent
+  | CodeReviewEvent
+  | DecisionEvent
   | GoalEvent
   | RecoveryEvent
   | AccountEvent
@@ -1173,7 +1368,9 @@ export type NamedEvent =
   | ArtifactEvent
   | AcpEvent
   | ClaudeModelGatewayEvent
-  | HandoffEvent;
+  | HandoffEvent
+  | OrchestrationEvent
+  | EventListenerFailedEvent;
 
 // Internal: snapshot marker stored in the ring so `Last-Event-ID` resume
 // from immediately after a snapshot remains resolvable. The marker itself
@@ -1256,11 +1453,42 @@ const DELTA_ONLY_EVENT_KINDS = new Set<string>([
   "worker.plan_rejected",
 ]);
 
+export type NamedEventListener = (event: NamedEvent) => void;
+
+const listeners = new Map<string, NamedEventListener>();
+
+/**
+ * Register an in-process observer of named events (e.g. orchestration
+ * stage adapters reacting to `code_review.finished`). Listeners run after
+ * the event is recorded, on a microtask, so they can never reorder or
+ * block emission. Registering the same name again replaces the listener.
+ */
+export function registerNamedEventListener(name: string, listener: NamedEventListener) {
+  listeners.set(name, listener);
+  return () => {
+    if (listeners.get(name) === listener) listeners.delete(name);
+  };
+}
+
+function dispatchToListeners(event: NamedEvent) {
+  if (listeners.size === 0 || event.kind === "events.listener_failed") return;
+  for (const [name, listener] of listeners) {
+    queueMicrotask(() => {
+      try {
+        listener(event);
+      } catch (error) {
+        emitNamedEvent({ kind: "events.listener_failed", listener: name, reason: error instanceof Error ? error.message : String(error) });
+      }
+    });
+  }
+}
+
 export function emitNamedEvent(event: NamedEvent): BufferedEntry {
   const entry = append(event);
   notifyEventStreamSubscribers({
     snapshotRelevant: !DELTA_ONLY_EVENT_KINDS.has(event.kind),
   });
+  dispatchToListeners(event);
   return entry;
 }
 

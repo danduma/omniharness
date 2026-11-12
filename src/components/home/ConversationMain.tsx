@@ -45,6 +45,7 @@ import type { WorkerEntry } from "@/shared/worker-entries";
 import type { PlanSurfaceOwner } from "@/shared/acp-plan";
 import { CliBrandIcon } from "@/components/cli-brand-icons";
 import { ErrorNotice } from "./ErrorNotice";
+import { OrchestrationTimeline } from "./OrchestrationTimeline";
 import { RecoveryIncidentInspector } from "./RecoveryIncidentInspector";
 import { RunRecoveryNotice } from "./RunRecoveryNotice";
 import { UserInputMessage, type UserInputMessageAction } from "./UserInputMessage";
@@ -1529,6 +1530,10 @@ const ConversationMain = memo(function ConversationMain({
               <p>No output recorded yet for this run.</p>
             </div>
           )}
+
+          {selectedRunId && selectedRun?.mode === "implementation" ? (
+            <OrchestrationTimeline runId={selectedRunId} />
+          ) : null}
 
           {isPlanningConversation ? (
             <PlanningArtifactsPanel

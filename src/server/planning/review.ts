@@ -124,6 +124,8 @@ export async function startPlanningReview(args: {
   runId: string;
   agentSelection: PlanningReviewAgentSelection;
   rounds: number;
+  /** Exact reviewer model/effort from an orchestration policy binding. */
+  reviewerLaunch?: { model: string | null; effort: string | null } | null;
 }) {
   console.log("[planning/review] start", { runId: args.runId, agentSelection: args.agentSelection, rounds: args.rounds });
   const initialRun = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
@@ -232,20 +234,23 @@ export async function startPlanningReview(args: {
   });
 
   // Orchestrate review
-  orchestratePlanningReview(reviewRunId).catch((err) => {
+  orchestratePlanningReview(reviewRunId, args.reviewerLaunch ?? null).catch((err) => {
     console.error(`Review orchestration failed for ${reviewRunId}:`, err);
   });
 
   return { reviewRunId, status: "running" };
 }
 
-async function orchestratePlanningReview(reviewRunId: string) {
+async function orchestratePlanningReview(reviewRunId: string, reviewerLaunch: { model: string | null; effort: string | null } | null = null) {
   const reviewRun = await db.select().from(planningReviewRuns).where(eq(planningReviewRuns.id, reviewRunId)).get();
   if (!reviewRun) return;
 
   const run = await db.select().from(runs).where(eq(runs.id, reviewRun.runId)).get();
   if (!run) return;
 
+  // The reviewer currently looking at the planner's output, so a failure can
+  // still close the review relationship it opened.
+  let activeReview: { reviewerWorkerId: string; subjectWorkerId: string | null } | null = null;
   try {
     for (let i = 0; i < reviewRun.roundsRequested; i++) {
       const roundNumber = i + 1;
@@ -304,6 +309,7 @@ async function orchestratePlanningReview(reviewRunId: string) {
         status: "starting",
         cwd: reviewerCwd,
         workerNumber: reviewerWorkerNumber,
+        workerRole: "plan_review",
         title: `Plan reviewer · round ${roundNumber}`,
         initialPrompt: prompt,
         outputLog: "",
@@ -314,6 +320,14 @@ async function orchestratePlanningReview(reviewRunId: string) {
         updatedAt: reviewerCreatedAt,
       });
       emitNamedEvent({ kind: "worker.spawned", runId: run.id, workerId: reviewerName, workerType });
+      activeReview = { reviewerWorkerId: reviewerName, subjectWorkerId: plannerWorker?.id ?? null };
+      emitNamedEvent({
+        kind: "worker.review_started",
+        runId: run.id,
+        ...activeReview,
+        reviewKind: "plan",
+        round: roundNumber,
+      });
       notifyEventStreamSubscribers();
 
       const { env: envParams } = await readRuntimeEnvFromSettings();
@@ -323,6 +337,8 @@ async function orchestratePlanningReview(reviewRunId: string) {
         name: reviewerName,
         mode: "slim",
         env: envParams,
+        ...(reviewerLaunch?.model ? { model: reviewerLaunch.model } : {}),
+        ...(reviewerLaunch?.effort ? { effort: reviewerLaunch.effort } : {}),
       });
 
       await db.update(workers).set({
@@ -355,6 +371,14 @@ async function orchestratePlanningReview(reviewRunId: string) {
       notifyEventStreamSubscribers();
 
       const findings = parseReviewerFindings(response.response);
+      emitNamedEvent({
+        kind: "worker.review_finished",
+        runId: run.id,
+        ...activeReview,
+        reviewKind: "plan",
+        outcome: findings.length > 0 ? "findings" : "no_findings",
+      });
+      activeReview = null;
 
       await db.update(planningReviewRounds).set({
         status: findings.length > 0 ? "revising" : "completed",
@@ -514,6 +538,16 @@ async function orchestratePlanningReview(reviewRunId: string) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[planning/review] orchestration failed", { reviewRunId, runId: run.id, error: message });
+    if (activeReview) {
+      emitNamedEvent({
+        kind: "worker.review_finished",
+        runId: run.id,
+        ...activeReview,
+        reviewKind: "plan",
+        outcome: "failed",
+      });
+      activeReview = null;
+    }
     await db.update(planningReviewRuns).set({
       status: "failed",
       lastError: message || "Review failed with no error message.",

@@ -559,6 +559,14 @@ export async function reapStuckDirectWorkers(now: Date = new Date()): Promise<Re
       // was lost on the way. Replaying an answered one is not a harmless
       // duplicate: the agent reads it as the user asking again.
       const shouldRedeliver = Boolean(lastUserInputId) && !lastUserInputAnswered;
+      emitNamedEvent({
+        kind: "worker.stuck_detected",
+        runId: worker.runId,
+        workerId: worker.id,
+        reason: "no_output",
+        sinceMs: idleMs,
+        willRedeliver: shouldRedeliver,
+      });
       process.stderr.write(
         `[stuck-reaper] worker ${worker.id} idle for ${Math.round(idleMs / 1000)}s; recovering` +
         ` (will redeliver: ${shouldRedeliver})\n`,

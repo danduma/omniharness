@@ -22,6 +22,8 @@ export function createRuntimeDomains({
     call("POST", path, body, options);
   const patch = (path: string, body: unknown, options?: RuntimeCallOptions) =>
     call("PATCH", path, body, options);
+  const put = (path: string, body: unknown, options?: RuntimeCallOptions) =>
+    call("PUT", path, body, options);
   const remove = (path: string, body: unknown, options?: RuntimeCallOptions) =>
     call("DELETE", path, body, options);
   return {
@@ -330,6 +332,31 @@ export function createRuntimeDomains({
     git: {
       execute(input, options) {
         return post("/api/git", input, options);
+      },
+    },
+    orchestration: {
+      getPolicy(options) {
+        return get("/api/orchestration/policy", options);
+      },
+      savePolicy(input, options) {
+        return put("/api/orchestration/policy", { policy: input.policy }, options);
+      },
+      preflight(input, options) {
+        return post("/api/orchestration/preflight", input, options);
+      },
+      getWorkflow(input, options) {
+        return get(`/api/runs/${encode(input.runId)}/orchestration`, options);
+      },
+      act(input, options) {
+        return post(`/api/runs/${encode(input.runId)}/orchestration`, input.body, options);
+      },
+    },
+    codeReviews: {
+      list(input, options) {
+        return get(`/api/runs/${encode(input.runId)}/code-reviews`, options);
+      },
+      start(input, options) {
+        return post(`/api/runs/${encode(input.runId)}/code-reviews`, input.body, options);
       },
     },
     planning: {

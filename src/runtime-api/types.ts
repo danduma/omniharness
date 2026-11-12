@@ -188,6 +188,20 @@ export interface RuntimeAPIs {
   git: {
     execute(input: unknown, options?: RuntimeCallOptions): Promise<unknown>;
   };
+  orchestration: {
+    getPolicy(options?: RuntimeCallOptions): Promise<unknown>;
+    savePolicy(input: { policy: unknown; idempotencyKey?: string }, options?: RuntimeCallOptions): Promise<unknown>;
+    preflight(input: { profile?: string; policy?: unknown }, options?: RuntimeCallOptions): Promise<unknown>;
+    getWorkflow(input: { runId: string }, options?: RuntimeCallOptions): Promise<unknown>;
+    act(input: { runId: string; body: { action: string; profile?: string; policy?: unknown } }, options?: RuntimeCallOptions): Promise<unknown>;
+  };
+  codeReviews: {
+    list(input: { runId: string }, options?: RuntimeCallOptions): Promise<unknown>;
+    start(input: {
+      runId: string;
+      body: { implementerWorkerId?: string | null; maxRounds?: number };
+    }, options?: RuntimeCallOptions): Promise<unknown>;
+  };
   planning: {
     list(options?: RuntimeCallOptions): Promise<unknown>;
     promote(input: {

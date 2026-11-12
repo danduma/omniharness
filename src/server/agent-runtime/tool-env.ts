@@ -278,6 +278,11 @@ function projectBinDirs(cwd: string | undefined, home: string): string[] {
     .map((dir) => join(dir, "node_modules", ".bin"));
 }
 
+/** Root of OmniHarness-managed installs on Windows; must match scripts/install-agent-acp.ps1. */
+function windowsManagedRoot(env: EnvLike, home: string) {
+  return env.LOCALAPPDATA ? join(env.LOCALAPPDATA, "OmniHarness") : join(home, ".omniharness");
+}
+
 function envBinDirs(env: EnvLike, home: string): string[] {
   const dirs = [
     env.NVM_BIN,
@@ -293,6 +298,12 @@ function envBinDirs(env: EnvLike, home: string): string[] {
     join(home, ".yarn", "bin"),
     join(home, ".opencode", "bin"),
     join(home, ".pyenv", "shims"),
+    ...(platform() === "win32" ? [
+      env.APPDATA ? join(env.APPDATA, "npm") : join(home, "AppData", "Roaming", "npm"),
+      // Where scripts/install-agent-acp.ps1 puts the codex-acp launcher. It
+      // only edits the user PATH with -AddToPath, so look here regardless.
+      env.OMNIHARNESS_CODEX_ACP_INSTALL_DIR?.trim() || join(windowsManagedRoot(env, home), "bin"),
+    ] : []),
   ];
 
   return dirs.filter((entry): entry is string => Boolean(entry));
@@ -562,6 +573,7 @@ export function buildManagedPath(input: BuildManagedPathInput = {}): string {
 
   return mergePathEntries([
     createCodexArgv0ShimDir(env),
+    dirname(process.execPath),
     ...projectBinDirs(input.cwd, home),
     ...inherited,
     ...splitPath(loginPath || undefined),
@@ -623,7 +635,7 @@ export function withCodexStandardTooling<T extends EnvLike>(env: T): T {
 function codexManagedExecutableCandidates(env: EnvLike): string[] {
   const packageRoot = env.CODEX_MANAGED_PACKAGE_ROOT?.trim();
   const defaultNpmRoot = platform() === "win32"
-    ? join(env.LOCALAPPDATA || join(env.HOME || homedir(), ".omniharness"), "codex-acp")
+    ? join(windowsManagedRoot(env, env.HOME || homedir()), "codex-acp")
     : join(env.HOME || homedir(), ".local", "share", "omniharness", "codex-acp");
   const codexLauncherName = platform() === "win32" ? "codex.cmd" : "codex";
   const npmRoots = [
@@ -663,15 +675,20 @@ export function resolveCommand(command: string, input: CommandLookupInput = {}):
     ? join(env.HOME || homedir(), command.slice(2))
     : command;
 
-  if (expanded.includes("/")) {
+  if (isAbsolute(expanded) || expanded.includes("/") || expanded.includes("\\")) {
     return executableExists(expanded) ? expanded : null;
   }
 
   const pathEntries = splitPath(env.PATH);
   for (const dir of pathEntries) {
-    const candidate = join(dir, expanded);
-    if (executableExists(candidate)) {
-      return candidate;
+    const suffixes = platform() === "win32" && !/\.(?:cmd|com|exe|bat)$/i.test(expanded)
+      ? [".cmd", ".exe", ".bat", ".com", ""]
+      : [""];
+    for (const suffix of suffixes) {
+      const candidate = join(dir, `${expanded}${suffix}`);
+      if (executableExists(candidate)) {
+        return candidate;
+      }
     }
   }
 

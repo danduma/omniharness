@@ -43,6 +43,11 @@ import {
   planningReviewRuns,
   planningReviewRounds,
   planningReviewFindings,
+  codeReviews,
+  codeReviewRounds,
+  codeReviewFindings,
+  orchestrationBudgetLedger,
+  orchestrationStages,
   processSessions,
 } from "@/server/db/schema";
 import {
@@ -884,6 +889,11 @@ export async function deleteConversationForApi(runId: string): Promise<Conversat
     await db.delete(planningReviewFindings).where(eq(planningReviewFindings.runId, runId));
     await db.delete(planningReviewRounds).where(eq(planningReviewRounds.runId, runId));
     await db.delete(planningReviewRuns).where(eq(planningReviewRuns.runId, runId));
+    await db.delete(codeReviewFindings).where(eq(codeReviewFindings.runId, runId));
+    await db.delete(codeReviewRounds).where(eq(codeReviewRounds.runId, runId));
+    await db.delete(codeReviews).where(eq(codeReviews.runId, runId));
+    await db.delete(orchestrationBudgetLedger).where(eq(orchestrationBudgetLedger.runId, runId));
+    await db.delete(orchestrationStages).where(eq(orchestrationStages.runId, runId));
     await db.delete(processSessions).where(eq(processSessions.runId, runId));
     await db.delete(workers).where(eq(workers.runId, runId));
     await db.delete(workerCounters).where(eq(workerCounters.runId, runId));

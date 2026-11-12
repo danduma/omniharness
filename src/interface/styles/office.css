@@ -1,0 +1,123 @@
+/*
+ * Office view motion. Animations run only on desks the layout model marked
+ * `data-animate="true"` (at most OFFICE_MAX_ANIMATED), and never when the
+ * user prefers reduced motion, on touch-first devices (battery), or while the
+ * office is offscreen / the page is hidden (`data-paused`).
+ * Every state is also carried by text and an icon, so a static pose loses
+ * no information.
+ */
+
+.office-avatar {
+  image-rendering: pixelated;
+}
+
+.office-figure {
+  display: inline-flex;
+  transform-origin: 50% 100%;
+}
+
+@keyframes officeType {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(1px); }
+}
+
+@keyframes officeRead {
+  0%, 100% { transform: rotate(-3deg); }
+  50% { transform: rotate(3deg); }
+}
+
+@keyframes officeBreathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.03); }
+}
+
+@keyframes officeFlicker {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@keyframes officeBubble {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+.office-desk[data-animate="true"][data-activity="writing"] .office-figure,
+.office-desk[data-animate="true"][data-activity="executing"] .office-figure {
+  animation: officeType 0.5s steps(2, jump-none) infinite;
+}
+
+.office-desk[data-animate="true"][data-activity="researching"] .office-figure {
+  animation: officeRead 2.4s ease-in-out infinite;
+}
+
+.office-desk[data-animate="true"][data-activity="working"] .office-figure,
+.office-desk[data-animate="true"][data-activity="starting"] .office-figure,
+.office-desk[data-animate="true"][data-activity="recovering"] .office-figure {
+  animation: officeBreathe 2.4s ease-in-out infinite;
+}
+
+.office-desk[data-animate="true"][data-activity="testing"] .office-monitor,
+.office-desk[data-animate="true"][data-activity="executing"] .office-monitor {
+  animation: officeFlicker 0.8s steps(2, jump-none) infinite;
+}
+
+.office-desk[data-animate="true"][data-activity="waiting_user"] .office-bubble {
+  animation: officeBubble 1.2s ease-in-out infinite;
+}
+
+@keyframes officeNudgeOut {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(2px); }
+}
+
+@keyframes officeNudgeIn {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(-2px); }
+}
+
+/* Delegation, handoff, and review badges point toward their counterpart. */
+.office-relation[data-animate="true"][data-direction="out"] .office-relation-icon {
+  animation: officeNudgeOut 1.4s ease-in-out infinite;
+}
+
+.office-relation[data-animate="true"][data-direction="in"] .office-relation-icon {
+  animation: officeNudgeIn 1.4s ease-in-out infinite;
+}
+
+@keyframes officeThoughtDot {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+/* The supervisor is mid-turn: three dots pulse in sequence. */
+.office-main-desk[data-supervisor="thinking"] .office-thought-dot {
+  animation: officeThoughtDot 1.2s ease-in-out infinite;
+}
+
+.office-main-desk[data-supervisor="thinking"] .office-thought-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.office-main-desk[data-supervisor="thinking"] .office-thought-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.office-main-desk[data-supervisor="thinking"] .office-figure {
+  animation: officeBreathe 2.4s ease-in-out infinite;
+}
+
+.office-root[data-paused="true"] * {
+  animation-play-state: paused !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .office-root * {
+    animation: none !important;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .office-root * {
+    animation: none !important;
+  }
+}

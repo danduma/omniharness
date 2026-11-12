@@ -1,4 +1,5 @@
 import { db } from "@/server/db";
+import { isEnvOnlySecretKey } from "@/shared/decision-layer";
 import { settings } from "@/server/db/schema";
 import { CLAUDE_MODEL_GATEWAY_SETTING_KEYS } from "@/lib/claude-model-gateway";
 import { decryptSettingValue, shouldEncryptSetting } from "@/server/settings/crypto";
@@ -16,7 +17,9 @@ export interface RuntimeSettingDecryptionFailure {
 
 function isRuntimeEnvSettingKey(key: string) {
   return /^[A-Z][A-Z0-9_]*$/.test(key)
-    && !CLAUDE_GATEWAY_CONTROL_SETTING_KEYS.has(key);
+    && !CLAUDE_GATEWAY_CONTROL_SETTING_KEYS.has(key)
+    // Env-only secrets never come from sqlite.db, even if a stray row exists.
+    && !isEnvOnlySecretKey(key);
 }
 
 export function hydrateRuntimeEnvFromSettings(settings: StoredSetting[]) {

@@ -1,0 +1,35 @@
+import {
+  Activity,
+  Ban,
+  BatteryLow,
+  BookOpen,
+  CircleCheck,
+  CircleX,
+  Coffee,
+  FlaskConical,
+  Hand,
+  LoaderCircle,
+  PenLine,
+  RotateCw,
+  SquareTerminal,
+  TriangleAlert,
+  type LucideIcon,
+} from "lucide-react";
+import type { AgentActivity } from "./deriveAgentActivity";
+
+export const ACTIVITY_ICONS: Record<AgentActivity, LucideIcon> = {
+  waiting_user: Hand,
+  blocked: TriangleAlert,
+  quota_blocked: BatteryLow,
+  errored: CircleX,
+  recovering: RotateCw,
+  starting: LoaderCircle,
+  researching: BookOpen,
+  writing: PenLine,
+  testing: FlaskConical,
+  executing: SquareTerminal,
+  working: Activity,
+  idle: Coffee,
+  done: CircleCheck,
+  cancelled: Ban,
+};

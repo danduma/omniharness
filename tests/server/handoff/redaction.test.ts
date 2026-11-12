@@ -2,6 +2,22 @@ import { describe, expect, it } from "vitest";
 import { redactHandoffText, sanitizeProjectRelativePath } from "@/server/handoff/redaction";
 
 describe("handoff redaction", () => {
+  it("removes bare provider tokens entirely instead of appending a marker", () => {
+    // Placeholders only; never real credentials.
+    const tokens = [
+      "sk-proj-TESTONLYabcdefgh",
+      "sk-ant-TESTONLYabcdefgh",
+      "ghp_TESTONLYabcdefghijklmnopqrstu",
+      "vck_TESTONLY_placeholder_0000",
+    ];
+    const result = redactHandoffText(tokens.map((token) => `token ${token} here`).join("\n"));
+
+    for (const token of tokens) {
+      expect(result).not.toContain(token);
+    }
+    expect(result.split("\n")).toEqual(tokens.map(() => "token [REDACTED] here"));
+  });
+
   it("redacts credentials, authorization headers, and environment assignments", () => {
     const input = [
       "Authorization: Bearer secret-token-value",

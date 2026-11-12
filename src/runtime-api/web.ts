@@ -1,4 +1,7 @@
+import { CODE_REVIEW_EVENT_TYPES } from "@/shared/code-review";
+import { ORCHESTRATION_EVENT_TYPES } from "@/shared/orchestration-api";
 import type { RuntimeAPIs, RuntimeSubscription } from "./types";
+import { OFFICE_RELATION_EVENT_TYPES, SUPERVISOR_ACTIVITY_EVENT_TYPES } from "@/shared/agent-activity";
 import { createFetchRuntimeRequest } from "./request";
 import {
   GOAL_SNAPSHOT_EVENT_TYPES,
@@ -102,6 +105,19 @@ export function createWebRuntimeAPIs(options: WebRuntimeApiOptions = {}): Runtim
         nextSource.addEventListener("runner.rekeyed", emit);
         nextSource.addEventListener("worker.plan_updated", emit);
         nextSource.addEventListener("worker.plan_boundary_started", emit);
+        nextSource.addEventListener("worker.activity", emit);
+        for (const eventType of OFFICE_RELATION_EVENT_TYPES) {
+          nextSource.addEventListener(eventType, emit);
+        }
+        for (const eventType of CODE_REVIEW_EVENT_TYPES) {
+          nextSource.addEventListener(eventType, emit);
+        }
+        for (const eventType of ORCHESTRATION_EVENT_TYPES) {
+          nextSource.addEventListener(eventType, emit);
+        }
+        for (const eventType of SUPERVISOR_ACTIVITY_EVENT_TYPES) {
+          nextSource.addEventListener(eventType, emit);
+        }
         for (const eventType of GOAL_SNAPSHOT_EVENT_TYPES) {
           nextSource.addEventListener(eventType, emit);
         }

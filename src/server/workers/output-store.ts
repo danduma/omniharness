@@ -21,6 +21,7 @@ import {
   type IndexEntry,
 } from "@/server/artifacts/stream-index";
 import { emitNamedEvent, type WorkerStreamIndexRebuildReason } from "@/server/events/named-events";
+import { observeWorkerActivity } from "@/server/workers/activity-tracker";
 import type {
   WorkerEntry,
 } from "@/server/workers/entries-types";
@@ -1602,6 +1603,7 @@ export async function writeWorkerOutputEntries(
           seq: highestAppendedSeq,
         });
       }
+      observeWorkerActivity(runId, workerId, appendedEntries);
       return true;
     });
   });

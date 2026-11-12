@@ -1,3 +1,6 @@
+import { CODE_REVIEW_EVENT_TYPES } from "@/shared/code-review";
+import { ORCHESTRATION_EVENT_TYPES } from "@/shared/orchestration-api";
+import { OFFICE_RELATION_EVENT_TYPES, SUPERVISOR_ACTIVITY_EVENT_TYPES } from "@/shared/agent-activity";
 import {
   AppRequestError,
   parseErrorResponse,
@@ -111,6 +114,11 @@ export function createLegacyLiveEventAPIs(options: {
         "worker.entry_appended",
         "worker.plan_updated",
         "worker.plan_boundary_started",
+        "worker.activity",
+        ...OFFICE_RELATION_EVENT_TYPES,
+        ...CODE_REVIEW_EVENT_TYPES,
+        ...ORCHESTRATION_EVENT_TYPES,
+        ...SUPERVISOR_ACTIVITY_EVENT_TYPES,
         "stream.resync_required",
         ...GOAL_SNAPSHOT_EVENT_TYPES,
       ];

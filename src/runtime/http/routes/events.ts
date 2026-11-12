@@ -158,6 +158,7 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}, prob
       type: workers.type,
       status: workers.status,
       workerNumber: workers.workerNumber,
+      workerRole: workers.workerRole,
       title: workers.title,
       initialPrompt: workers.initialPrompt,
       createdAt: workers.createdAt,
@@ -177,6 +178,7 @@ async function readPersistedEventRecords(options: EventPayloadOptions = {}, prob
         bridgeSessionMode: workers.bridgeSessionMode,
         supersededSeqRanges: workers.supersededSeqRanges,
         workerNumber: workers.workerNumber,
+        workerRole: workers.workerRole,
         title: workers.title,
         initialPrompt: workers.initialPrompt,
         activeWorkStartedAt: workers.activeWorkStartedAt,
@@ -286,6 +288,7 @@ function compactWorkerRecord(
     type: worker.type,
     status: worker.status,
     workerNumber: worker.workerNumber,
+    workerRole: worker.workerRole ?? null,
     title: worker.title,
     // The prompt is conversation content, not catalog metadata. Carry it only
     // for the selected run where the terminal uses it as a fallback for older
