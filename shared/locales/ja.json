@@ -1,4 +1,8 @@
 {
+  "conversation.welcome.beforeProject": "",
+  "conversation.welcome.afterProject": "で何を作りましょうか？",
+  "conversation.welcome.selectProject": "プロジェクトを選択（現在：{project}）",
+  "conversation.welcome.noProjects": "読み込まれたプロジェクトはありません",
   "product.name": "OmniHarness",
   "authorization.title": "このインターフェースを承認",
   "authorization.description": "{origin} がこのランナーに接続することを許可します。",

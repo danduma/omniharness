@@ -1,4 +1,8 @@
 {
+  "conversation.welcome.beforeProject": "What shall we build in ",
+  "conversation.welcome.afterProject": "?",
+  "conversation.welcome.selectProject": "Select project (current: {project})",
+  "conversation.welcome.noProjects": "No projects loaded",
   "product.name": "OmniHarness",
   "authorization.title": "Authorize this interface",
   "authorization.description": "Allow {origin} to connect to this server.",

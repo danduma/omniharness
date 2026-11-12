@@ -1,4 +1,8 @@
 {
+  "conversation.welcome.beforeProject": "我们要在 ",
+  "conversation.welcome.afterProject": " 中构建什么？",
+  "conversation.welcome.selectProject": "选择项目（当前：{project}）",
+  "conversation.welcome.noProjects": "尚未加载项目",
   "product.name": "OmniHarness",
   "authorization.title": "授权此界面",
   "authorization.description": "允许 {origin} 连接到此运行器。",

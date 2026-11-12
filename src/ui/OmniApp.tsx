@@ -1,6 +1,7 @@
 "use client";
 
-import { lazy, Suspense, useMemo } from "react";
+import { lazy, Suspense, useEffect, useMemo } from "react";
+import { backNavigationManager } from "@/interface/home/BackNavigationManager";
 import { BootShell } from "@/components/BootShell";
 import type { RunnerConnectionStatus } from "@/interface/runners/RunnerConnection";
 import { RunnerControls } from "@/interface/runners/RunnerControls";
@@ -29,6 +30,11 @@ export function OmniApp({
 }) {
   const defaultRuntimeApis = useMemo(() => runtimeApis ?? createDefaultWebRuntimeAPIs(), [runtimeApis]);
   const runnerSetup = useMemo(() => createDefaultRunnerRegistry(), []);
+
+  useEffect(() => {
+    if (defaultRuntimeApis.runtime.surface === "vscode") return;
+    return backNavigationManager.attach(window);
+  }, [defaultRuntimeApis]);
 
   if (defaultRuntimeApis.runtime.surface === "vscode") {
     return (
