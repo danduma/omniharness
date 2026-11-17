@@ -49,6 +49,19 @@ export const runs = sqliteTable('runs', {
   archivedAt: integer('archived_at', { mode: 'timestamp' }),
   memoryMetadataRevision: integer('memory_metadata_revision').notNull().default(0),
   lastMemoryConsolidationAt: integer('last_memory_consolidation_at', { mode: 'timestamp' }),
+  // Specialist orchestration (docs/architecture/specialist-orchestration.md).
+  // Null policy JSON means the run is not orchestrated and every existing
+  // planning/review/supervisor path behaves exactly as before.
+  orchestrationPolicyJson: text('orchestration_policy_json'),
+  orchestrationPolicyVersion: integer('orchestration_policy_version'),
+  orchestrationProfile: text('orchestration_profile'),
+  /** 'default' | 'user' | 'triage': who chose the profile. Triage never overrides 'user'. */
+  orchestrationProfileSource: text('orchestration_profile_source'),
+  /** Set on first dispatch; the profile can no longer change. */
+  orchestrationProfileLockedAt: integer('orchestration_profile_locked_at', { mode: 'timestamp' }),
+  orchestrationCancelledAt: integer('orchestration_cancelled_at', { mode: 'timestamp' }),
+  /** Advisory triage recommendation (JSON), never applied without the user. */
+  orchestrationTriageJson: text('orchestration_triage_json'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   // Conversation-visible activity: the last user message or the last agent turn
   // that finished. Distinct from `updatedAt`, which every piece of background
@@ -571,6 +584,121 @@ export const planningReviewFindings = sqliteTable('planning_review_findings', {
   detailsHash: text('details_hash'),
   recommendationPreview: text('recommendation_preview'),
   sourcePath: text('source_path'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
+
+/**
+ * Code cross-review (rollout B4): one worker type reviews another's code
+ * changes in rounds. Separate from planning_review_* on purpose: the plan
+ * review UI and refresh logic treat every row of those tables as a plan
+ * review.
+ */
+export const codeReviews = sqliteTable('code_reviews', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').references(() => runs.id).notNull(),
+  implementerWorkerId: text('implementer_worker_id').notNull(),
+  implementerType: text('implementer_type').notNull(),
+  reviewerType: text('reviewer_type').notNull(),
+  // 'running' | 'approved' | 'escalated' | 'cap_reached' | 'failed'
+  status: text('status').notNull(),
+  maxRounds: integer('max_rounds').notNull(),
+  roundsCompleted: integer('rounds_completed').notNull().default(0),
+  outcomeReason: text('outcome_reason'),
+  lastError: text('last_error'),
+  startedAt: integer('started_at', { mode: 'timestamp' }).notNull(),
+  completedAt: integer('completed_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export const codeReviewRounds = sqliteTable('code_review_rounds', {
+  id: text('id').primaryKey(),
+  reviewId: text('review_id').references(() => codeReviews.id).notNull(),
+  runId: text('run_id').references(() => runs.id).notNull(),
+  roundNumber: integer('round_number').notNull(),
+  reviewerWorkerId: text('reviewer_worker_id'),
+  // 'approve' | 'request_changes' | 'blocked' | 'inconclusive'
+  verdict: text('verdict'),
+  evidenceJson: text('evidence_json'),
+  /** The reviewer's final reply, redacted and capped (the reviewer is not a conversation worker). */
+  responseExcerpt: text('response_excerpt'),
+  diffChars: integer('diff_chars').notNull().default(0),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  completedAt: integer('completed_at', { mode: 'timestamp' }),
+});
+
+export const codeReviewFindings = sqliteTable('code_review_findings', {
+  id: text('id').primaryKey(),
+  reviewId: text('review_id').references(() => codeReviews.id).notNull(),
+  runId: text('run_id').references(() => runs.id).notNull(),
+  roundNumber: integer('round_number').notNull(),
+  // 'blocker' | 'major' | 'minor' | 'nit'
+  severity: text('severity').notNull(),
+  file: text('file'),
+  line: integer('line'),
+  claim: text('claim').notNull(),
+  evidence: text('evidence'),
+  suggestedFix: text('suggested_fix'),
+  // 'open' | 'resolved' | 'disputed' | 'escalated' | 'withdrawn'
+  status: text('status').notNull(),
+  disputeReason: text('dispute_reason'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+/**
+ * One row per orchestration stage attempt. `(run_id, stage_key, attempt)` is
+ * unique, and a partial unique index allows only one active
+ * (preflight/dispatched/waiting) row per run: that row is the run's single
+ * dispatch claim, so concurrent dispatchers cannot both create a worker.
+ */
+export const orchestrationStages = sqliteTable('orchestration_stages', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').references(() => runs.id).notNull(),
+  stageKey: text('stage_key').notNull(),
+  attempt: integer('attempt').notNull(),
+  /** Monotonic per-run order used by the pure next-stage rules. */
+  seq: integer('seq').notNull(),
+  status: text('status').notNull(),
+  outcome: text('outcome'),
+  bindingJson: text('binding_json').notNull(),
+  /** Requested canonical model and the provider-reported effective model, kept apart. */
+  requestedWorkerType: text('requested_worker_type'),
+  requestedModel: text('requested_model'),
+  effectiveModel: text('effective_model'),
+  usedFallback: integer('used_fallback', { mode: 'boolean' }).notNull().default(false),
+  workerId: text('worker_id'),
+  /** The run executing this stage (differs from run_id after a cross-CLI handoff). */
+  executionRunId: text('execution_run_id'),
+  handoffId: text('handoff_id'),
+  /** Id of the existing owner record (planning review run, code review). */
+  externalRef: text('external_ref'),
+  claimToken: text('claim_token'),
+  findingsJson: text('findings_json'),
+  failureCode: text('failure_code'),
+  lastError: text('last_error'),
+  claimedAt: integer('claimed_at', { mode: 'timestamp' }),
+  completedAt: integer('completed_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+/**
+ * Append-only budget ledger: one reservation and at most one settlement per
+ * stage attempt. Settlement keeps `usage_unknown` rather than inventing
+ * usage; an unknown settlement keeps the full reservation committed.
+ */
+export const orchestrationBudgetLedger = sqliteTable('orchestration_budget_ledger', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').references(() => runs.id).notNull(),
+  stageId: text('stage_id').references(() => orchestrationStages.id).notNull(),
+  // 'reservation' | 'settlement'
+  entryKind: text('entry_kind').notNull(),
+  tokens: integer('tokens'),
+  costUsd: real('cost_usd'),
+  inputTokens: integer('input_tokens'),
+  outputTokens: integer('output_tokens'),
+  usageUnknown: integer('usage_unknown', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 

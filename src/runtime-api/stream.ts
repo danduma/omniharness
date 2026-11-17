@@ -1,4 +1,7 @@
+import { CODE_REVIEW_EVENT_TYPES } from "@/shared/code-review";
+import { ORCHESTRATION_EVENT_TYPES } from "@/shared/orchestration-api";
 import type { RuntimeApiError, RuntimeSubscription } from "./types";
+import { OFFICE_RELATION_EVENT_TYPES, SUPERVISOR_ACTIVITY_EVENT_TYPES } from "@/shared/agent-activity";
 import { GOAL_PUBLISHED_EVENT_KINDS } from "@/shared/goal-plan";
 
 export type RuntimeStreamEvent = {
@@ -57,6 +60,11 @@ export function normalizeRuntimeStreamEvent(event: RuntimeStreamEvent) {
     || event.type === "worker.entry_appended"
     || event.type === "worker.plan_updated"
     || event.type === "worker.plan_boundary_started"
+    || event.type === "worker.activity"
+    || (OFFICE_RELATION_EVENT_TYPES as readonly string[]).includes(event.type)
+    || (CODE_REVIEW_EVENT_TYPES as readonly string[]).includes(event.type)
+    || (ORCHESTRATION_EVENT_TYPES as readonly string[]).includes(event.type)
+    || (SUPERVISOR_ACTIVITY_EVENT_TYPES as readonly string[]).includes(event.type)
     || isGoalSnapshotEventType(event.type)
   ) {
     return {

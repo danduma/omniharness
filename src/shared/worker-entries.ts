@@ -50,6 +50,24 @@ export type ServerWorkerEntryType =
 
 export type WorkerEntryType = BridgeWorkerEntryType | ServerWorkerEntryType;
 
+/** Statuses that close a permission or elicitation row in the worker stream. */
+export const HUMAN_INPUT_TERMINAL_STATUSES: ReadonlySet<string> = new Set([
+  "answered",
+  "approved",
+  "cancelled",
+  "canceled",
+  "completed",
+  "declined",
+  "denied",
+  "failed",
+  "rejected",
+  "skipped",
+]);
+
+export function isOpenHumanInputStatus(status: string | null | undefined) {
+  return !HUMAN_INPUT_TERMINAL_STATUSES.has((status ?? "pending").trim().toLowerCase());
+}
+
 export type WorkerPlanProjection =
   | "accepted_core"
   | "session_reset"

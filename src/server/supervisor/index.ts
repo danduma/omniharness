@@ -35,6 +35,7 @@ import { isLongWorkerCompletionText, normalizeWorkerStatus, workerTurnRecheckDel
 import { drainQueuedImplementationMessages } from "@/server/conversations/queued-messages";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent } from "@/server/events/named-events";
+import { redactHandoffText } from "@/server/handoff/redaction";
 import { parsePlan } from "@/server/plans/parser";
 import { syncPlanItems } from "@/server/plans/checklist";
 import { assessPlanReadiness } from "@/server/plans/readiness";
@@ -251,6 +252,13 @@ function isWorkerAuthenticationMissingReason(reason: string) {
     /\bsign-?in required\b/,
     /\bunauthorized\b/,
   ].some((pattern) => pattern.test(normalized));
+}
+
+const DELEGATION_PREVIEW_MAX_CHARS = 160;
+
+/** Short, redacted intent for `supervisor.delegated`; the full prompt stays in the worker stream. */
+function delegationPreview(text: string) {
+  return redactHandoffText(text.replace(/\s+/g, " ").trim(), DELEGATION_PREVIEW_MAX_CHARS);
 }
 
 function truncate(text: string, maxLength: number) {
@@ -1453,6 +1461,14 @@ export class Supervisor {
             purpose,
             fallbackNote,
           });
+          emitNamedEvent({
+            kind: "supervisor.delegated",
+            runId: this.runId,
+            toWorkerId: workerId,
+            mode: "spawn",
+            interventionType: null,
+            intentPreview: delegationPreview(title || prompt),
+          });
           await insertExecutionEvent(this.runId, "worker_spawned", {
             summary: spawnSummary,
             cwd,
@@ -1582,6 +1598,14 @@ export class Supervisor {
             prompt,
             summary: `Sent follow-up to ${workerId}`,
             interventionType,
+          });
+          emitNamedEvent({
+            kind: "supervisor.delegated",
+            runId: this.runId,
+            toWorkerId: workerId,
+            mode: "continue",
+            interventionType: intervention.interventionType,
+            intentPreview: delegationPreview(prompt),
           });
           let response: Awaited<ReturnType<typeof bridge.askAgent>> | null = null;
           try {
@@ -2009,6 +2033,7 @@ export class Supervisor {
           });
           await runMilestoneAutoCommit(this.runId, summary);
           await insertRunMessage(this.runId, "supervisor", completionSummary, "completion");
+          emitNamedEvent({ kind: "supervisor.run_finished", runId: this.runId, outcome: "completed" });
           return { state: "completed" };
         }
 
@@ -2069,6 +2094,7 @@ export class Supervisor {
           await persistRunFailure(this.runId, reason, {
             surface: { code: "supervisor.gave_up" },
           });
+          emitNamedEvent({ kind: "supervisor.run_finished", runId: this.runId, outcome: "failed" });
           return { state: "failed" };
         }
 

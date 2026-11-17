@@ -9,6 +9,23 @@ vi.mock("child_process", async (importOriginal) => ({
   execFileSync: mockExecFileSync,
 }));
 
+// On Windows binaries are resolved in-process instead of via `which`; route
+// that lookup through the same mock so these cases are platform-independent.
+vi.mock("@/server/agent-runtime/tool-env", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/agent-runtime/tool-env")>();
+  return {
+    ...actual,
+    resolveCommand: (command: string, input?: Parameters<typeof actual.resolveCommand>[1]) => {
+      if (process.platform !== "win32" || /[\\/]/.test(command)) return actual.resolveCommand(command, input);
+      try {
+        return String(mockExecFileSync("which", [command], { env: input?.env })).trim() || null;
+      } catch {
+        return null;
+      }
+    },
+  };
+});
+
 describe("selectSpawnableWorkerType", () => {
   beforeEach(() => {
     mockExecFileSync.mockReset();

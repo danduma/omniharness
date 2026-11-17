@@ -13,6 +13,14 @@ import type { EventStreamState } from "./types";
 import { workerEntriesManager } from "./WorkerEntriesManager";
 import { sidebarWorkerActivityManager, type SidebarWorkerActivityManager } from "./SidebarWorkerActivityManager";
 import { acpPlanManager, type AcpPlanManager } from "./AcpPlanManager";
+import { workerActivityManager, type WorkerActivityManager } from "@/interface/office/WorkerActivityManager";
+import { officeRelationsManager, type OfficeRelationsManager } from "@/interface/office/OfficeRelationsManager";
+import { OFFICE_RELATION_EVENT_TYPES, SUPERVISOR_ACTIVITY_EVENT_TYPES } from "@/shared/agent-activity";
+import { supervisorActivityManager, type SupervisorActivityManager } from "@/interface/office/SupervisorActivityManager";
+import { CODE_REVIEW_EVENT_TYPES } from "@/shared/code-review";
+import { codeReviewUiManager, type CodeReviewUiManager } from "@/interface/review/CodeReviewUiManager";
+import { orchestrationManager, type OrchestrationManager } from "@/interface/orchestration/OrchestrationManager";
+import { ORCHESTRATION_EVENT_TYPES } from "@/shared/orchestration-api";
 import type { GoalSnapshot } from "@/shared/goal-plan";
 
 export { buildEventStreamUrl };
@@ -48,6 +56,11 @@ interface LiveEventConnectionManagerOptions {
   workerEntries?: Pick<typeof workerEntriesManager, "onKnownSeqs" | "onStreamResync" | "onWakeUp">;
   planManager?: Pick<AcpPlanManager, "onKnownSeqs" | "onStreamResync" | "onWakeUp">;
   sidebarWorkerActivity?: Pick<SidebarWorkerActivityManager, "onKnownSeqs" | "onWakeUp">;
+  workerActivity?: Pick<WorkerActivityManager, "onActivityEvent">;
+  officeRelations?: Pick<OfficeRelationsManager, "onNamedEvent" | "reset">;
+  codeReviews?: Pick<CodeReviewUiManager, "onCodeReviewEvent">;
+  orchestration?: Pick<OrchestrationManager, "onOrchestrationEvent">;
+  supervisorActivity?: Pick<SupervisorActivityManager, "onSupervisorEvent" | "reset">;
   applyUpdate: (state: EventStreamState) => void;
   applyGoalEvent?: (snapshot: GoalSnapshot, eventKey: string | null) => boolean;
   reportError: (error: AppErrorDescriptor) => void;
@@ -195,6 +208,11 @@ export class LiveEventConnectionManager {
   private readonly workerEntries: Pick<typeof workerEntriesManager, "onKnownSeqs" | "onStreamResync" | "onWakeUp">;
   private readonly planManager: Pick<AcpPlanManager, "onKnownSeqs" | "onStreamResync" | "onWakeUp">;
   private readonly sidebarWorkerActivity: Pick<SidebarWorkerActivityManager, "onKnownSeqs" | "onWakeUp">;
+  private readonly workerActivity: Pick<WorkerActivityManager, "onActivityEvent">;
+  private readonly officeRelations: Pick<OfficeRelationsManager, "onNamedEvent" | "reset">;
+  private readonly codeReviews: Pick<CodeReviewUiManager, "onCodeReviewEvent">;
+  private readonly orchestration: Pick<OrchestrationManager, "onOrchestrationEvent">;
+  private readonly supervisorActivity: Pick<SupervisorActivityManager, "onSupervisorEvent" | "reset">;
   private readonly applyUpdate: (state: EventStreamState) => void;
   private readonly applyGoalEvent?: (snapshot: GoalSnapshot, eventKey: string | null) => boolean;
   private readonly reportError: (error: AppErrorDescriptor) => void;
@@ -229,6 +247,11 @@ export class LiveEventConnectionManager {
     this.workerEntries = options.workerEntries ?? workerEntriesManager;
     this.planManager = options.planManager ?? acpPlanManager;
     this.sidebarWorkerActivity = options.sidebarWorkerActivity ?? sidebarWorkerActivityManager;
+    this.workerActivity = options.workerActivity ?? workerActivityManager;
+    this.officeRelations = options.officeRelations ?? officeRelationsManager;
+    this.codeReviews = options.codeReviews ?? codeReviewUiManager;
+    this.orchestration = options.orchestration ?? orchestrationManager;
+    this.supervisorActivity = options.supervisorActivity ?? supervisorActivityManager;
     this.applyUpdate = options.applyUpdate;
     this.applyGoalEvent = options.applyGoalEvent;
     this.reportError = options.reportError;
@@ -300,9 +323,22 @@ export class LiveEventConnectionManager {
           this.handleWorkerEntryAppended(streamEvent.payload);
         } else if (streamEvent.kind === "worker.plan_updated" || streamEvent.kind === "worker.plan_boundary_started") {
           this.handlePlanWakeUp(streamEvent.payload);
+        } else if (streamEvent.kind === "worker.activity") {
+          this.workerActivity.onActivityEvent(streamEvent.payload);
+          this.officeRelations.onNamedEvent(streamEvent.payload);
+        } else if (streamEvent.kind && (OFFICE_RELATION_EVENT_TYPES as readonly string[]).includes(streamEvent.kind)) {
+          this.officeRelations.onNamedEvent(streamEvent.payload);
+        } else if (streamEvent.kind && (CODE_REVIEW_EVENT_TYPES as readonly string[]).includes(streamEvent.kind)) {
+          this.codeReviews.onCodeReviewEvent(streamEvent.payload);
+        } else if (streamEvent.kind && (ORCHESTRATION_EVENT_TYPES as readonly string[]).includes(streamEvent.kind)) {
+          this.orchestration.onOrchestrationEvent(streamEvent.payload);
+        } else if (streamEvent.kind && (SUPERVISOR_ACTIVITY_EVENT_TYPES as readonly string[]).includes(streamEvent.kind)) {
+          this.supervisorActivity.onSupervisorEvent(streamEvent.payload);
         } else if (streamEvent.kind?.startsWith("goal.")) {
           this.handleGoalEvent(streamEvent.payload);
         } else if (streamEvent.kind === "stream.resync_required") {
+          this.officeRelations.reset();
+          this.supervisorActivity.reset();
           void this.handleStreamResyncRequired();
         }
       },

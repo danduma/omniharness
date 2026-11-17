@@ -410,7 +410,9 @@ test("workers sidebar can focus one terminal across the workers tab", () => {
   expect(pageSource).toContain('setFocusedWorker = (focusedWorkerId: string | null)');
   expect(pageSource).toContain('toggleFocusedWorker = (workerId: string)');
   expect(workersSidebarSource).toContain("const focusedWorkerVisible = Boolean(focusedWorkerId && visibleWorkers.some((worker) => worker.id === focusedWorkerId));");
-  expect(workersSidebarSource).toContain("const isFocusMode = visibleWorkers.length > 1 && focusedWorkerVisible;");
+  // The office view always shows desks, so a single worker can be focused there too.
+  expect(workersSidebarSource).toContain('const isOfficeView = viewMode === "office" && activeTab === "active";');
+  expect(workersSidebarSource).toContain("const isFocusMode = (visibleWorkers.length > 1 || isOfficeView) && focusedWorkerVisible;");
   expect(workersSidebarSource).toContain("const focusedWorker = isFocusMode ? visibleWorkers.find((worker) => worker.id === focusedWorkerId) ?? null : null;");
   expect(workersSidebarSource).toContain('className="min-h-0 flex-1 p-3"');
   expect(workersSidebarSource).toContain('className="h-full min-h-0"');
@@ -423,7 +425,7 @@ test("workers sidebar can focus one terminal across the workers tab", () => {
   expect(workersSidebarSource).toContain('const isCompactWorker = Boolean(options.compact);');
   expect(workersSidebarSource).toContain('compact={isCompactWorker}');
   expect(workersSidebarSource).toContain('isFocused={isFocusedWorker}');
-  expect(workersSidebarSource).toContain('canFocus={visibleWorkers.length > 1}');
+  expect(workersSidebarSource).toContain('canFocus={visibleWorkers.length > 1 || isOfficeView}');
   expect(workerCardSource).toContain('compact?: boolean;');
   expect(workerCardSource).toContain('isFocused?: boolean;');
   expect(workerCardSource).toContain('canFocus?: boolean;');

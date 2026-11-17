@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
@@ -58,6 +59,23 @@ const LOGIN_TIMEOUT_MS = 10 * 60_000;
 // for a conclusive credential result instead of persisting a false timeout.
 const COMMAND_TIMEOUT_MS = 2 * 60_000;
 const COMMAND_MAX_BUFFER = 256 * 1024;
+
+function npmCommandInvocation(command: string, args: readonly string[]) {
+  if (process.platform !== "win32" || !/\.cmd$/i.test(command)) {
+    return { command, args: [...args] };
+  }
+  try {
+    const source = readFileSync(command, "utf8");
+    const scriptMatch = source.match(/"%dp0%\\([^\"]+\.js)"/i);
+    if (!scriptMatch) return { command, args: [...args] };
+    const script = join(dirname(command), scriptMatch[1]);
+    return existsSync(script)
+      ? { command: process.execPath, args: [script, ...args] }
+      : { command, args: [...args] };
+  } catch {
+    return { command, args: [...args] };
+  }
+}
 
 function buildManagedLoginEnv(env: Record<string, string | undefined>, configDir: string) {
   const childEnv = buildClaudeAuthChildEnv(env, configDir);
@@ -165,7 +183,8 @@ export class ClaudeAccountAuthService {
     const binary = dependencies.binary ?? resolveCommand("claude", { env: managedEnv }) ?? "claude";
     const instanceRoot = dependencies.instanceRoot ?? process.env.OMNIHARNESS_ROOT?.trim() ?? process.cwd();
     const runCommand = dependencies.runCommand ?? (async (args, configDir) => {
-      const result = await execFileAsync(binary, [...args], {
+      const invocation = npmCommandInvocation(binary, args);
+      const result = await execFileAsync(invocation.command, invocation.args, {
         cwd: instanceRoot,
         env: buildClaudeAuthChildEnv(managedEnv, configDir),
         encoding: "utf8",

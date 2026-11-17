@@ -13,7 +13,8 @@ import {
   validateSupervisorModelConfig,
 } from "@/server/supervisor/model-config";
 import { buildInitialConversationTitle } from "@/server/conversations/initial-title";
-import { isConversationTitleOwningWorker } from "@/server/conversations/agent-session-title";
+import { agentSessionTitleRejection, isConversationTitleOwningWorker } from "@/server/conversations/agent-session-title";
+import { decisionService } from "@/server/decisions/service";
 
 const MAX_TITLE_CONTEXT_CHARS = 4_000;
 const MAX_COMPLETED_TITLE_GENERATIONS = 5_000;
@@ -23,7 +24,60 @@ const completedTitleGenerationRunIds = new Set<string>();
 type ConversationTitleInput = {
   userMessage: string;
   assistantReply: string;
+  /** Enables the fast text lane and its title checks for this conversation. */
+  runId?: string;
 };
+
+const TEXT_LANE_TITLE_MAX_TOKENS = 32;
+const TEXT_LANE_TITLE_TIMEOUT_MS = 8_000;
+const TEXT_LANE_TITLE_MAX_CHARS = 80;
+
+/** First line of a model reply, stripped of quotes, "Title:" and markdown. */
+export function cleanTextLaneTitle(text: string) {
+  const firstLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
+  return firstLine
+    .replace(/^(?:title\s*:\s*)/i, "")
+    .replace(/^[#*_\s]+|[#*_\s]+$/g, "")
+    .replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Fast text lane (rollout B3): a small model on AI Gateway writes the title.
+ * Returns null whenever the lane is off, fails, or produces a title that
+ * would be rejected from any other non-user source; the caller then keeps
+ * the existing supervisor-model path.
+ */
+async function titleFromTextLane(input: ConversationTitleInput & { runId: string }): Promise<string | null> {
+  const outcome = await decisionService.generateText({
+    task: "conversation_title",
+    runId: input.runId,
+    system: `${CONVERSATION_TITLE_SYSTEM_PROMPT}\n\nReply with the title only, on one line, without quotes.`,
+    prompt: buildTitleContext(input),
+    maxTokens: TEXT_LANE_TITLE_MAX_TOKENS,
+    timeoutMs: TEXT_LANE_TITLE_TIMEOUT_MS,
+  });
+  if (outcome.status !== "answered") return null;
+  const title = cleanTextLaneTitle(outcome.text);
+  const rejection = !title
+    ? "empty" as const
+    : title.length > TEXT_LANE_TITLE_MAX_CHARS
+      ? "too_long" as const
+      : await agentSessionTitleRejection(input.runId, title);
+  if (rejection) {
+    emitNamedEvent({
+      kind: "conversation.title_rejected",
+      runId: input.runId,
+      source: "decision_text_lane",
+      reason: rejection,
+      titleLength: title.length,
+      titlePreview: title.slice(0, 80),
+    });
+    return null;
+  }
+  return title;
+}
 
 type ConversationTitleGenerationOutcome = "updated" | "skipped" | "superseded";
 
@@ -69,6 +123,11 @@ function buildTitleContext(input: ConversationTitleInput) {
 export async function generateConversationTitle(input: ConversationTitleInput) {
   if (process.env.MOCK_LLM === "true") {
     return { title: fallbackTitle(input.userMessage), error: null };
+  }
+
+  if (input.runId) {
+    const laneTitle = await titleFromTextLane({ ...input, runId: input.runId });
+    if (laneTitle) return { title: laneTitle, error: null };
   }
 
   try {
@@ -171,6 +230,7 @@ async function generateAndApplyConversationTitle(args: {
   const result = await generateConversationTitle({
     userMessage,
     assistantReply: args.assistantReply,
+    runId: args.runId,
   });
   const source = result.error ? "harness_fallback" as const : "harness_llm" as const;
   const updated = await db

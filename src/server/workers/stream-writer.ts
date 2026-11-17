@@ -21,6 +21,7 @@
 import { randomUUID } from "node:crypto";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { appendWorkerEntryWithResult } from "@/server/workers/output-store";
+import { observeWorkerActivity } from "@/server/workers/activity-tracker";
 import type {
   WorkerEntry,
   WorkerEntryAttachment,
@@ -107,6 +108,7 @@ function persistAndAnnounce(args: {
       workerId: args.workerId,
       seq: persisted.seq,
     });
+    observeWorkerActivity(args.runId, args.workerId, [persisted]);
     return persisted;
   });
 }

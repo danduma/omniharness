@@ -5,6 +5,9 @@ import { cn } from "@/lib/utils";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { ModelProfileForm } from "./ModelProfileForm";
+import { DecisionLayerSettings } from "./DecisionLayerSettings";
+import { OrchestrationPolicySettings } from "./OrchestrationPolicySettings";
+import type { DecisionLayerStatus } from "@/shared/decision-layer";
 import { parseBooleanSetting } from "@/interface/home/utils";
 
 interface ModelsSettingsPanelProps {
@@ -13,6 +16,7 @@ interface ModelsSettingsPanelProps {
   settings: Record<string, string>;
   setSetting: (key: string, value: string) => void;
   secretStates?: Record<string, { configured: boolean; updatedAt: string; preview?: string }>;
+  decisionLayer?: DecisionLayerStatus;
 }
 
 const CREDIT_STRATEGY_VALUES = ["swap_account", "fallback_api", "wait_for_reset", "cross_provider"] as const;
@@ -24,6 +28,7 @@ export function ModelsSettingsPanel({
   settings,
   setSetting,
   secretStates,
+  decisionLayer,
 }: ModelsSettingsPanelProps) {
   useI18nSnapshot();
   const creditStrategyOptions: SelectOption[] = CREDIT_STRATEGY_VALUES.map((value) => ({
@@ -127,6 +132,9 @@ export function ModelsSettingsPanel({
           </div>
         </div>
       </div>
+
+      <DecisionLayerSettings settings={settings} setSetting={setSetting} status={decisionLayer} />
+      <OrchestrationPolicySettings />
     </div>
   );
 }

@@ -46,6 +46,7 @@
     "mobile:build:android": "pnpm --dir apps/mobile exec -- ./android/gradlew -p ./android testDebugUnitTest assembleDebug",
     "test:lifecycle": "vitest run tests/lifecycle",
     "check:acp": "tsx scripts/check-acp-compatibility.ts",
+    "decisions:shadow-report": "tsx scripts/decision-shadow-report.ts",
     "measure:dev": "node ./scripts/measure-local-dev.mjs"
   },
   "dependencies": {

@@ -101,6 +101,15 @@ check and insertion occur under one SQLite write transaction so concurrent
 recovery sources cannot duplicate it. Only verified active work or a terminal
 run may resolve that incident.
 
+## Specialist orchestration stage invariant
+
+An orchestrated run holds at most one active stage claim (a partial unique
+index on `orchestration_stages`), every stage settles its budget reservation
+exactly once, and a restart never infers that a stage's agent finished from a
+reattached session: unproven launches become `needs_recovery` with their
+reservation kept. See `docs/architecture/specialist-orchestration.md` for the
+event list, error codes, and reconciliation rules.
+
 ## Why this document exists
 
 Over a single afternoon we hit three production-class bugs that the existing test

@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import { Cpu, PanelRightClose, Terminal as TerminalIcon } from "lucide-react";
+import { Cpu, LayoutGrid, List, PanelRightClose, Terminal as TerminalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkerCard } from "@/components/WorkerCard";
@@ -12,6 +12,10 @@ import { cn } from "@/lib/utils";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
 import { t, useI18nSnapshot } from "@/lib/i18n";
+import { OfficeStatusStrip } from "@/interface/office/OfficeStatusStrip";
+import { OfficeView } from "@/interface/office/OfficeView";
+import { CodeReviewPanel } from "./CodeReviewPanel";
+import { officeViewManager } from "@/interface/office/OfficeViewManager";
 
 export interface WorkersSidebarProps {
   workers: ConversationWorkerRecord[];
@@ -162,6 +166,7 @@ export function ConversationWorkerCard({
 const WorkersSidebar = memo(function WorkersSidebar({ workers, agents, supervisorInterventions, preferredModel, preferredEffort, projectRoot, onStopWorker, onStopTerminalProcess, onRespondElicitation, onRespondPermission, onLoadWorkerHistory, stoppingWorkerId, stoppingTerminalProcess, onClose, showHeader = true }: WorkersSidebarProps) {
   useI18nSnapshot();
   const { activeTab: requestedActiveTab, focusedWorkerId } = useManagerSnapshot(workersSidebarManager);
+  const { viewMode } = useManagerSnapshot(officeViewManager);
   const workerGroups = buildWorkerLists(workers);
   const agentsById = useMemo(
     () => new Map(agents.map((agent) => [agent.name, agent])),
@@ -176,7 +181,9 @@ const WorkersSidebar = memo(function WorkersSidebar({ workers, agents, superviso
   const visibleWorkers = activeTab === "active" ? workerGroups.active : workerGroups.finished;
   const hasSingleVisibleWorker = visibleWorkers.length === 1;
   const focusedWorkerVisible = Boolean(focusedWorkerId && visibleWorkers.some((worker) => worker.id === focusedWorkerId));
-  const isFocusMode = visibleWorkers.length > 1 && focusedWorkerVisible;
+  // The office always shows desks, so focusing even a single worker opens its card.
+  const isOfficeView = viewMode === "office" && activeTab === "active";
+  const isFocusMode = (visibleWorkers.length > 1 || isOfficeView) && focusedWorkerVisible;
   const focusedWorker = isFocusMode ? visibleWorkers.find((worker) => worker.id === focusedWorkerId) ?? null : null;
   const renderWorkerCard = (worker: ConversationWorkerRecord, options: { compact?: boolean; isFocused?: boolean } = {}) => {
     const agent = agentsById.get(worker.id) ?? {
@@ -204,7 +211,7 @@ const WorkersSidebar = memo(function WorkersSidebar({ workers, agents, superviso
         fillAvailable={hasSingleVisibleWorker || isFocusedWorker}
         compact={isCompactWorker}
         isFocused={isFocusedWorker}
-        canFocus={visibleWorkers.length > 1}
+        canFocus={visibleWorkers.length > 1 || isOfficeView}
         onToggleFocus={() => workersSidebarManager.toggleFocusedWorker(worker.id)}
         onStopWorker={onStopWorker}
         onStopTerminalProcess={onStopTerminalProcess}
@@ -245,7 +252,7 @@ const WorkersSidebar = memo(function WorkersSidebar({ workers, agents, superviso
         )}
       </div>
       ) : null}
-      <div className="border-b border-border/60 px-3 py-2">
+      <div className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
         <div className="inline-flex rounded-lg border border-border/60 bg-muted/30 p-0.5">
           <button
             type="button"
@@ -272,7 +279,43 @@ const WorkersSidebar = memo(function WorkersSidebar({ workers, agents, superviso
             {t("workers.sidebar.finishedTab", { count: workerGroups.finished.length })}
           </button>
         </div>
+        <div className="inline-flex rounded-lg border border-border/60 bg-muted/30 p-0.5" role="group" aria-label={t("office.view.toggleAria")}>
+          {([
+            { mode: "list", Icon: List, label: t("office.view.list") },
+            { mode: "office", Icon: LayoutGrid, label: t("office.view.office") },
+          ] as const).map(({ mode, Icon, label }) => (
+            <button
+              key={mode}
+              type="button"
+              aria-pressed={viewMode === mode}
+              aria-label={label}
+              title={label}
+              className={cn(
+                "rounded-md p-1 transition-colors motion-reduce:transition-none",
+                viewMode === mode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => officeViewManager.setViewMode(mode)}
+            >
+              <Icon aria-hidden="true" className="h-3.5 w-3.5" />
+            </button>
+          ))}
+        </div>
       </div>
+      {workers[0]?.runId ? (
+        <div className="border-b border-border/60 px-3 py-2">
+          <CodeReviewPanel runId={workers[0].runId} />
+        </div>
+      ) : null}
+      {activeTab === "active" && visibleWorkers.length > 1 && !isOfficeView ? (
+        <div className="border-b border-border/60 px-2 py-1.5">
+          <OfficeStatusStrip
+            workers={visibleWorkers}
+            agentsById={agentsById}
+            focusedWorkerId={focusedWorkerVisible ? focusedWorkerId : null}
+            onFocusWorker={workersSidebarManager.toggleFocusedWorker}
+          />
+        </div>
+      ) : null}
       {isFocusMode && focusedWorker ? (
         <div className="min-h-0 flex-1 p-3">
           <div className="h-full min-h-0">
@@ -284,7 +327,13 @@ const WorkersSidebar = memo(function WorkersSidebar({ workers, agents, superviso
           <div className={cn(
             hasSingleVisibleWorker ? "flex h-full min-h-full flex-col" : visibleWorkers.length > 0 ? "space-y-4" : "flex h-full min-h-full flex-col",
           )}>
-            {visibleWorkers.length > 0 ? (
+            {visibleWorkers.length > 0 && isOfficeView ? (
+              <OfficeView
+                workers={visibleWorkers}
+                agentsById={agentsById}
+                onFocusWorker={workersSidebarManager.setFocusedWorker}
+              />
+            ) : visibleWorkers.length > 0 ? (
               visibleWorkers.map((worker) => renderWorkerCard(worker))
             ) : (
               <div className="flex h-full min-h-[16rem] flex-1 flex-col items-center justify-center rounded-md border border-dashed bg-transparent text-xs text-muted-foreground">

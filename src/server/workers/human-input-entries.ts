@@ -27,6 +27,7 @@ import { workers } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
 import type { AgentOutputEntry } from "@/lib/agent-output";
 import type { WorkerEntry } from "@/server/workers/entries-types";
+import { isOpenHumanInputStatus } from "@/shared/worker-entries";
 import { readWorkerOutputEntries, writeWorkerOutputEntries } from "@/server/workers/output-store";
 
 export type HumanInputKind = "elicitation" | "permission";
@@ -36,21 +37,8 @@ type ReconcileHumanInputResult = {
   closedPermissionRequestIds: number[];
 };
 
-const TERMINAL_STATUSES = new Set([
-  "answered",
-  "approved",
-  "cancelled",
-  "canceled",
-  "completed",
-  "declined",
-  "denied",
-  "failed",
-  "rejected",
-  "skipped",
-]);
-
 function isOpen(entry: WorkerEntry) {
-  return !TERMINAL_STATUSES.has((entry.status ?? "pending").trim().toLowerCase());
+  return isOpenHumanInputStatus(entry.status);
 }
 
 function entryRequestId(entry: WorkerEntry) {

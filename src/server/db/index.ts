@@ -4,7 +4,7 @@ import * as schema from './schema';
 import { getAppDataPath } from '@/server/app-root';
 
 const dbPath = getAppDataPath('sqlite.db');
-const DB_SCHEMA_VERSION = 10;
+const DB_SCHEMA_VERSION = 11;
 const CONNECTION_BUSY_TIMEOUT_MS = 15_000;
 export type DbClient = ReturnType<typeof createClient>;
 
@@ -627,6 +627,102 @@ CREATE TABLE IF NOT EXISTS planning_review_findings (
   FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE no action
 );
 
+CREATE TABLE IF NOT EXISTS code_reviews (
+  id text PRIMARY KEY NOT NULL,
+  run_id text NOT NULL,
+  implementer_worker_id text NOT NULL,
+  implementer_type text NOT NULL,
+  reviewer_type text NOT NULL,
+  status text NOT NULL,
+  max_rounds integer NOT NULL,
+  rounds_completed integer NOT NULL DEFAULT 0,
+  outcome_reason text,
+  last_error text,
+  started_at integer NOT NULL,
+  completed_at integer,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS code_review_rounds (
+  id text PRIMARY KEY NOT NULL,
+  review_id text NOT NULL,
+  run_id text NOT NULL,
+  round_number integer NOT NULL,
+  reviewer_worker_id text,
+  verdict text,
+  evidence_json text,
+  response_excerpt text,
+  diff_chars integer NOT NULL DEFAULT 0,
+  created_at integer NOT NULL,
+  completed_at integer,
+  FOREIGN KEY (review_id) REFERENCES code_reviews(id) ON UPDATE no action ON DELETE CASCADE,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS code_review_findings (
+  id text PRIMARY KEY NOT NULL,
+  review_id text NOT NULL,
+  run_id text NOT NULL,
+  round_number integer NOT NULL,
+  severity text NOT NULL,
+  file text,
+  line integer,
+  claim text NOT NULL,
+  evidence text,
+  suggested_fix text,
+  status text NOT NULL,
+  dispute_reason text,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (review_id) REFERENCES code_reviews(id) ON UPDATE no action ON DELETE CASCADE,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS orchestration_stages (
+  id text PRIMARY KEY NOT NULL,
+  run_id text NOT NULL,
+  stage_key text NOT NULL,
+  attempt integer NOT NULL,
+  seq integer NOT NULL,
+  status text NOT NULL,
+  outcome text,
+  binding_json text NOT NULL,
+  requested_worker_type text,
+  requested_model text,
+  effective_model text,
+  used_fallback integer NOT NULL DEFAULT 0,
+  worker_id text,
+  execution_run_id text,
+  handoff_id text,
+  external_ref text,
+  claim_token text,
+  findings_json text,
+  failure_code text,
+  last_error text,
+  claimed_at integer,
+  completed_at integer,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS orchestration_budget_ledger (
+  id text PRIMARY KEY NOT NULL,
+  run_id text NOT NULL,
+  stage_id text NOT NULL,
+  entry_kind text NOT NULL,
+  tokens integer,
+  cost_usd real,
+  input_tokens integer,
+  output_tokens integer,
+  usage_unknown integer NOT NULL DEFAULT 0,
+  created_at integer NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(id) ON UPDATE no action ON DELETE CASCADE,
+  FOREIGN KEY (stage_id) REFERENCES orchestration_stages(id) ON UPDATE no action ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS artifact_streams (
   id text PRIMARY KEY NOT NULL,
   run_id text NOT NULL,
@@ -791,6 +887,34 @@ if (!runColumnNames.has("memory_metadata_revision")) {
 
 if (!runColumnNames.has("last_memory_consolidation_at")) {
   await client.execute("ALTER TABLE runs ADD COLUMN last_memory_consolidation_at integer;");
+}
+
+if (!runColumnNames.has("orchestration_policy_json")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN orchestration_policy_json text;");
+}
+
+if (!runColumnNames.has("orchestration_policy_version")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN orchestration_policy_version integer;");
+}
+
+if (!runColumnNames.has("orchestration_profile")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN orchestration_profile text;");
+}
+
+if (!runColumnNames.has("orchestration_profile_source")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN orchestration_profile_source text;");
+}
+
+if (!runColumnNames.has("orchestration_profile_locked_at")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN orchestration_profile_locked_at integer;");
+}
+
+if (!runColumnNames.has("orchestration_cancelled_at")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN orchestration_cancelled_at integer;");
+}
+
+if (!runColumnNames.has("orchestration_triage_json")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN orchestration_triage_json text;");
 }
 
 if (!runColumnNames.has("last_activity_at")) {
@@ -1163,6 +1287,16 @@ CREATE INDEX IF NOT EXISTS planning_review_rounds_run_idx ON planning_review_rou
 CREATE INDEX IF NOT EXISTS planning_review_rounds_run_round_number_idx ON planning_review_rounds(run_id, round_number);
 CREATE INDEX IF NOT EXISTS planning_review_findings_run_idx ON planning_review_findings(run_id);
 CREATE INDEX IF NOT EXISTS planning_review_findings_run_created_id_desc_idx ON planning_review_findings(run_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS code_reviews_run_created_idx ON code_reviews(run_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS code_review_rounds_review_idx ON code_review_rounds(review_id, round_number);
+CREATE INDEX IF NOT EXISTS code_review_findings_review_idx ON code_review_findings(review_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS orchestration_stages_run_stage_attempt_idx ON orchestration_stages(run_id, stage_key, attempt);
+CREATE UNIQUE INDEX IF NOT EXISTS orchestration_stages_run_seq_idx ON orchestration_stages(run_id, seq);
+CREATE UNIQUE INDEX IF NOT EXISTS orchestration_stages_active_claim_idx
+  ON orchestration_stages(run_id)
+  WHERE status IN ('preflight', 'dispatched', 'waiting');
+CREATE UNIQUE INDEX IF NOT EXISTS orchestration_budget_ledger_stage_kind_idx ON orchestration_budget_ledger(stage_id, entry_kind);
+CREATE INDEX IF NOT EXISTS orchestration_budget_ledger_run_idx ON orchestration_budget_ledger(run_id);
 CREATE INDEX IF NOT EXISTS queued_conversation_messages_run_status_created_idx ON queued_conversation_messages(run_id, status, created_at);
 CREATE INDEX IF NOT EXISTS queued_conversation_messages_run_status_created_id_desc_idx ON queued_conversation_messages(run_id, status, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS queued_conversation_messages_pending_run_created_id_desc_idx

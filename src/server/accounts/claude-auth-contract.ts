@@ -16,9 +16,12 @@ const EXACT_CLAUDE_ROUTING_KEYS = new Set([
 const AUTH_ENV_KEYS = new Set([
   "PATH", "HOME", "USER", "LOGNAME", "SHELL",
   "TMPDIR", "TEMP", "TMP", "TERM", "LANG",
+  "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+  "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT",
   "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
   "http_proxy", "https_proxy", "all_proxy", "no_proxy",
   "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
+  "NODE_OPTIONS",
 ]);
 
 export type ClaudeAuthStatus = {
@@ -55,8 +58,9 @@ export function buildClaudeAuthChildEnv(source: EnvLike, configDir: string) {
   const stripped = stripClaudeCredentialRoutingEnv(source);
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(stripped)) {
-    if (AUTH_ENV_KEYS.has(key) || key.startsWith("LC_")) {
-      result[key] = value;
+    const normalizedKey = process.platform === "win32" ? key.toUpperCase() : key;
+    if (AUTH_ENV_KEYS.has(normalizedKey) || normalizedKey.startsWith("LC_")) {
+      result[normalizedKey] = value;
     }
   }
   result.PATH = result.PATH || process.env.PATH || "";
@@ -64,6 +68,13 @@ export function buildClaudeAuthChildEnv(source: EnvLike, configDir: string) {
   result.TERM = result.TERM || "xterm-256color";
   result.LANG = "C";
   result.LC_ALL = "C";
+  // Corporate Windows installations often trust their TLS inspection root in
+  // the Windows certificate store only. Node does not consult that store by
+  // default, which makes an otherwise successful OAuth callback fail when the
+  // Claude CLI exchanges the authorization code.
+  if (process.platform === "win32" && !/(?:^|\s)--use-system-ca(?:\s|$)/.test(result.NODE_OPTIONS ?? "")) {
+    result.NODE_OPTIONS = [result.NODE_OPTIONS, "--use-system-ca"].filter(Boolean).join(" ");
+  }
   result.CLAUDE_CONFIG_DIR = configDir;
   return result;
 }

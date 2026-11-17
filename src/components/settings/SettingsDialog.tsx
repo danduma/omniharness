@@ -58,6 +58,7 @@ interface SettingsDialogProps {
   workerCatalogRefreshing: boolean;
   settingsDiagnostics: AppErrorDescriptor[];
   resourceSnapshot?: SettingsResponse["resourceSnapshot"];
+  decisionLayer?: SettingsResponse["decisionLayer"];
   saveSettings: {
     error: unknown;
     isPending: boolean;
@@ -88,6 +89,7 @@ export function SettingsDialog({
   workerCatalogRefreshing,
   settingsDiagnostics,
   resourceSnapshot,
+  decisionLayer,
   saveSettings,
   activeProjectPath,
   claudeAccountAuthManager,
@@ -167,6 +169,7 @@ export function SettingsDialog({
                 settings={settingsDraft.draft}
                 setSetting={setSetting}
                 secretStates={secretStates}
+                decisionLayer={decisionLayer}
               />
             ) : null}
             {activeSettingsTab === "credentials" ? (

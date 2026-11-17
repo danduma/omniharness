@@ -14,6 +14,15 @@ vi.mock("@/server/settings/crypto", () => ({
 }));
 
 describe("hydrateRuntimeEnvFromSettings", () => {
+  it("never hydrates env-only secrets from stored settings rows", () => {
+    const result = hydrateRuntimeEnvFromSettings([
+      { key: "AI_GATEWAY_API_KEY", value: "enc:v1:stray" },
+      { key: "DECISION_LAYER_ENABLED", value: "true" },
+    ]);
+
+    expect(result).toEqual({ env: { DECISION_LAYER_ENABLED: "true" }, decryptionFailures: [] });
+  });
+
   it("decrypts stored secret settings before exposing them to runtime code", () => {
     const result = hydrateRuntimeEnvFromSettings([
       { key: "GEMINI_API_KEY", value: "enc:v1:secret-value" },

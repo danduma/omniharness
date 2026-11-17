@@ -89,6 +89,8 @@ next-env.d.ts
 # (managed by src/server/workers/output-store.ts, kept as
 # read-only/migration-source after append-only artifact migration).
 run-data/
+# Decision-layer shadow comparisons (local, per runner).
+decision-log/
 
 # Project-local append-only artifact streams (kept explicit for
 # older Git clients and tests that probe this path directly).

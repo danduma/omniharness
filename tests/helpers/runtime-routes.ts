@@ -1,4 +1,5 @@
 import type { OmniHttpHandler } from "@/runtime/http/registry";
+import { handleCodeReviewsRequest } from "@/runtime/http/routes/code-reviews";
 import {
   handleAccountsRequest,
   handleAgentDetailRequest,
@@ -108,6 +109,7 @@ export const notificationsGetRoute = testRoute(handleNotificationsRequest);
 export const notificationsPostRoute = testRoute(handleNotificationsRequest);
 export const planningPromoteRoute = testRoute(handlePlanningPromoteRequest);
 export const planningReviewRoute = testRoute(handlePlanningReviewRequest);
+export const codeReviewsRoute = testRoute(handleCodeReviewsRequest);
 export const queuedMessageInterruptNextRoute = testRoute(
   handleQueuedConversationMessageInterruptNextRequest,
 );

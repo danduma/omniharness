@@ -179,12 +179,12 @@ function Test-GlobalNpmPackageOutdated {
 
 function Install-ClaudeAcp {
   if ($DryRun) {
-    Write-Host "  -> would install the latest official `@agentclientprotocol/claude-agent-acp` with `npm install -g`"
+    Write-Host "  -> would install the latest official @agentclientprotocol/claude-agent-acp with npm install -g"
     return
   }
   npm install -g "@agentclientprotocol/claude-agent-acp@latest"
   if ($LASTEXITCODE -ne 0) { throw "Claude ACP npm installation failed (exit $LASTEXITCODE)" }
-  Write-Host "  -> installed `@agentclientprotocol/claude-agent-acp`"
+  Write-Host "  -> installed @agentclientprotocol/claude-agent-acp"
 }
 
 function Add-InstallDirToUserPath {
@@ -255,10 +255,10 @@ if (Test-Command "claude") {
   Write-Host "claude: detected"
   if (Test-Command "claude-agent-acp") {
     if (Test-GlobalNpmPackageOutdated "@agentclientprotocol/claude-agent-acp") {
-      Write-Host "  -> managed `@agentclientprotocol/claude-agent-acp` is outdated; refreshing it"
+      Write-Host "  -> managed @agentclientprotocol/claude-agent-acp is outdated; refreshing it"
       Install-ClaudeAcp
     } else {
-      Write-Host "  -> `claude-agent-acp` already installed and current"
+      Write-Host "  -> claude-agent-acp already installed and current"
     }
   } else {
     Install-ClaudeAcp

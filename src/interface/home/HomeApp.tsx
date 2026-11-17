@@ -1779,6 +1779,7 @@ export function HomeApp({
         workerCatalogRefreshing={refreshWorkerCatalog.isPending || workerCatalogQuery.isFetching}
         settingsDiagnostics={settingsDiagnostics}
         resourceSnapshot={settingsQuery.data?.resourceSnapshot}
+        decisionLayer={settingsQuery.data?.decisionLayer}
         saveSettings={saveSettings}
         activeProjectPath={activeConversationCwd ?? null}
         claudeAccountAuthManager={claudeAccountAuthManager}

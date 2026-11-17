@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { AgentRuntimeManager } from "@/server/agent-runtime/manager";
@@ -161,6 +161,39 @@ afterEach(() => {
 });
 
 describe("Claude worker model pinning", () => {
+  it("launches the resolved Windows npm command shim for the default Claude worker", async () => {
+    if (process.platform !== "win32") return;
+    const projectDir = process.cwd();
+    const binDir = createTempDir("omni-runtime-claude-windows-bin-");
+    const scriptPath = join(binDir, "node_modules", "@agentclientprotocol", "claude-agent-acp", "dist", "index.js");
+    mkdirSync(dirname(scriptPath), { recursive: true });
+    writeFileSync(scriptPath, fakeClaudeAcpAgentScript);
+    writeFileSync(
+      join(binDir, "claude-agent-acp.cmd"),
+      "@ECHO off\r\n\"%_prog%\"  \"%dp0%\\node_modules\\@agentclientprotocol\\claude-agent-acp\\dist\\index.js\" %*\r\n",
+    );
+    const manager = new AgentRuntimeManager({
+      env: {
+        ...process.env,
+        OMNIHARNESS_MEMORY_TRACE: "0",
+        OMNIHARNESS_RESOURCE_GUARD: "0",
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        PATH: `${binDir};${dirname(process.execPath)}`,
+      },
+    });
+
+    try {
+      await expect(manager.startAgent({
+        type: "claude",
+        cwd: projectDir,
+        name: "claude-windows-shim-worker",
+      })).resolves.toMatchObject({ type: "claude" });
+    } finally {
+      await manager.stopAgent("claude-windows-shim-worker").catch(() => undefined);
+      manager.shutdownPools();
+    }
+  }, 15_000);
+
   it("passes an exact requested version instead of inheriting the CLI's selection", async () => {
     const { status, requests } = await startClaudeWorker({ model: "claude-opus-4-8", currentModel: "default" });
 

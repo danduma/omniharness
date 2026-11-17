@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { appearancePreferencesManager } from "@/interface/home/AppearancePreferencesManager";
 import { fileViewerPanelManager } from "@/components/component-state-managers";
+import { officeViewManager } from "@/interface/office/OfficeViewManager";
 import { i18nManager } from "@/lib/i18n";
 import { clearPreviewCacheStorage } from "@/lib/browser-storage";
 
@@ -20,6 +21,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     clearPreviewCacheStorage();
     appearancePreferencesManager.hydrateFromLocalStorage();
     fileViewerPanelManager.hydrateFromLocalStorage();
+    officeViewManager.hydrate();
     void i18nManager.hydrateAsync();
   }, []);
 

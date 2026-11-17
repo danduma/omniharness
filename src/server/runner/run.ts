@@ -1,3 +1,5 @@
+import { registerOrchestrationSignalListener } from "@/server/orchestration/stage-adapters";
+import { reconcileOrchestrationStages } from "@/server/orchestration/reconcile";
 import path from "node:path";
 import { AgentUpdatesManager } from "./agent-updates";
 import { dbReady } from "@/server/db";
@@ -130,6 +132,20 @@ export async function startRunnerProcess(
       process.stderr.write(
         `[runner] failed to reclaim orphaned queued messages: ${reason}\n`,
       );
+    });
+    // Specialist orchestration: one owner turns terminal events into stage
+    // signals, then stages claimed before a restart are reconciled.
+    registerOrchestrationSignalListener();
+    await reconcileOrchestrationStages().catch((error) => {
+      const reason = error instanceof Error ? error.message : String(error);
+      emitNamedEvent({ kind: "orchestration.adapter_failed", runId: "", stageId: null, reason: `startup reconciliation: ${reason}` });
+      emitNamedEvent({
+        kind: "error.surfaced",
+        code: "orchestration.needs_recovery",
+        message: `Could not reconcile orchestration stages after restart: ${reason}`,
+        surface: "log",
+        cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+      });
     });
     // Titles poisoned before the guard existed cannot repair themselves: the
     // agent that wrote one keeps echoing the prompt, so nothing clean ever

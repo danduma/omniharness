@@ -2,7 +2,7 @@ import { execFileSync } from "child_process";
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
-import { withManagedPath } from "@/server/agent-runtime/tool-env";
+import { resolveCommand, withManagedPath } from "@/server/agent-runtime/tool-env";
 import { isCredentialProfileConfigured } from "@/server/agent-runtime/external-credentials";
 import { SUPPORTED_WORKER_TYPES, type SupportedWorkerType, normalizeWorkerType } from "./worker-types";
 
@@ -78,6 +78,13 @@ function resolveCommandPath(command: string, options: WorkerDetectionOptions = {
   );
   if (options.commandResolver) {
     return options.commandResolver(command, lookupEnv);
+  }
+
+  if (process.platform === "win32") {
+    // Windows has no `which`, and Git Bash's cannot see `.cmd` launchers such
+    // as the managed codex-acp, so every installed agent looked missing.
+    // Resolve in-process instead (PATHEXT-style .cmd/.exe lookup).
+    return resolveCommand(command, { env: lookupEnv });
   }
 
   try {

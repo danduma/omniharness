@@ -1,4 +1,6 @@
 import { eq } from "drizzle-orm";
+import { isEnvOnlySecretKey } from "@/shared/decision-layer";
+import { readDecisionLayerStatus } from "@/server/decisions/config";
 import { db } from "@/server/db";
 import { settings } from "@/server/db/schema";
 import { buildAppError, errorResponse } from "@/server/api-errors";
@@ -19,7 +21,7 @@ import { readClaudeModelGatewaySettings } from "@/server/integrations/claude-mod
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 
 function isInternalSettingKey(key: string) {
-  return key.startsWith("__");
+  return key.startsWith("__") || isEnvOnlySecretKey(key);
 }
 
 function describeError(error: unknown) {
@@ -101,7 +103,7 @@ async function getSettings(request: Request) {
 
   const resourceSnapshot = await readSystemResourceSnapshot(process.cwd());
 
-  return Response.json({ values, secrets, diagnostics, resourceSnapshot });
+  return Response.json({ values, secrets, diagnostics, resourceSnapshot, decisionLayer: readDecisionLayerStatus() });
 }
 
 async function postSettings(request: Request) {
@@ -124,6 +126,16 @@ async function postSettings(request: Request) {
     await validateClaudeGatewayDraft(body);
   } catch (error) {
     return Response.json({ error: { code: "invalid_gateway_settings", message: describeError(error) } }, { status: 400 });
+  }
+  const envOnlyKeys = Object.keys(body).filter(isEnvOnlySecretKey);
+  if (envOnlyKeys.length > 0) {
+    // Never echo the submitted value; name the key only.
+    return Response.json({
+      error: {
+        code: "env_only_setting",
+        message: `${envOnlyKeys.join(", ")} can only be set in the server environment, not saved in settings.`,
+      },
+    }, { status: 400 });
   }
   let projectSettingValue: string | null = null;
   const runtimeResourceSettings: Record<string, string> = {};

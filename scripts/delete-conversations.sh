@@ -73,6 +73,11 @@ function deleteConversationRows() {
     if (tables.has("process_sessions")) {
       db.prepare("delete from process_sessions where run_id in (select id from runs)").run();
     }
+    for (const table of ["code_review_findings", "code_review_rounds", "code_reviews", "orchestration_budget_ledger", "orchestration_stages"]) {
+      if (tables.has(table)) {
+        db.prepare(`delete from ${table} where run_id in (select id from runs)`).run();
+      }
+    }
     db.prepare("delete from workers where run_id in (select id from runs)").run();
     if (tables.has("worker_counters")) {
       db.prepare("delete from worker_counters where run_id in (select id from runs)").run();

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import React, { createContext, useContext } from "react";
 import type { PropsWithChildren } from "react";
 import type { RuntimeAPIs } from "./types";
 import { createWebRuntimeAPIs } from "./web";
