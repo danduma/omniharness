@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { resizeComposerTextarea } from "@/lib/composer-textarea";
+import { resizeComposerTextarea, restoreKeyboardAfterSpellcheckReplacement } from "@/lib/composer-textarea";
 
 interface TestTextarea {
   style: { height: string };
@@ -47,4 +47,57 @@ test("composer autosize uses the natural measured height when content does not o
 
   expect(textarea.style.height).toBe("72px");
   expect(textarea.scrollTop).toBe(0);
+});
+
+function createKeyboardTextarea() {
+  const attributes = new Map<string, string>();
+  const policyAtShow: Array<string | undefined> = [];
+  let focusCount = 0;
+  const textarea = {
+    focus: () => { focusCount += 1; },
+    getAttribute: (name: string) => attributes.get(name) ?? null,
+    setAttribute: (name: string, value: string) => { attributes.set(name, value); },
+    removeAttribute: (name: string) => { attributes.delete(name); },
+  };
+  const virtualKeyboard = { show: () => { policyAtShow.push(attributes.get("virtualkeyboardpolicy")); } };
+  return { textarea, attributes, policyAtShow, virtualKeyboard, focusCount: () => focusCount };
+}
+
+test("re-shows the keyboard after an Android spellcheck replacement", () => {
+  const { textarea, attributes, policyAtShow, virtualKeyboard, focusCount } = createKeyboardTextarea();
+
+  const shown = restoreKeyboardAfterSpellcheckReplacement(textarea, "insertReplacementText", {
+    virtualKeyboard,
+    isActiveElement: () => true,
+  });
+
+  expect(shown).toBe(true);
+  expect(policyAtShow).toEqual(["manual"]);
+  expect(attributes.has("virtualkeyboardpolicy")).toBe(false);
+  expect(focusCount()).toBe(0);
+});
+
+test("refocuses the textarea when the suggestion menu took focus", () => {
+  const { textarea, virtualKeyboard, focusCount } = createKeyboardTextarea();
+
+  restoreKeyboardAfterSpellcheckReplacement(textarea, "insertReplacementText", {
+    virtualKeyboard,
+    isActiveElement: () => false,
+  });
+
+  expect(focusCount()).toBe(1);
+});
+
+test("ignores ordinary typing and browsers without the VirtualKeyboard API", () => {
+  const { textarea, policyAtShow, virtualKeyboard } = createKeyboardTextarea();
+
+  expect(restoreKeyboardAfterSpellcheckReplacement(textarea, "insertText", {
+    virtualKeyboard,
+    isActiveElement: () => true,
+  })).toBe(false);
+  expect(restoreKeyboardAfterSpellcheckReplacement(textarea, "insertReplacementText", {
+    virtualKeyboard: undefined,
+    isActiveElement: () => true,
+  })).toBe(false);
+  expect(policyAtShow).toEqual([]);
 });

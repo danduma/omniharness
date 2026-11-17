@@ -77,7 +77,7 @@ test("mobile composer keeps the summary in one bounded controls row and grows on
   expect(pageSource).toContain('data-composer-controls="true"');
   expect(pageSource).toContain('className="mt-0 flex min-w-0 items-end gap-1 pb-2 sm:gap-2"');
   expect(pageSource).not.toContain('className="mt-0 flex flex-wrap items-center gap-1 pb-2 sm:flex-nowrap sm:gap-2"');
-  expect(pageSource).toContain('import { resizeComposerTextarea } from "@/lib/composer-textarea";');
+  expect(pageSource).toContain('import { resizeComposerTextarea, restoreKeyboardAfterSpellcheckReplacement } from "@/lib/composer-textarea";');
   expect(pageSource).toContain("resizeComposerTextarea");
   expect(pageSource).toContain("useLayoutEffect");
   expect(pageSource).not.toContain('textarea.style.height = "0px"');
