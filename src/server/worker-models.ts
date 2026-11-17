@@ -38,6 +38,8 @@ type WorkerModelCatalogManagerOptions = {
 
 const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
   codex: [
+    { value: "gpt-6.2-sol", label: "GPT-6.2 Sol" },
+    { value: "gpt-6.2-astra", label: "GPT-6.2 Astra" },
     { value: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
     { value: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
     { value: "gpt-6-sol", label: "GPT-6 Sol" },
@@ -62,6 +64,7 @@ const HARDCODED_WORKER_MODELS: WorkerModelCatalog = {
     { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
   ],
   opencode: [
+    { value: "openai/gpt-6.2-sol", label: "GPT-6.2 Sol" },
     { value: "openai/gpt-6.1-sol", label: "GPT-6.1 Sol" },
     { value: "openai/gpt-6.1-terra", label: "GPT-6.1 Terra" },
     { value: "openai/gpt-6-sol", label: "GPT-6 Sol" },

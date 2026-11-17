@@ -92,10 +92,12 @@ describe("worker model catalog", () => {
     expect(catalog.codex.some((model) => model.value === "codex-auto-review")).toBe(false);
   });
 
-  it("uses GPT-6.1 Sol as the first Codex fallback when discovery is unavailable", async () => {
+  it("uses GPT-6.2 Sol as the first Codex fallback when discovery is unavailable", async () => {
     const catalog = await buildWorkerModelCatalog({ runCommand: async () => "" });
 
-    expect(catalog.codex.slice(0, 5)).toEqual([
+    expect(catalog.codex.slice(0, 7)).toEqual([
+      { value: "gpt-6.2-sol", label: "GPT-6.2 Sol" },
+      { value: "gpt-6.2-astra", label: "GPT-6.2 Astra" },
       { value: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
       { value: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
       { value: "gpt-6-sol", label: "GPT-6 Sol" },

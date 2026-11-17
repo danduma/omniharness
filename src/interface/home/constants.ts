@@ -148,6 +148,8 @@ export const DEFAULT_ALLOWED_WORKER_TYPES = JSON.stringify(WORKER_OPTIONS.map((o
 DEFAULT_SERVER_SETTINGS.WORKER_ALLOWED_TYPES = DEFAULT_ALLOWED_WORKER_TYPES;
 export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
   codex: [
+    { value: "gpt-6.2-sol", label: "GPT-6.2 Sol" },
+    { value: "gpt-6.2-astra", label: "GPT-6.2 Astra" },
     { value: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
     { value: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
     { value: "gpt-6-sol", label: "GPT-6 Sol" },
@@ -172,6 +174,7 @@ export const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {
     { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
   ],
   opencode: [
+    { value: "openai/gpt-6.2-sol", label: "GPT-6.2 Sol" },
     { value: "openai/gpt-6.1-sol", label: "GPT-6.1 Sol" },
     { value: "openai/gpt-6.1-terra", label: "GPT-6.1 Terra" },
     { value: "openai/gpt-6-sol", label: "GPT-6 Sol" },
@@ -239,6 +242,8 @@ export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: st
     { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
   ],
   codex: [
+    { value: "gpt-6.2-sol", label: "GPT-6.2 Sol" },
+    { value: "gpt-6.2-astra", label: "GPT-6.2 Astra" },
     { value: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
     { value: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
     { value: "gpt-6-sol", label: "GPT-6 Sol" },
