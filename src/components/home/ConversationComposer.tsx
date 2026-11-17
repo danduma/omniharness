@@ -12,7 +12,7 @@ import { isManualStopCommand, resolveBusyMessageActionForSubmitAction, type Busy
 import { getComposerSubmitShortcutLabel, isAppleComposerShortcutPlatform, shouldInterruptQueuedMessageKeyDown, shouldSubmitComposerKeyDown, shouldUseAlternateComposerSubmitKeyDown } from "@/interface/home/composer-keyboard";
 import type { ComposerWorkerOption, QueuedConversationMessageRecord, WorkerModelOption } from "@/interface/home/types";
 import { formatBytes, type PendingChatAttachment } from "@/lib/chat-attachments";
-import { resizeComposerTextarea } from "@/lib/composer-textarea";
+import { resizeComposerTextarea, restoreKeyboardAfterSpellcheckReplacement } from "@/lib/composer-textarea";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { StateManager } from "@/lib/state-manager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
@@ -338,6 +338,17 @@ function ConversationComposerInner({
               command: e.target.value,
               commandCursor: e.target.selectionStart ?? e.target.value.length,
             });
+            const inputType = (e.nativeEvent as InputEvent).inputType;
+            if (inputType === "insertReplacementText") {
+              const textarea = e.currentTarget;
+              // Let Chrome finish dismissing its suggestion menu first.
+              requestAnimationFrame(() => {
+                restoreKeyboardAfterSpellcheckReplacement(textarea, inputType, {
+                  virtualKeyboard: (navigator as Navigator & { virtualKeyboard?: { show(): void } }).virtualKeyboard,
+                  isActiveElement: () => document.activeElement === textarea,
+                });
+              });
+            }
           }}
           onClick={(e) => setCommandCursor(e.currentTarget.selectionStart ?? 0)}
           onKeyUp={(e) => setCommandCursor(e.currentTarget.selectionStart ?? 0)}
