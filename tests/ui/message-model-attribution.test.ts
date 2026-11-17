@@ -116,6 +116,8 @@ describe("formatMessageModelAttribution", () => {
     expect(formatMessageModelAttribution("gpt-6-luna", "medium")).toBe("GPT-6 Luna (Medium)");
     expect(formatMessageModelAttribution("gpt-6.1-sol", "medium")).toBe("GPT-6.1 Sol (Medium)");
     expect(formatMessageModelAttribution("gpt-6.1-terra", "high")).toBe("GPT-6.1 Terra (High)");
+    expect(formatMessageModelAttribution("gpt-6.2-sol", "medium")).toBe("GPT-6.2 Sol (Medium)");
+    expect(formatMessageModelAttribution("gpt-6.2-astra", "high")).toBe("GPT-6.2 Astra (High)");
   });
 
   test("drops the effort when the session reports one we cannot name", () => {
