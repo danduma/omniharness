@@ -374,7 +374,7 @@ function ConversationRunRow({ run, selected, unread, openRemote, pin, machine, a
       )}
     >
       <div className="min-w-0 flex-1">
-        <div className="min-w-0 flex items-center justify-between gap-2">
+        <div className={cn("min-w-0 flex items-center justify-between gap-2", machine && "lg:min-h-6")}>
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <span className="inline-flex h-5 w-3 shrink-0 items-center justify-center">
               {showAwaitingUserIndicator && statusIndicatorLabel ? (

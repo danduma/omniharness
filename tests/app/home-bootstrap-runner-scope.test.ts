@@ -10,16 +10,21 @@ let bootstrapSequence = 0;
 function bootstrapFor(
   runnerInstanceId: string,
   settingsValues: Record<string, string> | null,
+  options: { draftProjectPath?: string | null; runProjectPaths?: string[] } = {},
 ): HomeBootstrapPayload {
   bootstrapSequence += 1;
   return {
     id: `bootstrap-${bootstrapSequence}`,
     route: {
       selectedRunId: null,
-      draftProjectPath: null,
+      draftProjectPath: options.draftProjectPath ?? null,
       pairTokenFromUrl: null,
     },
-    initialEventState: null,
+    initialEventState: options.runProjectPaths
+      ? {
+        runs: options.runProjectPaths.map((projectPath, index) => ({ id: `run-${index}`, projectPath })),
+      } as unknown as HomeBootstrapPayload["initialEventState"]
+      : null,
     initialLastEventId: "",
     initialQueries: {
       session: null,
@@ -120,5 +125,50 @@ describe("applyHomeBootstrap runner scoping", () => {
     applyHomeBootstrap(alpha, false);
 
     expect(projectsOf()).toBe('["/work/alpha"]');
+  });
+
+  it("drops the previous server's draft project when the new server does not know it", () => {
+    applyHomeBootstrap(
+      bootstrapFor("runner-a", { PROJECTS: '["/work/alpha"]' }, { draftProjectPath: "/work/alpha" }),
+      false,
+    );
+    expect(homeUiStateManager.getSnapshot().draftProjectPath).toBe("/work/alpha");
+
+    // The URL still carries `?project=/work/alpha` after the switch.
+    applyHomeBootstrap(
+      bootstrapFor("runner-b", { PROJECTS: '["/srv/beta"]' }, { draftProjectPath: "/work/alpha" }),
+      false,
+    );
+
+    expect(homeUiStateManager.getSnapshot().draftProjectPath).toBeNull();
+  });
+
+  it("keeps a draft project the new server knows, as when opening a pinned project there", () => {
+    applyHomeBootstrap(bootstrapFor("runner-a", { PROJECTS: '["/work/alpha"]' }), false);
+
+    applyHomeBootstrap(
+      bootstrapFor("runner-b", { PROJECTS: '["/srv/beta/"]' }, { draftProjectPath: "/srv/beta" }),
+      false,
+    );
+    expect(homeUiStateManager.getSnapshot().draftProjectPath).toBe("/srv/beta");
+
+    applyHomeBootstrap(
+      bootstrapFor("runner-c", { PROJECTS: "[]" }, { draftProjectPath: "/srv/gamma", runProjectPaths: ["/srv/gamma"] }),
+      false,
+    );
+    expect(homeUiStateManager.getSnapshot().draftProjectPath).toBe("/srv/gamma");
+  });
+
+  it("keeps the draft project when the same server reconnects", () => {
+    applyHomeBootstrap(
+      bootstrapFor("runner-a", { PROJECTS: '["/work/alpha"]' }, { draftProjectPath: "/work/unlisted" }),
+      false,
+    );
+    applyHomeBootstrap(
+      bootstrapFor("runner-a", null, { draftProjectPath: "/work/unlisted" }),
+      false,
+    );
+
+    expect(homeUiStateManager.getSnapshot().draftProjectPath).toBe("/work/unlisted");
   });
 });

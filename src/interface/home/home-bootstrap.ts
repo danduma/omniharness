@@ -4,7 +4,8 @@ import { DEFAULT_SERVER_SETTINGS } from "./constants";
 import { homeUiStateManager } from "./HomeUiStateManager";
 import { planningReviewPreferencesManager } from "./PlanningReviewPreferencesManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
-import { parseBrowserConversationRoute } from "./utils";
+import { parseBrowserConversationRoute, parseProjectList } from "./utils";
+import { normalizeProjectPath } from "@/lib/project-paths";
 
 let appliedHomeBootstrapId: string | null = null;
 let appliedRunnerInstanceId: string | null = null;
@@ -40,11 +41,22 @@ export function applyHomeBootstrap(
     planningReviewPreferencesManager.hydrate(settingsValues);
   }
 
+  // Switching servers keeps the browser URL, so a `?project=` left there by the
+  // previous server would name a project the new one has never heard of — the
+  // welcome heading would keep offering it while listing the new server's
+  // projects underneath. Keep it only when the new server knows the project
+  // (a deep link written for that server, such as opening a pinned project).
+  const routeDraftProjectPath = routeSelectedRunId ? null : browserRoute.draftProjectPath;
+  const draftProjectPath = runnerChanged && routeDraftProjectPath
+    && !isProjectKnownToServer(routeDraftProjectPath, bootstrap)
+    ? null
+    : routeDraftProjectPath;
+
   homeUiStateManager.patch((current) => ({
     routeReady: true,
     hasReceivedInitialEventStreamPayload: Boolean(bootstrap.initialEventState),
     selectedRunId: routeSelectedRunId,
-    draftProjectPath: routeSelectedRunId ? null : browserRoute.draftProjectPath,
+    draftProjectPath,
     pairTokenFromUrl: browserRoute.pairTokenFromUrl,
     apiKeys: runnerChanged
       ? { ...DEFAULT_SERVER_SETTINGS, ...settingsValues }
@@ -61,4 +73,13 @@ export function applyHomeBootstrap(
       notify,
     });
   }
+}
+
+function isProjectKnownToServer(projectPath: string, bootstrap: HomeBootstrapPayload) {
+  const target = normalizeProjectPath(projectPath);
+  const knownPaths = [
+    ...parseProjectList(bootstrap.initialQueries.settings?.values?.PROJECTS),
+    ...(bootstrap.initialEventState?.runs ?? []).map((run) => run.projectPath),
+  ];
+  return knownPaths.some((knownPath) => typeof knownPath === "string" && normalizeProjectPath(knownPath) === target);
 }
