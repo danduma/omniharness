@@ -82,10 +82,32 @@ describe("SideWindowManager", () => {
     manager.selectTab("files");
 
     manager.setExpanded(true);
-    expect(manager.getSnapshot()).toMatchObject({ activeTabId: selected, layout: { expanded: true } });
+    expect(manager.getSnapshot()).toMatchObject({ expandedFile: { id: selected }, layout: { expanded: true } });
     manager.setExpanded(false);
     expect(manager.getSnapshot()).toMatchObject({ activeTabId: selected, layout: { expanded: false } });
     expect(manager.getSnapshot().tabs).toHaveLength(2);
+  });
+
+  it("replaces the expanded file and docks only the current preview", () => {
+    const manager = new SideWindowManager();
+    manager.openFile({ root: "/repo", relativePath: "pinned.md" });
+    manager.setExpanded(true);
+
+    manager.openFile({ root: "/repo", relativePath: "first.md" });
+    manager.openFile({ root: "/repo", relativePath: "second.md" });
+    expect(manager.getSnapshot().expandedFile?.relativePath).toBe("second.md");
+    expect(manager.getSnapshot().tabs.map((tab) => tab.id)).toEqual(["files", "file:/repo:pinned.md"]);
+
+    manager.setExpanded(false);
+    expect(manager.getSnapshot().tabs.map((tab) => tab.id)).toEqual([
+      "files", "file:/repo:pinned.md", "file:/repo:second.md",
+    ]);
+    expect(manager.getSnapshot().activeTabId).toBe("file:/repo:second.md");
+
+    manager.setExpanded(true);
+    manager.closeExpandedFile();
+    expect(manager.getSnapshot().expandedFile).toBeNull();
+    expect(manager.getSnapshot().tabs).toHaveLength(3);
   });
 
   it("opens the menu-selected project without inheriting another project's tabs", () => {
