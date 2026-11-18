@@ -36,7 +36,7 @@ import {
   runWorkerTurn,
   trackConversationBackgroundTask,
 } from "./worker-turn-gate";
-import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
+import { buildSteerWorkerPrompt } from "./direct-worker-prompt";
 import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
 import {
   isProviderSessionDiagnosticErrorMessage,
@@ -506,9 +506,9 @@ async function deliverInterruptedQueuedMessage(args: {
         return;
       }
 
-      let workerPrompt = run.mode === "direct" || run.mode === "commit"
-        ? buildDirectWorkerPrompt(workerContent)
-        : workerContent;
+      let workerPrompt = buildSteerWorkerPrompt(workerContent, {
+        direct: run.mode === "direct" || run.mode === "commit",
+      });
       if (!cancellationSettled) {
         const currentWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
         const recreated = await recreateWorkerFromTranscript({
