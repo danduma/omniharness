@@ -74,4 +74,39 @@ describe("SideWindowManager", () => {
     expect(manager.getSnapshot().activeTabId).toBe("files");
     expect(manager.getSnapshot().tabs.map((tab) => tab.id)).toEqual(["files"]);
   });
+
+  it("keeps open documents and selection when docking and expanding", () => {
+    const manager = new SideWindowManager();
+    manager.openFile({ root: "/repo", relativePath: "README.md" });
+    const selected = manager.getSnapshot().activeTabId;
+    manager.selectTab("files");
+
+    manager.setExpanded(true);
+    expect(manager.getSnapshot()).toMatchObject({ activeTabId: selected, layout: { expanded: true } });
+    manager.setExpanded(false);
+    expect(manager.getSnapshot()).toMatchObject({ activeTabId: selected, layout: { expanded: false } });
+    expect(manager.getSnapshot().tabs).toHaveLength(2);
+  });
+
+  it("opens the menu-selected project without inheriting another project's tabs", () => {
+    const manager = new SideWindowManager();
+    manager.openFile({ root: "/conversation", relativePath: "README.md" });
+    manager.openProject("/another", "/conversation", true);
+
+    expect(manager.getSnapshot()).toMatchObject({
+      activeTabId: "files",
+      tabs: [{ id: "files" }],
+      layout: { expanded: true, projectRoot: "/another" },
+    });
+    manager.openFile({ root: "/another", relativePath: "notes.md" });
+    manager.setExpanded(false);
+    expect(manager.getSnapshot().layout.projectRoot).toBe("/another");
+
+    manager.closeWorkspace();
+    expect(manager.getSnapshot()).toMatchObject({
+      activeTabId: "files",
+      tabs: [{ id: "files" }],
+      layout: { expanded: false, projectRoot: null },
+    });
+  });
 });

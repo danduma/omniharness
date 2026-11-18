@@ -836,6 +836,10 @@ export function HomeApp({
     runnerConnection,
   });
 
+  const fileWorkspace = useManagerSelector(sideWindowManager, (state) => state.layout);
+  const fileWorkspaceRoot = fileWorkspace.projectRoot ?? currentProjectScope;
+  const fileWorkspaceAvailable = workspaceSideWindowAvailable || Boolean(fileWorkspace.projectRoot);
+  const fileWorkspaceExpanded = fileWorkspace.expanded && rightSidebarOpen && !isCompactLayout && fileWorkspaceAvailable;
   const workspaceRunner = runnerConnection?.getSnapshot();
   const workspaceRunnerId = workspaceRunner?.runnerInstanceId ?? workspaceRunner?.profileId ?? "local-runner";
 
@@ -850,8 +854,29 @@ export function HomeApp({
   }, [selectedRunId, setExpandedDirectMessageIds, setMobileWorkersOpen, setRightSidebarOpen]);
 
   useLayoutEffect(() => {
+    const { layout } = sideWindowManager.getSnapshot();
     sideWindowManager.resetFileTabs();
-  }, [currentProjectScope, selectedRunId, workspaceRunnerId]);
+    if (layout.expanded || layout.projectRoot) {
+      setRightSidebarOpen(false);
+      setMobileWorkersOpen(false);
+    }
+  }, [currentProjectScope, selectedRunId, workspaceRunnerId, setMobileWorkersOpen, setRightSidebarOpen]);
+
+  const openProjectFiles = useCallback((projectPath: string) => {
+    sideWindowManager.openProject(projectPath, currentProjectScope, !isCompactLayout);
+    if (isCompactLayout) {
+      setMobileNavOpen(false);
+      setMobileWorkersOpen(true);
+    } else {
+      setRightSidebarOpen(true);
+    }
+  }, [currentProjectScope, isCompactLayout, setMobileNavOpen, setMobileWorkersOpen, setRightSidebarOpen]);
+
+  const closeFileWorkspace = useCallback(() => {
+    sideWindowManager.closeWorkspace();
+    setRightSidebarOpen(false);
+    setMobileWorkersOpen(false);
+  }, [setMobileWorkersOpen, setRightSidebarOpen]);
 
   useRunSelectionEffects({
     scrollRef,
@@ -1435,6 +1460,7 @@ export function HomeApp({
     presetCommands,
     runPresetCommand: actions.handleRunPresetCommand,
     isPresetCommandPending: runPresetCommand.isPending,
+    onOpenProjectFiles: openProjectFiles,
     handleRemoveProject: actions.handleRemoveProject,
     selectRun: actions.handleSelectRun,
     renamingRunId,
@@ -1490,7 +1516,7 @@ export function HomeApp({
         </div>
       </div>
 
-      <div className="relative flex min-w-0 flex-1 flex-col bg-background">
+      <div className={`relative min-w-0 flex-1 flex-col bg-background ${fileWorkspaceExpanded ? "hidden" : "flex"}`}>
         <HomeHeader
           {...sharedSidebarProps}
           startRenamingRun={actions.handleStartTopBarRenamingRun}
@@ -1500,9 +1526,9 @@ export function HomeApp({
           setLeftSidebarOpen={setLeftSidebarOpen}
           activeConversationCwd={activeConversationCwd}
           selectedRun={selectedRun}
-          workspaceSideWindowAvailable={workspaceSideWindowAvailable}
+          workspaceSideWindowAvailable={fileWorkspaceAvailable}
           workspaceRunnerId={workspaceRunnerId}
-          projectRoot={currentProjectScope}
+          projectRoot={fileWorkspaceRoot}
           themeMode={themeMode}
           setThemeMode={setThemeMode}
           rightSidebarOpen={rightSidebarOpen}
@@ -1511,6 +1537,7 @@ export function HomeApp({
           setTerminalPanelOpen={setTerminalPanelOpen}
           mobileWorkersOpen={mobileWorkersOpen}
           setMobileWorkersOpen={setMobileWorkersOpen}
+          onCloseFileWorkspace={closeFileWorkspace}
           mobileTerminalOpen={mobileTerminalOpen}
           setMobileTerminalOpen={setMobileTerminalOpen}
           onCommitNow={() => actions.handleManualCommitChat("commit")}
@@ -1627,10 +1654,10 @@ export function HomeApp({
 
       <div
         ref={terminalPaneRef}
-        className={`relative hidden h-full shrink-0 overflow-hidden border-l bg-background transition-[width,opacity] duration-150 ease-out lg:flex motion-reduce:transition-none ${terminalPanelOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
+        className={`relative hidden h-full shrink-0 overflow-hidden border-l bg-background transition-[width,opacity] duration-150 ease-out motion-reduce:transition-none ${fileWorkspaceExpanded ? "" : "lg:flex"} ${terminalPanelOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
         style={{ width: terminalPanelOpen ? terminalPanelWidth : 0 }}
-        aria-hidden={!terminalPanelOpen}
-        inert={!terminalPanelOpen ? true : undefined}
+        aria-hidden={!terminalPanelOpen || fileWorkspaceExpanded}
+        inert={!terminalPanelOpen || fileWorkspaceExpanded ? true : undefined}
       >
         <button
           type="button"
@@ -1657,25 +1684,31 @@ export function HomeApp({
         </div>
       </div>
 
-      {workspaceSideWindowAvailable ? (
+      {fileWorkspaceAvailable ? (
         <div
-          className={`relative hidden h-full shrink-0 overflow-hidden border-l bg-background transition-[width,opacity] duration-150 ease-out lg:flex motion-reduce:transition-none ${rightSidebarOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
-          style={{ width: rightSidebarOpen ? rightSidebarWidth : 0 }}
+          className={`relative hidden h-full min-w-0 overflow-hidden bg-background lg:flex ${fileWorkspaceExpanded
+            ? "flex-1"
+            : `shrink-0 border-l transition-[width,opacity] duration-150 ease-out motion-reduce:transition-none ${rightSidebarOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}`}
+          style={fileWorkspaceExpanded ? undefined : { width: rightSidebarOpen ? rightSidebarWidth : 0 }}
           aria-hidden={!rightSidebarOpen}
           inert={!rightSidebarOpen ? true : undefined}
         >
-          <button
-            type="button"
-            className="absolute inset-y-0 left-0 z-10 w-3 -translate-x-1/2 cursor-col-resize bg-transparent"
-            aria-label={t("sidebar.resize.workspace")}
-            onPointerDown={layout.handleRightSidebarResizeStart}
-          />
-          <div className={`flex h-full min-w-0 flex-1 pl-2 transition-transform duration-150 ease-out motion-reduce:transition-none ${rightSidebarOpen ? "translate-x-0" : "translate-x-3"}`}>
+          {!fileWorkspaceExpanded && (
+            <button
+              type="button"
+              className="absolute inset-y-0 left-0 z-10 w-3 -translate-x-1/2 cursor-col-resize bg-transparent"
+              aria-label={t("sidebar.resize.workspace")}
+              onPointerDown={layout.handleRightSidebarResizeStart}
+            />
+          )}
+          <div className={`flex h-full min-w-0 flex-1 ${fileWorkspaceExpanded ? "" : `pl-2 transition-transform duration-150 ease-out motion-reduce:transition-none ${rightSidebarOpen ? "translate-x-0" : "translate-x-3"}`}`}>
             <SideWindow
-              projectRoot={currentProjectScope}
+              projectRoot={fileWorkspaceRoot}
               runnerId={workspaceRunnerId}
-              visible={rightSidebarOpen}
-              onCloseWindow={() => setRightSidebarOpen(false)}
+              visible={rightSidebarOpen && !isCompactLayout}
+              expanded={fileWorkspaceExpanded}
+              onToggleExpanded={() => sideWindowManager.setExpanded(!fileWorkspaceExpanded)}
+              onCloseWindow={closeFileWorkspace}
             />
           </div>
         </div>

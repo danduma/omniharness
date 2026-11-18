@@ -334,6 +334,8 @@ export function useConversationActions({
 
     if (!file?.root || !file.relativePath) return;
 
+    const browserRoot = sideWindowManager.getSnapshot().layout.projectRoot;
+    if (browserRoot && browserRoot !== file.root) sideWindowManager.closeWorkspace();
     if (!sideWindowManager.openFile(file)) return;
     if (shouldOpenMobileSideWindow()) {
       setMobileWorkersOpen(true);

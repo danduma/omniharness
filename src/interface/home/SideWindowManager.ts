@@ -22,6 +22,7 @@ export type SideWindowTab = SideWindowFilesTab | SideWindowFileTab;
 export type SideWindowState = {
   tabs: SideWindowTab[];
   activeTabId: string;
+  layout: { expanded: boolean; projectRoot: string | null };
 };
 
 export type OpenSideWindowFileInput = {
@@ -32,7 +33,8 @@ export type OpenSideWindowFileInput = {
 };
 
 const FILES_TAB: SideWindowFilesTab = { id: "files", kind: "files", closeable: false };
-const INITIAL_STATE: SideWindowState = { tabs: [FILES_TAB], activeTabId: FILES_TAB.id };
+const DEFAULT_LAYOUT: SideWindowState["layout"] = { expanded: false, projectRoot: null };
+const INITIAL_STATE: SideWindowState = { tabs: [FILES_TAB], activeTabId: FILES_TAB.id, layout: DEFAULT_LAYOUT };
 
 function normalizeRoot(root: string) {
   if (/^[a-z]:[\\/]*$/i.test(root)) return root.slice(0, 2) + "/";
@@ -81,12 +83,14 @@ export class SideWindowManager extends StateManager<SideWindowState> {
 
       if (existingIndex >= 0) {
         return {
+          ...current,
           tabs: current.tabs.map((tab, index) => index === existingIndex ? nextFileTab : tab),
           activeTabId: id,
         };
       }
 
       return {
+        ...current,
         tabs: [...current.tabs, nextFileTab],
         activeTabId: id,
       };
@@ -111,6 +115,7 @@ export class SideWindowManager extends StateManager<SideWindowState> {
         : current.activeTabId;
 
       return {
+        ...current,
         tabs: nextTabs,
         activeTabId,
       };
@@ -125,9 +130,42 @@ export class SideWindowManager extends StateManager<SideWindowState> {
     ));
   }
 
+  setExpanded(expanded: boolean) {
+    this.update((current) => {
+      if (current.layout.expanded === expanded) return current;
+      const activeTabId = expanded && current.activeTabId === FILES_TAB.id
+        ? current.tabs.at(-1)?.id ?? FILES_TAB.id
+        : current.activeTabId;
+      return { ...current, activeTabId, layout: { ...current.layout, expanded } };
+    });
+  }
+
+  openProject(root: string, conversationRoot: string | null, expanded: boolean) {
+    const projectRoot = normalizeRoot(root);
+    const defaultRoot = conversationRoot && normalizeRoot(conversationRoot);
+    this.update((current) => {
+      const sameProject = (current.layout.projectRoot ?? defaultRoot) === projectRoot;
+      const base = sameProject ? current : INITIAL_STATE;
+      return {
+        ...base,
+        activeTabId: expanded
+          ? base.activeTabId === FILES_TAB.id ? base.tabs.at(-1)?.id ?? FILES_TAB.id : base.activeTabId
+          : FILES_TAB.id,
+        layout: { expanded, projectRoot: projectRoot === defaultRoot ? null : projectRoot },
+      };
+    });
+  }
+
+  closeWorkspace() {
+    this.update((current) => {
+      if (current.layout.projectRoot) return INITIAL_STATE;
+      return current.layout.expanded ? { ...current, layout: DEFAULT_LAYOUT } : current;
+    });
+  }
+
   resetFileTabs() {
     this.update((current) => (
-      current.tabs.length === 1
+      current.tabs.length === 1 && current.layout === DEFAULT_LAYOUT
         ? current
         : INITIAL_STATE
     ));
