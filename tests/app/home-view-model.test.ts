@@ -129,7 +129,7 @@ describe("useHomeViewModel", () => {
     expect(viewModel.isConversationThinking).toBe(false);
   });
 
-  it("quiesces completed commit workers before handing them to the side window", () => {
+  it("keeps workers from a completed commit out of active conversation activity", () => {
     const viewModel = useRenderViewModel(createState({
       runs: [createRun({ mode: "commit", status: "done", title: "Commit" })],
       plans: [{ id: "plan-1", path: "/workspace/project" }],
@@ -158,8 +158,8 @@ describe("useHomeViewModel", () => {
       }],
     }));
 
-    expect(viewModel.sideWindowWorkers.map((worker) => worker.status)).toEqual(["done"]);
-    expect(viewModel.sideWindowAgents.map((agent) => agent.state)).toEqual(["done"]);
+    expect(viewModel.conversationWorkerGroups.active).toEqual([]);
+    expect(viewModel.conversationWorkerGroups.finished.map((worker) => worker.id)).toEqual(["run-1-worker-1"]);
   });
 
   it("does not show a manual-recovery run as thinking because of a stale recovering worker", () => {

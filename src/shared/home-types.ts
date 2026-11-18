@@ -288,7 +288,20 @@ export type AgentSnapshot = {
   bridgeMissing?: boolean;
 };
 export type ProjectFilesResponse = { root: string; files: string[] };
-export type ProjectFileContentResponse = { root: string; path: string; content: string; size: number; truncated: boolean };
+export type ProjectFileContentResponse = {
+  root: string;
+  path: string;
+  content: string;
+  size: number;
+  truncated: boolean;
+  revision: string | null;
+};
+
+export type ProjectDirectoryResponse = {
+  root: string;
+  directory: string;
+  entries: Array<{ name: string; path: string; kind: "directory" | "file" | "unavailable" }>;
+};
 export type WorkerType = "codex" | "claude" | "gemini" | "opencode";
 export type ComposerWorkerOption = WorkerType | "auto";
 export type WorkerAuthentication = {

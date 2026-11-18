@@ -1,3 +1,4 @@
+import type { ProjectDirectoryResponse, ProjectFileContentResponse } from "@/shared/home-types";
 import { buildRuntimeQuery, type RuntimeDomainRequest } from "../request";
 import type { RuntimeEventStreamOpener } from "../stream";
 import type { RuntimeAPIs, RuntimeCallOptions } from "../types";
@@ -295,6 +296,18 @@ export function createRuntimeDomains({
           root: input.root,
           file: input.file,
         })}`, options);
+      },
+      directory(input, options) {
+        return get(`/api/fs/files${buildRuntimeQuery({ root: input.root, directory: input.directory || "." })}`, options) as Promise<ProjectDirectoryResponse>;
+      },
+      save({ root, file, revision, content }, options) {
+        return call("PUT", `/api/fs/files${buildRuntimeQuery({ root, file })}`, { revision, content }, options) as Promise<ProjectFileContentResponse>;
+      },
+      download(input, options) {
+        return request("GET", `/api/fs/files${buildRuntimeQuery({ root: input.root, file: input.file, download: "1" })}`, {
+          responseType: "blob",
+          signal: options?.signal,
+        }) as Promise<Blob>;
       },
       video(input, options) {
         return request("GET", `/api/fs/files${buildRuntimeQuery({ root: input.root, file: input.file, video: "1" })}`, {

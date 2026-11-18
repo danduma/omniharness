@@ -89,78 +89,11 @@ interface ConversationExecutionStatusProps {
   liveThoughts: Array<{ agentName: string; text: string; snippet: string; isLive: boolean }>;
 }
 
-function formatActivityWorkerTitle(worker: SupervisorActivityWorker) {
-  if (worker.title) {
-    return worker.title;
-  }
-  if (worker.workerNumber !== null) {
-    return t("supervisor.activity.worker.fallbackName", { number: worker.workerNumber });
-  }
-  return worker.workerId;
-}
-
 function renderActivityText(worker: SupervisorActivityWorker) {
   if (worker.activityKey) {
     return t(worker.activityKey, worker.activityParams);
   }
   return worker.activityText;
-}
-
-const WORKER_MENTION_PATTERN = /\b[Ww]orker\s+(\d+)\b/g;
-
-function renderTextWithWorkerLinks(
-  text: string,
-  workers: ConversationWorkerRecord[],
-  onOpenWorker?: (workerId: string) => void,
-): React.ReactNode {
-  if (!text || !onOpenWorker || workers.length === 0) {
-    return text;
-  }
-  const workerByNumber = new Map<number, ConversationWorkerRecord>();
-  for (const worker of workers) {
-    if (typeof worker.workerNumber === "number") {
-      workerByNumber.set(worker.workerNumber, worker);
-    }
-  }
-  if (workerByNumber.size === 0) {
-    return text;
-  }
-  const nodes: React.ReactNode[] = [];
-  let cursor = 0;
-  let keyCounter = 0;
-  for (const match of text.matchAll(WORKER_MENTION_PATTERN)) {
-    const matchStart = match.index ?? 0;
-    const number = Number.parseInt(match[1]!, 10);
-    const target = Number.isFinite(number) ? workerByNumber.get(number) : null;
-    if (!target) {
-      continue;
-    }
-    if (matchStart > cursor) {
-      nodes.push(text.slice(cursor, matchStart));
-    }
-    const workerId = target.id;
-    nodes.push(
-      <button
-        key={`worker-link-${keyCounter++}`}
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          onOpenWorker(workerId);
-        }}
-        className="omni-worker-mention-link inline cursor-pointer underline decoration-dotted underline-offset-2 hover:text-foreground"
-      >
-        {match[0]}
-      </button>,
-    );
-    cursor = matchStart + match[0].length;
-  }
-  if (cursor === 0) {
-    return text;
-  }
-  if (cursor < text.length) {
-    nodes.push(text.slice(cursor));
-  }
-  return nodes;
 }
 
 function ConversationExecutionPanel({
@@ -171,14 +104,12 @@ function ConversationExecutionPanel({
   executionEvents,
   activeWorkers,
   conversationAgents,
-  onOpenWorkerActivity,
 }: ConversationExecutionStatusProps & {
   runId: string | null;
   selectedRun: RunRecord | null;
   executionEvents: ExecutionEventRecord[];
   activeWorkers: ConversationWorkerRecord[];
   conversationAgents: AgentSnapshot[];
-  onOpenWorkerActivity?: (workerId: string) => void;
 }) {
   const { runLogOpenByRunId } = useManagerSnapshot(conversationMainManager);
   const activityCard = useMemo(() => buildSupervisorActivityCard({
@@ -244,7 +175,7 @@ function ConversationExecutionPanel({
               </div>
               {statusText ? (
                 <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                  {renderTextWithWorkerLinks(statusText, activeWorkers, onOpenWorkerActivity)}
+                  {statusText}
                 </p>
               ) : null}
             </div>
@@ -265,18 +196,14 @@ function ConversationExecutionPanel({
           {activityCard.workers.length > 0 ? (
             <div className="space-y-1.5" aria-label={t("supervisor.activity.activeWorkers")}>
               {activityCard.workers.map((worker) => {
-                const workerTitle = formatActivityWorkerTitle(worker);
                 const visibleWorkerTitle = worker.title || (worker.workerNumber === null ? worker.workerId : "");
                 return (
-                  <button
+                  <div
                     key={worker.workerId}
-                    type="button"
-                    className="group flex w-full min-w-0 items-start gap-2.5 rounded-md border border-border/55 bg-background/45 px-2.5 py-2 text-left shadow-[inset_0_1px_0_color-mix(in_oklch,var(--foreground)_4%,transparent)] transition-colors hover:border-foreground/18 hover:bg-background/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    onClick={() => onOpenWorkerActivity?.(worker.workerId)}
-                    aria-label={t("supervisor.activity.openWorker", { worker: workerTitle })}
+                    className="flex w-full min-w-0 items-start gap-2.5 rounded-md border border-border/55 bg-background/45 px-2.5 py-2"
                   >
                     <span
-                      className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border/70 bg-muted/20 text-muted-foreground group-hover:border-foreground/20 group-hover:text-foreground"
+                      className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border/70 bg-muted/20 text-muted-foreground"
                       aria-hidden="true"
                     >
                       <CliBrandIcon workerType={worker.workerType} className="h-3.5 w-3.5" />
@@ -324,7 +251,7 @@ function ConversationExecutionPanel({
                         {renderActivityText(worker)}
                       </span>
                     </span>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -708,7 +635,6 @@ interface ConversationMainProps {
   emptyComposer: React.ReactNode;
   projectRoot?: string | null;
   onOpenProjectFile?: (file: ProjectFileReference) => void;
-  onOpenWorkerActivity?: (workerId: string) => void;
   setMobileConversationListOpen: (open: boolean) => void;
   onRespondElicitation?: (input: ElicitationResponseInput) => void;
   onRespondPermission?: (input: PermissionResponseInput) => void;
@@ -872,7 +798,6 @@ const ConversationMain = memo(function ConversationMain({
   emptyComposer,
   projectRoot,
   onOpenProjectFile,
-  onOpenWorkerActivity,
   setMobileConversationListOpen,
   onRespondElicitation,
   onRespondPermission,
@@ -1563,7 +1488,6 @@ const ConversationMain = memo(function ConversationMain({
               executionEvents={executionEvents}
               activeWorkers={activeWorkers}
               conversationAgents={conversationAgents}
-              onOpenWorkerActivity={onOpenWorkerActivity}
             />
           ) : null}
 
