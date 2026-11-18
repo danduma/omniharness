@@ -22,7 +22,21 @@ export const TRANSCRIPT_REPLAY_INSTRUCTION = [
   "The authoritative conversation transcript captured by OmniHarness is below. Treat it as prior context, do not repeat completed work, and continue from the latest useful point.",
 ].join("\n");
 
+/**
+ * Prepended to a steer delivery. Steer is cancel-and-replace at the transport
+ * level, so the provider shows the model an interruption marker on its previous
+ * turn ("[Request interrupted by user]", a rejected tool call). Without this
+ * notice the model reads that as the user cancelling or rejecting its work.
+ */
+export const STEER_INSTRUCTION = [
+  "OmniHarness steer notice:",
+  "The user sent the message below while you were still working, as a steer. They did not cancel, stop, or reject anything.",
+  "Any interruption, cancellation, or rejected tool call on your previous turn was caused by OmniHarness delivering this message, not by the user. Do not treat it as the user declining a command or tool use.",
+  "Treat the message as added guidance for the work in progress: continue the task, adjusted to it, unless the message itself tells you to stop or change course. Re-run any command that was cut off if it is still needed.",
+].join("\n");
+
 export const HARNESS_PROMPT_PREAMBLES: readonly string[] = [
+  STEER_INSTRUCTION,
   DIRECT_WORKER_INSTRUCTION,
   TRANSCRIPT_REPLAY_INSTRUCTION,
 ];
