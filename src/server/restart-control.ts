@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import { verify } from "@node-rs/argon2";
 import { promisify } from "util";
+import { describeCodexDaemonRestart, restartCodexDaemon } from "@/server/codex-daemon";
 import { isProcessAlive as isSharedProcessAlive } from "@/server/process-ownership";
 
 const execFileAsync = promisify(execFile);
@@ -48,6 +49,8 @@ export type RestartSystem = {
   isProcessAlive: (pid: number) => Promise<boolean>;
   readPidFile: () => Promise<RestartPidEntry | null>;
   readRecentLog: (lines?: number) => Promise<string>;
+  /** Restarts helper daemons outside the runner tree; returns a log line. */
+  restartAuxiliaryDaemons?: () => Promise<string>;
   removePidFile: () => void | Promise<void>;
   signalProcess: (pid: number, signal: NodeJS.Signals) => void | Promise<void>;
   spawnDetached: (command: string, args: string[], options?: { cwd: string; logFile: string; env: NodeJS.ProcessEnv }) => Promise<number>;
@@ -223,6 +226,13 @@ export function createRestartController({ config, system }: {
     async restart(reason = "manual", mode: RestartMode = "dev") {
       await system.appendLog(`${mode} restart requested: ${reason}`);
       await stopCurrent();
+      if (system.restartAuxiliaryDaemons) {
+        try {
+          await system.appendLog(await system.restartAuxiliaryDaemons());
+        } catch (error) {
+          await system.appendLog(`auxiliary daemon restart failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
       const entry = await start(mode, reason);
       await system.appendLog(`${mode} restart completed: spawned pid ${entry.pid}`);
       return entry;
@@ -489,6 +499,7 @@ export function createNodeRestartSystem(config: RestartControlConfig): RestartSy
     removePidFile: async () => {
       fs.rmSync(config.pidFile, { force: true });
     },
+    restartAuxiliaryDaemons: async () => describeCodexDaemonRestart(await restartCodexDaemon()),
     signalProcess: async (pid, signal) => {
       try {
         process.kill(pid, signal);
