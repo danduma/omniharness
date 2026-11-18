@@ -620,6 +620,18 @@ export function withCodexStandardTooling<T extends EnvLike>(env: T): T {
   };
 }
 
+// Release builds of codex-acp ignore CODEX_MANAGED_CONFIG_PATH, so the
+// current model catalog must also be passed as a CLI override; otherwise
+// newer models fall back to generic metadata.
+export function codexModelCatalogConfigArgs(env: EnvLike): string[] {
+  const managedConfigPath = env.CODEX_MANAGED_CONFIG_PATH?.trim();
+  if (!managedConfigPath) {
+    return [];
+  }
+  const catalogPath = join(dirname(managedConfigPath), "model_catalog.json");
+  return existsSync(catalogPath) ? ["-c", `model_catalog_json=${JSON.stringify(catalogPath)}`] : [];
+}
+
 function codexManagedExecutableCandidates(env: EnvLike): string[] {
   const packageRoot = env.CODEX_MANAGED_PACKAGE_ROOT?.trim();
   const defaultNpmRoot = platform() === "win32"
