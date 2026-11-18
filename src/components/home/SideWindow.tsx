@@ -29,8 +29,8 @@ export function SideWindow({
   closeButtonVariant?: "collapse" | "back";
 }) {
   useI18nSnapshot();
-  const { tabs, activeTabId } = useManagerSnapshot(sideWindowManager);
-  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
+  const { tabs, activeTabId, expandedFile } = useManagerSnapshot(sideWindowManager);
+  const activeTab = expanded ? expandedFile : tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
   const activeTabElement = useRef<HTMLDivElement | null>(null);
   const selectedId = activeTab?.id;
   useEffect(() => {
@@ -47,7 +47,7 @@ export function SideWindow({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onCloseWindow, visible]);
   const filesTabLabel = t("projectFiles.tab");
-  const visibleTabs = expanded ? tabs.filter((tab) => tab.kind === "file") : tabs;
+  const visibleTabs = expanded ? (expandedFile ? [expandedFile] : []) : tabs;
   const closeButtonLabel = expanded ? t("common.close") : closeButtonVariant === "back" ? t("common.back") : t("side.window.collapseAria");
   const CloseButtonIcon = expanded ? X : closeButtonVariant === "back" ? ArrowLeft : PanelRightClose;
   const closeButton = onCloseWindow ? (
@@ -73,7 +73,7 @@ export function SideWindow({
         <div className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto [scrollbar-width:none]">
           {visibleTabs.map((tab) => (
             <div
-              key={tab.id}
+              key={expanded ? "expanded-file" : tab.id}
               ref={tab.id === selectedId ? activeTabElement : undefined}
               className={cn(
                 "inline-flex h-8 max-w-44 shrink-0 items-center overflow-hidden rounded-t-md border px-0 text-xs font-medium transition-colors",
@@ -92,7 +92,8 @@ export function SideWindow({
                   onClick={(event) => {
                     event.stopPropagation();
                     projectFilesManager.close(projectDocumentKey(runnerId, tab.root, tab.relativePath));
-                    sideWindowManager.closeTab(tab.id);
+                    if (expanded) sideWindowManager.closeExpandedFile();
+                    else sideWindowManager.closeTab(tab.id);
                   }}
                 >
                   <X className="h-3 w-3" />
@@ -100,7 +101,7 @@ export function SideWindow({
               ) : null}
               <button
                 type="button"
-                onClick={() => sideWindowManager.selectTab(tab.id)}
+                onClick={expanded ? undefined : () => sideWindowManager.selectTab(tab.id)}
                 aria-label={tab.kind === "file" ? tab.relativePath : filesTabLabel}
                 aria-pressed={tab.id === activeTab?.id}
                 className="inline-flex min-w-0 flex-1 items-center gap-1.5 px-2"

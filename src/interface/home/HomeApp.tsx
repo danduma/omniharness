@@ -862,6 +862,10 @@ export function HomeApp({
     }
   }, [currentProjectScope, selectedRunId, workspaceRunnerId, setMobileWorkersOpen, setRightSidebarOpen]);
 
+  useLayoutEffect(() => {
+    if (isCompactLayout) sideWindowManager.setExpanded(false);
+  }, [isCompactLayout]);
+
   const openProjectFiles = useCallback((projectPath: string) => {
     sideWindowManager.openProject(projectPath, currentProjectScope, !isCompactLayout);
     if (isCompactLayout) {

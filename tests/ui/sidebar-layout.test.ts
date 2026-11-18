@@ -350,7 +350,7 @@ test("workspace side window owns the Files tab and open documents", () => {
   expect(conversationSidebarSource.indexOf('t("projectFiles.menu.open")')).toBeLessThan(
     conversationSidebarSource.indexOf('t("conversation.sidebar.removeProject")'),
   );
-  expect(sideWindowSource).toContain("const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];");
+  expect(sideWindowSource).toContain("const activeTab = expanded ? expandedFile : tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];");
   expect(sideWindowSource).toContain("{visibleTabs.map((tab) => (");
   expect(pageSource).toContain("DropdownMenuCheckboxItem");
   expect(pageSource).toContain("fileViewerPanelManager.toggleWordWrap()");
