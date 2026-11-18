@@ -12,10 +12,15 @@ import {
 } from "@/server/fs/allowed-roots";
 import {
   isPathInside,
+  listProjectDirectory,
   listProjectFiles,
+  ProjectFileAccessError,
   ProjectFileTooLargeError,
+  PROJECT_TEXT_FILE_MAX_BYTES,
   readProjectImageFile,
   readProjectTextFile,
+  resolveProjectFilePath,
+  saveProjectTextFile,
   UnsupportedProjectFileTypeError,
 } from "@/server/fs/files";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
@@ -191,6 +196,76 @@ export const handleCreateDirectoryRequest: OmniHttpHandler = async (request) => 
   }
 };
 
+function resolveAllowedProjectRoot(rawRoot: string | null) {
+  const projectPath = path.resolve(rawRoot || getDefaultAllowedRoot());
+  const allowedRoot = findAllowedRootFor(projectPath);
+  if (!allowedRoot || !isPathInside(fs.realpathSync(allowedRoot), fs.realpathSync(projectPath))) {
+    throw new ProjectFileAccessError(403, "filesystem.outside_project", "Project is outside the allowed filesystem root.");
+  }
+  return projectPath;
+}
+
+function projectFileError(error: unknown) {
+  if (error instanceof ProjectFileAccessError) return error;
+  const code = error instanceof Error && "code" in error ? error.code : null;
+  if (code === "ENOENT" || code === "ENOTDIR") {
+    return new ProjectFileAccessError(404, "filesystem.file_missing", "The file or folder no longer exists.");
+  }
+  if (code === "EACCES" || code === "EPERM" || code === "EROFS") {
+    return new ProjectFileAccessError(403, "filesystem.permission_denied", "The filesystem denied access.");
+  }
+  if (error instanceof SyntaxError) {
+    return new ProjectFileAccessError(400, "filesystem.invalid_file_request", "The file request is invalid.");
+  }
+  return new ProjectFileAccessError(500, "filesystem.file_operation_failed", "The filesystem operation failed.");
+}
+
+function projectFileErrorResponse(error: ProjectFileAccessError) {
+  return Response.json({ error: { code: error.code, message: error.message } }, { status: error.status });
+}
+
+export const handleSaveProjectFileRequest: OmniHttpHandler = async (request) => {
+  const url = new URL(request.url);
+  const root = url.searchParams.get("root");
+  const file = url.searchParams.get("file");
+  const auth = await requireApiSession(request, {
+    source: "Filesystem",
+    action: "Save project file",
+    enforceSameOrigin: true,
+  });
+  if (auth.response) return auth.response;
+
+  try {
+    if (!root || !file) {
+      throw new ProjectFileAccessError(400, "filesystem.invalid_file_request", "A project root and file path are required.");
+    }
+    // JSON can escape a single UTF-8 byte as six characters (e.g. a tab).
+    const bodyText = await request.text();
+    if (bodyText.length > PROJECT_TEXT_FILE_MAX_BYTES * 6 + 1024) {
+      throw new ProjectFileAccessError(413, "filesystem.file_too_large", "Text exceeds the editor size limit.");
+    }
+    const body: unknown = JSON.parse(bodyText);
+    if (!body || typeof body !== "object" || !("content" in body) || typeof body.content !== "string"
+      || !("revision" in body) || typeof body.revision !== "string" || !/^[a-f0-9]{64}$/.test(body.revision)) {
+      throw new ProjectFileAccessError(400, "filesystem.invalid_file_request", "File content and an existing revision are required.");
+    }
+    const result = saveProjectTextFile(resolveAllowedProjectRoot(root), file, body.revision, body.content);
+    emitNamedEvent({ kind: "filesystem.file_saved", root: result.root, path: result.path, revision: result.revision });
+    return Response.json(result, { headers: { "cache-control": "no-store" } });
+  } catch (error) {
+    const failure = projectFileError(error);
+    emitNamedEvent({ kind: "filesystem.file_save_failed", root, path: file, reason: failure.code });
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "filesystem.file_save_failed",
+      message: failure.message,
+      surface: "log",
+      path: file ?? root ?? undefined,
+    });
+    return projectFileErrorResponse(failure);
+  }
+};
+
 export const handleProjectFilesRequest: OmniHttpHandler = async (request) => {
   let action = "Load project files";
   try {
@@ -210,8 +285,12 @@ export const handleProjectFilesRequest: OmniHttpHandler = async (request) => {
     }
 
     const url = new URL(request.url);
-    const projectPath = resolveInsideAllowedRoot(url.searchParams.get("root"));
+    const projectPath = resolveAllowedProjectRoot(url.searchParams.get("root"));
     const filePath = url.searchParams.get("file");
+    const directory = url.searchParams.get("directory");
+    if (directory !== null) {
+      return Response.json(listProjectDirectory(projectPath, directory), { headers: { "cache-control": "no-store" } });
+    }
     if (filePath) {
       action = "Read project file";
       if (url.searchParams.get("video") === "1") {
@@ -219,11 +298,7 @@ export const handleProjectFilesRequest: OmniHttpHandler = async (request) => {
       }
       if (url.searchParams.get("browser") === "1") {
         if (!/\.html?$/i.test(filePath)) throw new Error("Browser preview requires an HTML file.");
-        const root = fs.realpathSync(projectPath);
-        const absolutePath = path.resolve(root, filePath);
-        if (!isPathInside(root, absolutePath)) throw new Error("File path is outside the project root.");
-        const canonicalPath = fs.realpathSync(absolutePath);
-        if (!isPathInside(root, canonicalPath)) throw new Error("File path is outside the project root.");
+        const { canonicalPath } = resolveProjectFilePath(projectPath, filePath);
         const stat = fs.statSync(canonicalPath);
         if (!stat.isFile()) throw new Error("Project path is not a file.");
         if (stat.size > 24 * 1024 * 1024) throw new Error("HTML file exceeds the 24 MB browser preview limit.");
@@ -237,7 +312,10 @@ export const handleProjectFilesRequest: OmniHttpHandler = async (request) => {
           },
         });
       }
-      return Response.json(readProjectTextFile(projectPath, filePath));
+      if (url.searchParams.get("download") === "1") {
+        return downloadProjectFile(request, projectPath, filePath);
+      }
+      return Response.json(readProjectTextFile(projectPath, filePath), { headers: { "cache-control": "no-store" } });
     }
 
     return Response.json({
@@ -248,6 +326,10 @@ export const handleProjectFilesRequest: OmniHttpHandler = async (request) => {
     const url = new URL(request.url);
     if (url.searchParams.get("video") === "1") {
       reportVideoFailure(url.searchParams.get("file"), error);
+    }
+    if (!url.searchParams.has("video") && !url.searchParams.has("browser")
+      && (url.searchParams.has("file") || url.searchParams.has("directory"))) {
+      return projectFileErrorResponse(projectFileError(error));
     }
     return errorResponse(error, {
       status: 400,
@@ -263,6 +345,7 @@ function getProjectImageErrorStatus(error: unknown) {
     : null;
   if (code === "ENOENT") return 404;
   if (code === "EACCES" || code === "EPERM") return 403;
+  if (error instanceof ProjectFileAccessError) return error.status;
   if (error instanceof UnsupportedProjectFileTypeError) return 415;
   if (error instanceof ProjectFileTooLargeError) return 413;
   return 400;
@@ -287,7 +370,7 @@ export const handleProjectImageRequest: OmniHttpHandler = async (request) => {
     }
 
     const url = new URL(request.url);
-    const projectPath = resolveInsideAllowedRoot(url.searchParams.get("root"));
+    const projectPath = resolveAllowedProjectRoot(url.searchParams.get("root"));
     const filePath = url.searchParams.get("file");
     if (!filePath) {
       return errorResponse("File path is required.", {
@@ -321,15 +404,30 @@ export const handleProjectImageRequest: OmniHttpHandler = async (request) => {
   }
 };
 
+function downloadProjectFile(request: Request, root: string, file: string) {
+  const target = resolveProjectFilePath(root, file);
+  const stat = fs.statSync(target.canonicalPath);
+  if (!stat.isFile()) {
+    throw new ProjectFileAccessError(400, "filesystem.not_file", "Project path is not a file.");
+  }
+  const stream = fs.createReadStream(target.canonicalPath, { signal: request.signal });
+  return new Response(Readable.toWeb(stream) as ReadableStream<Uint8Array>, {
+    headers: {
+      "content-type": "application/octet-stream",
+      "content-length": String(stat.size),
+      "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(target.relativePath))}`,
+      "cache-control": "private, no-store",
+      "content-security-policy": "default-src 'none'; sandbox",
+      "x-content-type-options": "nosniff",
+    },
+  });
+}
+
 /** Stream media and byte ranges without loading the whole video into memory. */
 function serveProjectVideo(request: Request, projectPath: string, filePath: string) {
   const mimeType = videoMimeTypeForPath(filePath);
   if (!mimeType) throw new Error("Project file is not a supported video type.");
-  const root = fs.realpathSync(projectPath);
-  const absolutePath = path.resolve(root, filePath.replace(/\\/g, path.sep));
-  if (!isPathInside(root, absolutePath)) throw new Error("File path is outside the project root.");
-  const canonicalPath = fs.realpathSync(absolutePath);
-  if (!isPathInside(root, canonicalPath)) throw new Error("File path is outside the project root.");
+  const { canonicalPath } = resolveProjectFilePath(projectPath, filePath);
   const stat = fs.statSync(canonicalPath);
   if (!stat.isFile()) throw new Error("Project path is not a file.");
   const headers = new Headers({

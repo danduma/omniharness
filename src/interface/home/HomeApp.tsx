@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { lazy, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -80,7 +80,6 @@ import { ComposerContainer } from "./ComposerContainer";
 import { formatAccountOptionLabel, resolveCompatibleComposerAccountId } from "./account-labels";
 import { sessionStateManager } from "./SessionStateManager";
 import { t } from "@/lib/i18n";
-import { workersSidebarManager } from "@/components/component-state-managers";
 import type { AccountRecord } from "./types";
 import { decodeClaudeGatewayModel } from "@/lib/claude-model-gateway";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
@@ -583,7 +582,6 @@ export function HomeApp({
     latestUserCheckpoint,
     liveThoughts,
     selectedRunExecutionEvents,
-    selectedRunSupervisorInterventions,
     latestExecutionEvent,
     completionEvent,
     failedWorkerAvailability,
@@ -755,12 +753,10 @@ export function HomeApp({
     runPresetCommand,
     stopSupervisor,
     stopWorker,
-    stopWorkerTerminalProcess,
     respondElicitation,
     respondPermission,
     promotePlanningConversation,
     startPlanningReview,
-    handleLoadWorkerHistory,
   } = mutations;
 
   // Conversation actions
@@ -840,16 +836,22 @@ export function HomeApp({
     runnerConnection,
   });
 
+  const workspaceRunner = runnerConnection?.getSnapshot();
+  const workspaceRunnerId = workspaceRunner?.runnerInstanceId ?? workspaceRunner?.profileId ?? "local-runner";
+
   const isHydratingConversations = appUnlocked && !hasReceivedInitialEventStreamPayload;
 
   useEffect(() => {
-    sideWindowManager.resetFileTabs();
     if (!selectedRunId) {
       setRightSidebarOpen(false);
       setMobileWorkersOpen(false);
     }
     setExpandedDirectMessageIds(new Set());
   }, [selectedRunId, setExpandedDirectMessageIds, setMobileWorkersOpen, setRightSidebarOpen]);
+
+  useLayoutEffect(() => {
+    sideWindowManager.resetFileTabs();
+  }, [currentProjectScope, selectedRunId, workspaceRunnerId]);
 
   useRunSelectionEffects({
     scrollRef,
@@ -947,35 +949,6 @@ export function HomeApp({
       prewarmedWorkerSlotsRef.current.delete(slot);
     });
   }, [appUnlocked, currentProjectScope, effectivePrewarmType, effectiveSelectedWorkerAccountId, runtimeApis.workers, selectedModel]);
-
-  // Keep non-worker conversations from leaving the workspace side window open.
-  useEffect(() => {
-    if (selectedRunId && !isImplementationConversation) {
-      setRightSidebarOpen(false);
-      setMobileWorkersOpen(false);
-    }
-  }, [isImplementationConversation, selectedRunId, setMobileWorkersOpen, setRightSidebarOpen]);
-
-  const handleOpenWorkerActivity = useCallback((workerId: string) => {
-    // Hard invariant: never open the workers sidebar unless the worker we're
-    // trying to open is actually visible in the current snapshot. Otherwise
-    // the user gets an empty side window with no obvious way to close it.
-    const matchingWorker = selectedRunWorkersForDisplay.find((worker) => worker.id === workerId);
-    if (!matchingWorker) {
-      return;
-    }
-    const targetTab = matchingWorker.status === "cancelled" || matchingWorker.status === "stopped" || matchingWorker.status === "done" || matchingWorker.status === "completed" || matchingWorker.status === "error" || matchingWorker.status === "failed"
-      ? "finished"
-      : "active";
-    workersSidebarManager.setActiveTab(targetTab);
-    workersSidebarManager.setFocusedWorker(workerId);
-    if (typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches) {
-      setRightSidebarOpen(true);
-    } else {
-      setMobileWorkersOpen(true);
-    }
-    void handleLoadWorkerHistory(workerId);
-  }, [handleLoadWorkerHistory, selectedRunWorkersForDisplay, setMobileWorkersOpen, setRightSidebarOpen]);
 
   // Auto-resume failed runs with backoff. Up to MAX_AUTO_RESUME_ATTEMPTS per
   // distinct failure; after that, surface the real error so the user is not
@@ -1176,12 +1149,7 @@ export function HomeApp({
       stopSupervisor.variables?.runId,
       selectedRunId,
     ),
-    stopWorkerError: scopedMutationError(stopWorker.error, stopWorker.variables?.runId, selectedRunId)
-      ?? scopedMutationError(
-        stopWorkerTerminalProcess.error,
-        stopWorkerTerminalProcess.variables?.runId,
-        selectedRunId,
-      ),
+    stopWorkerError: scopedMutationError(stopWorker.error, stopWorker.variables?.runId, selectedRunId),
   });
 
   // Composer state
@@ -1532,8 +1500,8 @@ export function HomeApp({
           setLeftSidebarOpen={setLeftSidebarOpen}
           activeConversationCwd={activeConversationCwd}
           selectedRun={selectedRun}
-          isImplementationConversation={isImplementationConversation}
           workspaceSideWindowAvailable={workspaceSideWindowAvailable}
+          workspaceRunnerId={workspaceRunnerId}
           projectRoot={currentProjectScope}
           themeMode={themeMode}
           setThemeMode={setThemeMode}
@@ -1545,9 +1513,6 @@ export function HomeApp({
           setMobileWorkersOpen={setMobileWorkersOpen}
           mobileTerminalOpen={mobileTerminalOpen}
           setMobileTerminalOpen={setMobileTerminalOpen}
-          selectedRunWorkers={vm.sideWindowWorkers}
-          conversationAgents={vm.sideWindowAgents}
-          supervisorInterventions={selectedRunSupervisorInterventions}
           onCommitNow={() => actions.handleManualCommitChat("commit")}
           onCommitAndPushNow={() => actions.handleManualCommitChat("commit-push")}
           onPrimaryCommit={() => actions.handleManualCommitChat()}
@@ -1556,22 +1521,6 @@ export function HomeApp({
           onAutoCommitMilestonesChange={(checked) => actions.updateCommitWorkflowSetting("GIT_AUTO_COMMIT_MILESTONES", checked)}
           onPushOnCommitChange={(checked) => actions.updateCommitWorkflowSetting("GIT_PUSH_ON_COMMIT", checked)}
           isAutoCommitChatPending={autoCommitChat.isPending}
-          onStopWorker={(workerId) => {
-            if (selectedRunId) stopWorker.mutate({ runId: selectedRunId, workerId });
-          }}
-          onStopTerminalProcess={(workerId, terminalProcess) => {
-            if (selectedRunId && terminalProcess.processId) {
-              stopWorkerTerminalProcess.mutate({ runId: selectedRunId, workerId, terminalProcess });
-            }
-          }}
-          onRespondElicitation={(input) => respondElicitation.mutateAsync(input)}
-          onRespondPermission={(input) => respondPermission.mutate(input)}
-          onLoadWorkerHistory={handleLoadWorkerHistory}
-          stoppingWorkerId={stopWorker.variables?.workerId ?? null}
-          stoppingTerminalProcess={stopWorkerTerminalProcess.variables ? {
-            workerId: stopWorkerTerminalProcess.variables.workerId,
-            terminalProcessId: stopWorkerTerminalProcess.variables.terminalProcess.id,
-          } : null}
           onForkSession={actions.handleForkSession}
           onForkSessionIntoWorktree={actions.handleForkSessionIntoWorktree}
           onForkSessionToDifferentCli={() => {
@@ -1666,7 +1615,6 @@ export function HomeApp({
           emptyComposer={renderComposer("mt-2 w-full pt-0 sm:pt-0")}
           projectRoot={currentProjectScope}
           onOpenProjectFile={actions.handleOpenProjectFile}
-          onOpenWorkerActivity={handleOpenWorkerActivity}
           setMobileConversationListOpen={setMobileNavOpen}
           onRespondElicitation={(input) => respondElicitation.mutateAsync(input)}
           onRespondPermission={(input) => respondPermission.mutate(input)}
@@ -1725,25 +1673,8 @@ export function HomeApp({
           <div className={`flex h-full min-w-0 flex-1 pl-2 transition-transform duration-150 ease-out motion-reduce:transition-none ${rightSidebarOpen ? "translate-x-0" : "translate-x-3"}`}>
             <SideWindow
               projectRoot={currentProjectScope}
-              workers={selectedRunId ? vm.sideWindowWorkers : []}
-              agents={selectedRunId ? vm.sideWindowAgents : []}
-              supervisorInterventions={selectedRunId ? selectedRunSupervisorInterventions : []}
-              preferredModel={selectedRun?.preferredWorkerModel ?? null}
-              preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
-              onStopWorker={(workerId) => { if (selectedRunId) stopWorker.mutate({ runId: selectedRunId, workerId }); }}
-              onStopTerminalProcess={(workerId, terminalProcess) => {
-                if (selectedRunId && terminalProcess.processId) {
-                  stopWorkerTerminalProcess.mutate({ runId: selectedRunId, workerId, terminalProcess });
-                }
-              }}
-              onRespondElicitation={(input) => respondElicitation.mutateAsync(input)}
-              onRespondPermission={(input) => respondPermission.mutate(input)}
-              onLoadWorkerHistory={handleLoadWorkerHistory}
-              stoppingWorkerId={stopWorker.variables?.workerId ?? null}
-              stoppingTerminalProcess={stopWorkerTerminalProcess.variables ? {
-                workerId: stopWorkerTerminalProcess.variables.workerId,
-                terminalProcessId: stopWorkerTerminalProcess.variables.terminalProcess.id,
-              } : null}
+              runnerId={workspaceRunnerId}
+              visible={rightSidebarOpen}
               onCloseWindow={() => setRightSidebarOpen(false)}
             />
           </div>
