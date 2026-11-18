@@ -238,6 +238,7 @@ describe("agent runtime tool environment diagnostics", () => {
       models: [{
         slug: "gpt-5.6-sol",
         display_name: "GPT-5.6-Sol",
+        input_modalities: ["text", "image", "audio"],
         supported_reasoning_levels: [
           { effort: "low", description: "Low" },
           { effort: "xhigh", description: "Extra high" },
@@ -268,6 +269,30 @@ describe("agent runtime tool environment diagnostics", () => {
       "xhigh",
     ]);
     expect(catalog.models[0].supports_reasoning_summaries).toBe(true);
+    expect(catalog.models[0].input_modalities).toEqual(["text", "image"]);
+    expect(catalog.models[0].supports_parallel_tool_calls).toBe(true);
+  });
+
+  it("drops the model catalog when codex-acp cannot parse it", () => {
+    const binDir = createTempDir("omni-tool-env-rejecting-acp-");
+    const rawCatalog = JSON.stringify({ models: [{ slug: "gpt-6-luna" }] });
+    writeFileSync(join(binDir, "codex"), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(rawCatalog)});\n`, { mode: 0o755 });
+    writeFileSync(
+      join(binDir, "codex-acp"),
+      "#!/bin/sh\necho 'Error: error loading config: failed to parse model_catalog_json path as JSON' >&2\nexit 1\n",
+      { mode: 0o755 },
+    );
+
+    const env: Record<string, string | undefined> = withCodexStandardTooling({
+      HOME: createTempDir("omni-tool-env-home-"),
+      PATH: `${binDir}:${dirname(process.execPath)}:/bin:/usr/bin`,
+      OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+    });
+
+    const managedConfig = readFileSync(env.CODEX_MANAGED_CONFIG_PATH || "", "utf8");
+    expect(managedConfig).not.toContain("model_catalog_json");
+    expect(managedConfig).toContain("unified_exec = true");
+    expect(codexModelCatalogConfigArgs(env)).toEqual([]);
   });
 
   it("preserves every reasoning level for the maintained Codex ACP runner", () => {

@@ -8,6 +8,7 @@ import {
   openSync,
   readFileSync,
   readSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -147,6 +148,7 @@ parallel = true
 remote_models = true
 `;
 const LEGACY_CODEX_ACP_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
+const LEGACY_CODEX_ACP_INPUT_MODALITIES = new Set(["text", "image"]);
 
 type CodexModelCatalog = {
   models: Array<Record<string, unknown>>;
@@ -213,6 +215,14 @@ function prepareCodexModelCatalogForAcp(rawCatalog: string, supportsCurrentCatal
 
       return {
         ...model,
+        // Older codex-acp builds reject unknown modalities (e.g. "audio") and
+        // require supports_parallel_tool_calls, failing the whole catalog.
+        ...(Array.isArray(model.input_modalities)
+          ? { input_modalities: model.input_modalities.filter((modality) => LEGACY_CODEX_ACP_INPUT_MODALITIES.has(String(modality))) }
+          : {}),
+        supports_parallel_tool_calls: typeof model.supports_parallel_tool_calls === "boolean"
+          ? model.supports_parallel_tool_calls
+          : true,
         supported_reasoning_levels: supportedReasoningLevels,
         ...(defaultReasoningLevel ? { default_reasoning_level: defaultReasoningLevel } : {}),
         supports_reasoning_summaries: typeof model.supports_reasoning_summaries === "boolean"
@@ -413,6 +423,29 @@ function createCodexArgv0ShimDir(env: EnvLike): string | null {
   }
 }
 
+// codex-acp exits immediately when it cannot parse model_catalog_json, which
+// would take down every worker launch. A config it accepts leaves it waiting
+// on stdin, so a short timeout counts as success.
+function codexAcpRejectsModelCatalog(env: EnvLike, catalogPath: string): string | null {
+  const codexAcpPath = resolveCommand("codex-acp", { env });
+  if (!codexAcpPath) {
+    return null;
+  }
+  try {
+    execFileSync(codexAcpPath, ["-c", `model_catalog_json=${JSON.stringify(catalogPath)}`], {
+      env: env as NodeJS.ProcessEnv,
+      input: "",
+      encoding: "utf8",
+      timeout: 1_000,
+      stdio: ["pipe", "ignore", "pipe"],
+    });
+    return null;
+  } catch (error) {
+    const stderr = String((error as { stderr?: unknown }).stderr ?? "");
+    return stderr.includes("model_catalog_json") ? stderr.trim() : null;
+  }
+}
+
 export function createCodexManagedToolConfigPath(env: EnvLike = process.env): string | null {
   if (env.OMNIHARNESS_DISABLE_CODEX_MANAGED_TOOL_CONFIG === "1") {
     return null;
@@ -447,7 +480,13 @@ export function createCodexManagedToolConfigPath(env: EnvLike = process.env): st
         const catalog = prepareCodexModelCatalogForAcp(rawCatalog, codexAcpSupportsCurrentCatalog(env));
         const catalogPath = join(dir, "model_catalog.json");
         writeFileSync(catalogPath, `${JSON.stringify(catalog)}\n`, "utf8");
-        modelCatalogConfig = `model_catalog_json = ${JSON.stringify(catalogPath)}\n\n`;
+        const rejection = codexAcpRejectsModelCatalog(commandEnv, catalogPath);
+        if (rejection) {
+          rmSync(catalogPath, { force: true });
+          console.warn(`OmniHarness is not passing the Codex model catalog to codex-acp: ${rejection}`);
+        } else {
+          modelCatalogConfig = `model_catalog_json = ${JSON.stringify(catalogPath)}\n\n`;
+        }
       } catch (error) {
         console.warn("OmniHarness could not load current Codex model details for the ACP runner.", error);
       }
