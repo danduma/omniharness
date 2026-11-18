@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { ArrowLeft, FileText, FolderOpen, PanelRightClose, X } from "lucide-react";
+import { ArrowLeft, FileText, FolderOpen, Maximize2, PanelRight, PanelRightClose, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { sideWindowManager, type SideWindowFileTab } from "@/interface/home/SideWindowManager";
 import { cn } from "@/lib/utils";
@@ -15,12 +15,16 @@ export function SideWindow({
   projectRoot,
   runnerId,
   visible = true,
+  expanded = false,
+  onToggleExpanded,
   onCloseWindow,
   closeButtonVariant = "collapse",
 }: {
   projectRoot: string | null;
   runnerId: string;
   visible?: boolean;
+  expanded?: boolean;
+  onToggleExpanded?: () => void;
   onCloseWindow?: () => void;
   closeButtonVariant?: "collapse" | "back";
 }) {
@@ -43,8 +47,9 @@ export function SideWindow({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onCloseWindow, visible]);
   const filesTabLabel = t("projectFiles.tab");
-  const closeButtonLabel = closeButtonVariant === "back" ? t("common.back") : t("side.window.collapseAria");
-  const CloseButtonIcon = closeButtonVariant === "back" ? ArrowLeft : PanelRightClose;
+  const visibleTabs = expanded ? tabs.filter((tab) => tab.kind === "file") : tabs;
+  const closeButtonLabel = expanded ? t("common.close") : closeButtonVariant === "back" ? t("common.back") : t("side.window.collapseAria");
+  const CloseButtonIcon = expanded ? X : closeButtonVariant === "back" ? ArrowLeft : PanelRightClose;
   const closeButton = onCloseWindow ? (
     <Button
       variant="ghost"
@@ -58,12 +63,15 @@ export function SideWindow({
     </Button>
   ) : null;
 
+  const modeLabel = t(expanded ? "projectFiles.dock" : "projectFiles.expand");
+  const ModeIcon = expanded ? PanelRight : Maximize2;
+
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-background">
       <div className="flex shrink-0 items-center gap-1 border-b border-border/70 bg-muted/25 px-2 pt-2">
         {closeButtonVariant === "back" ? closeButton : null}
         <div className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto [scrollbar-width:none]">
-          {tabs.map((tab) => (
+          {visibleTabs.map((tab) => (
             <div
               key={tab.id}
               ref={tab.id === selectedId ? activeTabElement : undefined}
@@ -104,20 +112,46 @@ export function SideWindow({
             </div>
           ))}
         </div>
+        {onToggleExpanded && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 shrink-0 gap-1.5 px-2 text-muted-foreground"
+            aria-label={modeLabel}
+            title={modeLabel}
+            onClick={onToggleExpanded}
+          >
+            <ModeIcon className="size-3.5" />
+            <span>{modeLabel}</span>
+          </Button>
+        )}
         {closeButtonVariant === "collapse" ? closeButton : null}
       </div>
-      <div className="min-h-0 flex-1">
-        {activeTab?.kind === "files" && projectRoot && visible ? (
-          <ProjectFileBrowser root={projectRoot} runnerId={runnerId} />
-        ) : activeTab?.kind === "file" && visible ? (
-          <FileViewerPanel
-            key={projectDocumentKey(runnerId, activeTab.root, activeTab.relativePath)}
-            runnerId={runnerId}
-            root={activeTab.root}
-            relativePath={activeTab.relativePath}
-            line={activeTab.line}
-          />
-        ) : null}
+      <div className="flex min-h-0 flex-1">
+        {projectRoot && visible && (expanded || activeTab?.kind === "files") && (
+          <div className={expanded ? "w-[clamp(13rem,23vw,21rem)] shrink-0 border-r border-border/60" : "min-w-0 flex-1"}>
+            <ProjectFileBrowser
+              root={projectRoot}
+              runnerId={runnerId}
+              selectedPath={activeTab?.kind === "file" && activeTab.root === projectRoot ? activeTab.relativePath : undefined}
+            />
+          </div>
+        )}
+        {activeTab?.kind === "file" && visible ? (
+          <div className="min-h-0 min-w-0 flex-1">
+            <FileViewerPanel
+              key={projectDocumentKey(runnerId, activeTab.root, activeTab.relativePath)}
+              runnerId={runnerId}
+              root={activeTab.root}
+              relativePath={activeTab.relativePath}
+              line={activeTab.line}
+            />
+          </div>
+        ) : expanded && (
+          <div className="grid min-w-0 flex-1 place-items-center p-6 text-sm text-muted-foreground">
+            {t("projectFiles.selectFile")}
+          </div>
+        )}
       </div>
     </div>
   );

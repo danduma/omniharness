@@ -13,7 +13,7 @@ import { useManagerSelector } from "@/lib/use-manager-snapshot";
 import { cn } from "@/lib/utils";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
 
-export function ProjectFileBrowser({ root, runnerId }: { root: string; runnerId: string }) {
+export function ProjectFileBrowser({ root, runnerId, selectedPath }: { root: string; runnerId: string; selectedPath?: string }) {
   useI18nSnapshot();
   const { files } = useRuntimeAPIs();
   const key = projectDirectoryKey(runnerId, root);
@@ -106,6 +106,7 @@ export function ProjectFileBrowser({ root, runnerId }: { root: string; runnerId:
               <ProjectFileRow
                 key={entry.path}
                 entry={entry}
+                selected={selectedPath === entry.path}
                 runnerId={runnerId}
                 root={root}
                 openDirectory={() => projectFilesManager.navigate(key, entry.path)}
@@ -121,10 +122,11 @@ export function ProjectFileBrowser({ root, runnerId }: { root: string; runnerId:
   );
 }
 
-function ProjectFileRow({ root, runnerId, entry, openDirectory }: {
+function ProjectFileRow({ root, runnerId, entry, selected, openDirectory }: {
   root: string;
   runnerId: string;
   entry: { kind: "directory" | "file" | "unavailable"; path: string; name: string };
+  selected: boolean;
   openDirectory: () => void;
 }) {
   const dirty = useManagerSelector(projectFilesManager, (state) =>
@@ -136,7 +138,8 @@ function ProjectFileRow({ root, runnerId, entry, openDirectory }: {
   return (
     <li>
       <Button
-        variant="ghost"
+        variant={selected ? "secondary" : "ghost"}
+        aria-current={selected || undefined}
         className="h-10 w-full justify-start gap-2.5 rounded-md px-2.5 text-sm font-normal lg:h-8"
         title={isUnavailable ? t("projectFiles.unavailable", { name: entry.name }) : entry.name}
         aria-disabled={isUnavailable || undefined}

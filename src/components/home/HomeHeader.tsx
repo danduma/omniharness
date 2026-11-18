@@ -123,6 +123,7 @@ interface HomeHeaderProps {
   presetCommands: ProjectPresetCommandMenuItem[];
   runPresetCommand: (projectPath: string, presetCommandId: string) => void;
   isPresetCommandPending: boolean;
+  onOpenProjectFiles: (projectPath: string) => void;
   handleRemoveProject: (pathToRemove: string) => void;
   selectRun: (runId: string) => void;
   renamingRunId: string | null;
@@ -158,6 +159,7 @@ interface HomeHeaderProps {
   setTerminalPanelOpen: (open: boolean) => void;
   mobileWorkersOpen: boolean;
   setMobileWorkersOpen: (open: boolean) => void;
+  onCloseFileWorkspace: () => void;
   mobileTerminalOpen: boolean;
   setMobileTerminalOpen: (open: boolean) => void;
   onPrimaryCommit: () => void;
@@ -211,6 +213,7 @@ const HomeHeader = memo(function HomeHeader({
   presetCommands,
   runPresetCommand,
   isPresetCommandPending,
+  onOpenProjectFiles,
   handleRemoveProject,
   selectRun,
   renamingRunId,
@@ -246,6 +249,7 @@ const HomeHeader = memo(function HomeHeader({
   setTerminalPanelOpen,
   mobileWorkersOpen,
   setMobileWorkersOpen,
+  onCloseFileWorkspace,
   mobileTerminalOpen,
   setMobileTerminalOpen,
   onPrimaryCommit,
@@ -396,6 +400,7 @@ const HomeHeader = memo(function HomeHeader({
             presetCommands={presetCommands}
             runPresetCommand={runPresetCommand}
             isPresetCommandPending={isPresetCommandPending}
+            onOpenProjectFiles={onOpenProjectFiles}
             handleRemoveProject={handleRemoveProject}
             selectRun={selectRun}
             renamingRunId={renamingRunId}
@@ -748,7 +753,7 @@ const HomeHeader = memo(function HomeHeader({
           <FolderOpen className="h-4 w-4" />
         </Button>
       ) : null}
-      <Sheet open={mobileWorkersOpen} onOpenChange={setMobileWorkersOpen} disablePointerDismissal>
+      <Sheet open={mobileWorkersOpen} onOpenChange={(open) => open ? setMobileWorkersOpen(true) : onCloseFileWorkspace()} disablePointerDismissal>
         {workspaceSideWindowAvailable ? (
           <Button
             variant="ghost"
@@ -766,7 +771,7 @@ const HomeHeader = memo(function HomeHeader({
             <SideWindow
               projectRoot={projectRoot}
               runnerId={workspaceRunnerId}
-              onCloseWindow={() => setMobileWorkersOpen(false)}
+              onCloseWindow={onCloseFileWorkspace}
               closeButtonVariant="back"
             />
           </SheetContent>

@@ -1,6 +1,6 @@
 import type React from "react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { Archive, Bug, ChevronDown, Folder, FolderInput, FolderPlus, GitCommitHorizontal, GripVertical, ListChevronsDownUp, LoaderCircle, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pencil, Pin, PinOff, Play, Plus, Search, Settings, Smartphone, SquareTerminal, Sun, Trash2, TriangleAlert, Wand2, X } from "lucide-react";
+import { Archive, Bug, ChevronDown, Folder, FolderInput, FolderOpen, FolderPlus, GitCommitHorizontal, GripVertical, ListChevronsDownUp, LoaderCircle, LogOut, Moon, MoreHorizontal, PanelLeftClose, Pencil, Pin, PinOff, Play, Plus, Search, Settings, Smartphone, SquareTerminal, Sun, Trash2, TriangleAlert, Wand2, X } from "lucide-react";
 import type { ConversationSidebarTab } from "@/interface/home/types";
 import type { ProjectDropPlacement } from "@/interface/home/utils";
 import { Button } from "@/components/ui/button";
@@ -589,6 +589,7 @@ interface ConversationProjectGroupListProps {
   presetCommands: ProjectPresetCommandMenuItem[];
   runPresetCommand: (projectPath: string, presetCommandId: string) => void;
   isPresetCommandPending: boolean;
+  onOpenProjectFiles: (projectPath: string) => void;
   handleRemoveProject: (pathToRemove: string) => void;
   runRowActions: RunRowActions;
   emptyState: React.ReactNode;
@@ -610,6 +611,7 @@ function ConversationProjectGroupList({
   presetCommands,
   runPresetCommand,
   isPresetCommandPending,
+  onOpenProjectFiles,
   handleRemoveProject,
   runRowActions,
   emptyState,
@@ -790,6 +792,9 @@ function ConversationProjectGroupList({
                         </DropdownMenuItem>
                       ))}
                       {presetCommands.length > 0 ? <DropdownMenuSeparator /> : null}
+                      <DropdownMenuItem className="cursor-pointer whitespace-nowrap" onClick={() => onOpenProjectFiles(group.path)}>
+                        <FolderOpen className="mr-2 h-4 w-4" /> {t("projectFiles.menu.open")}
+                      </DropdownMenuItem>
                       <DropdownMenuItem className="cursor-pointer whitespace-nowrap text-destructive focus:bg-destructive/10 focus:text-destructive" onClick={() => handleRemoveProject(group.path)}>
                         <Trash2 className="mr-2 h-4 w-4" /> {t("conversation.sidebar.removeProject")}
                       </DropdownMenuItem>
@@ -970,6 +975,7 @@ export interface ConversationSidebarProps {
   presetCommands: ProjectPresetCommandMenuItem[];
   runPresetCommand: (projectPath: string, presetCommandId: string) => void;
   isPresetCommandPending: boolean;
+  onOpenProjectFiles: (projectPath: string) => void;
   handleRemoveProject: (pathToRemove: string) => void;
   selectRun: (runId: string) => void;
   renamingRunId: string | null;
@@ -1030,6 +1036,7 @@ const ConversationSidebar = memo(function ConversationSidebar({
   presetCommands,
   runPresetCommand,
   isPresetCommandPending,
+  onOpenProjectFiles,
   handleRemoveProject,
   selectRun,
   renamingRunId,
@@ -1576,6 +1583,7 @@ const ConversationSidebar = memo(function ConversationSidebar({
                 presetCommands={presetCommands}
                 runPresetCommand={runPresetCommand}
                 isPresetCommandPending={isPresetCommandPending}
+                onOpenProjectFiles={onOpenProjectFiles}
                 handleRemoveProject={removeProject}
                 runRowActions={runRowActions}
                 emptyState={null}
@@ -1600,6 +1608,7 @@ const ConversationSidebar = memo(function ConversationSidebar({
               presetCommands={presetCommands}
               runPresetCommand={runPresetCommand}
               isPresetCommandPending={isPresetCommandPending}
+              onOpenProjectFiles={onOpenProjectFiles}
               handleRemoveProject={removeProject}
               runRowActions={runRowActions}
               emptyState={hasPinnedItems
@@ -1623,6 +1632,7 @@ const ConversationSidebar = memo(function ConversationSidebar({
               presetCommands={presetCommands}
               runPresetCommand={runPresetCommand}
               isPresetCommandPending={isPresetCommandPending}
+              onOpenProjectFiles={onOpenProjectFiles}
               handleRemoveProject={removeProject}
               runRowActions={runRowActions}
               emptyState={<p className="pl-2 text-sm text-muted-foreground">{t("conversation.sidebar.empty.active")}</p>}
