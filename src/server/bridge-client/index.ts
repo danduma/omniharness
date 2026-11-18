@@ -859,22 +859,6 @@ export async function cancelAgentTerminalProcess(name: string, processId: string
   );
 }
 
-export async function createTask(body: { name: string; subtasks: unknown[] }) {
-  return requestBridge<TaskRecord>(
-    "/tasks",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    },
-    "Create task",
-  );
-}
-
-export async function getTask(taskId: string) {
-  return requestBridge<TaskRecord>(`/tasks/${taskId}`, {}, "Get task");
-}
-
 export async function approvePermission(name: string, optionId?: string, requestId?: number) {
   return requestBridge<unknown>(
     `/agents/${name}/approve`,

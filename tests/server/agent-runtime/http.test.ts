@@ -2113,13 +2113,18 @@ process.stdout.write(JSON.stringify({
     expect(spawnResponse.status).toBe(201);
     const events = readFileSync(requestLog, "utf8").trim().split(/\r?\n/g).map((line) => JSON.parse(line));
     const initialize = events.find((event) => event.method === "initialize");
-    expect(initialize.argv).toEqual([
+    expect(initialize.argv.slice(0, 4)).toEqual([
       "-c",
       'model="gpt-5.5"',
       "-c",
       'model_reasoning_effort="high"',
     ]);
     expect(initialize.codexManagedConfigPath).toMatch(/managed_config\.toml$/);
+    // The catalog is only present when a real codex binary was found to dump it.
+    const catalogPath = join(dirname(initialize.codexManagedConfigPath), "model_catalog.json");
+    expect(initialize.argv.slice(4)).toEqual(
+      existsSync(catalogPath) ? ["-c", `model_catalog_json=${JSON.stringify(catalogPath)}`] : [],
+    );
     const managedConfig = readFileSync(initialize.codexManagedConfigPath, "utf8");
     expect(managedConfig).toContain("apply_patch_freeform = true");
     expect(managedConfig).toContain("unified_exec = true");

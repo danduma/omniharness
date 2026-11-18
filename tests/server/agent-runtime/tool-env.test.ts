@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   NATIVE_CODEX_APPLICATION_CANDIDATES,
   buildManagedPath,
+  codexModelCatalogConfigArgs,
   createToolDiagnostics,
   resolveCommand,
   resolveCodexCommand,
@@ -300,5 +301,26 @@ describe("agent runtime tool environment diagnostics", () => {
       "max",
       "ultra",
     ]);
+  });
+});
+
+describe("codexModelCatalogConfigArgs", () => {
+  it("passes the managed model catalog as a CLI override", () => {
+    const dir = createTempDir("omni-codex-catalog-args-");
+    const configPath = join(dir, "managed_config.toml");
+    const catalogPath = join(dir, "model_catalog.json");
+    writeFileSync(configPath, "");
+    writeFileSync(catalogPath, "{\"models\":[]}");
+
+    expect(codexModelCatalogConfigArgs({ CODEX_MANAGED_CONFIG_PATH: configPath })).toEqual([
+      "-c",
+      `model_catalog_json=${JSON.stringify(catalogPath)}`,
+    ]);
+  });
+
+  it("returns no args without a managed catalog", () => {
+    const dir = createTempDir("omni-codex-catalog-args-");
+    expect(codexModelCatalogConfigArgs({})).toEqual([]);
+    expect(codexModelCatalogConfigArgs({ CODEX_MANAGED_CONFIG_PATH: join(dir, "managed_config.toml") })).toEqual([]);
   });
 });

@@ -99,12 +99,13 @@ describe("Codex ACP session modes", () => {
     const launchLog = join(dir, "launch.jsonl");
     mkdirSync(binDir, { recursive: true });
     writeFileSync(serverScript, codexAcpLaunchCaptureScript);
-    writeFileSync(command, `#!/bin/sh\nexec ${process.execPath} ${serverScript}\n`, { mode: 0o755 });
+    writeFileSync(command, `#!/bin/sh\nexec ${process.execPath} ${serverScript} "$@"\n`, { mode: 0o755 });
     const manager = new AgentRuntimeManager({
       env: {
         ...process.env,
         PATH: binDir,
         OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        OMNIHARNESS_DISABLE_CODEX_MANAGED_TOOL_CONFIG: "1",
         OMNIHARNESS_AGENT_STARTUP_TIMEOUT_MS: "3000",
         OMNIHARNESS_MEMORY_TRACE: "0",
       } as Record<string, string>,
@@ -123,7 +124,10 @@ describe("Codex ACP session modes", () => {
         argv: string[];
         codexConfig: string | null;
       };
-      expect(launch.argv).toEqual([]);
+      expect(launch.argv).toEqual([
+        "-c", 'model="gpt-5.6-sol"',
+        "-c", 'model_reasoning_effort="xhigh"',
+      ]);
       expect(JSON.parse(launch.codexConfig ?? "{}")).toMatchObject({
         model: "gpt-5.6-sol",
         model_reasoning_effort: "xhigh",
@@ -131,6 +135,40 @@ describe("Codex ACP session modes", () => {
       expect(status.effectiveEffort).toBe("xhigh");
     } finally {
       await manager.stopAgent("codex-config");
+      manager.shutdownPools();
+    }
+  });
+
+  it("passes the selected model to prewarmed Codex processes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omni-codex-prewarm-model-"));
+    tempDirs.push(dir);
+    const binDir = join(dir, "bin");
+    const launchLog = join(dir, "launch.jsonl");
+    const serverScript = join(dir, "codex-acp-server.js");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(serverScript, codexAcpLaunchCaptureScript);
+    writeFileSync(join(binDir, "codex-acp"), `#!/bin/sh\nexec ${process.execPath} ${serverScript} "$@"\n`, { mode: 0o755 });
+    const manager = new AgentRuntimeManager({
+      env: {
+        ...process.env,
+        PATH: binDir,
+        OMNIHARNESS_RUNTIME_DISABLE_LOGIN_PATH: "1",
+        OMNIHARNESS_DISABLE_CODEX_MANAGED_TOOL_CONFIG: "1",
+        OMNIHARNESS_AGENT_STARTUP_TIMEOUT_MS: "3000",
+        OMNIHARNESS_MEMORY_TRACE: "0",
+      } as Record<string, string>,
+    });
+    try {
+      const result = await manager.prewarmWorker({
+        type: "codex",
+        cwd: dir,
+        model: "gpt-6.1-sol",
+        env: { LAUNCH_LOG: launchLog },
+      });
+      expect(result.warmed).toBe(true);
+      const launch = JSON.parse(readFileSync(launchLog, "utf8")) as { argv: string[] };
+      expect(launch.argv).toEqual(["-c", 'model="gpt-6.1-sol"']);
+    } finally {
       manager.shutdownPools();
     }
   });

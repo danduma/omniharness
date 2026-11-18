@@ -31,7 +31,7 @@ import { applyCodexBridgeEnv, buildCodexAcpConfig, buildCodexConfigArgs, resolve
 import { normalizeReasoningEffort } from "@/shared/reasoning-effort";
 import { buildGeminiArgs, isFullAccessAgentMode, resolveFullGeminiUuid } from "./gemini";
 import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
-import { commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, stripAmbientCodexSessionEnv, stripRunnerControlEnv, withCodexStandardTooling, withManagedPath } from "./tool-env";
+import { codexModelCatalogConfigArgs, commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, stripAmbientCodexSessionEnv, stripRunnerControlEnv, withCodexStandardTooling, withManagedPath } from "./tool-env";
 import {
   appendOutputEntry,
   openAgentOutputArchive,
@@ -123,14 +123,14 @@ type EndpointCheckResult = {
 
 const endpointCheckCache = new Map<string, { result: EndpointCheckResult | null; refreshing: boolean }>();
 
-function defaultCommandFor(type: string, model: string | null, mode?: string | null): { command: string; args: string[] } | null {
+function defaultCommandFor(type: string, model: string | null, mode?: string | null, extraCodexArgs: string[] = []): { command: string; args: string[] } | null {
   switch (type) {
     case "gemini":
       return { command: "gemini", args: buildGeminiArgs({ model, mode }) };
     case "claude":
       return { command: "claude-agent-acp", args: [] };
     case "codex":
-      return { command: "codex-acp", args: [] };
+      return { command: "codex-acp", args: [...buildCodexConfigArgs({ model }), ...extraCodexArgs] };
     case "opencode":
       return { command: "opencode", args: ["acp"] };
     default:
@@ -1670,6 +1670,7 @@ export class AgentRuntimeManager {
     if (type === "codex") {
       Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
       Object.assign(finalEnv, applyCodexBridgeEnv(finalEnv, null));
+      defaultArgs = [...defaultArgs, ...codexModelCatalogConfigArgs(finalEnv)];
     }
     if (type === "opencode") {
       Object.assign(finalEnv, withCodexStandardTooling(finalEnv));
@@ -1761,7 +1762,7 @@ export class AgentRuntimeManager {
         managedSkillLinks,
       });
       const candidates = (useCodexFallback
-        ? [{ command: "codex-acp", args: [] as string[] }]
+        ? [{ command: "codex-acp", args: defaultArgsList }]
         : useClaudeDefault
           ? [{ command: "claude-agent-acp", args: [] as string[] }]
           : useGeminiDefault
@@ -2746,7 +2747,12 @@ export class AgentRuntimeManager {
       accountId: accountCredentials.account?.id ?? input.accountId?.trim() ?? null,
     });
 
-    const candidate = defaultCommandFor(type, requestedModel, requestedMode);
+    const candidate = defaultCommandFor(
+      type,
+      requestedModel,
+      requestedMode,
+      type === "codex" ? codexModelCatalogConfigArgs(finalEnv) : [],
+    );
     if (!candidate) {
       throw new RuntimeHttpError(400, `Worker type "${type}" has no default ACP command; cannot prewarm`);
     }
