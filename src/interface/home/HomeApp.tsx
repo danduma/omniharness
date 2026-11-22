@@ -391,6 +391,7 @@ export function HomeApp({
   // Refs
   const scrollRef = useRef<HTMLDivElement>(null);
   const commandInputRef = useRef<HTMLTextAreaElement>(null);
+  const deleteRunButtonRef = useRef<HTMLButtonElement>(null);
   const pendingDeletedRunIdsRef = useRef<Set<string>>(new Set());
   const pendingCreatedConversationSnapshotsRef = useRef<Map<string, CreatedConversationSnapshot>>(new Map());
   const loadingWorkerHistoryIdsRef = useRef<Set<string>>(new Set());
@@ -1796,7 +1797,7 @@ export function HomeApp({
           }
         }}
       >
-        <DialogContent showCloseButton={false}>
+        <DialogContent showCloseButton={false} initialFocus={deleteRunButtonRef}>
           <DialogHeader>
             <DialogTitle>{t("conversation.delete.title")}</DialogTitle>
             <DialogDescription>
@@ -1813,6 +1814,7 @@ export function HomeApp({
               {t("common.cancel")}
             </Button>
             <Button
+              ref={deleteRunButtonRef}
               type="button"
               variant="destructive"
               onClick={actions.handleConfirmDeleteRun}
