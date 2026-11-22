@@ -10,13 +10,13 @@ let bootstrapSequence = 0;
 function bootstrapFor(
   runnerInstanceId: string,
   settingsValues: Record<string, string> | null,
-  options: { draftProjectPath?: string | null; runProjectPaths?: string[] } = {},
+  options: { selectedRunId?: string; draftProjectPath?: string | null; runProjectPaths?: string[] } = {},
 ): HomeBootstrapPayload {
   bootstrapSequence += 1;
   return {
     id: `bootstrap-${bootstrapSequence}`,
     route: {
-      selectedRunId: null,
+      selectedRunId: options.selectedRunId ?? null,
       draftProjectPath: options.draftProjectPath ?? null,
       pairTokenFromUrl: null,
     },
@@ -125,6 +125,57 @@ describe("applyHomeBootstrap runner scoping", () => {
     applyHomeBootstrap(alpha, false);
 
     expect(projectsOf()).toBe('["/work/alpha"]');
+  });
+
+  it("restores each session's composer when navigating between servers", () => {
+    const first = bootstrapFor("runner-a", {}, { selectedRunId: "pinned-a" });
+    const second = bootstrapFor("runner-b", {}, { selectedRunId: "pinned-b" });
+    const firstSelection = {
+      conversationMode: "direct" as const,
+      worker: "codex" as const,
+      accountId: "codex-account",
+      model: "gpt-5.6-sol",
+      effort: "High",
+    };
+    const secondSelection = {
+      conversationMode: "direct" as const,
+      worker: "claude" as const,
+      accountId: "claude-account",
+      model: "claude-fable-5-1",
+      effort: "Low",
+    };
+
+    applyHomeBootstrap(first, false);
+    homeUiStateManager.hydrateComposerSelection({ runId: "pinned-a", selection: firstSelection, serverVersion: "a" });
+    homeUiStateManager.setKey("command", "Draft on server A", false);
+
+    applyHomeBootstrap(second, false);
+    expect(homeUiStateManager.getSnapshot().command).toBe("");
+    homeUiStateManager.hydrateComposerSelection({ runId: "pinned-b", selection: secondSelection, serverVersion: "b" });
+    homeUiStateManager.setKey("command", "Draft on server B", false);
+
+    applyHomeBootstrap(first, false);
+    homeUiStateManager.hydrateComposerSelection({ runId: "pinned-a", selection: firstSelection, serverVersion: "a" });
+    expect(homeUiStateManager.getSnapshot()).toMatchObject({
+      selectedRunId: "pinned-a",
+      hydratedRunSelectionId: "pinned-a",
+      command: "Draft on server A",
+      selectedCliAgent: "codex",
+      selectedWorkerAccountId: "codex-account",
+      selectedModel: "gpt-5.6-sol",
+      selectedEffort: "High",
+    });
+
+    applyHomeBootstrap(second, false);
+    expect(homeUiStateManager.getSnapshot()).toMatchObject({
+      selectedRunId: "pinned-b",
+      hydratedRunSelectionId: "pinned-b",
+      command: "Draft on server B",
+      selectedCliAgent: "claude",
+      selectedWorkerAccountId: "claude-account",
+      selectedModel: "claude-fable-5-1",
+      selectedEffort: "Low",
+    });
   });
 
   it("drops the previous server's draft project when the new server does not know it", () => {

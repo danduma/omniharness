@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { lazy, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -80,7 +80,6 @@ import { ComposerContainer } from "./ComposerContainer";
 import { formatAccountOptionLabel, resolveCompatibleComposerAccountId } from "./account-labels";
 import { sessionStateManager } from "./SessionStateManager";
 import { t } from "@/lib/i18n";
-import { workersSidebarManager } from "@/components/component-state-managers";
 import type { AccountRecord } from "./types";
 import { decodeClaudeGatewayModel } from "@/lib/claude-model-gateway";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
@@ -392,6 +391,7 @@ export function HomeApp({
   // Refs
   const scrollRef = useRef<HTMLDivElement>(null);
   const commandInputRef = useRef<HTMLTextAreaElement>(null);
+  const deleteRunButtonRef = useRef<HTMLButtonElement>(null);
   const pendingDeletedRunIdsRef = useRef<Set<string>>(new Set());
   const pendingCreatedConversationSnapshotsRef = useRef<Map<string, CreatedConversationSnapshot>>(new Map());
   const loadingWorkerHistoryIdsRef = useRef<Set<string>>(new Set());
@@ -583,7 +583,6 @@ export function HomeApp({
     latestUserCheckpoint,
     liveThoughts,
     selectedRunExecutionEvents,
-    selectedRunSupervisorInterventions,
     latestExecutionEvent,
     completionEvent,
     failedWorkerAvailability,
@@ -755,12 +754,10 @@ export function HomeApp({
     runPresetCommand,
     stopSupervisor,
     stopWorker,
-    stopWorkerTerminalProcess,
     respondElicitation,
     respondPermission,
     promotePlanningConversation,
     startPlanningReview,
-    handleLoadWorkerHistory,
   } = mutations;
 
   // Conversation actions
@@ -840,16 +837,51 @@ export function HomeApp({
     runnerConnection,
   });
 
+  const fileWorkspace = useManagerSelector(sideWindowManager, (state) => state.layout);
+  const fileWorkspaceRoot = fileWorkspace.projectRoot ?? currentProjectScope;
+  const fileWorkspaceAvailable = workspaceSideWindowAvailable || Boolean(fileWorkspace.projectRoot);
+  const fileWorkspaceExpanded = fileWorkspace.expanded && rightSidebarOpen && !isCompactLayout && fileWorkspaceAvailable;
+  const workspaceRunner = runnerConnection?.getSnapshot();
+  const workspaceRunnerId = workspaceRunner?.runnerInstanceId ?? workspaceRunner?.profileId ?? "local-runner";
+
   const isHydratingConversations = appUnlocked && !hasReceivedInitialEventStreamPayload;
 
   useEffect(() => {
-    sideWindowManager.resetFileTabs();
     if (!selectedRunId) {
       setRightSidebarOpen(false);
       setMobileWorkersOpen(false);
     }
     setExpandedDirectMessageIds(new Set());
   }, [selectedRunId, setExpandedDirectMessageIds, setMobileWorkersOpen, setRightSidebarOpen]);
+
+  useLayoutEffect(() => {
+    const { layout } = sideWindowManager.getSnapshot();
+    sideWindowManager.resetFileTabs();
+    if (layout.expanded || layout.projectRoot) {
+      setRightSidebarOpen(false);
+      setMobileWorkersOpen(false);
+    }
+  }, [currentProjectScope, selectedRunId, workspaceRunnerId, setMobileWorkersOpen, setRightSidebarOpen]);
+
+  useLayoutEffect(() => {
+    if (isCompactLayout) sideWindowManager.setExpanded(false);
+  }, [isCompactLayout]);
+
+  const openProjectFiles = useCallback((projectPath: string) => {
+    sideWindowManager.openProject(projectPath, currentProjectScope, !isCompactLayout);
+    if (isCompactLayout) {
+      setMobileNavOpen(false);
+      setMobileWorkersOpen(true);
+    } else {
+      setRightSidebarOpen(true);
+    }
+  }, [currentProjectScope, isCompactLayout, setMobileNavOpen, setMobileWorkersOpen, setRightSidebarOpen]);
+
+  const closeFileWorkspace = useCallback(() => {
+    sideWindowManager.closeWorkspace();
+    setRightSidebarOpen(false);
+    setMobileWorkersOpen(false);
+  }, [setMobileWorkersOpen, setRightSidebarOpen]);
 
   useRunSelectionEffects({
     scrollRef,
@@ -947,35 +979,6 @@ export function HomeApp({
       prewarmedWorkerSlotsRef.current.delete(slot);
     });
   }, [appUnlocked, currentProjectScope, effectivePrewarmType, effectiveSelectedWorkerAccountId, runtimeApis.workers, selectedModel]);
-
-  // Keep non-worker conversations from leaving the workspace side window open.
-  useEffect(() => {
-    if (selectedRunId && !isImplementationConversation) {
-      setRightSidebarOpen(false);
-      setMobileWorkersOpen(false);
-    }
-  }, [isImplementationConversation, selectedRunId, setMobileWorkersOpen, setRightSidebarOpen]);
-
-  const handleOpenWorkerActivity = useCallback((workerId: string) => {
-    // Hard invariant: never open the workers sidebar unless the worker we're
-    // trying to open is actually visible in the current snapshot. Otherwise
-    // the user gets an empty side window with no obvious way to close it.
-    const matchingWorker = selectedRunWorkersForDisplay.find((worker) => worker.id === workerId);
-    if (!matchingWorker) {
-      return;
-    }
-    const targetTab = matchingWorker.status === "cancelled" || matchingWorker.status === "stopped" || matchingWorker.status === "done" || matchingWorker.status === "completed" || matchingWorker.status === "error" || matchingWorker.status === "failed"
-      ? "finished"
-      : "active";
-    workersSidebarManager.setActiveTab(targetTab);
-    workersSidebarManager.setFocusedWorker(workerId);
-    if (typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches) {
-      setRightSidebarOpen(true);
-    } else {
-      setMobileWorkersOpen(true);
-    }
-    void handleLoadWorkerHistory(workerId);
-  }, [handleLoadWorkerHistory, selectedRunWorkersForDisplay, setMobileWorkersOpen, setRightSidebarOpen]);
 
   // Auto-resume failed runs with backoff. Up to MAX_AUTO_RESUME_ATTEMPTS per
   // distinct failure; after that, surface the real error so the user is not
@@ -1176,12 +1179,7 @@ export function HomeApp({
       stopSupervisor.variables?.runId,
       selectedRunId,
     ),
-    stopWorkerError: scopedMutationError(stopWorker.error, stopWorker.variables?.runId, selectedRunId)
-      ?? scopedMutationError(
-        stopWorkerTerminalProcess.error,
-        stopWorkerTerminalProcess.variables?.runId,
-        selectedRunId,
-      ),
+    stopWorkerError: scopedMutationError(stopWorker.error, stopWorker.variables?.runId, selectedRunId),
   });
 
   // Composer state
@@ -1467,6 +1465,7 @@ export function HomeApp({
     presetCommands,
     runPresetCommand: actions.handleRunPresetCommand,
     isPresetCommandPending: runPresetCommand.isPending,
+    onOpenProjectFiles: openProjectFiles,
     handleRemoveProject: actions.handleRemoveProject,
     selectRun: actions.handleSelectRun,
     renamingRunId,
@@ -1522,7 +1521,7 @@ export function HomeApp({
         </div>
       </div>
 
-      <div className="relative flex min-w-0 flex-1 flex-col bg-background">
+      <div className={`relative min-w-0 flex-1 flex-col bg-background ${fileWorkspaceExpanded ? "hidden" : "flex"}`}>
         <HomeHeader
           {...sharedSidebarProps}
           startRenamingRun={actions.handleStartTopBarRenamingRun}
@@ -1532,9 +1531,9 @@ export function HomeApp({
           setLeftSidebarOpen={setLeftSidebarOpen}
           activeConversationCwd={activeConversationCwd}
           selectedRun={selectedRun}
-          isImplementationConversation={isImplementationConversation}
-          workspaceSideWindowAvailable={workspaceSideWindowAvailable}
-          projectRoot={currentProjectScope}
+          workspaceSideWindowAvailable={fileWorkspaceAvailable}
+          workspaceRunnerId={workspaceRunnerId}
+          projectRoot={fileWorkspaceRoot}
           themeMode={themeMode}
           setThemeMode={setThemeMode}
           rightSidebarOpen={rightSidebarOpen}
@@ -1543,11 +1542,9 @@ export function HomeApp({
           setTerminalPanelOpen={setTerminalPanelOpen}
           mobileWorkersOpen={mobileWorkersOpen}
           setMobileWorkersOpen={setMobileWorkersOpen}
+          onCloseFileWorkspace={closeFileWorkspace}
           mobileTerminalOpen={mobileTerminalOpen}
           setMobileTerminalOpen={setMobileTerminalOpen}
-          selectedRunWorkers={vm.sideWindowWorkers}
-          conversationAgents={vm.sideWindowAgents}
-          supervisorInterventions={selectedRunSupervisorInterventions}
           onCommitNow={() => actions.handleManualCommitChat("commit")}
           onCommitAndPushNow={() => actions.handleManualCommitChat("commit-push")}
           onPrimaryCommit={() => actions.handleManualCommitChat()}
@@ -1556,22 +1553,6 @@ export function HomeApp({
           onAutoCommitMilestonesChange={(checked) => actions.updateCommitWorkflowSetting("GIT_AUTO_COMMIT_MILESTONES", checked)}
           onPushOnCommitChange={(checked) => actions.updateCommitWorkflowSetting("GIT_PUSH_ON_COMMIT", checked)}
           isAutoCommitChatPending={autoCommitChat.isPending}
-          onStopWorker={(workerId) => {
-            if (selectedRunId) stopWorker.mutate({ runId: selectedRunId, workerId });
-          }}
-          onStopTerminalProcess={(workerId, terminalProcess) => {
-            if (selectedRunId && terminalProcess.processId) {
-              stopWorkerTerminalProcess.mutate({ runId: selectedRunId, workerId, terminalProcess });
-            }
-          }}
-          onRespondElicitation={(input) => respondElicitation.mutateAsync(input)}
-          onRespondPermission={(input) => respondPermission.mutate(input)}
-          onLoadWorkerHistory={handleLoadWorkerHistory}
-          stoppingWorkerId={stopWorker.variables?.workerId ?? null}
-          stoppingTerminalProcess={stopWorkerTerminalProcess.variables ? {
-            workerId: stopWorkerTerminalProcess.variables.workerId,
-            terminalProcessId: stopWorkerTerminalProcess.variables.terminalProcess.id,
-          } : null}
           onForkSession={actions.handleForkSession}
           onForkSessionIntoWorktree={actions.handleForkSessionIntoWorktree}
           onForkSessionToDifferentCli={() => {
@@ -1666,7 +1647,6 @@ export function HomeApp({
           emptyComposer={renderComposer("mt-2 w-full pt-0 sm:pt-0")}
           projectRoot={currentProjectScope}
           onOpenProjectFile={actions.handleOpenProjectFile}
-          onOpenWorkerActivity={handleOpenWorkerActivity}
           setMobileConversationListOpen={setMobileNavOpen}
           onRespondElicitation={(input) => respondElicitation.mutateAsync(input)}
           onRespondPermission={(input) => respondPermission.mutate(input)}
@@ -1679,10 +1659,10 @@ export function HomeApp({
 
       <div
         ref={terminalPaneRef}
-        className={`relative hidden h-full shrink-0 overflow-hidden border-l bg-background transition-[width,opacity] duration-150 ease-out lg:flex motion-reduce:transition-none ${terminalPanelOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
+        className={`relative hidden h-full shrink-0 overflow-hidden border-l bg-background transition-[width,opacity] duration-150 ease-out motion-reduce:transition-none ${fileWorkspaceExpanded ? "" : "lg:flex"} ${terminalPanelOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
         style={{ width: terminalPanelOpen ? terminalPanelWidth : 0 }}
-        aria-hidden={!terminalPanelOpen}
-        inert={!terminalPanelOpen ? true : undefined}
+        aria-hidden={!terminalPanelOpen || fileWorkspaceExpanded}
+        inert={!terminalPanelOpen || fileWorkspaceExpanded ? true : undefined}
       >
         <button
           type="button"
@@ -1709,42 +1689,31 @@ export function HomeApp({
         </div>
       </div>
 
-      {workspaceSideWindowAvailable ? (
+      {fileWorkspaceAvailable ? (
         <div
-          className={`relative hidden h-full shrink-0 overflow-hidden border-l bg-background transition-[width,opacity] duration-150 ease-out lg:flex motion-reduce:transition-none ${rightSidebarOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
-          style={{ width: rightSidebarOpen ? rightSidebarWidth : 0 }}
+          className={`relative hidden h-full min-w-0 overflow-hidden bg-background lg:flex ${fileWorkspaceExpanded
+            ? "flex-1"
+            : `shrink-0 border-l transition-[width,opacity] duration-150 ease-out motion-reduce:transition-none ${rightSidebarOpen ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}`}
+          style={fileWorkspaceExpanded ? undefined : { width: rightSidebarOpen ? rightSidebarWidth : 0 }}
           aria-hidden={!rightSidebarOpen}
           inert={!rightSidebarOpen ? true : undefined}
         >
-          <button
-            type="button"
-            className="absolute inset-y-0 left-0 z-10 w-3 -translate-x-1/2 cursor-col-resize bg-transparent"
-            aria-label={t("sidebar.resize.workspace")}
-            onPointerDown={layout.handleRightSidebarResizeStart}
-          />
-          <div className={`flex h-full min-w-0 flex-1 pl-2 transition-transform duration-150 ease-out motion-reduce:transition-none ${rightSidebarOpen ? "translate-x-0" : "translate-x-3"}`}>
+          {!fileWorkspaceExpanded && (
+            <button
+              type="button"
+              className="absolute inset-y-0 left-0 z-10 w-3 -translate-x-1/2 cursor-col-resize bg-transparent"
+              aria-label={t("sidebar.resize.workspace")}
+              onPointerDown={layout.handleRightSidebarResizeStart}
+            />
+          )}
+          <div className={`flex h-full min-w-0 flex-1 ${fileWorkspaceExpanded ? "" : `pl-2 transition-transform duration-150 ease-out motion-reduce:transition-none ${rightSidebarOpen ? "translate-x-0" : "translate-x-3"}`}`}>
             <SideWindow
-              projectRoot={currentProjectScope}
-              workers={selectedRunId ? vm.sideWindowWorkers : []}
-              agents={selectedRunId ? vm.sideWindowAgents : []}
-              supervisorInterventions={selectedRunId ? selectedRunSupervisorInterventions : []}
-              preferredModel={selectedRun?.preferredWorkerModel ?? null}
-              preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
-              onStopWorker={(workerId) => { if (selectedRunId) stopWorker.mutate({ runId: selectedRunId, workerId }); }}
-              onStopTerminalProcess={(workerId, terminalProcess) => {
-                if (selectedRunId && terminalProcess.processId) {
-                  stopWorkerTerminalProcess.mutate({ runId: selectedRunId, workerId, terminalProcess });
-                }
-              }}
-              onRespondElicitation={(input) => respondElicitation.mutateAsync(input)}
-              onRespondPermission={(input) => respondPermission.mutate(input)}
-              onLoadWorkerHistory={handleLoadWorkerHistory}
-              stoppingWorkerId={stopWorker.variables?.workerId ?? null}
-              stoppingTerminalProcess={stopWorkerTerminalProcess.variables ? {
-                workerId: stopWorkerTerminalProcess.variables.workerId,
-                terminalProcessId: stopWorkerTerminalProcess.variables.terminalProcess.id,
-              } : null}
-              onCloseWindow={() => setRightSidebarOpen(false)}
+              projectRoot={fileWorkspaceRoot}
+              runnerId={workspaceRunnerId}
+              visible={rightSidebarOpen && !isCompactLayout}
+              expanded={fileWorkspaceExpanded}
+              onToggleExpanded={() => sideWindowManager.setExpanded(!fileWorkspaceExpanded)}
+              onCloseWindow={closeFileWorkspace}
             />
           </div>
         </div>
@@ -1828,7 +1797,7 @@ export function HomeApp({
           }
         }}
       >
-        <DialogContent showCloseButton={false}>
+        <DialogContent showCloseButton={false} initialFocus={deleteRunButtonRef}>
           <DialogHeader>
             <DialogTitle>{t("conversation.delete.title")}</DialogTitle>
             <DialogDescription>
@@ -1845,6 +1814,7 @@ export function HomeApp({
               {t("common.cancel")}
             </Button>
             <Button
+              ref={deleteRunButtonRef}
               type="button"
               variant="destructive"
               onClick={actions.handleConfirmDeleteRun}

@@ -162,7 +162,15 @@ export function resolveRunComposerSelection(args: {
   activeAllowedWorkerTypes: WorkerType[];
 }) {
   const preferredWorker = parseWorkerType(args.run.preferredWorkerType);
-  const worker: ComposerWorkerOption = preferredWorker && args.activeAllowedWorkerTypes.includes(preferredWorker)
+  const isDirectRun = args.run.mode === "direct" || args.run.mode === "commit";
+  // A direct conversation is bound to the CLI it runs on; the server refuses a
+  // turn on any other one. Its worker is never re-derived from the allowed
+  // list, which is transiently wrong while a server switch or a conversation
+  // switch is still loading the worker catalogue. Collapsing to "auto" there
+  // resolved to whatever CLI came first (often Claude Code for a Codex
+  // conversation) and the send was rightly refused.
+  const worker: ComposerWorkerOption = preferredWorker
+    && (isDirectRun || args.activeAllowedWorkerTypes.includes(preferredWorker))
     ? preferredWorker
     : "auto";
   const modelWorker = preferredWorker ?? args.activeAllowedWorkerTypes[0] ?? "codex";
@@ -236,7 +244,16 @@ export function resolveNewConversationWorkerSelection(args: {
   return { worker, model };
 }
 
-function runSelectionVersion(run: RunRecord) {
+/**
+ * The version a hydrated composer selection is cached under.
+ *
+ * It must cover the resolved selection, not only the run record: the resolution
+ * also depends on which workers are currently available. Keyed on the run alone,
+ * a selection resolved against a stale or still-loading catalogue (right after
+ * switching server or conversation) was cached as current and never corrected
+ * once the real catalogue arrived; only a full reload cleared it.
+ */
+export function runComposerSelectionVersion(run: RunRecord, selection: ComposerSelectionLike) {
   return JSON.stringify([
     run.preferredWorkerRevision ?? 0,
     run.preferredWorkerType ?? null,
@@ -244,8 +261,15 @@ function runSelectionVersion(run: RunRecord) {
     run.preferredWorkerEffort ?? null,
     run.preferredWorkerAccountId ?? null,
     run.mode,
+    selection.conversationMode,
+    selection.worker,
+    selection.accountId,
+    selection.model,
+    selection.effort,
   ]);
 }
+
+type ComposerSelectionLike = ReturnType<typeof resolveRunComposerSelection>;
 
 export function useRunSelectionEffects({
   scrollRef,
@@ -403,7 +427,7 @@ export function useRunSelectionEffects({
     homeUiStateManager.hydrateComposerSelection({
       runId: selectedRunId,
       selection: runSelection,
-      serverVersion: runSelectionVersion(selectedRun),
+      serverVersion: runComposerSelectionVersion(selectedRun, runSelection),
     });
   }, [
     activeComposerMode,

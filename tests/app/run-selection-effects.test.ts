@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { resolveNewConversationWorkerSelection, resolveRunComposerSelection } from "@/interface/home/useRunSelectionEffects";
+import { resolveNewConversationWorkerSelection, resolveRunComposerSelection, runComposerSelectionVersion } from "@/interface/home/useRunSelectionEffects";
+import { HomeUiStateManager } from "@/interface/home/HomeUiStateManager";
 import { buildOptimisticCreatedConversationSnapshot } from "@/interface/home/utils";
 import type { RunRecord, WorkerModelCatalog } from "@/interface/home/types";
 
@@ -48,6 +49,40 @@ describe("resolveRunComposerSelection", () => {
     });
 
     expect(selection).toMatchObject({ worker: "claude", model: "claude-fable-5-1", effort: "High" });
+  });
+
+  it("keeps a direct conversation on its own CLI while the worker catalogue is stale", () => {
+    // Mid server/conversation switch the allowed list can come from another
+    // server or still be loading, and not include this conversation's CLI.
+    const selection = resolveRunComposerSelection({
+      run: createRun({ mode: "direct", preferredWorkerType: "codex", preferredWorkerModel: "gpt-5.6-sol" }),
+      activeAllowedWorkerTypes: ["claude"],
+    });
+
+    expect(selection.worker).toBe("codex");
+  });
+
+  it("still falls back to auto for an Omni run whose preferred worker is not allowed", () => {
+    const selection = resolveRunComposerSelection({
+      run: createRun({ mode: "implementation", preferredWorkerType: "codex" }),
+      activeAllowedWorkerTypes: ["claude"],
+    });
+
+    expect(selection.worker).toBe("auto");
+  });
+
+  it("re-hydrates a selection resolved against a stale catalogue once the real one arrives", () => {
+    const run = createRun({ mode: "implementation", preferredWorkerType: "codex", preferredWorkerModel: "gpt-5.6-sol" });
+    const manager = new HomeUiStateManager();
+    manager.selectRun(run.id);
+
+    const stale = resolveRunComposerSelection({ run, activeAllowedWorkerTypes: ["claude"] });
+    manager.hydrateComposerSelection({ runId: run.id, selection: stale, serverVersion: runComposerSelectionVersion(run, stale) });
+    expect(manager.getSnapshot().selectedCliAgent).toBe("auto");
+
+    const loaded = resolveRunComposerSelection({ run, activeAllowedWorkerTypes: ["codex", "claude"] });
+    manager.hydrateComposerSelection({ runId: run.id, selection: loaded, serverVersion: runComposerSelectionVersion(run, loaded) });
+    expect(manager.getSnapshot().selectedCliAgent).toBe("codex");
   });
 });
 

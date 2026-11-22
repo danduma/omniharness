@@ -61,6 +61,7 @@ describe("readProjectTextFile", () => {
       content: "export const value = 1;\n",
       size: 24,
       truncated: false,
+      revision: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
   });
 

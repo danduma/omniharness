@@ -1,5 +1,5 @@
 import { lazy, memo, useCallback, useSyncExternalStore, type CSSProperties, type Dispatch, type KeyboardEvent, type ReactNode, type SetStateAction } from "react";
-import { ArrowLeftRight, Bug, ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, Menu, MoreHorizontal, PanelLeft, PanelRight, Pencil, RotateCw, SquareTerminal } from "lucide-react";
+import { ArrowLeftRight, Bug, ChevronDown, FolderGit2, FolderOpen, GitBranch, GitCommitHorizontal, Menu, MoreHorizontal, PanelLeft, Pencil, RotateCw, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
@@ -21,12 +21,11 @@ import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { requestBugDropOpen } from "@/components/BugDropBootstrap";
+import { sideWindowManager } from "@/interface/home/SideWindowManager";
 import { PRODUCT_NAME } from "@/interface/home/constants";
 import { mobileConversationSwipeManager, type MobileDrawerDragSnapshot } from "@/interface/home/MobileConversationSwipeManager";
 import type { ProjectDropPlacement } from "@/interface/home/utils";
-import type { AgentSnapshot, ConversationSidebarTab, MessageRecord, RunRecord, SidebarGroup, SidebarRun, SupervisorInterventionRecord } from "@/interface/home/types";
-import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
-import type { WorkerTerminalProcess } from "@/lib/worker-terminal-processes";
+import type { ConversationSidebarTab, MessageRecord, RunRecord, SidebarGroup, SidebarRun } from "@/interface/home/types";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { useIsCompactLayout } from "@/hooks/use-mobile";
 import { getVisualViewportDialogStyle, useVisualViewportSnapshot } from "@/hooks/use-visual-viewport";
@@ -124,6 +123,7 @@ interface HomeHeaderProps {
   presetCommands: ProjectPresetCommandMenuItem[];
   runPresetCommand: (projectPath: string, presetCommandId: string) => void;
   isPresetCommandPending: boolean;
+  onOpenProjectFiles: (projectPath: string) => void;
   handleRemoveProject: (pathToRemove: string) => void;
   selectRun: (runId: string) => void;
   renamingRunId: string | null;
@@ -148,9 +148,9 @@ interface HomeHeaderProps {
   logout: () => void;
   activeConversationCwd: string | null;
   selectedRun: RunRecord | null;
-  isImplementationConversation: boolean;
   workspaceSideWindowAvailable: boolean;
   projectRoot: string | null;
+  workspaceRunnerId: string;
   themeMode: "day" | "night";
   setThemeMode: Dispatch<SetStateAction<"day" | "night">>;
   rightSidebarOpen: boolean;
@@ -159,11 +159,9 @@ interface HomeHeaderProps {
   setTerminalPanelOpen: (open: boolean) => void;
   mobileWorkersOpen: boolean;
   setMobileWorkersOpen: (open: boolean) => void;
+  onCloseFileWorkspace: () => void;
   mobileTerminalOpen: boolean;
   setMobileTerminalOpen: (open: boolean) => void;
-  selectedRunWorkers: ConversationWorkerRecord[];
-  conversationAgents: AgentSnapshot[];
-  supervisorInterventions: SupervisorInterventionRecord[];
   onPrimaryCommit: () => void;
   onCommitNow: () => void;
   onCommitAndPushNow: () => void;
@@ -172,23 +170,6 @@ interface HomeHeaderProps {
   onAutoCommitMilestonesChange: (checked: boolean) => void;
   onPushOnCommitChange: (checked: boolean) => void;
   isAutoCommitChatPending: boolean;
-  onStopWorker?: (workerId: string) => void;
-  onStopTerminalProcess?: (workerId: string, terminalProcess: WorkerTerminalProcess) => void;
-  onRespondElicitation?: (input: {
-    workerId: string;
-    requestId: number;
-    action: "accept" | "decline" | "cancel";
-    content?: Record<string, string | number | boolean | string[]>;
-  }) => void;
-  onRespondPermission?: (input: {
-    workerId: string;
-    requestId: number;
-    decision: "approve" | "deny";
-    optionId?: string;
-  }) => void;
-  onLoadWorkerHistory?: (workerId: string) => void;
-  stoppingWorkerId?: string | null;
-  stoppingTerminalProcess?: { workerId: string; terminalProcessId: string } | null;
   onForkSession: () => void;
   onForkSessionIntoWorktree: () => void;
   onForkSessionToDifferentCli: () => void;
@@ -232,6 +213,7 @@ const HomeHeader = memo(function HomeHeader({
   presetCommands,
   runPresetCommand,
   isPresetCommandPending,
+  onOpenProjectFiles,
   handleRemoveProject,
   selectRun,
   renamingRunId,
@@ -256,9 +238,9 @@ const HomeHeader = memo(function HomeHeader({
   logout,
   activeConversationCwd,
   selectedRun,
-  isImplementationConversation,
   workspaceSideWindowAvailable,
   projectRoot,
+  workspaceRunnerId,
   themeMode,
   setThemeMode,
   rightSidebarOpen,
@@ -267,11 +249,9 @@ const HomeHeader = memo(function HomeHeader({
   setTerminalPanelOpen,
   mobileWorkersOpen,
   setMobileWorkersOpen,
+  onCloseFileWorkspace,
   mobileTerminalOpen,
   setMobileTerminalOpen,
-  selectedRunWorkers,
-  conversationAgents,
-  supervisorInterventions,
   onPrimaryCommit,
   onCommitNow,
   onCommitAndPushNow,
@@ -280,13 +260,6 @@ const HomeHeader = memo(function HomeHeader({
   onAutoCommitMilestonesChange,
   onPushOnCommitChange,
   isAutoCommitChatPending,
-  onStopWorker,
-  onStopTerminalProcess,
-  onRespondElicitation,
-  onRespondPermission,
-  onLoadWorkerHistory,
-  stoppingWorkerId,
-  stoppingTerminalProcess,
   onForkSession,
   onForkSessionIntoWorktree,
   onForkSessionToDifferentCli,
@@ -427,6 +400,7 @@ const HomeHeader = memo(function HomeHeader({
             presetCommands={presetCommands}
             runPresetCommand={runPresetCommand}
             isPresetCommandPending={isPresetCommandPending}
+            onOpenProjectFiles={onOpenProjectFiles}
             handleRemoveProject={handleRemoveProject}
             selectRun={selectRun}
             renamingRunId={renamingRunId}
@@ -772,37 +746,32 @@ const HomeHeader = memo(function HomeHeader({
           variant="ghost"
           size="icon"
           className="hidden h-8 w-8 text-muted-foreground hover:text-foreground lg:inline-flex"
-          aria-label="Toggle workspace side window"
-          title="Toggle workspace side window"
-          onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
+          aria-label={t("projectFiles.tab")}
+          title={t("projectFiles.tab")}
+          onClick={() => { sideWindowManager.selectTab("files"); setRightSidebarOpen(true); }}
         >
-          <PanelRight className="h-4 w-4" />
+          <FolderOpen className="h-4 w-4" />
         </Button>
       ) : null}
-      <Sheet open={mobileWorkersOpen} onOpenChange={setMobileWorkersOpen} disablePointerDismissal>
+      <Sheet open={mobileWorkersOpen} onOpenChange={(open) => open ? setMobileWorkersOpen(true) : onCloseFileWorkspace()} disablePointerDismissal>
         {workspaceSideWindowAvailable ? (
-          <Button variant="ghost" size="icon" className="h-8 w-8 lg:hidden" aria-label="Open workspace side window" onClick={() => setMobileWorkersOpen(true)}>
-            <PanelRight className="h-4 w-4" />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground hover:text-foreground lg:hidden"
+            aria-label={t("projectFiles.tab")}
+            onClick={() => { sideWindowManager.selectTab("files"); setMobileWorkersOpen(true); }}
+          >
+            <FolderOpen className="h-4 w-4" />
           </Button>
         ) : null}
         {mobileWorkersOpen ? (
           <SheetContent side="right" className="!inset-0 h-[100dvh] !w-screen !max-w-none gap-0 !border-0 p-0 sm:!max-w-none lg:hidden" showCloseButton={false}>
-            <SheetTitle className="sr-only">Workspace tools</SheetTitle>
+            <SheetTitle className="sr-only">{t("projectFiles.workspace")}</SheetTitle>
             <SideWindow
               projectRoot={projectRoot}
-              workers={selectedRunId && isImplementationConversation ? selectedRunWorkers : []}
-              agents={selectedRunId && isImplementationConversation ? conversationAgents : []}
-              supervisorInterventions={selectedRunId && isImplementationConversation ? supervisorInterventions : []}
-              preferredModel={selectedRun?.preferredWorkerModel ?? null}
-              preferredEffort={selectedRun?.preferredWorkerEffort ?? null}
-              onStopWorker={onStopWorker}
-              onStopTerminalProcess={onStopTerminalProcess}
-              onRespondElicitation={onRespondElicitation}
-              onRespondPermission={onRespondPermission}
-              onLoadWorkerHistory={onLoadWorkerHistory}
-              stoppingWorkerId={stoppingWorkerId}
-              stoppingTerminalProcess={stoppingTerminalProcess}
-              onCloseWindow={() => setMobileWorkersOpen(false)}
+              runnerId={workspaceRunnerId}
+              onCloseWindow={onCloseFileWorkspace}
               closeButtonVariant="back"
             />
           </SheetContent>

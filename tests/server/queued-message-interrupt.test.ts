@@ -164,6 +164,12 @@ describe("queued conversation message interrupt", () => {
     const stored = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, queued.id)).get();
     expect(stored?.status).toBe("delivered");
     expect(mockAskAgent).toHaveBeenCalledWith(workerId, expect.stringContaining("Actually, focus on the failing test first."));
+    // The worker must learn the cancellation was the harness delivering a
+    // steer, not the user rejecting its work.
+    const steerPrompt = mockAskAgent.mock.calls.at(-1)?.[1] as string;
+    expect(steerPrompt.startsWith("OmniHarness steer notice:")).toBe(true);
+    expect(steerPrompt).toContain("They did not cancel, stop, or reject anything.");
+    expect(steerPrompt).toContain("OmniHarness direct-control instruction:");
 
     const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
     expect(worker?.turnGeneration).toBe(1);

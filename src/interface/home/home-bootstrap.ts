@@ -52,10 +52,12 @@ export function applyHomeBootstrap(
     ? null
     : routeDraftProjectPath;
 
+  // A pinned session on another server is selected through the bootstrap route.
+  // Swap the composer draft along with the run before publishing the route state.
+  homeUiStateManager.selectRun(routeSelectedRunId, false);
   homeUiStateManager.patch((current) => ({
     routeReady: true,
     hasReceivedInitialEventStreamPayload: Boolean(bootstrap.initialEventState),
-    selectedRunId: routeSelectedRunId,
     draftProjectPath,
     pairTokenFromUrl: browserRoute.pairTokenFromUrl,
     apiKeys: runnerChanged

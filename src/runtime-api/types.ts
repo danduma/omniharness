@@ -1,3 +1,5 @@
+import type { ProjectDirectoryResponse, ProjectFileContentResponse } from "@/shared/home-types";
+
 export type RuntimeSurface = "web" | "electron" | "vscode" | "capacitor";
 
 export type RuntimeApiError = {
@@ -174,6 +176,14 @@ export interface RuntimeAPIs {
       root: string;
       file?: string;
     }, options?: RuntimeCallOptions): Promise<unknown>;
+    directory(input: { root: string; directory: string }, options?: RuntimeCallOptions): Promise<ProjectDirectoryResponse>;
+    save(input: {
+      root: string;
+      file: string;
+      revision: string;
+      content: string;
+    }, options?: RuntimeCallOptions): Promise<ProjectFileContentResponse>;
+    download(input: { root: string; file: string }, options?: RuntimeCallOptions): Promise<Blob>;
     video(input: { root: string; file: string }, options?: RuntimeCallOptions): Promise<Blob>;
     image(input: {
       root: string;

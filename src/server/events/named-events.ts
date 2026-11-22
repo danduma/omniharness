@@ -155,6 +155,7 @@ export type SurfacedErrorCode =
   | "goal.rate_limited"
   | "filesystem.video_read_failed"
   | "filesystem.directory_create_failed"
+  | "filesystem.file_save_failed"
   | "codex_auth_missing"
   | "codex_auth_refresh_failed"
   | "codex_auth_unavailable"
@@ -1009,6 +1010,8 @@ export type ErrorSurfacedEvent = {
 };
 
 export type FilesystemEvent =
+  | { kind: "filesystem.file_saved"; root: string; path: string; revision: string }
+  | { kind: "filesystem.file_save_failed"; root: string | null; path: string | null; reason: string }
   | { kind: "filesystem.video_read_failed"; path: string | null; reason: string }
   | { kind: "filesystem.directory_created"; parentPath: string; path: string }
   | {
@@ -1244,6 +1247,8 @@ function append(event: NamedEvent | SnapshotMarker, runIdOverride?: string | nul
 const DELTA_ONLY_EVENT_KINDS = new Set<string>([
   "filesystem.video_read_failed",
   "filesystem.directory_created",
+  "filesystem.file_saved",
+  "filesystem.file_save_failed",
   "filesystem.directory_create_failed",
   "runtime.output_logs_pruned",
   "runtime.output_logs_prune_deferred",
