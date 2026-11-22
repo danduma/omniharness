@@ -4,6 +4,7 @@ set -euo pipefail
 
 DRY_RUN=0
 ENSURE_ONLY=0
+INSTALL_MISSING=0
 INSTALL_FAILED=0
 CODEX_ACP_INSTALL_MODE="${OMNIHARNESS_CODEX_ACP_INSTALL:-auto}"
 CODEX_ACP_NPM_PACKAGE="${OMNIHARNESS_CODEX_ACP_NPM_PACKAGE:-@agentclientprotocol/codex-acp}"
@@ -39,6 +40,9 @@ for arg in "$@"; do
     --dry-run)
       DRY_RUN=1
       ;;
+    --install-missing)
+      INSTALL_MISSING=1
+      ;;
     --ensure-only)
       ENSURE_ONLY=1
       ;;
@@ -47,7 +51,7 @@ for arg in "$@"; do
       ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: scripts/install-agent-acp.sh [--dry-run] [--ensure-only] [--codex-acp=auto|npm|binary|cargo|docker]" >&2
+      echo "Usage: scripts/install-agent-acp.sh [--dry-run] [--ensure-only] [--install-missing] [--codex-acp=auto|npm|binary|cargo|docker]" >&2
       exit 1
       ;;
   esac
@@ -110,7 +114,7 @@ ensure_native_cargo_toolchain() {
   rustup toolchain install stable-aarch64-apple-darwin
 }
 
-run_install_npm() {
+install_claude_acp() {
   local package_name="$1"
 
   if [ "$DRY_RUN" -eq 1 ]; then
@@ -124,6 +128,10 @@ run_install_npm() {
   fi
 
   if npm install -g "$package_name"; then
+    if ! have_command claude-agent-acp; then
+      echo "  -> failed to install \`$package_name\`: claude-agent-acp is still missing from PATH" >&2
+      return 1
+    fi
     echo "  -> installed \`$package_name\`"
     return 0
   fi
@@ -681,7 +689,9 @@ try_install() {
 if have_command codex || have_codex_acp; then
   echo "codex: detected"
   if have_codex_acp; then
-    if [ "$CODEX_ACP_INSTALL_MODE" = "docker" ]; then
+    if [ "$INSTALL_MISSING" -eq 1 ]; then
+      echo "  -> \`codex-acp\` already installed at $(codex_acp_location)"
+    elif [ "$CODEX_ACP_INSTALL_MODE" = "docker" ]; then
       echo "  -> \`codex-acp\` already installed; refreshing Docker-backed \`codex-acp\` wrapper"
       try_install install_codex_acp
     elif [ "$CODEX_ACP_INSTALL_MODE" = "npm" ]; then
@@ -726,22 +736,25 @@ else
   fi
 fi
 
-if have_command claude \
-  || have_command claude-agent-acp \
-  || [ -n "$(global_npm_package_version \"@agentclientprotocol/claude-agent-acp\" || true)" ]; then
+# The adapter includes the Claude Agent SDK. A standalone Claude CLI is not
+# required, so clean installs must not gate this dependency on `claude`.
+if have_command claude-agent-acp; then
   echo "claude: detected"
-  if have_command claude-agent-acp; then
-    if managed_npm_package_is_outdated "@agentclientprotocol/claude-agent-acp"; then
-      echo "  -> managed \`@agentclientprotocol/claude-agent-acp\` is outdated; refreshing it"
-      try_install run_install_npm "@agentclientprotocol/claude-agent-acp@latest"
-    else
-      echo "  -> \`claude-agent-acp\` already installed and current"
-    fi
+  if [ "$INSTALL_MISSING" -eq 1 ]; then
+    echo "  -> \`claude-agent-acp\` already installed"
+  elif managed_npm_package_is_outdated "@agentclientprotocol/claude-agent-acp"; then
+    echo "  -> managed \`@agentclientprotocol/claude-agent-acp\` is outdated; refreshing it"
+    try_install install_claude_acp "@agentclientprotocol/claude-agent-acp@latest"
   else
-    try_install run_install_npm "@agentclientprotocol/claude-agent-acp"
+    echo "  -> \`claude-agent-acp\` already installed and current"
   fi
 else
-  echo "claude: not detected"
+  if have_command claude; then
+    echo "claude: detected"
+  else
+    echo "claude: not detected; installing the Claude ACP adapter and bundled SDK"
+  fi
+  try_install install_claude_acp "@agentclientprotocol/claude-agent-acp"
 fi
 
 if have_command gemini; then

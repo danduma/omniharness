@@ -194,8 +194,9 @@ fi
 AUTH_PASSWORD_NOTICE_FILE="$(mktemp "${TMPDIR:-/tmp}/omniharness-auth-password.XXXXXX")"
 OMNIHARNESS_AUTH_PASSWORD_NOTICE_FILE="$AUTH_PASSWORD_NOTICE_FILE" node ./scripts/setup-auth.mjs
 
-# The runner checks agent updates in the background after listening. Never let
-# registry access or an adapter update block launching the local server.
+# Required adapters must exist before opening the app. Warm launches only check
+# local executables; version checks and upgrades remain in the runner background.
+./scripts/install-agent-acp.sh --install-missing
 
 WEB_PORT="$(node --env-file-if-exists="$ROOT_DIR/.env" --input-type=module -e '
   const value = process.env.OMNIHARNESS_RUNNER_PORT || process.env.PORT || "3050";

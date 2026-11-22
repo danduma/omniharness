@@ -8,7 +8,10 @@ const packageJson = JSON.parse(readFileSync(path.resolve(process.cwd(), "package
 };
 
 describe("omniharness launcher", () => {
-  it("does not run agent installation before launching the server", () => {
+  it("installs missing adapters before opening the app and leaves upgrades to the runner", () => {
+    const setupIndex = launcherSource.indexOf("./scripts/install-agent-acp.sh --install-missing");
+    expect(setupIndex).toBeGreaterThan(-1);
+    expect(setupIndex).toBeLessThan(launcherSource.indexOf('CURRENT_STATUS="$(local_omniharness_status)"'));
     expect(launcherSource).not.toContain("./scripts/install-agent-acp.sh --ensure-only");
   });
 

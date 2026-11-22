@@ -184,6 +184,9 @@ function Install-ClaudeAcp {
   }
   npm install -g "@agentclientprotocol/claude-agent-acp@latest"
   if ($LASTEXITCODE -ne 0) { throw "Claude ACP npm installation failed (exit $LASTEXITCODE)" }
+  if (-not (Test-Command "claude-agent-acp")) {
+    throw "Claude ACP installation completed but claude-agent-acp is still missing from PATH."
+  }
   Write-Host "  -> installed `@agentclientprotocol/claude-agent-acp`"
 }
 
@@ -251,20 +254,18 @@ if ((Test-Command "codex-acp") -or (Test-Command "codex-acp.exe")) {
   }
 }
 
-if (Test-Command "claude") {
+# The adapter bundles the Claude Agent SDK and does not require a standalone CLI.
+if (Test-Command "claude-agent-acp") {
   Write-Host "claude: detected"
-  if (Test-Command "claude-agent-acp") {
-    if (Test-GlobalNpmPackageOutdated "@agentclientprotocol/claude-agent-acp") {
-      Write-Host "  -> managed `@agentclientprotocol/claude-agent-acp` is outdated; refreshing it"
-      Install-ClaudeAcp
-    } else {
-      Write-Host "  -> `claude-agent-acp` already installed and current"
-    }
-  } else {
+  if (Test-GlobalNpmPackageOutdated "@agentclientprotocol/claude-agent-acp") {
+    Write-Host "  -> managed `@agentclientprotocol/claude-agent-acp` is outdated; refreshing it"
     Install-ClaudeAcp
+  } else {
+    Write-Host "  -> `claude-agent-acp` already installed and current"
   }
 } else {
-  Write-Host "claude: not detected"
+  Write-Host "claude: not detected; installing the Claude ACP adapter and bundled SDK"
+  Install-ClaudeAcp
 }
 
 if ($AddToPath) {

@@ -78,7 +78,7 @@ automation separately checks new Codex/model metadata against OmniHarness.
   `OMNIHARNESS_SKIP_RECOMMENDED_TOOLS=1` to skip that step.
 - At least one coding agent for real worker runs:
   - Codex (published ACP adapter and Codex CLI installed by the launcher)
-  - Claude CLI plus `claude-agent-acp`
+  - Claude (`claude-agent-acp` and its bundled SDK installed by the launcher)
   - Gemini CLI with native ACP mode
   - OpenCode with native ACP mode
 
@@ -290,8 +290,11 @@ The launcher does not require a global `omniharness` install. Run the app from
 the checkout with `./omniharness`, and run CLI conversations from the checkout
 with `./omni`.
 
-Preview the agent adapter setup only when you want to install or refresh
-optional ACP adapters:
+The launcher installs missing Codex and Claude ACP dependencies before opening
+the app. If installation fails, setup stops with the error. Existing adapters
+are checked locally on warm launches; upgrades run in the background.
+
+Preview the agent adapter setup or refresh it manually:
 
 ```bash
 scripts/install-agent-acp.sh --dry-run
@@ -303,20 +306,22 @@ Then run the installer directly when you are ready:
 scripts/install-agent-acp.sh
 ```
 
-The setup script detects supported local coding agents and installs or refreshes
-the ACP adapters they need. Codex uses the maintained
+The setup script installs or refreshes Codex and Claude ACP dependencies,
+including on machines without preinstalled agent CLIs. Codex uses the maintained
 `@agentclientprotocol/codex-acp` package plus the current `@openai/codex`
 package. The Codex package selects its published macOS binary for the current
 CPU; the user does not compile an ACP adapter. Claude's adapter is installed from
-npm, while Gemini and OpenCode expose native ACP commands and need no separate
-adapter. The setup script also checks common agent tools.
+npm and includes the Claude Agent SDK; a standalone Claude CLI is not required.
+Gemini and OpenCode expose native ACP commands and need no separate adapter.
+The setup script also checks common agent tools.
 
 ### Codex ACP Updates
 
 After the runner starts listening, it checks managed Codex ACP, Codex CLI, and
 npm-installed Claude ACP versions in the background, then checks again every six
-hours. Boot and restart never wait for registry checks or downloads. A per-user
-lock prevents overlapping background updaters, and each attempt has a ten-minute
+hours. Once the required adapters are installed, boot and restart never wait
+for registry checks or downloads. A per-user lock prevents overlapping
+background updaters, and each attempt has a ten-minute
 limit. The updater stops with its runner; failures leave OH running and retry at
 the next scheduled check.
 

@@ -22,6 +22,81 @@ describe("install-agent-acp.sh", () => {
     }
   });
 
+  it.each([{ flags: [] }, { flags: ["--install-missing"] }])("installs Claude ACP without a preinstalled Claude CLI ($flags)", ({ flags }) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
+    tempDirs.push(tempDir);
+    const binDir = path.join(tempDir, "bin");
+    fs.mkdirSync(binDir);
+    const npmLogPath = path.join(tempDir, "npm.log");
+    createFakeBin("codex-acp", binDir);
+    createFakeBin("npm", binDir, `#!/bin/sh
+ echo "$@" >> "${npmLogPath}"
+ if [ "$1" = "install" ]; then
+   printf '#!/bin/sh\\nexit 0\\n' > "${binDir}/claude-agent-acp"
+   chmod +x "${binDir}/claude-agent-acp"
+ fi
+ exit 0
+`);
+    const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh", ...flags], {
+      env: { ...process.env, HOME: tempDir, CARGO_HOME: path.join(tempDir, ".cargo"), PATH: `${binDir}:/usr/bin:/bin` },
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(npmLogPath, "utf8")).toContain("install -g @agentclientprotocol/claude-agent-acp");
+  });
+
+  it("checks installed adapters without registry access in install-missing mode", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
+    tempDirs.push(tempDir);
+    const binDir = path.join(tempDir, "bin");
+    fs.mkdirSync(binDir);
+    createFakeBin("codex-acp", binDir);
+    createFakeBin("claude-agent-acp", binDir);
+    const npmLogPath = path.join(tempDir, "npm.log");
+    createFakeBin("npm", binDir, `#!/bin/sh
+ echo "$@" >> "${npmLogPath}"
+ exit 17
+`);
+    const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh", "--install-missing"], {
+      env: { ...process.env, HOME: tempDir, CARGO_HOME: path.join(tempDir, ".cargo"), PATH: `${binDir}:/usr/bin:/bin` },
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(npmLogPath)).toBe(false);
+  });
+
+  it("fails installation when a missing Claude adapter cannot be installed", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
+    tempDirs.push(tempDir);
+    const binDir = path.join(tempDir, "bin");
+    fs.mkdirSync(binDir);
+    createFakeBin("codex-acp", binDir);
+    createFakeBin("npm", binDir, "#!/bin/sh\nexit 17\n");
+    const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh", "--install-missing"], {
+      env: { ...process.env, HOME: tempDir, CARGO_HOME: path.join(tempDir, ".cargo"), PATH: `${binDir}:/usr/bin:/bin` },
+      encoding: "utf8",
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("failed to install");
+    expect(result.stdout).not.toContain("Done.");
+  });
+
+  it("rejects a successful package command that leaves the Claude executable missing", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
+    tempDirs.push(tempDir);
+    const binDir = path.join(tempDir, "bin");
+    fs.mkdirSync(binDir);
+    createFakeBin("codex-acp", binDir);
+    createFakeBin("npm", binDir);
+    const result = spawnSync("/bin/bash", ["scripts/install-agent-acp.sh", "--install-missing"], {
+      env: { ...process.env, HOME: tempDir, CARGO_HOME: path.join(tempDir, ".cargo"), PATH: `${binDir}:/usr/bin:/bin` },
+      encoding: "utf8",
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("claude-agent-acp is still missing from PATH");
+    expect(result.stdout).not.toContain("Done.");
+  });
+
   it("reports background installation failures instead of claiming success", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "install-agent-acp-"));
     tempDirs.push(tempDir);
@@ -128,6 +203,8 @@ fi
       binDir,
       `#!/bin/sh
 echo "$@" >> "${npmLogPath}"
+printf '#!/bin/sh\\nexit 0\\n' > "${binDir}/claude-agent-acp"
+chmod +x "${binDir}/claude-agent-acp"
 exit 0
 `,
     );
@@ -272,6 +349,7 @@ exit 0
     const curlLogPath = path.join(tempDir, "curl.log");
     tempDirs.push(tempDir);
     fs.mkdirSync(binDir, { recursive: true });
+    createFakeBin("claude-agent-acp", binDir);
     fs.mkdirSync(homeDir, { recursive: true });
 
     createFakeBin("codex", binDir);
@@ -316,6 +394,7 @@ fi
     const npmLogPath = path.join(tempDir, "npm.log");
     tempDirs.push(tempDir);
     fs.mkdirSync(binDir, { recursive: true });
+    createFakeBin("claude-agent-acp", binDir);
     fs.mkdirSync(managedBinDir, { recursive: true });
 
     createFakeBin("codex", binDir);
@@ -362,6 +441,7 @@ fi
     const npmLogPath = path.join(tempDir, "npm.log");
     tempDirs.push(tempDir);
     fs.mkdirSync(binDir, { recursive: true });
+    createFakeBin("claude-agent-acp", binDir);
     fs.mkdirSync(managedBinDir, { recursive: true });
     fs.mkdirSync(path.join(npmRoot, "node_modules", "@agentclientprotocol", "codex-acp"), { recursive: true });
     fs.mkdirSync(path.join(npmRoot, "node_modules", "@openai", "codex"), { recursive: true });
@@ -404,6 +484,7 @@ exit 0
     const curlLogPath = path.join(tempDir, "curl.log");
     tempDirs.push(tempDir);
     fs.mkdirSync(binDir, { recursive: true });
+    createFakeBin("claude-agent-acp", binDir);
     fs.mkdirSync(homeDir, { recursive: true });
 
     createFakeBin("codex", binDir);
@@ -455,6 +536,7 @@ fi
     const curlLogPath = path.join(tempDir, "curl.log");
     tempDirs.push(tempDir);
     fs.mkdirSync(binDir, { recursive: true });
+    createFakeBin("claude-agent-acp", binDir);
     fs.mkdirSync(cargoBinDir, { recursive: true });
 
     createFakeBin("codex", binDir);
@@ -498,6 +580,7 @@ fi
     const cargoLogPath = path.join(tempDir, "cargo.log");
     tempDirs.push(tempDir);
     fs.mkdirSync(binDir, { recursive: true });
+    createFakeBin("claude-agent-acp", binDir);
 
     createFakeBin("codex", binDir);
     createFakeBin(
@@ -540,6 +623,7 @@ fi
     const dockerLogPath = path.join(tempDir, "docker.log");
     tempDirs.push(tempDir);
     fs.mkdirSync(binDir, { recursive: true });
+    createFakeBin("claude-agent-acp", binDir);
     fs.mkdirSync(homeDir, { recursive: true });
 
     createFakeBin("codex", binDir);
@@ -582,6 +666,7 @@ exit 0
     const homeDir = path.join(tempDir, "home");
     tempDirs.push(tempDir);
     fs.mkdirSync(binDir, { recursive: true });
+    createFakeBin("claude-agent-acp", binDir);
     fs.mkdirSync(homeDir, { recursive: true });
 
     createFakeBin("codex", binDir);
@@ -618,6 +703,7 @@ fi
     const curlLogPath = path.join(tempDir, "curl.log");
     tempDirs.push(tempDir);
     fs.mkdirSync(binDir, { recursive: true });
+    createFakeBin("claude-agent-acp", binDir);
     fs.mkdirSync(installDir, { recursive: true });
 
     createFakeBin("codex", binDir);
@@ -667,6 +753,7 @@ fi
     const homeDir = path.join(tempDir, "home");
     tempDirs.push(tempDir);
     fs.mkdirSync(binDir, { recursive: true });
+    createFakeBin("claude-agent-acp", binDir);
     fs.mkdirSync(homeDir, { recursive: true });
 
     createFakeBin("codex", binDir);
@@ -694,6 +781,7 @@ fi
     const homeDir = path.join(tempDir, "home");
     tempDirs.push(tempDir);
     fs.mkdirSync(binDir, { recursive: true });
+    createFakeBin("claude-agent-acp", binDir);
     fs.mkdirSync(homeDir, { recursive: true });
 
     createFakeBin("codex", binDir);
