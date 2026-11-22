@@ -517,7 +517,7 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
     });
   }
 
-  selectRun(nextRunId: string | null) {
+  selectRun(nextRunId: string | null, notify = true) {
     this.update((current) => {
       if (current.selectedRunId === nextRunId) return current;
       const prevKey = current.selectedRunId ?? NEW_CONVERSATION_DRAFT_KEY;
@@ -567,7 +567,7 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
         selectedEffort: nextDraft.selection.effort,
         hydratedRunSelectionId: nextRunId && nextDraft.serverSelectionVersion ? nextRunId : null,
       };
-    });
+    }, notify);
   }
 
   setRenamingRunId(runId: string | null) {

@@ -256,7 +256,6 @@ export function useHomeLifecycle({
     }
 
     const route = parseBrowserConversationRoute(window.location);
-    const savedMode = window.localStorage.getItem(COMPOSER_MODE_STORAGE_KEY)?.trim() || "";
     const savedWorker = window.localStorage.getItem(COMPOSER_WORKER_STORAGE_KEY)?.trim() || "";
     const savedModelValue = window.localStorage.getItem(COMPOSER_MODEL_STORAGE_KEY);
     const savedModel = resolveSavedComposerModel(savedModelValue);
@@ -267,13 +266,6 @@ export function useHomeLifecycle({
     if (route.selectedRunId) {
       setSelectedRunId(route.selectedRunId);
       setDraftProjectPath(null);
-      // Legacy persisted values ("planning"/"implementation") collapse into the
-      // single "omni" picker option.
-      if (savedMode === "direct") {
-        homeUiStateManager.setComposerSelectionField("conversationMode", "direct", { userEdited: false });
-      } else if (savedMode === "omni" || savedMode === "planning" || savedMode === "implementation") {
-        homeUiStateManager.setComposerSelectionField("conversationMode", "omni", { userEdited: false });
-      }
     } else {
       if (route.draftProjectPath) {
         setDraftProjectPath(route.draftProjectPath);
@@ -281,17 +273,25 @@ export function useHomeLifecycle({
       setSelectedRunId(null);
       homeUiStateManager.setComposerSelectionField("conversationMode", "direct", { userEdited: false });
     }
+    // A server switch remounts HomeApp. Browser defaults must never overwrite
+    // the session selection that selectRun just restored.
     if (savedWorker === "auto" || WORKER_OPTIONS.some((option) => option.value === savedWorker)) {
       homeUiStateManager.setNewConversationDefaults({ worker: savedWorker as ComposerWorkerOption });
-      homeUiStateManager.setComposerSelectionField("worker", savedWorker as ComposerWorkerOption, { userEdited: false });
+      if (!route.selectedRunId) {
+        homeUiStateManager.setComposerSelectionField("worker", savedWorker as ComposerWorkerOption, { userEdited: false });
+      }
     }
     if (savedModel) {
       homeUiStateManager.setNewConversationDefaults({ model: savedModel });
-      homeUiStateManager.setComposerSelectionField("model", savedModel, { userEdited: false });
+      if (!route.selectedRunId) {
+        homeUiStateManager.setComposerSelectionField("model", savedModel, { userEdited: false });
+      }
     }
     if (EFFORT_OPTIONS.includes(savedEffort)) {
       homeUiStateManager.setNewConversationDefaults({ effort: savedEffort });
-      homeUiStateManager.setComposerSelectionField("effort", savedEffort, { userEdited: false });
+      if (!route.selectedRunId) {
+        homeUiStateManager.setComposerSelectionField("effort", savedEffort, { userEdited: false });
+      }
     }
     setRouteReady(true);
   }, [
