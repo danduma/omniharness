@@ -433,7 +433,7 @@ const HomeHeader = memo(function HomeHeader({
 
       <div className="flex min-w-0 items-center gap-2">
         {titleLabel || rootFolderLabel ? (
-          <div className="flex min-w-0 items-baseline gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             {titleLabel && selectedRun ? (
               isEditingTitleInline ? (
                 <Input
