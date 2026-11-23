@@ -1437,6 +1437,7 @@ const ConversationSidebar = memo(function ConversationSidebar({
         </div>
         <RunnerControls
           placement="sidebar"
+          desktopServerStrip={runnerControlsMode === "desktop"}
           controlId={runnerControlsMode === "mobile" ? "runner-switcher-mobile" : "runner-switcher"}
         />
         <div className="flex items-stretch gap-0">

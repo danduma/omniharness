@@ -26,8 +26,7 @@ async function login(page: Page, runner: RealRunnerHarness) {
 }
 
 async function connectRunner(page: Page, runner: RealRunnerHarness) {
-  await page.locator("#runner-switcher").click();
-  await page.getByText("Add server", { exact: true }).click();
+  await page.getByRole("button", { name: "Add server", exact: true }).click();
   await page.locator("#runner-label").fill(runner.options.name);
   await page.locator("#runner-url").fill(runner.origin);
   const popupPromise = page.waitForEvent("popup");
@@ -43,8 +42,7 @@ async function connectRunner(page: Page, runner: RealRunnerHarness) {
 }
 
 async function selectRunner(page: Page, name: string) {
-  await page.locator("#runner-switcher").click();
-  await page.getByRole("menuitem").filter({ hasText: name }).first().click();
+  await page.getByRole("button", { name: new RegExp(`^Switch server\\. ${name} is `) }).click();
   await expect(page.locator("#runner-switcher")).toHaveAccessibleName(new RegExp(name));
 }
 

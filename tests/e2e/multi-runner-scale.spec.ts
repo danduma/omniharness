@@ -117,13 +117,11 @@ test("keeps eight real runner streams live within the client memory budget", asy
     await baseline.context.close();
 
     const measured = await openMeasuredPage(browser, runners[0], credentials);
-    await measured.page.locator("#runner-switcher").click();
     for (const runner of runners) {
       await expect(
-        measured.page.getByRole("menuitem").filter({ hasText: runner.options.name }),
+        measured.page.getByRole("button", { name: new RegExp(`Switch server.*${runner.options.name} is `) }),
       ).toBeVisible();
     }
-    await measured.page.keyboard.press("Escape");
     await expect.poll(
       () => [...measured.eventStreamOrigins].sort(),
       { timeout: 30_000 },
