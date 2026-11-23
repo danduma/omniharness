@@ -515,10 +515,13 @@ export function useHomeMutations({
         }) as Promise<{ runId?: string } & CreatedConversationSnapshot>;
     },
     onMutate: (payload) => {
-      const previousCommand = homeUiStateManager.getSnapshot().command;
-      const previousCommandCursor = homeUiStateManager.getSnapshot().commandCursor;
-      const previousSelectedRunId = homeUiStateManager.getSnapshot().selectedRunId;
-      const previousDraftProjectPath = homeUiStateManager.getSnapshot().draftProjectPath;
+      const previous = homeUiStateManager.getSnapshot();
+      const previousDraft = {
+        command: previous.command,
+        commandCursor: previous.commandCursor,
+        mentionIndex: previous.mentionIndex,
+        attachments: previous.attachments,
+      };
       const requestedRunId = payload.requestedRunId;
       const previousPendingCreatedSnapshot = pendingCreatedConversationSnapshotsRef.current.get(requestedRunId);
       const hadPendingCreatedSnapshot = pendingCreatedConversationSnapshotsRef.current.has(requestedRunId);
@@ -532,11 +535,9 @@ export function useHomeMutations({
         preferredWorkerAccountId: payload.launch.accountId,
       });
       pendingCreatedConversationSnapshotsRef.current.set(requestedRunId, optimisticSnapshot);
-      setCommand("");
-      homeUiSetters.setCommandCursor(0);
-      // Before the selection moves: the new run has no draft of its own yet, and
-      // switching to a draftless run resets the composer to the generic
-      // new-conversation defaults.
+      // Selecting the new run saves the outgoing draft. Clear the submitted
+      // content first and keep its previews available for an upload retry.
+      homeUiStateManager.setComposerDraft({ command: "", commandCursor: 0, mentionIndex: 0, attachments: [] });
       homeUiSetters.adoptSelectionForCreatedRun(requestedRunId);
       setSelectedRunId(requestedRunId);
       replaceBrowserConversationPath(requestedRunId, null);
@@ -546,13 +547,15 @@ export function useHomeMutations({
         requestedRunId,
         previousPendingCreatedSnapshot,
         hadPendingCreatedSnapshot,
-        previousSelectedRunId,
-        previousDraftProjectPath,
-        previousCommand,
-        previousCommandCursor,
+        previousSelectedRunId: previous.selectedRunId,
+        previousDraftProjectPath: previous.draftProjectPath,
+        previousDraft,
       };
     },
-    onSuccess: (data, variables) => {
+    onSuccess: (data, variables, context) => {
+      if (context) {
+        homeUiStateManager.revokeAttachmentPreviews(context.previousDraft.attachments);
+      }
       if (variables.projectPath) {
         gitWorkspaceManager.consumePendingLaunch(variables.projectPath);
       }
@@ -561,9 +564,6 @@ export function useHomeMutations({
         requestedRunId: variables.requestedRunId,
         currentSelectedRunId: homeUiStateManager.getSnapshot().selectedRunId,
       });
-      if (ownsSelection) {
-        clearAttachments();
-      }
       if (createdRunId) {
         if (data.run) {
           pendingCreatedConversationSnapshotsRef.current.set(createdRunId, {
@@ -599,9 +599,10 @@ export function useHomeMutations({
         replaceBrowserConversationPath(context.previousSelectedRunId, context.previousDraftProjectPath);
       }
       const snapshot = homeUiStateManager.getSnapshot();
-      if (context && ownsSelection && !snapshot.command.trim()) {
-        setCommand(context.previousCommand);
-        homeUiSetters.setCommandCursor(context.previousCommandCursor);
+      if (context && ownsSelection && !snapshot.command.trim() && snapshot.attachments.length === 0) {
+        homeUiStateManager.setComposerDraft(context.previousDraft);
+      } else if (context) {
+        homeUiStateManager.revokeAttachmentPreviews(context.previousDraft.attachments);
       }
     },
   });

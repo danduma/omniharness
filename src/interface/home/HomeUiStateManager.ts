@@ -255,9 +255,12 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
   }
 
   clearAttachments() {
-    const current = this.getSnapshot().attachments;
-    current.forEach((attachment) => this.revokeAttachmentPreview(attachment));
+    this.revokeAttachmentPreviews(this.getSnapshot().attachments);
     this.setKey("attachments", []);
+  }
+
+  revokeAttachmentPreviews(attachments: PendingChatAttachment[]) {
+    attachments.forEach((attachment) => this.revokeAttachmentPreview(attachment));
   }
 
   setComposerDraft(patch: Partial<ComposerDraft>) {
