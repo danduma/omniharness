@@ -78,22 +78,6 @@ describe("classifyRunRecoveryState", () => {
     });
   });
 
-  it("classifies missing implementation workers without sessions as rerunnable", () => {
-    const state = classifyRunRecoveryState({
-      run,
-      workers: [{ id: "worker-1", runId: run.id, status: "working", updatedAt: new Date(0) }],
-      liveAgents: [],
-      messages: [userMessage],
-      nowMs: 60_000,
-    });
-
-    expect(state).toMatchObject({
-      kind: "lost_worker_rerunnable",
-      workerId: "worker-1",
-      recommendedAction: "restart_from_checkpoint",
-    });
-  });
-
   it("keeps freshly transitioned active workers out of recovery during grace window", () => {
     const state = classifyRunRecoveryState({
       run,

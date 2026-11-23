@@ -1,17 +1,15 @@
-import { Agent } from "@mastra/core/agent";
-import { z } from "zod";
 import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/server/db";
-import { messages, runs, settings } from "@/server/db/schema";
+import { messages, runs } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
+import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { CONVERSATION_TITLE_SYSTEM_PROMPT } from "@/server/prompts";
 import { formatErrorMessage } from "@/server/runs/failures";
-import { hydrateRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
 import {
-  buildMastraModelConfig,
-  getSupervisorModelConfig,
-  validateSupervisorModelConfig,
-} from "@/server/supervisor/model-config";
+  CodexAuthMissingError,
+  ensureFreshCodexCredentials,
+  readCodexCredentialsSync,
+} from "@/server/auth/codex-auth";
 import { buildInitialConversationTitle } from "@/server/conversations/initial-title";
 import { isConversationTitleOwningWorker } from "@/server/conversations/agent-session-title";
 
@@ -72,40 +70,68 @@ export async function generateConversationTitle(input: ConversationTitleInput) {
   }
 
   try {
-    const allSettings = await db.select().from(settings);
-    const { env: envParams, decryptionFailures } = hydrateRuntimeEnvFromSettings(allSettings);
-    const env = { ...process.env, ...envParams };
-    const config = validateSupervisorModelConfig(
-      getSupervisorModelConfig(env),
-      decryptionFailures,
-    );
-    const model = buildMastraModelConfig(config);
-    const agent = new Agent({
-      id: "omniharness-title-generator",
-      name: "OmniHarness Title Generator",
-      instructions: CONVERSATION_TITLE_SYSTEM_PROMPT,
-      model,
-    });
-
-    const completion = await agent.generate(buildTitleContext(input), {
-      structuredOutput: {
-        schema: z.object({ title: z.string() }),
-        model,
-        jsonPromptInjection: true,
-      },
-    });
-    const title = completion.object?.title?.trim();
-    if (!title) {
-      return {
-        title: fallbackTitle(input.userMessage),
-        error: "The title model returned no title.",
-      };
+    const title = await generateTitleWithCodexSubscription(input);
+    if (title) {
+      return { title, error: null };
     }
-
-    return { title, error: null };
+    return { title: fallbackTitle(input.userMessage), error: "The title model returned no title." };
   } catch (error) {
     return { title: fallbackTitle(input.userMessage), error: formatErrorMessage(error) };
   }
+}
+
+const CODEX_TITLE_MODEL = "gpt-5.6-sol";
+const CODEX_TITLE_TIMEOUT_MS = 60_000;
+
+/**
+ * Title the conversation through the ChatGPT Codex backend with the
+ * credentials the Codex CLI keeps in `~/.codex/auth.json`.
+ *
+ * Called directly rather than through Mastra: this backend refuses any request
+ * that is not `store: false` and streamed, which the generic responses client
+ * does not send.
+ */
+async function generateTitleWithCodexSubscription(input: ConversationTitleInput) {
+  if (!readCodexCredentialsSync()) {
+    throw new CodexAuthMissingError();
+  }
+  const creds = await ensureFreshCodexCredentials();
+  const response = await fetch("https://chatgpt.com/backend-api/codex/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${creds.accessToken}`,
+      "chatgpt-account-id": creds.accountId,
+      "OpenAI-Beta": "responses=experimental",
+    },
+    body: JSON.stringify({
+      model: CODEX_TITLE_MODEL,
+      instructions: CONVERSATION_TITLE_SYSTEM_PROMPT,
+      input: [{ role: "user", content: [{ type: "input_text", text: buildTitleContext(input) }] }],
+      store: false,
+      stream: true,
+    }),
+    signal: AbortSignal.timeout(CODEX_TITLE_TIMEOUT_MS),
+  });
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(`Codex title request failed (${response.status}): ${body.slice(0, 200)}`);
+  }
+
+  let text = "";
+  for (const line of body.split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    let event: { type?: string; delta?: unknown };
+    try {
+      event = JSON.parse(line.slice(5).trim());
+    } catch {
+      continue;
+    }
+    if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+      text += event.delta;
+    }
+  }
+  return text.trim().replace(/^["'`]+|["'`.]+$/g, "").trim() || null;
 }
 
 async function firstConversationUserMessage(runId: string) {
@@ -158,16 +184,6 @@ async function generateAndApplyConversationTitle(args: {
     return "skipped";
   }
 
-  emitNamedEvent({
-    kind: "conversation.title_sources_missing",
-    runId: args.runId,
-    workerId: args.workerId,
-    workerType: args.workerType,
-    streamCandidateStatus: args.streamCandidateStatus,
-    transcriptCandidateStatus: args.transcriptCandidateStatus,
-    fallback: "harness_llm",
-  });
-
   const result = await generateConversationTitle({
     userMessage,
     assistantReply: args.assistantReply,
@@ -204,6 +220,7 @@ async function generateAndApplyConversationTitle(args: {
     revision: updated.revision,
     workerId: args.workerId,
   });
+  notifyEventStreamSubscribers();
 
   if (result.error) {
     emitNamedEvent({

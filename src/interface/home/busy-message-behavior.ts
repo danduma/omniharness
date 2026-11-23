@@ -23,13 +23,11 @@ export function resolveBusyComposerBehavior({
   isConversationStoppable,
   hasContent,
   busyMessageAction,
-  forceSteer,
 }: {
   hasBusyConversation: boolean;
   isConversationStoppable: boolean;
   hasContent: boolean;
   busyMessageAction: BusyMessageAction;
-  forceSteer?: boolean;
 }): BusyComposerBehavior {
   if (isConversationStoppable && !hasContent) {
     return {
@@ -41,12 +39,12 @@ export function resolveBusyComposerBehavior({
   }
 
   if (hasBusyConversation && hasContent) {
-    return busyMessageAction === "steer" || forceSteer
+    return busyMessageAction === "steer"
       ? {
           buttonKind: "send",
           submitAction: "send_steer",
           ariaLabelKey: "conversation.composer.sendButton.steer",
-          allowAlternateBusyAction: !forceSteer,
+          allowAlternateBusyAction: true,
         }
       : {
           buttonKind: "send",

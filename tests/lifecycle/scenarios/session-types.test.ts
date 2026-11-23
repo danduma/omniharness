@@ -80,10 +80,6 @@ vi.mock("@/server/git/auto-commit", () => ({
   captureGitBaseline: vi.fn(() => null),
 }));
 
-vi.mock("@/server/supervisor/start", () => ({
-  startSupervisorRun: vi.fn(),
-}));
-
 vi.mock("@/server/workers/snapshots", () => ({
   persistWorkerSnapshot: vi.fn().mockResolvedValue(undefined),
 }));
@@ -155,42 +151,5 @@ describe("lifecycle harness — session types", () => {
     // Status may have advanced past "starting" by the time we read it
     // (direct mode kicks off askAgent asynchronously). The important
     // thing is the row exists and `worker.spawned` was emitted above.
-  });
-
-  it("planning: creates a run in planning mode and emits worker.spawned for the planner", async () => {
-    await client.bootstrapSnapshot();
-    await client.subscribe({});
-
-    const { runId } = await createConversation("planning", "draft a plan for X");
-
-    const spawned = await client.waitFor("worker.spawned", {
-      predicate: (frame) => (frame.payload as { runId?: string } | null)?.runId === runId,
-      timeoutMs: 10_000,
-    });
-    expect(spawned.payload).toMatchObject({
-      kind: "worker.spawned",
-      runId,
-    });
-
-    const runRow = (await db.select().from(runs)).find((r) => r.id === runId);
-    expect(runRow?.mode).toBe("planning");
-  });
-
-  it("implementation: creates a run and hands off to the supervisor (no immediate worker.spawned)", async () => {
-    await client.bootstrapSnapshot();
-    await client.subscribe({});
-
-    const { runId } = await createConversation("implementation", "implement Y");
-
-    // We deliberately do NOT assert worker.spawned here — implementation
-    // mode delegates to startSupervisorRun (mocked), which is what
-    // would actually create workers later. The visible synchronous
-    // assertion is the run row landing in "running".
-    const runRow = (await db.select().from(runs)).find((r) => r.id === runId);
-    expect(runRow?.mode).toBe("implementation");
-    expect(runRow?.status).toBe("running");
-
-    const { startSupervisorRun } = await import("@/server/supervisor/start");
-    expect(startSupervisorRun).toHaveBeenCalledWith(runId);
   });
 });

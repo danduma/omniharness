@@ -22,8 +22,6 @@ import { handleAgentsRequest } from "./agents";
 import { handleAgentsCatalogRequest } from "./agents-catalog";
 import { handleAgentAcpRequest, handleAgentDetailRequest, handleAgentElicitationRequest, handleAgentPermissionRequest } from "./agent-detail";
 import { handlePrewarmWorkerRequest } from "./prewarm-worker";
-import { handleLlmModelsRequest } from "./llm-models";
-import { handleCodexAuthStatusRequest } from "./codex-auth-status";
 import { handleRuntimeBootstrapRequest } from "./runtime-bootstrap";
 import { handleHealthRequest } from "./health";
 import {
@@ -32,10 +30,7 @@ import {
   handleRunnerSettingsRequest,
 } from "./runner-settings";
 import { handleNotificationsRequest } from "./notifications";
-import { handlePlansRequest } from "./plans";
-import { handleProjectMemoryRequest } from "./project-memory";
 import { handleAttachmentsRequest } from "./attachments";
-import { handlePlanningPromoteRequest, handlePlanningReviewRequest } from "./planning";
 import { handleBrowseFilesystemRequest, handleCreateDirectoryRequest, handleProjectFilesRequest, handleProjectImageRequest, handleSaveProjectFileRequest } from "./filesystem";
 import { handleGitRequest } from "./git";
 import { handleMessagesRequest } from "./messages";
@@ -50,13 +45,11 @@ import { handleWorkerEntriesRequest } from "./worker-entries";
 import { handleConversationTranscriptRequest } from "./conversation-transcript";
 import { handleEventsLogRequest } from "./events-log";
 import { handleEventsRequest } from "./events";
-import { handleSupervisorRequest } from "./supervisor";
-import { handleRunAnswerRequest } from "./run-answer";
-import { handleRunResumeRequest } from "./run-resume";
 import { handleRunDeleteRequest, handleRunPatchRequest, handleRunPostRequest } from "./runs";
 import { handleGoalRequest } from "./goals";
 import { handleExternalSessionsRequest } from "./external-sessions";
 import { handleHandoffCancelRequest, handleHandoffLaunchRequest, handleHandoffRequest, handleRunHandoffsRequest } from "./handoffs";
+import { handleRunResumeRequest } from "./run-resume";
 import {
   handleTerminalCreateRequest,
   handleTerminalDeleteRequest,
@@ -150,18 +143,11 @@ export function createOmniRuntimeHttpRegistry() {
     .route("POST", "/api/agents/:name/acp", handleAgentAcpRequest)
     .route("GET", "/api/agents/catalog", handleAgentsCatalogRequest)
     .route("POST", "/api/agents/prewarm-worker", handlePrewarmWorkerRequest)
-    .route("POST", "/api/llm-models", handleLlmModelsRequest)
-    .route("GET", "/api/codex-auth/status", handleCodexAuthStatusRequest)
     .route("GET", "/api/notifications", handleNotificationsRequest)
     .route("POST", "/api/notifications", handleNotificationsRequest)
     .route("DELETE", "/api/notifications", handleNotificationsRequest)
-    .route("GET", "/api/plans", handlePlansRequest)
-    .route("GET", "/api/projects/memory", handleProjectMemoryRequest)
-    .route("POST", "/api/projects/memory", handleProjectMemoryRequest)
     .route("GET", "/api/attachments", handleAttachmentsRequest)
     .route("POST", "/api/attachments", handleAttachmentsRequest)
-    .route("POST", "/api/planning/:id/review", handlePlanningReviewRequest)
-    .route("POST", "/api/planning/:id/promote", handlePlanningPromoteRequest)
     .route("GET", "/api/fs", handleBrowseFilesystemRequest)
     .route("POST", "/api/fs/directories", handleCreateDirectoryRequest, {
       auth: "same-origin-session",
@@ -187,14 +173,12 @@ export function createOmniRuntimeHttpRegistry() {
     .route("GET", "/api/conversations/:id/transcript", handleConversationTranscriptRequest)
     .route("GET", "/api/events/log", handleEventsLogRequest)
     .route("GET", "/api/events", handleEventsRequest)
-    .route("POST", "/api/supervisor", handleSupervisorRequest)
     .route("PATCH", "/api/runs/:id", handleRunPatchRequest)
     .route("POST", "/api/runs/:id", handleRunPostRequest)
     .route("DELETE", "/api/runs/:id", handleRunDeleteRequest)
     .route("GET", "/api/runs/:id/goal", handleGoalRequest)
     .route("PUT", "/api/runs/:id/goal", handleGoalRequest)
     .route("POST", "/api/runs/:id/goal/actions", handleGoalRequest)
-    .route("POST", "/api/runs/:id/answer", handleRunAnswerRequest)
     .route("POST", "/api/runs/:id/resume", handleRunResumeRequest)
     .route("GET", "/api/runs/:id/handoffs", handleRunHandoffsRequest)
     .route("POST", "/api/runs/:id/handoffs", handleRunHandoffsRequest)
@@ -233,8 +217,6 @@ export { handleAgentsRequest } from "./agents";
 export { handleAgentsCatalogRequest } from "./agents-catalog";
 export { handleAgentAcpRequest, handleAgentDetailRequest, handleAgentElicitationRequest, handleAgentPermissionRequest } from "./agent-detail";
 export { handlePrewarmWorkerRequest } from "./prewarm-worker";
-export { handleLlmModelsRequest } from "./llm-models";
-export { handleCodexAuthStatusRequest } from "./codex-auth-status";
 export { handleRuntimeBootstrapRequest } from "./runtime-bootstrap";
 export {
   handleRunnerRekeyRequest,
@@ -243,10 +225,7 @@ export {
 } from "./runner-settings";
 export { handleHealthRequest } from "./health";
 export { handleNotificationsRequest } from "./notifications";
-export { handlePlansRequest } from "./plans";
-export { handleProjectMemoryRequest } from "./project-memory";
 export { handleAttachmentsRequest } from "./attachments";
-export { handlePlanningPromoteRequest, handlePlanningReviewRequest } from "./planning";
 export { handleBrowseFilesystemRequest, handleCreateDirectoryRequest, handleProjectFilesRequest, handleProjectImageRequest, handleSaveProjectFileRequest } from "./filesystem";
 export { handleGitRequest } from "./git";
 export { handleMessagesRequest } from "./messages";
@@ -261,13 +240,11 @@ export { handleWorkerEntriesRequest } from "./worker-entries";
 export { handleConversationTranscriptRequest } from "./conversation-transcript";
 export { handleEventsLogRequest } from "./events-log";
 export { handleEventsRequest } from "./events";
-export { handleSupervisorRequest } from "./supervisor";
-export { handleRunAnswerRequest } from "./run-answer";
-export { handleRunResumeRequest } from "./run-resume";
 export { handleRunDeleteRequest, handleRunPatchRequest, handleRunPostRequest } from "./runs";
 export { handleGoalRequest } from "./goals";
 export { handleExternalSessionsRequest } from "./external-sessions";
 export { handleHandoffCancelRequest, handleHandoffLaunchRequest, handleHandoffRequest, handleRunHandoffsRequest } from "./handoffs";
+export { handleRunResumeRequest } from "./run-resume";
 export {
   handleTerminalCreateRequest,
   handleTerminalDeleteRequest,

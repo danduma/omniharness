@@ -1,12 +1,8 @@
-import {
-  REQUESTED_CONVERSATION_MODES,
-  type RequestedConversationMode,
-} from "@/server/conversations/modes";
-import { looksLikePlanPath } from "@/lib/plan-path";
+import { CONVERSATION_MODES, type ConversationMode } from "@/server/conversations/modes";
 
 export interface OmniCliOptions {
   command: string;
-  mode: RequestedConversationMode;
+  mode: ConversationMode;
   projectPath: string;
   preferredWorkerType: string | null;
   preferredWorkerModel: string | null;
@@ -35,16 +31,15 @@ function readOptionValue(args: string[], index: number, flag: string) {
   return value;
 }
 
-function normalizeMode(value: string): RequestedConversationMode {
-  if (REQUESTED_CONVERSATION_MODES.includes(value as RequestedConversationMode)) {
-    return value as RequestedConversationMode;
+function normalizeMode(value: string): ConversationMode {
+  if (CONVERSATION_MODES.includes(value as ConversationMode)) {
+    return value as ConversationMode;
   }
-  throw new OmniCliUsageError(`Unsupported mode "${value}". Use one of: ${REQUESTED_CONVERSATION_MODES.join(", ")}.`);
+  throw new OmniCliUsageError(`Unsupported mode "${value}". Use one of: ${CONVERSATION_MODES.join(", ")}.`);
 }
 
 export function parseOmniCliArgs(argv: string[]): OmniCliOptions {
-  let mode: RequestedConversationMode = "direct";
-  let modeWasSpecified = false;
+  let mode: ConversationMode = "direct";
   let projectPath: string = process.cwd();
   let preferredWorkerType: string | null = null;
   let preferredWorkerModel: string | null = null;
@@ -66,23 +61,7 @@ export function parseOmniCliArgs(argv: string[]): OmniCliOptions {
     }
     if (arg === "--mode" || arg === "-m") {
       mode = normalizeMode(readOptionValue(argv, index, arg));
-      modeWasSpecified = true;
       index += 1;
-      continue;
-    }
-    if (arg === "-o" || arg === "--omni") {
-      mode = "omni";
-      modeWasSpecified = true;
-      continue;
-    }
-    if (arg === "-i") {
-      mode = "implementation";
-      modeWasSpecified = true;
-      continue;
-    }
-    if (arg === "-p") {
-      mode = "planning";
-      modeWasSpecified = true;
       continue;
     }
     if (arg === "--cwd" || arg === "--project") {
@@ -160,19 +139,8 @@ export function parseOmniCliArgs(argv: string[]): OmniCliOptions {
     throw new OmniCliUsageError("Choose exactly one of --token-file, --token-stdin, or legacy --token.");
   }
 
-  const shouldExpandPlanPath =
-    commandFromFlag === null
-    && positional.length === 1
-    && looksLikePlanPath(rawCommand)
-    && !rawCommand.toLowerCase().startsWith("implement ")
-    && (mode === "implementation" || mode === "omni" || !modeWasSpecified);
-  const command = shouldExpandPlanPath ? `implement ${rawCommand}` : rawCommand;
-  if (shouldExpandPlanPath && !modeWasSpecified) {
-    mode = "implementation";
-  }
-
   return {
-    command,
+    command: rawCommand,
     mode,
     projectPath,
     preferredWorkerType,
@@ -196,9 +164,7 @@ export function omniCliUsage() {
     "       omni runner rekey --runner <url> [token source] --confirm-identity <id>",
     "",
     "Options:",
-    "  -o, --omni                    Omni: plan interactively when needed, then supervise implementation",
-    "  -i                            Implementation mode (supervise an existing plan)",
-    "  -p                            Planning mode (legacy: create a plan to promote later)",
+    "  -m, --mode <direct|commit>    Conversation mode (default: direct)",
     "      --cwd <path>              Project directory for spawned workers",
     "  -w, --worker, --agent <type>  Preferred worker type, e.g. codex, claude, gemini, opencode",
     "      --model <model>           Preferred worker model",
@@ -212,12 +178,7 @@ export function omniCliUsage() {
     "      --token-stdin              Read the remote token from stdin",
     "                                  OMNI_TOKEN is used when no token flag is supplied",
     "",
-    "Direct mode is the default when no mode flag is supplied.",
-    "",
     "ACP harness mode:",
     "  acp                           Run OmniHarness itself as an ACP agent over stdio",
-    "",
-    "Legacy shorthand:",
-    "  omni docs/superpowers/plans/example.md",
   ].join("\n");
 }

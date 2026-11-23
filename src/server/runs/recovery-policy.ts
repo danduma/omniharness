@@ -6,13 +6,11 @@ import type { RecoveryState } from "./recovery-state";
 export const RECOVERY_POLICY_SETTING_KEY = "RECOVERY_POLICY";
 
 export type RecoveryPolicy = {
-  autoRecoverImplementationRuns: boolean;
   autoRecoverDirectRuns: boolean;
   maxAutoAttemptsPerIncident: number;
   baseBackoffMs: number;
   maxBackoffMs: number;
   sessionResumeFirst: boolean;
-  restartFromCheckpointWhenSessionMissing: boolean;
   preserveQueuedMessages: boolean;
   autoResumeAfterQuotaReset: boolean;
   quotaResetGraceMs: number;
@@ -24,7 +22,6 @@ export type RecoveryPolicy = {
 export type RecoveryPolicyDecision =
   | { action: "none"; reason: string }
   | { action: "resume_session"; reason: string }
-  | { action: "restart_from_checkpoint"; reason: string }
   | { action: "restart_direct_worker"; reason: string }
   | { action: "wait_for_quota_reset"; reason: string; resumeAt: Date | null }
   | { action: "wait_for_backoff"; reason: string; nextAttemptAt: Date }
@@ -32,7 +29,6 @@ export type RecoveryPolicyDecision =
   | { action: "mark_failed"; reason: string };
 
 export const DEFAULT_RECOVERY_POLICY: RecoveryPolicy = {
-  autoRecoverImplementationRuns: true,
   // Default flipped from `false` to `true`. The previous default meant
   // every direct-mode worker death (bridge restart, crash, OOM, lost
   // session, …) surfaced as a "needs recovery" incident requiring the
@@ -47,7 +43,6 @@ export const DEFAULT_RECOVERY_POLICY: RecoveryPolicy = {
   baseBackoffMs: 5_000,
   maxBackoffMs: 60_000,
   sessionResumeFirst: true,
-  restartFromCheckpointWhenSessionMissing: true,
   preserveQueuedMessages: true,
   autoResumeAfterQuotaReset: true,
   quotaResetGraceMs: 1_000,
@@ -70,13 +65,11 @@ function asPositiveInteger(value: unknown, fallback: number) {
 export function normalizeRecoveryPolicy(value: unknown): RecoveryPolicy {
   const record = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
   return {
-    autoRecoverImplementationRuns: asBoolean(record.autoRecoverImplementationRuns, DEFAULT_RECOVERY_POLICY.autoRecoverImplementationRuns),
     autoRecoverDirectRuns: asBoolean(record.autoRecoverDirectRuns, DEFAULT_RECOVERY_POLICY.autoRecoverDirectRuns),
     maxAutoAttemptsPerIncident: asPositiveInteger(record.maxAutoAttemptsPerIncident, DEFAULT_RECOVERY_POLICY.maxAutoAttemptsPerIncident),
     baseBackoffMs: asPositiveInteger(record.baseBackoffMs, DEFAULT_RECOVERY_POLICY.baseBackoffMs),
     maxBackoffMs: asPositiveInteger(record.maxBackoffMs, DEFAULT_RECOVERY_POLICY.maxBackoffMs),
     sessionResumeFirst: asBoolean(record.sessionResumeFirst, DEFAULT_RECOVERY_POLICY.sessionResumeFirst),
-    restartFromCheckpointWhenSessionMissing: asBoolean(record.restartFromCheckpointWhenSessionMissing, DEFAULT_RECOVERY_POLICY.restartFromCheckpointWhenSessionMissing),
     preserveQueuedMessages: asBoolean(record.preserveQueuedMessages, DEFAULT_RECOVERY_POLICY.preserveQueuedMessages),
     autoResumeAfterQuotaReset: asBoolean(record.autoResumeAfterQuotaReset, DEFAULT_RECOVERY_POLICY.autoResumeAfterQuotaReset),
     quotaResetGraceMs: asPositiveInteger(record.quotaResetGraceMs, DEFAULT_RECOVERY_POLICY.quotaResetGraceMs),
@@ -127,7 +120,6 @@ export function computeRecoveryBackoff(args: {
 }
 
 export function decideRecoveryAction(args: {
-  runMode?: string | null;
   recoveryState: RecoveryState;
   policy: RecoveryPolicy;
   autoAttemptCount: number;
@@ -164,29 +156,16 @@ export function decideRecoveryAction(args: {
     return { action: "resume_session", reason: "A saved worker session is available." };
   }
 
-  const implementationRun = args.runMode === "implementation";
-  if (!args.force) {
-    if (implementationRun && !policy.autoRecoverImplementationRuns) {
-      return { action: "needs_user", reason: "Automatic recovery is disabled for implementation runs." };
-    }
-    if (!implementationRun && !policy.autoRecoverDirectRuns) {
-      return { action: "needs_user", reason: "Automatic recovery is disabled for this conversation mode." };
-    }
-  }
-
-  if (recoveryState.kind === "lost_worker_rerunnable" && implementationRun && policy.restartFromCheckpointWhenSessionMissing) {
-    return { action: "restart_from_checkpoint", reason: "No saved session is available; latest checkpoint can restart the supervisor." };
+  if (!args.force && !policy.autoRecoverDirectRuns) {
+    return { action: "needs_user", reason: "Automatic recovery is disabled for this conversation mode." };
   }
 
   if (recoveryState.kind === "queue_blocked") {
-    if (implementationRun) {
-      return { action: "restart_from_checkpoint", reason: "Queued message is blocked by a missing worker." };
-    }
-    // A direct run has no checkpoint to restart from, but `needs_user` here was
-    // a dead end rather than a prompt: Resume re-classified the run, landed on
-    // `queue_blocked` again, and returned needs_user again — forever, and even
-    // with `force` set. A direct worker whose session is gone can still be
-    // replaced, and the blocked message redelivered to the fresh one.
+    // `needs_user` here was a dead end rather than a prompt: Resume
+    // re-classified the run, landed on `queue_blocked` again, and returned
+    // needs_user again — forever, and even with `force` set. A worker whose
+    // session is gone can still be replaced, and the blocked message
+    // redelivered to the fresh one.
     return { action: "restart_direct_worker", reason: "Queued message is blocked by a missing direct worker." };
   }
 

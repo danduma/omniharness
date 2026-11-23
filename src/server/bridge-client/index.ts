@@ -1,4 +1,4 @@
-import { isRecoverableConnectionSupervisorError, isTransientSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
+import { isRecoverableBridgeConnectionError, isTransientBridgeError, retryBridgeRequest } from "@/server/bridge-client/retry";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { providerQuotaNoticeText } from "@/server/quota/reset-parser";
 import type { AgentOutputEntry } from "@/lib/agent-output";
@@ -357,7 +357,7 @@ export function normalizeAgentRecord(value: unknown): AgentRecord {
 
 async function requestBridge<T>(path: string, init: RequestInit, action: string, options: { retryIndefinitely?: boolean } = {}) {
   try {
-    return await retrySupervisorRequest(async () => {
+    return await retryBridgeRequest(async () => {
       const res = await fetch(`${BRIDGE_URL}${path}`, init);
       if (!res.ok) {
         let detail = `${res.status} ${res.statusText}`;
@@ -377,8 +377,8 @@ async function requestBridge<T>(path: string, init: RequestInit, action: string,
             ? (isNonRetryableBridgeFailureDetail(detail)
               ? false
               : res.status === 500
-                ? isTransientSupervisorError(new Error(detail))
-                : isTransientSupervisorError(Object.assign(new Error(detail), { status: res.status })))
+                ? isTransientBridgeError(new Error(detail))
+                : isTransientBridgeError(Object.assign(new Error(detail), { status: res.status })))
             : undefined;
 
         throw Object.assign(new Error(`${action} failed: ${detail}`), {
@@ -393,7 +393,7 @@ async function requestBridge<T>(path: string, init: RequestInit, action: string,
       operationLabel: `${action} ${path}`,
       retryIndefinitelyWhen: options.retryIndefinitely === false
         ? undefined
-        : (error) => isRecoverableConnectionSupervisorError(error) && !isBridgeConnectionRefused(error),
+        : (error) => isRecoverableBridgeConnectionError(error) && !isBridgeConnectionRefused(error),
     });
   } catch (error) {
     if (isBridgeConnectionRefused(error)) {
@@ -711,7 +711,7 @@ export async function askAgent(
   };
 
   try {
-    return await retrySupervisorRequest(async () => {
+    return await retryBridgeRequest(async () => {
       // Cancellation closes the active ask stream. Before retrying what looks
       // like a transient connection failure, confirm an interrupt has not
       // advanced this persisted worker's generation.
@@ -765,7 +765,7 @@ export async function askAgent(
       // the very turn the user just stopped.
       retryIndefinitelyWhen: (error) =>
         !isWorkerTurnAbortedError(error)
-        && isRecoverableConnectionSupervisorError(error)
+        && isRecoverableBridgeConnectionError(error)
         && !isBridgeConnectionRefused(error),
     });
   } catch (error) {
@@ -843,6 +843,34 @@ export async function cancelAgentTurn(name: string) {
       method: "POST",
     },
     "Cancel turn",
+    { retryIndefinitely: false },
+  );
+}
+
+export type SteerAgentTurnResult =
+  | { name: string; outcome: "injected"; outputBoundaryEntryId?: string | null }
+  | { name: string; outcome: "promptRequired"; reason: "unsupported" | "no_prompt_in_flight" | "adapter_idle" }
+  | { name: string; outcome: "failed"; reason: string };
+
+/**
+ * Deliver a message into the worker's running turn without cancelling it
+ * (ACP `_session/steering`). Only `injected` means the agent received it; every
+ * other outcome leaves delivery to the caller. Not retried: a retry after an
+ * ambiguous failure could inject the same message twice.
+ */
+export async function steerAgentTurn(
+  name: string,
+  prompt: string,
+  imageAttachments?: Array<{ path: string; mimeType: string }>,
+) {
+  return requestBridge<SteerAgentTurnResult>(
+    `/agents/${name}/steer`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, ...(imageAttachments?.length ? { imageAttachments } : {}) }),
+    },
+    "Steer turn",
     { retryIndefinitely: false },
   );
 }

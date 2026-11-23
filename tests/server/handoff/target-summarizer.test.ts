@@ -10,7 +10,7 @@ const { mockAllocateWorkerAccount, mockAskAgent, mockCancelAgent, mockReadRuntim
 
 vi.mock("@/server/accounts/account-allocator", () => ({ allocateWorkerAccount: mockAllocateWorkerAccount }));
 vi.mock("@/server/bridge-client", () => ({ askAgent: mockAskAgent, cancelAgent: mockCancelAgent, spawnAgent: mockSpawnAgent }));
-vi.mock("@/server/supervisor/runtime-settings", () => ({ readRuntimeEnvFromSettings: mockReadRuntimeEnv }));
+vi.mock("@/server/settings/runtime-env", () => ({ readRuntimeEnvFromSettings: mockReadRuntimeEnv }));
 
 import { summarizeHandoffWithTarget } from "@/server/handoff/target-summarizer";
 import type { HybridHandoffPacketV1 } from "@/shared/handoff";

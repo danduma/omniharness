@@ -11,16 +11,6 @@ import { createShortUuid } from "@/server/runs/ids";
 
 const OMNI_ACP_MODES: acp.SessionMode[] = [
   {
-    id: "implementation",
-    name: "Implement plan",
-    description: "Start a supervisor-managed OmniHarness implementation run.",
-  },
-  {
-    id: "planning",
-    name: "Create plan",
-    description: "Use a single ACP-backed worker to create or refine a plan.",
-  },
-  {
     id: "direct",
     name: "Direct control",
     description: "Use a single ACP-backed worker as a direct conversation surface.",
@@ -61,7 +51,7 @@ function isConversationMode(value: string): value is ConversationMode {
 }
 
 function normalizeRunMode(value: string): ConversationMode {
-  return isConversationMode(value) ? value : "implementation";
+  return isConversationMode(value) ? value : "direct";
 }
 
 function modeState(currentModeId: ConversationMode): acp.SessionModeState {
@@ -192,12 +182,7 @@ export async function waitForOmniConversationTurn(args: WaitForTurnArgs): Promis
       return { stopReason: "end_turn" };
     }
 
-    // An Omni run is mode === "implementation" for its whole life, so keying
-    // off mode alone would hang the ACP turn on the dormant supervisor during
-    // the planning phase. Treat a planning-phase run like a single-worker run:
-    // end the turn once its worker goes idle.
-    const supervised = snapshot.run.mode === "implementation" && snapshot.run.phase !== "planning";
-    if (!supervised && !snapshot.workerRecords.some((worker) => activeWorkerStatus(worker.status))) {
+    if (!snapshot.workerRecords.some((worker) => activeWorkerStatus(worker.status))) {
       return { stopReason: "end_turn" };
     }
 
@@ -247,7 +232,7 @@ export class OmniHarnessAcpAgent implements acp.Agent {
     this.sessions.set(sessionId, {
       sessionId,
       cwd: params.cwd,
-      mode: "implementation",
+      mode: "direct",
       runId: null,
       abortController: null,
       seenMessageIds: new Set(),
@@ -257,7 +242,7 @@ export class OmniHarnessAcpAgent implements acp.Agent {
 
     return {
       sessionId,
-      modes: modeState("implementation"),
+      modes: modeState("direct"),
     };
   }
 

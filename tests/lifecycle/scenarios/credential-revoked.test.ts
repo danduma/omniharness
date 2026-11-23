@@ -86,7 +86,6 @@ vi.mock("@/server/git/auto-commit", () => ({
   captureGitBaseline: vi.fn(() => null),
   parseGitBaselineJson: vi.fn(() => null),
 }));
-vi.mock("@/server/supervisor/start", () => ({ startSupervisorRun: vi.fn() }));
 vi.mock("@/server/workers/snapshots", () => ({ persistWorkerSnapshot: vi.fn().mockResolvedValue(undefined) }));
 
 async function waitForErrorMessages(runId: string, timeoutMs = 5_000) {

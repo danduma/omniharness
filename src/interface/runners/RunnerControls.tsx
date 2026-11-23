@@ -1,8 +1,12 @@
 "use client";
 
-import React, { useCallback } from "react";
+import React, { useCallback, useLayoutEffect, useRef } from "react";
+import { ScrollArea } from "@base-ui/react/scroll-area";
 import {
   Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleDot,
   Edit3,
   KeyRound,
@@ -43,7 +47,9 @@ import { BrowserAuthorizationManager } from "@/interface/auth/BrowserAuthorizati
 import {
   isInsecureServerFromSecurePage,
   isMixedContentBlocked,
+  type RunnerProfile,
 } from "./RunnerProfile";
+import type { RunnerConnectionSnapshot } from "./RunnerConnection";
 import {
   useOptionalRunnerRegistryContext,
   useRunnerConnections,
@@ -53,6 +59,7 @@ import {
   RunnerConnectionStatusPanel,
   RunnerSwitcherButton,
   runnerDialogTitleKey,
+  runnerStatusTone,
 } from "./RunnerSwitcher";
 
 function createAuthorizationManager() {
@@ -109,10 +116,12 @@ export function RunnerControls({
   placement = "header",
   controlId = "runner-switcher",
   renderDialogs = true,
+  desktopServerStrip = false,
 }: {
   placement?: "header" | "sidebar";
   controlId?: string;
   renderDialogs?: boolean;
+  desktopServerStrip?: boolean;
 }) {
   useI18nSnapshot();
   const context = useOptionalRunnerRegistryContext();
@@ -122,6 +131,7 @@ export function RunnerControls({
       placement={placement}
       controlId={controlId}
       renderDialogs={renderDialogs}
+      desktopServerStrip={desktopServerStrip}
     />
   );
 }
@@ -130,10 +140,12 @@ function ConnectedRunnerControls({
   placement,
   controlId,
   renderDialogs,
+  desktopServerStrip,
 }: {
   placement: "header" | "sidebar";
   controlId: string;
   renderDialogs: boolean;
+  desktopServerStrip: boolean;
 }) {
   useI18nSnapshot();
   const context = useOptionalRunnerRegistryContext()!;
@@ -142,6 +154,29 @@ function ConnectedRunnerControls({
   const active = connections.find((connection) => connection.active)
     ?? connections[0]
     ?? null;
+  const activeProfileId = active?.profileId;
+  const stripRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    const selected = strip?.querySelector('[data-active-server="true"]');
+    if (!strip || !selected) return;
+    const edge = getComputedStyle(strip).direction === "rtl" ? "right" : "left";
+    // HomeApp remounts on a server switch. Start the strip at the selected
+    // server without reordering the buttons or scrolling the rest of the sidebar.
+    strip.scrollLeft += selected.getBoundingClientRect()[edge] - strip.getBoundingClientRect()[edge];
+  }, [activeProfileId, desktopServerStrip]);
+  const scrollServerStrip = (direction: "start" | "end") => {
+    const strip = stripRef.current;
+    if (!strip) return;
+    const forward = getComputedStyle(strip).direction === "rtl" ? -1 : 1;
+    const pageWidth = Math.max(1, strip.clientWidth - 24);
+    strip.scrollBy({ left: pageWidth * forward * (direction === "end" ? 1 : -1) });
+    const offset = Math.abs(strip.scrollLeft);
+    const remaining = direction === "start" ? offset : strip.scrollWidth - strip.clientWidth - offset;
+    if (remaining <= 1 && strip.ownerDocument.activeElement?.matches(":focus-visible")) {
+      strip.focus({ preventScroll: true });
+    }
+  };
   const profiles = context.profileStore.getSnapshot().profiles;
   const activeProfile = active
     ? profiles.find((profile) => profile.id === active.profileId) ?? null
@@ -277,7 +312,11 @@ function ConnectedRunnerControls({
     context.uiManager.setBusy(true);
     try {
       const runtime = context.registry.getConnection(profileId)?.getRuntimeAPIs();
-      const response = await runtime?.auth.session() as {
+      if (!runtime) {
+        context.uiManager.setError("runner.error.sessions");
+        return;
+      }
+      const response = await runtime.auth.session() as {
         sessions?: Array<{
           id: string;
           label?: string | null;
@@ -306,12 +345,16 @@ function ConnectedRunnerControls({
       if (draft.dialog === "forget") {
         await context.profileStore.forgetProfile(draft.profileId);
       } else if (draft.dialog === "restart") {
+        if (!runtime) {
+          context.uiManager.setError("runner.error.generic");
+          return;
+        }
         // The runner cannot restart itself, so this asks the restart-control
         // service to do it. That service kills the process serving this very
         // request, so anything short of a stated refusal means the restart is
         // under way — the registry reconnects on its own.
         try {
-          await runtime?.runner.restart();
+          await runtime.runner.restart();
         } catch (error) {
           if (isRestartRefusal(error)) {
             throw error;
@@ -380,6 +423,8 @@ function ConnectedRunnerControls({
 
   if (!active || !activeProfile) return null;
   const menuFocusId = `runner-${active.profileId}-menu`;
+  const addServerId = `${controlId}-add`;
+  const stripId = `${controlId}-strip`;
   const statusAction = () => {
     if (active.status === "needs-reauth") {
       if (nativeAuthorization) {
@@ -408,121 +453,234 @@ function ConnectedRunnerControls({
     }
   };
 
+  const renderServerActions = (
+    connection: RunnerConnectionSnapshot,
+    profile: RunnerProfile,
+    focusId: string,
+    canManageServer: boolean,
+  ) => (
+    <>
+      <DropdownMenuItem
+        onClick={() => context.uiManager.openEdit(profile, focusId)}
+        id={desktopServerStrip ? undefined : focusId}
+      >
+        <Edit3 />
+        {t("runner.action.edit")}
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        disabled={!canManageServer}
+        onClick={() => void openSessions(connection.profileId, focusId)}
+      >
+        <UserRoundCog />
+        {t("runner.action.sessions")}
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        disabled={!canManageServer}
+        onClick={() => context.uiManager.openRestart(
+          connection.profileId,
+          connection.runnerName,
+          focusId,
+        )}
+      >
+        <RotateCcw />
+        {t("runner.action.restart")}
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        onClick={() => context.uiManager.openRename(
+          connection.profileId,
+          connection.runnerName,
+          focusId,
+        )}
+      >
+        <MoreHorizontal />
+        {t("runner.action.rename")}
+      </DropdownMenuItem>
+      {!profile.isSameOrigin ? (
+        <DropdownMenuItem
+          variant="destructive"
+          onClick={() => context.uiManager.openForget(connection.profileId, focusId)}
+        >
+          <Trash2 />
+          {t("runner.action.forget")}
+        </DropdownMenuItem>
+      ) : null}
+    </>
+  );
+
   return (
     <>
-      <DropdownMenu>
-        <DropdownMenuTrigger render={(
-          <RunnerSwitcherButton
-            runnerName={active.runnerName}
-            status={active.status}
-            expanded={false}
-            surface={surface}
-            id={controlId}
-            className={placement === "sidebar"
-              ? "w-full max-w-none text-[#333333] hover:bg-[#deddda] hover:text-[#1f1f1f] dark:text-zinc-200 dark:hover:bg-muted/70 dark:hover:text-zinc-100"
-              : undefined}
-          />
-        )} />
-        <DropdownMenuContent
-          align="start"
-          className={cn(
-            "w-[min(22rem,calc(100vw-1rem))] p-2 lg:p-1",
-            "max-lg:[&_[data-slot=dropdown-menu-item]]:min-h-12 max-lg:[&_[data-slot=dropdown-menu-item]]:gap-3",
-            "max-lg:[&_[data-slot=dropdown-menu-item]]:px-3 max-lg:[&_[data-slot=dropdown-menu-item]]:text-base",
-            "max-lg:[&_[data-slot=dropdown-menu-item]_svg]:size-5",
-          )}
+      {desktopServerStrip ? (
+        <ScrollArea.Root
+          className="group/server-strip -mx-2 flex min-w-0 items-center"
+          overflowEdgeThreshold={1}
         >
-          <DropdownMenuGroup>
-            <DropdownMenuLabel>{t("runner.switcher.label")}</DropdownMenuLabel>
-            {connections.map((connection) => {
-              return (
-                <DropdownMenuItem
-                  key={connection.profileId}
-                  onClick={() => context.registry.switchActive(connection.profileId)}
-                  className="min-h-11"
-                >
-                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-muted">
-                    <Server className="h-3.5 w-3.5" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{connection.runnerName}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {t(runnerStatusMessageKey(connection.status))}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="invisible h-7 w-5 text-muted-foreground group-data-[overflow-x-start]/server-strip:visible"
+            aria-label={t("runner.switcher.scrollBack")}
+            aria-controls={stripId}
+            onClick={() => scrollServerStrip("start")}
+          >
+            <ChevronLeft className="size-3.5 rtl:rotate-180" aria-hidden="true" />
+          </Button>
+          <ScrollArea.Viewport
+            id={stripId}
+            ref={stripRef}
+            role="group"
+            aria-label={t("runner.switcher.label")}
+            className="min-w-0 flex-1 rounded-md focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+          >
+            <ScrollArea.Content className="flex gap-0.5">
+              {connections.map((connection) => {
+                const profile = profiles.find((item) => item.id === connection.profileId);
+                if (!profile) return null;
+                const selected = connection.profileId === activeProfileId;
+                const triggerId = `${controlId}-${connection.profileId}-actions`;
+                const status = t(runnerStatusMessageKey(connection.status));
+                return (
+                  <div
+                    key={connection.profileId}
+                    data-active-server={selected}
+                    className={cn(
+                      "flex h-7 min-w-0 max-w-36 shrink-0 items-stretch rounded-md",
+                      selected && "bg-primary/12",
+                    )}
+                  >
+                    <Button
+                      id={selected ? controlId : undefined}
+                      type="button"
+                      variant="ghost"
+                      aria-label={t("runner.switcher.aria", { runner: connection.runnerName, status })}
+                      aria-pressed={selected}
+                      title={`${connection.runnerName} · ${status}`}
+                      className="h-auto min-w-0 shrink justify-start gap-1.5 rounded-s-md rounded-e-none border-0 px-1.5 font-medium hover:bg-foreground/5 focus-visible:ring-inset dark:hover:bg-foreground/5"
+                      onClick={() => {
+                        if (!selected) context.registry.switchActive(connection.profileId);
+                      }}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={cn("size-1.5 shrink-0 rounded-full", runnerStatusTone(connection.status))}
+                      />
+                      <span className="truncate">{connection.runnerName}</span>
+                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        id={triggerId}
+                        aria-label={t("runner.switcher.actionsAria", { runner: connection.runnerName })}
+                        className="flex w-6 shrink-0 items-center justify-center rounded-e-md text-muted-foreground hover:bg-foreground/5 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring data-popup-open:bg-foreground/5 data-popup-open:text-foreground"
+                      >
+                        <ChevronDown className="size-3" aria-hidden="true" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent className="min-w-52 p-1 [&_[data-slot=dropdown-menu-item]]:min-h-11 [&_[data-slot=dropdown-menu-item]]:gap-3 [&_[data-slot=dropdown-menu-item]]:px-3 [&_[data-slot=dropdown-menu-item]]:text-[0.9375rem]">
+                        {renderServerActions(
+                          connection,
+                          profile,
+                          triggerId,
+                          Boolean(context.registry.getConnection(connection.profileId)?.getRuntimeAPIs()),
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                );
+              })}
+              <Button
+                id={addServerId}
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground hover:text-foreground focus-visible:ring-inset"
+                aria-label={t("runner.action.add")}
+                title={t("runner.action.add")}
+                onClick={() => context.uiManager.openAdd(addServerId)}
+              >
+                <Plus className="size-3.5" aria-hidden="true" />
+              </Button>
+            </ScrollArea.Content>
+          </ScrollArea.Viewport>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="invisible h-7 w-5 text-muted-foreground group-data-[overflow-x-end]/server-strip:visible"
+            aria-label={t("runner.switcher.scrollForward")}
+            aria-controls={stripId}
+            onClick={() => scrollServerStrip("end")}
+          >
+            <ChevronRight className="size-3.5 rtl:rotate-180" aria-hidden="true" />
+          </Button>
+        </ScrollArea.Root>
+      ) : (
+        <DropdownMenu>
+          <DropdownMenuTrigger render={(
+            <RunnerSwitcherButton
+              runnerName={active.runnerName}
+              status={active.status}
+              expanded={false}
+              surface={surface}
+              id={controlId}
+              className={placement === "sidebar"
+                ? "w-full max-w-none text-[#333333] hover:bg-[#deddda] hover:text-[#1f1f1f] dark:text-zinc-200 dark:hover:bg-muted/70 dark:hover:text-zinc-100"
+                : undefined}
+            />
+          )} />
+          <DropdownMenuContent
+            align="start"
+            className={cn(
+              "w-[min(22rem,calc(100vw-1rem))] p-2 lg:p-1",
+              "max-lg:[&_[data-slot=dropdown-menu-item]]:min-h-12 max-lg:[&_[data-slot=dropdown-menu-item]]:gap-3",
+              "max-lg:[&_[data-slot=dropdown-menu-item]]:px-3 max-lg:[&_[data-slot=dropdown-menu-item]]:text-base",
+              "max-lg:[&_[data-slot=dropdown-menu-item]_svg]:size-5",
+            )}
+          >
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>{t("runner.switcher.label")}</DropdownMenuLabel>
+              {connections.map((connection) => {
+                return (
+                  <DropdownMenuItem
+                    key={connection.profileId}
+                    onClick={() => context.registry.switchActive(connection.profileId)}
+                    className="min-h-11"
+                  >
+                    <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-muted">
+                      <Server className="h-3.5 w-3.5" />
                     </span>
-                  </span>
-                  {connection.profileId === active.profileId
-                    ? <Check className="h-4 w-4" />
-                    : null}
-                </DropdownMenuItem>
-              );
-            })}
-          </DropdownMenuGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => context.uiManager.openAdd(controlId)}>
-            <Plus />
-            {t("runner.action.add")}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            id={menuFocusId}
-            onClick={() => context.uiManager.openEdit(activeProfile, menuFocusId)}
-          >
-            <Edit3 />
-            {t("runner.action.edit")}
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => void openSessions(active.profileId, menuFocusId)}>
-            <UserRoundCog />
-            {t("runner.action.sessions")}
-          </DropdownMenuItem>
-          {/*
-            Offered for whichever server is selected, including one this page
-            was not served from. The restart travels as an ordinary call to that
-            server's own `/api/runner/restart`, which forwards to the control
-            service on *its* machine — so a remote restart is authorized by the
-            same bearer session as every other action against it, and needs no
-            special path. Gating this on same-origin also hid the action
-            entirely from the Electron and Capacitor shells, whose local server
-            profile is never same-origin.
-          */}
-          <DropdownMenuItem
-            onClick={() => context.uiManager.openRestart(
-              active.profileId,
-              active.runnerName,
-              menuFocusId,
-            )}
-          >
-            <RotateCcw />
-            {t("runner.action.restart")}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={() => context.uiManager.openRename(
-              active.profileId,
-              active.runnerName,
-              menuFocusId,
-            )}
-          >
-            <MoreHorizontal />
-            {t("runner.action.rename")}
-          </DropdownMenuItem>
-          {!activeProfile.isSameOrigin ? (
-            <DropdownMenuItem
-              variant="destructive"
-              onClick={() => context.uiManager.openForget(active.profileId, menuFocusId)}
-            >
-              <Trash2 />
-              {t("runner.action.forget")}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{connection.runnerName}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {t(runnerStatusMessageKey(connection.status))}
+                      </span>
+                    </span>
+                    {connection.profileId === active.profileId
+                      ? <Check className="h-4 w-4" />
+                      : null}
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => context.uiManager.openAdd(controlId)}>
+              <Plus />
+              {t("runner.action.add")}
             </DropdownMenuItem>
-          ) : null}
-        </DropdownMenuContent>
-      </DropdownMenu>
+            {renderServerActions(active, activeProfile, menuFocusId, true)}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
       {renderDialogs ? (
         <RunnerDialog
           ui={ui}
+          forgetTarget={desktopServerStrip && ui.dialog === "forget"
+            ? connections.find((connection) => connection.profileId === ui.profileId)?.runnerName
+            : undefined}
           onClose={() => context.uiManager.close()}
           onDraft={(patch) => context.uiManager.setDraft(patch)}
           onSubmit={() => void submitProfile()}
           onConfirm={() => void handleDialogAction()}
-          onAuthorize={() => void authorizeProfile(active.profileId)}
+          onAuthorize={() => void authorizeProfile(ui.profileId ?? active.profileId)}
           onRevoke={(sessionId) => void revokeSession(sessionId)}
           nativeAuthorization={nativeAuthorization}
         />
@@ -550,6 +708,7 @@ function ConnectedRunnerControls({
 
 function RunnerDialog({
   ui,
+  forgetTarget,
   onClose,
   onDraft,
   onSubmit,
@@ -559,6 +718,7 @@ function RunnerDialog({
   nativeAuthorization,
 }: {
   ui: ReturnType<RunnerUiManagerLike["getSnapshot"]>;
+  forgetTarget?: string;
   onClose: () => void;
   onDraft: (patch: { label?: string; baseUrl?: string; password?: string }) => void;
   onSubmit: () => void;
@@ -583,6 +743,9 @@ function RunnerDialog({
           <DialogTitle>{t(runnerDialogTitleKey(ui.dialog))}</DialogTitle>
           <DialogDescription>{t(descriptionKey)}</DialogDescription>
         </DialogHeader>
+        {forgetTarget ? (
+          <p className="break-words font-medium">{forgetTarget}</p>
+        ) : null}
         {formDialog ? (
           <FieldGroup>
             <Field>

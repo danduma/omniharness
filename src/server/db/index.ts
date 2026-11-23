@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS runs (
   id text PRIMARY KEY NOT NULL,
   plan_id text NOT NULL,
   session_type text NOT NULL DEFAULT 'omni',
-  mode text NOT NULL DEFAULT 'implementation',
+  mode text NOT NULL DEFAULT 'direct',
   phase text,
   project_path text,
   title text,
@@ -661,7 +661,7 @@ if (!runColumnNames.has("project_path")) {
 }
 
 if (!runColumnNames.has("mode")) {
-  await client.execute("ALTER TABLE runs ADD COLUMN mode text NOT NULL DEFAULT 'implementation';");
+  await client.execute("ALTER TABLE runs ADD COLUMN mode text NOT NULL DEFAULT 'direct';");
 }
 
 if (!runColumnNames.has("phase")) {
@@ -1243,6 +1243,12 @@ BEGIN
   SELECT RAISE(ABORT, 'HANDOFF_REQUIRED');
 END;
 `);
+
+// The supervisor modes are gone. Runs they created are driven as direct
+// conversations, so give them the mode that says so.
+await client.execute(
+  "UPDATE runs SET mode = 'direct', phase = NULL WHERE mode IN ('implementation', 'planning')",
+);
 
 await client.execute(`PRAGMA user_version = ${DB_SCHEMA_VERSION}`);
 }

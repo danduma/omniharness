@@ -15,9 +15,6 @@ export interface ProjectGitWorkspaceConfig {
 
 export interface ProjectConfig {
   version: 1;
-  supervisor?: {
-    memoryEnabled?: boolean;
-  };
   git?: {
     workspace?: ProjectGitWorkspaceConfig;
   };
@@ -91,9 +88,6 @@ export function readProjectConfig(projectPath: string): ProjectConfig {
     const candidate = parsed as Record<string, unknown>;
     return {
       version: PROJECT_CONFIG_VERSION,
-      supervisor: typeof candidate.supervisor === "object" && candidate.supervisor !== null
-        ? (candidate.supervisor as ProjectConfig["supervisor"])
-        : undefined,
       git: typeof candidate.git === "object" && candidate.git !== null
         ? (candidate.git as ProjectConfig["git"])
         : undefined,
@@ -167,15 +161,6 @@ export function setProjectSetting(projectPath: string, dottedKey: string, value:
   const config = readProjectConfig(projectPath) as unknown as Record<string, unknown>;
   setNested(config, dottedKey, value);
   writeProjectConfig(projectPath, config as unknown as ProjectConfig);
-}
-
-export function isProjectMemoryEnabled(projectPath: string | null | undefined): boolean {
-  if (!projectPath) {
-    return false;
-  }
-
-  const value = getProjectSetting<boolean>(projectPath, "supervisor.memoryEnabled", true);
-  return value !== false;
 }
 
 export function getProjectGitWorkspaceConfig(projectPath: string): ProjectGitWorkspaceConfig {

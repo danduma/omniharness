@@ -5,26 +5,22 @@ import { recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
-import { isRunnableImplementationRun, normalizeRunStatus } from "@/lib/run-status";
+import { normalizeRunStatus } from "@/lib/run-status";
 import { formatErrorMessage } from "@/server/runs/failures";
 import {
   claimRecoveryIncident,
   markRecoveryIncidentNeedsUser,
   markRecoveryIncidentResolved,
 } from "@/server/runs/recovery-incidents";
-import { recordSupervisorIntervention } from "@/server/supervisor/interventions";
 import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { appendSupervisorInputOnDelivery } from "@/server/workers/stream-writer";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
 import { readWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
-import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
-import { isTransientSupervisorError } from "@/server/supervisor/retry";
-import {
-  hasFutureDurableSupervisorWake,
-  scheduleDurableSupervisorWakeAt,
-} from "@/server/supervisor/wake-schedule";
+import { readRuntimeEnvFromSettings } from "@/server/settings/runtime-env";
+import { isTransientBridgeError } from "@/server/bridge-client/retry";
+import { hasFutureQuotaWake } from "@/server/quota/wake-schedule";
 import {
   isWorkerTurnAbortedError,
   isWorkerTurnGenerationCurrent,
@@ -167,13 +163,6 @@ async function promptResumedQuotaWorker(args: {
       return { state: "superseded" as const };
     }
     const deliveredAt = new Date();
-    await recordSupervisorIntervention({
-      runId: args.runId,
-      workerId: args.worker.id,
-      prompt,
-      summary: "Prompted worker to continue after quota reset.",
-      interventionType: "recovery",
-    });
     await appendSupervisorInputOnDelivery({
       runId: args.runId,
       workerId: args.worker.id,
@@ -457,7 +446,7 @@ export async function resumeQuotaExhaustedWorkers(args: {
       }
 
       const reason = error instanceof Error ? error.message : String(error);
-      if (isTransientSupervisorError(error)) {
+      if (isTransientBridgeError(error)) {
         const transientRefusal = await runQuotaRecoveryMutation(args.run.id, async () => {
           const refused = await refuseLateQuotaRecovery({
             runId: args.run.id,
@@ -552,7 +541,7 @@ export async function resumeQuotaExhaustedWorkers(args: {
 }
 
 /**
- * Resume a non-implementation (direct/commit) run once its quota window has
+ * Resume a run once its quota window has
  * reopened, and settle the run status afterwards.
  *
  * Callers must decide *whether* to resume from the open `quota_exhausted`
@@ -674,33 +663,7 @@ export async function resumeElapsedQuotaWaits(options: { now?: Date } = {}) {
     if (normalizeRunStatus(run.status) === "cancelled" || normalizeRunStatus(run.status) === "canceled") {
       continue;
     }
-    if (await hasFutureDurableSupervisorWake(runId, now.getTime())) {
-      continue;
-    }
-
-    // Implementation runs park at `quota_waiting`, which the watchdog loop
-    // below deliberately skips — so a lost wake strands them exactly like a
-    // direct conversation. Re-arm a due wake rather than resuming here, so the
-    // normal (well-tested) wake handler does the work. This converges: the
-    // handler either resolves the incident or moves the run out of
-    // `quota_waiting`, and either outcome stops matching on the next sweep.
-    if (run.mode === "implementation") {
-      if (isRunnableImplementationRun(run) && normalizeRunStatus(run.status) === "quota_waiting") {
-        const sweepRefusal = await runQuotaRecoveryMutation(runId, async () => {
-          const refused = await refuseLateQuotaRecovery({ runId, now });
-          if (refused) return refused;
-          await scheduleDurableSupervisorWakeAt({
-            runId,
-            wakeAt: now,
-            reason: "quota_wait",
-            source: "watchdog-sweep",
-            force: true,
-          });
-          emitNamedEvent({ kind: "supervisor.quota_wake_swept", runId, status: run.status, action: "rescheduled" });
-          return null;
-        });
-        if (!sweepRefusal) sweptCount += 1;
-      }
+    if (await hasFutureQuotaWake(runId, now.getTime())) {
       continue;
     }
 
@@ -715,7 +678,7 @@ export async function resumeElapsedQuotaWaits(options: { now?: Date } = {}) {
       // a conversation the user considers finished would start unrequested work.
       const { resolvedCount } = await clearResolvedQuotaIncidents(runId, { now });
       if (resolvedCount > 0) {
-        emitNamedEvent({ kind: "supervisor.quota_wake_swept", runId, status: run.status, action: "cleared" });
+        emitNamedEvent({ kind: "quota.wake_swept", runId, status: run.status, action: "cleared" });
         clearedCount += 1;
       }
       continue;
@@ -725,7 +688,7 @@ export async function resumeElapsedQuotaWaits(options: { now?: Date } = {}) {
     if (resumeResult.state === "ignored") {
       continue;
     }
-    emitNamedEvent({ kind: "supervisor.quota_wake_swept", runId, status: run.status, action: "resumed" });
+    emitNamedEvent({ kind: "quota.wake_swept", runId, status: run.status, action: "resumed" });
     await recordExecutionEvent({
       runId,
       eventType: "quota_wait_swept",

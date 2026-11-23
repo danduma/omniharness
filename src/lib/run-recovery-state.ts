@@ -29,11 +29,6 @@ type RecoverableAgent = {
   [key: string]: unknown;
 };
 
-type RecoverableRunScoped = {
-  runId: string;
-  [key: string]: unknown;
-};
-
 type RecoverableExecutionEvent = {
   id: string;
   runId: string;
@@ -51,9 +46,7 @@ export type RecoverableConversationState = {
   messages: RecoverableMessage[];
   workers: RecoverableWorker[];
   agents: RecoverableAgent[];
-  clarifications: RecoverableRunScoped[];
   executionEvents: RecoverableExecutionEvent[];
-  supervisorInterventions: RecoverableRunScoped[];
   queuedMessages?: RecoverableQueuedMessage[];
 };
 
@@ -95,32 +88,9 @@ export function applyRunRecoveryOptimisticUpdate(
     .filter((worker) => worker.runId === args.runId)
     .map((worker) => worker.id);
   const targetTimestamp = new Date(targetMessage.createdAt).getTime();
-  const targetRun = state.runs.find((run) => run.id === args.runId);
-  const isImplementationResume = args.action === "retry" && targetRun?.mode === "implementation";
-  const isDirectSessionRetry = args.action === "retry" && (
-    targetRun?.mode === "direct" || targetRun?.mode === "commit"
-  );
-
-  if (isImplementationResume) {
-    return {
-      ...state,
-      runs: state.runs.map((run) => (
-        run.id === args.runId
-          ? {
-              ...run,
-              status: "running",
-              lastError: null,
-              failedAt: null,
-            }
-          : run
-      )),
-      messages: state.messages.filter((message) => (
-        message.runId !== args.runId
-        || message.kind !== "error"
-        || message.content !== `Run failed: ${targetRun?.lastError ?? ""}`
-      )),
-    };
-  }
+  // A retry re-sends the message to the same live session, which keeps its
+  // own transcript, so there is nothing to rewind optimistically.
+  const isDirectSessionRetry = args.action === "retry";
 
   if (isDirectSessionRetry) {
     return state;
@@ -162,9 +132,7 @@ export function applyRunRecoveryOptimisticUpdate(
         : worker
     )),
     agents: state.agents.filter((agent) => !workerIds.includes(agent.name)),
-    clarifications: state.clarifications.filter((item) => item.runId !== args.runId),
     executionEvents: state.executionEvents.filter((item) => item.runId !== args.runId),
-    supervisorInterventions: state.supervisorInterventions.filter((item) => item.runId !== args.runId),
     queuedMessages: state.queuedMessages?.filter((item) => item.runId !== args.runId),
   };
 }

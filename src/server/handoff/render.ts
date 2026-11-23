@@ -1,4 +1,4 @@
-import { WORKER_TYPE_LABELS } from "@/server/supervisor/worker-types";
+import { WORKER_TYPE_LABELS } from "@/shared/worker-types";
 import type { HandoffReport } from "./parser";
 
 /**

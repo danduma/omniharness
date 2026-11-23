@@ -11,10 +11,7 @@ function state(overrides: Partial<EventStreamState> = {}): EventStreamState {
     accounts: [],
     agents: [],
     workers: [],
-    planItems: [],
-    clarifications: [],
     executionEvents: [],
-    supervisorInterventions: [],
     ...overrides,
   };
 }

@@ -1,4 +1,4 @@
-import { normalizeWorkerType, type SupportedWorkerType } from "@/server/supervisor/worker-types";
+import { normalizeWorkerType, type SupportedWorkerType } from "@/shared/worker-types";
 import type { HandoffReport } from "./parser";
 import { gatherHandoffCandidates } from "./candidates";
 

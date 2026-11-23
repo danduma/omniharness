@@ -10,8 +10,6 @@ const settingsSource = [
   "src/components/settings/SettingsDialog.tsx",
   "src/components/settings/GeneralSettingsPanel.tsx",
   "src/components/settings/AppearanceSettingsPanel.tsx",
-  "src/components/settings/ModelsSettingsPanel.tsx",
-  "src/components/settings/ModelProfileForm.tsx",
   "src/components/settings/AgentsSettingsPanel.tsx",
   "src/components/settings/RuntimeSettingsPanel.tsx",
   "src/interface/home/SettingsDraftManager.ts",
@@ -30,19 +28,17 @@ const generalSettingsSource = [
 const presetCommandsSource = readSource("src/components/settings/PresetCommandsSettings.tsx");
 const workerLaunchControlsSource = readSource("src/components/composer/WorkerLaunchControls.tsx");
 
-test("settings dialog exposes General, Models, Agents, and Runtime tabs in order", () => {
+test("settings dialog exposes General, Presets, Credentials, Agents, and Runtime tabs in order", () => {
   expect(settingsSource).toContain('const SETTINGS_TABS: Array<{ value: SettingsTab; labelKey: string }> = [');
-  expect(settingsSource).toContain('{ value: "general", labelKey: "settings.tabs.general" }');
-  expect(settingsSource).toContain('{ value: "models", labelKey: "settings.tabs.models" }');
-  expect(settingsSource).toContain('{ value: "agents", labelKey: "settings.tabs.agents" }');
-  expect(settingsSource).toContain('{ value: "runtime", labelKey: "settings.tabs.runtime" }');
-  expect(settingsSource).not.toContain("Configure browser preferences, model routing, worker agents, and runtime behavior for this workspace.");
-  expect(settingsSource.indexOf('{ value: "general", labelKey: "settings.tabs.general" }')).toBeLessThan(settingsSource.indexOf('{ value: "models", labelKey: "settings.tabs.models" }'));
-  expect(settingsSource.indexOf('{ value: "models", labelKey: "settings.tabs.models" }')).toBeLessThan(settingsSource.indexOf('{ value: "agents", labelKey: "settings.tabs.agents" }'));
-  expect(settingsSource.indexOf('{ value: "agents", labelKey: "settings.tabs.agents" }')).toBeLessThan(settingsSource.indexOf('{ value: "runtime", labelKey: "settings.tabs.runtime" }'));
-  expect(settingsSource).toContain('export type SettingsTab = "general" | "presets" | "models" | "credentials" | "agents" | "runtime" | "memory"');
-  expect(settingsSource.indexOf('{ value: "general", labelKey: "settings.tabs.general" }')).toBeLessThan(settingsSource.indexOf('{ value: "presets", labelKey: "settings.tabs.presets" }'));
-  expect(settingsSource.indexOf('{ value: "presets", labelKey: "settings.tabs.presets" }')).toBeLessThan(settingsSource.indexOf('{ value: "models", labelKey: "settings.tabs.models" }'));
+  expect(settingsSource).toContain('export type SettingsTab = "general" | "presets" | "credentials" | "agents" | "runtime"');
+  const order = ["general", "presets", "agents", "runtime"].map((tab) => (
+    settingsSource.indexOf(`{ value: "${tab}", labelKey: "settings.tabs.${tab}" }`)
+  ));
+  for (const index of order) expect(index).toBeGreaterThanOrEqual(0);
+  expect([...order].sort((x, y) => x - y)).toEqual(order);
+  expect(settingsSource).not.toContain('{ value: "models", labelKey: "settings.tabs.models" }');
+  expect(settingsSource).not.toContain('{ value: "memory", labelKey: "settings.tabs.memory" }');
+  expect(settingsSource).not.toContain("SUPERVISOR_LLM_PROVIDER");
   expect(settingsSource).not.toContain('activeSettingsTab === "llm"');
   expect(settingsSource).not.toContain('activeSettingsTab === "workers"');
 });
@@ -100,28 +96,7 @@ test("preset commands pick their worker with the composer's CLI, account, model,
   expect(settingsSource).toContain("<select");
 });
 
-test("models, agents, and runtime panels preserve server-backed settings", () => {
-  expect(settingsSource).toContain('t("settings.models.supervisorTitle")');
-  expect(settingsSource).toContain('t("settings.models.fallbackTitle")');
-  expect(settingsSource).toContain('t("settings.models.memoryTitle")');
-  expect(settingsSource).toContain('t("settings.models.creditStrategy.label")');
-  expect(settingsSource).toContain("SUPERVISOR_LLM_PROVIDER");
-  expect(settingsSource).toContain("SUPERVISOR_LLM_MODEL");
-  expect(settingsSource).toContain("SUPERVISOR_LLM_BASE_URL");
-  expect(settingsSource).toContain("SUPERVISOR_LLM_API_KEY");
-  expect(settingsSource).toContain("SUPERVISOR_FALLBACK_LLM_PROVIDER");
-  expect(settingsSource).toContain("SUPERVISOR_FALLBACK_LLM_MODEL");
-  expect(settingsSource).toContain("SUPERVISOR_FALLBACK_LLM_BASE_URL");
-  expect(settingsSource).toContain("SUPERVISOR_FALLBACK_LLM_API_KEY");
-  expect(settingsSource).toContain("SUPERVISOR_MEMORY_LLM_USE_CUSTOM");
-  expect(settingsSource).toContain("SUPERVISOR_MEMORY_LLM_PROVIDER");
-  expect(settingsSource).toContain("SUPERVISOR_MEMORY_LLM_MODEL");
-  expect(settingsSource).toContain("SUPERVISOR_MEMORY_LLM_BASE_URL");
-  expect(settingsSource).toContain("SUPERVISOR_MEMORY_LLM_API_KEY");
-  expect(settingsSource).toContain("LLM_PROVIDER_MODEL_CATALOG");
-  expect(settingsSource).toContain("SUPERVISOR_LLM_THINKING_EFFORT");
-  expect(settingsSource).toContain("settings.models.creditStrategy.explanation.");
-  expect(settingsSource).toContain('t("settings.models.advanced")');
+test("agents and runtime panels preserve server-backed settings", () => {
   expect(settingsSource).toContain('t("settings.agents.workerAvailability")');
   expect(settingsSource).toContain('t("settings.agents.autoPriority")');
   expect(settingsSource).toContain('t("settings.agents.autoPriorityHelp")');

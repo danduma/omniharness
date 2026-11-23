@@ -26,10 +26,7 @@ function createState(overrides: Partial<EventStreamState> = {}): EventStreamStat
     accounts: [],
     agents: [],
     workers: [],
-    planItems: [],
-    clarifications: [],
     executionEvents: [],
-    supervisorInterventions: [],
     frontendErrors: [],
     ...overrides,
   };
@@ -39,7 +36,7 @@ function buildRun(id: string, status: string, title = "Implement notifications")
   return {
     id,
     planId: `plan-${id}`,
-    mode: "implementation" as const,
+    mode: "direct" as const,
     status,
     createdAt: "2026-05-10T00:00:00.000Z",
     updatedAt: "2026-05-10T00:00:00.000Z",
@@ -163,19 +160,12 @@ describe("ConversationNotificationManager", () => {
     }));
     manager.handleEventStreamState(createState({
       runs: [buildRun("run-1", "awaiting_user")],
-      clarifications: [{
-        id: "clarification-1",
-        runId: "run-1",
-        question: "Which deployment target?",
-        answer: null,
-        status: "pending",
-      }],
     }));
 
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({
       title: "Implement notifications — answer needed",
-      body: "Which deployment target?",
+      body: "Work is paused for your answer. Open the conversation to reply.",
       url: "/session/run-1",
       tag: "omniharness-run-1-input",
     }));
@@ -199,8 +189,8 @@ describe("ConversationNotificationManager", () => {
 
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({
-      title: "Implement notifications — completed",
-      body: "The workflow has finished. Open the conversation to review the result.",
+      title: "Implement notifications — response ready",
+      body: "The agent finished this turn. Open the conversation to read the response.",
       url: "/session/run-1",
       tag: "omniharness-run-1-complete",
     }));

@@ -27,8 +27,7 @@ async function connectRunner(
   page: Page,
   runner: RealRunnerHarness,
 ) {
-  await page.locator("#runner-switcher").click();
-  await page.getByText("Add runner", { exact: true }).click();
+  await page.getByRole("button", { name: "Add server", exact: true }).click();
   await page.locator("#runner-label").fill(runner.options.name);
   await page.locator("#runner-url").fill(runner.origin);
   const popupPromise = page.waitForEvent("popup");
@@ -53,8 +52,7 @@ async function connectRunner(
 }
 
 async function selectRunner(page: Page, name: string) {
-  await page.locator("#runner-switcher").click();
-  await page.getByRole("menuitem").filter({ hasText: name }).first().click();
+  await page.getByRole("button", { name: new RegExp(`^Switch server\\. ${name} is `) }).click();
   await expect(page.locator("#runner-switcher")).toHaveAccessibleName(
     new RegExp(name),
   );
@@ -151,22 +149,21 @@ test("connects two real packaged runners, switches workspaces, revokes, reauthor
     authenticated: true,
   });
 
-  await page.locator("#runner-switcher").click();
-  await expect(page.getByRole("menuitem").filter({ hasText: "Runner One" })).toBeVisible();
-  const secondRunnerMenuItem = page.getByRole("menuitem").filter({
-    hasText: "Runner Two",
-  });
-  await expect(secondRunnerMenuItem).toBeVisible();
-  await expect(secondRunnerMenuItem).toContainText("Online");
-  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: /Switch server.*Runner One/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Switch server.*Runner Two.*Online/ }))
+    .toHaveAttribute("aria-pressed", "true");
 
   await selectRunner(page, "Runner One");
+  await page.getByRole("button", { name: "Actions for Runner Two" }).click();
+  await page.getByRole("menuitem", { name: "Edit connection" }).click();
+  await expect(page.locator("#runner-url")).toHaveValue(second.origin);
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.locator("#runner-switcher")).toHaveAccessibleName(/Runner One/);
+
   await second.rename("Runner Two Background");
-  await page.locator("#runner-switcher").click();
   await expect(
-    page.getByRole("menuitem").filter({ hasText: "Runner Two Background" }),
+    page.getByRole("button", { name: /Switch server.*Runner Two Background/ }),
   ).toBeVisible({ timeout: 15_000 });
-  await page.keyboard.press("Escape");
   await second.rename("Runner Two");
   await selectRunner(page, "Runner Two");
 

@@ -6,7 +6,7 @@ import {
   SUPPORTED_WORKER_TYPES,
   type SupportedWorkerType,
   normalizeWorkerType,
-} from "@/server/supervisor/worker-types";
+} from "@/shared/worker-types";
 
 type RecoveryIncidentRecord = typeof recoveryIncidents.$inferSelect;
 

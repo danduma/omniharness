@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import type React from "react";
 import { conversationMainManager } from "@/components/component-state-managers";
 import { getRunLatestUnreadTimestamp } from "@/lib/conversation-state";
-import type { ComposerMode } from "./types";
 import type { AgentSnapshot, ComposerWorkerOption, MessageRecord, RunRecord, WorkerModelCatalog, WorkerType } from "./types";
 import { homeUiStateManager } from "./HomeUiStateManager";
 import { DEFAULT_COMPOSER_EFFORT } from "./constants";
@@ -141,7 +140,6 @@ interface UseRunSelectionEffectsProps {
   state: { messages?: MessageRecord[]; agents?: AgentSnapshot[] };
   selectedRunId: string | null;
   selectedRun: RunRecord | null;
-  activeComposerMode: ComposerMode;
   selectedCliAgent: ComposerWorkerOption;
   selectedModel: string;
   autoSelectedWorkerType: WorkerType | null;
@@ -162,20 +160,15 @@ export function resolveRunComposerSelection(args: {
   activeAllowedWorkerTypes: WorkerType[];
 }) {
   const preferredWorker = parseWorkerType(args.run.preferredWorkerType);
-  const isDirectRun = args.run.mode === "direct" || args.run.mode === "commit";
-  // A direct conversation is bound to the CLI it runs on; the server refuses a
-  // turn on any other one. Its worker is never re-derived from the allowed
-  // list, which is transiently wrong while a server switch or a conversation
-  // switch is still loading the worker catalogue. Collapsing to "auto" there
-  // resolved to whatever CLI came first (often Claude Code for a Codex
-  // conversation) and the send was rightly refused.
-  const worker: ComposerWorkerOption = preferredWorker
-    && (isDirectRun || args.activeAllowedWorkerTypes.includes(preferredWorker))
-    ? preferredWorker
-    : "auto";
+  // A conversation is bound to the CLI it runs on; the server refuses a turn
+  // on any other one. Its worker is never re-derived from the allowed list,
+  // which is transiently wrong while a server switch or a conversation switch
+  // is still loading the worker catalogue. Collapsing to "auto" there resolved
+  // to whatever CLI came first (often Claude Code for a Codex conversation)
+  // and the send was rightly refused.
+  const worker: ComposerWorkerOption = preferredWorker ?? "auto";
   const modelWorker = preferredWorker ?? args.activeAllowedWorkerTypes[0] ?? "codex";
   return {
-    conversationMode: args.run.mode === "direct" || args.run.mode === "commit" ? "direct" as const : "omni" as const,
     worker,
     model: resolveComposerModelValue(args.run.preferredWorkerModel)
       ?? getWorkerModelOptions(undefined, modelWorker)[0]?.value
@@ -188,7 +181,7 @@ export function resolveRunComposerSelection(args: {
 /**
  * Reconcile the new-conversation composer's worker/model pair.
  *
- * The worker half has to move on its own: direct mode cannot launch on "auto",
+ * The worker half has to move on its own: a conversation cannot launch on "auto",
  * and a worker the runner does not offer is not a launchable choice. The model
  * half used to be left behind, which is how a brand new session came up reading
  * "Codex · claude-opus-5 (unavailable)" after the Claude CLI went missing from
@@ -206,7 +199,6 @@ export function resolveRunComposerSelection(args: {
  * Returns `null` when the composer is already consistent.
  */
 export function resolveNewConversationWorkerSelection(args: {
-  composerMode: ComposerMode;
   selectedCliAgent: ComposerWorkerOption;
   selectedModel: string;
   autoSelectedWorkerType: WorkerType | null;
@@ -216,17 +208,10 @@ export function resolveNewConversationWorkerSelection(args: {
 }): { worker: ComposerWorkerOption; model: string } | null {
   const fallbackWorker = args.autoSelectedWorkerType ?? args.activeAllowedWorkerTypes[0] ?? "codex";
 
-  let worker: ComposerWorkerOption;
-  if (args.composerMode === "direct") {
-    const current = args.selectedCliAgent === "auto" ? fallbackWorker : args.selectedCliAgent;
-    worker = args.activeAllowedWorkerTypes.includes(current) ? current : fallbackWorker;
-  } else if (args.selectedCliAgent !== "auto" && !args.activeAllowedWorkerTypes.includes(args.selectedCliAgent)) {
-    worker = "auto";
-  } else {
-    worker = args.selectedCliAgent;
-  }
+  const current = args.selectedCliAgent === "auto" ? fallbackWorker : args.selectedCliAgent;
+  const worker: WorkerType = args.activeAllowedWorkerTypes.includes(current) ? current : fallbackWorker;
 
-  const workerType = worker === "auto" ? fallbackWorker : worker;
+  const workerType = worker;
   const workerChanged = worker !== args.selectedCliAgent;
   const catalogComplete = Array.isArray(args.workerModelCatalog?.[workerType]) && !args.workerModelsRefreshing;
   if (!workerChanged && !catalogComplete) {
@@ -261,7 +246,6 @@ export function runComposerSelectionVersion(run: RunRecord, selection: ComposerS
     run.preferredWorkerEffort ?? null,
     run.preferredWorkerAccountId ?? null,
     run.mode,
-    selection.conversationMode,
     selection.worker,
     selection.accountId,
     selection.model,
@@ -276,7 +260,6 @@ export function useRunSelectionEffects({
   state,
   selectedRunId,
   selectedRun,
-  activeComposerMode,
   selectedCliAgent,
   selectedModel,
   autoSelectedWorkerType,
@@ -406,7 +389,6 @@ export function useRunSelectionEffects({
         return;
       }
       const reconciled = resolveNewConversationWorkerSelection({
-        composerMode: activeComposerMode,
         selectedCliAgent,
         selectedModel,
         autoSelectedWorkerType,
@@ -430,7 +412,6 @@ export function useRunSelectionEffects({
       serverVersion: runComposerSelectionVersion(selectedRun, runSelection),
     });
   }, [
-    activeComposerMode,
     activeAllowedWorkerTypes,
     autoSelectedWorkerType,
     selectedCliAgent,

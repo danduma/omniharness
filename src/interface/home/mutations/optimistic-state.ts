@@ -204,17 +204,13 @@ export function applyStopWorkerOptimisticUpdate(
 ) {
   const now = new Date().toISOString();
   const run = current.runs.find((candidate) => candidate.id === runId) ?? null;
-  const isImplementationRun = run?.mode === "implementation" && run?.phase !== "planning";
   const stoppedWorkerIds = new Set<string>();
 
   const workers = (current.workers || []).map((worker) => {
     if (worker.runId !== runId) {
       return worker;
     }
-    if (
-      worker.id === workerId
-      || (isImplementationRun && isOptimisticallyStoppableWorkerStatus(worker.status))
-    ) {
+    if (worker.id === workerId) {
       stoppedWorkerIds.add(worker.id);
       return { ...worker, status: "cancelled", updatedAt: now };
     }
@@ -223,11 +219,7 @@ export function applyStopWorkerOptimisticUpdate(
 
   const hasActiveWorker = workers.some((worker) =>
     worker.runId === runId && isOptimisticallyStoppableWorkerStatus(worker.status));
-  const nextRunStatus = isImplementationRun
-    ? "awaiting_user"
-    : hasActiveWorker
-      ? run?.status
-      : "cancelled";
+  const nextRunStatus = hasActiveWorker ? run?.status : "cancelled";
 
   return {
     ...current,
@@ -244,12 +236,10 @@ export function applyStopWorkerOptimisticUpdate(
       createOptimisticExecutionEvent({
         runId,
         workerId,
-        eventType: isImplementationRun ? "worker_stop_requested" : "worker_cancelled",
+        eventType: "worker_cancelled",
         details: {
-          summary: isImplementationRun
-            ? `Paused work because ${workerId} was stopped by the user.`
-            : `Stopped ${workerId}`,
-          reason: isImplementationRun ? "User stopped a worker." : "User stopped this worker.",
+          summary: `Stopped ${workerId}`,
+          reason: "User stopped this worker.",
           userInitiated: true,
           stoppedWorkerId: workerId,
           optimistic: true,
@@ -260,7 +250,7 @@ export function applyStopWorkerOptimisticUpdate(
   };
 }
 
-export function applyStopSupervisorOptimisticUpdate(current: EventStreamState, runId: string) {
+export function applyStopConversationOptimisticUpdate(current: EventStreamState, runId: string) {
   const now = new Date().toISOString();
   const stoppedWorkerIds = new Set<string>();
   const workers = (current.workers || []).map((worker) => {
@@ -285,10 +275,10 @@ export function applyStopSupervisorOptimisticUpdate(current: EventStreamState, r
     executionEvents: [
       createOptimisticExecutionEvent({
         runId,
-        eventType: "supervisor_stopped",
+        eventType: "conversation_stopped",
         details: {
-          summary: "Stopped supervisor and cancelled active workers.",
-          reason: "User stopped the supervisor.",
+          summary: "Stopped conversation and cancelled active workers.",
+          reason: "User stopped the conversation.",
           userInitiated: true,
           optimistic: true,
         },

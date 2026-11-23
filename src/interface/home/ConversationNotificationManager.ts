@@ -2,7 +2,7 @@ import { WorkerEntriesManager } from "./WorkerEntriesManager";
 import { StateManager } from "@/lib/state-manager";
 import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
 import { t } from "@/lib/i18n";
-import { conversationNotificationContent, notificationEventDetail, notificationPreview, type ConversationNotificationKind } from "@/lib/conversation-notification-content";
+import { conversationNotificationContent, notificationPreview, type ConversationNotificationKind } from "@/lib/conversation-notification-content";
 import { registerServiceWorker } from "@/lib/pwa";
 import type { AgentSnapshot, EventStreamState, RunRecord } from "./types";
 import type { RuntimeAPIs } from "@/runtime-api/types";
@@ -263,11 +263,8 @@ function agentBelongsToRun(agent: AgentSnapshot, run: RunRecord, workerRunIds: M
 interface RunNotificationIndex {
   busyRunIds: Set<string>;
   agentsByRun: Map<string, AgentSnapshot[]>;
-  detailsByRun: Map<string, string>;
-  questionsByRun: Map<string, string>;
   workerRunIds: Map<string, string>;
   agentsWithPendingPermissions: AgentSnapshot[];
-  pendingClarificationRunIds: Set<string>;
 }
 
 function buildRunNotificationIndex(state: EventStreamState): RunNotificationIndex {
@@ -287,25 +284,10 @@ function buildRunNotificationIndex(state: EventStreamState): RunNotificationInde
     agentsByRun.set(runId, agents);
     if (active.has(normalizeStatus(agent.state))) busyRunIds.add(runId);
   }
-  const detailsByRun = new Map<string, string>();
-  const latestEventTimes = new Map<string, number>();
-  for (const event of state.executionEvents ?? []) {
-    if (event.eventType !== "run_completed") continue;
-    const time = Date.parse(event.createdAt);
-    if (time < (latestEventTimes.get(event.runId) ?? -Infinity)) continue;
-    latestEventTimes.set(event.runId, time);
-    detailsByRun.set(event.runId, notificationEventDetail(event.details));
-  }
-  const questionsByRun = new Map((state.clarifications ?? [])
-    .filter((question) => normalizeStatus(question.status) === "pending")
-    .map((question) => [question.runId, question.question]));
   return {
-    busyRunIds, agentsByRun, detailsByRun, questionsByRun,
+    busyRunIds, agentsByRun,
     workerRunIds,
     agentsWithPendingPermissions: (state.agents ?? []).filter((agent) => (agent.pendingPermissions?.length ?? 0) > 0),
-    pendingClarificationRunIds: new Set((state.clarifications ?? [])
-      .filter((clarification) => normalizeStatus(clarification.status) === "pending")
-      .map((clarification) => clarification.runId)),
   };
 }
 
@@ -342,7 +324,7 @@ function hasNewPermission(previous: ObservedRunState | undefined, permissionKeys
 function buildObservedRunState(run: RunRecord, index: RunNotificationIndex): ObservedRunState {
   return {
     status: normalizeStatus(run.status),
-    inputNeeded: normalizeStatus(run.status) === "awaiting_user" || index.pendingClarificationRunIds.has(run.id),
+    inputNeeded: normalizeStatus(run.status) === "awaiting_user",
     completed: isCompletedRun(run, index),
     permissionKeys: buildPermissionKeys(run, index),
   };
@@ -532,15 +514,13 @@ export class ConversationNotificationManager extends StateManager<ConversationNo
         tag = `permission-${newPermissionKey}`;
       } else if (!previous.inputNeeded && observed.inputNeeded) {
         kind = "input";
-        detail = index.questionsByRun.get(run.id) ?? "";
         tag = "input";
       } else if (previous.status !== "failed" && observed.status === "failed") {
         kind = "failed";
         detail = run.lastError ?? "";
         tag = "failed";
       } else if (!previous.completed && observed.completed && !observed.inputNeeded && observed.permissionKeys.size === 0) {
-        kind = run.mode === "direct" || run.mode === "commit" ? "response" : "complete";
-        detail = kind === "complete" ? index.detailsByRun.get(run.id) ?? "" : "";
+        kind = "response";
         tag = "complete";
       }
       if (!kind) continue;

@@ -69,6 +69,26 @@ wait for the mutex and acknowledge the replacement without awaiting the new
 provider turn. Otherwise the request inherits provider-turn latency and can
 expire at an HTTP proxy even though the user's intent was to interrupt it.
 
+A steer to a direct worker whose adapter advertises
+`initialize._meta.steering.supported` (claude-agent-acp) is first delivered
+into the running turn with ACP `_session/steering`, the way Claude Code
+delivers a message typed while it works. Nothing is cancelled and the turn
+fence does not advance: the request that owns the turn keeps it and persists
+the reply, because the adapter holds the turn open until the steer is
+answered. Before the steer's `user_input` entry is appended, the runtime's
+output up to `outputBoundaryEntryId` is persisted, so the steer renders after
+the text it interrupted. Only an `injected` outcome counts as delivered
+(`queue.interrupt_injected`); every other outcome, error or timeout emits
+`queue.interrupt_inject_fallback` and continues as cancel-and-replace, so an
+unavailable in-turn path can never make a steer fail.
+
+A steer during a foreground tool makes claude-agent-acp move that tool to the
+background. Claude may then end the prompted turn and later start a turn of
+its own when the command finishes. Such a turn can begin and end between two
+bridge sweeps, so the sweep cannot rely on seeing the agent `working`: a `done`
+direct run whose idle agent's `lastText` differs from the persisted worker's is
+synced once more, which persists the finished turn and clears the difference.
+
 ## Provider identity and startup ownership invariant
 
 A requested provider model id and the provider's reported session value are
@@ -154,8 +174,7 @@ and bridge-client subsystems revealed the structural gaps.
 
 `/api/events` emits exactly one named event: `update`, whose payload is the
 *entire* current state of the world for the selected run (messages, plans,
-runs, workers, planItems, clarifications, executionEvents, supervisor
-interventions, queued messages, recovery incidents, review runs/rounds/findings).
+runs, workers, executionEvents, queued messages, recovery incidents).
 
 There are no other named events. An observer cannot ask "did a worker spawn?"
 or "was a recovery attempted?" — only "is the state now different?" To answer
@@ -433,22 +452,17 @@ column and emit `artifact.payload_missing` so an operator can repair.
 
 ### Rule 10: `awaiting_user` implies a visible question
 
-A selected run with `status="awaiting_user"` must include a visible supervisor
-message with kind `clarification` or `implementation_confirmation`. The
-transition that creates this state must persist the clarification row, the
-supervisor message, the run status, and the lifecycle event before notifying
-SSE clients.
-
-If a snapshot violates this invariant, it surfaces a `Lifecycle` frontend
-error instead of leaving the UI stuck on "Loading Omni's question". The error
-is not a substitute for the invariant; it is the safety rail that makes any
-future violation observable.
+A selected run with `status="awaiting_user"` must be waiting on a question the
+worker itself asked: an open elicitation or permission request in its stream,
+recorded with a `direct_worker_awaiting_user` event. (The supervisor
+clarification rows that used to satisfy this rule went away with the
+supervisor.)
 
 ### Rule 11: terminal user actions retire recovery ownership first
 
 A user stop is not complete when only `runs.status` and `workers.status` are
 terminal. Before publishing the terminal run state, the server synchronously
-cancels volatile and durable wakes, clears wake leases, and resolves every open
+cancels the durable quota wake and resolves every open
 recovery incident with its normal named event. Otherwise a later sync or timer
 still owns permission to reactivate the run. Once cancelled, the run rejects
 late live-worker snapshots from the interrupted turn even when the provider
@@ -700,17 +714,9 @@ Walked every `} catch {` in `src/server/**` and `src/app/api/**`. Findings:
   state-mutating paths.
 
 Future audit passes should look at:
-- ~~Early-return sites in `supervisor/observer.ts` (decision branches).~~
-  **Done.** All 16 `stopRunObserver` call sites now pass a typed
-  `reason` (`run_terminated`, `run_failed`, `cwd_mismatch`,
-  `snapshot_invalid`, `quota_exhausted`, `fatal_bridge_error`,
-  `explicit`). `supervisor.stopped` is emitted from inside
-  `stopRunObserver` itself, guarded by `wasActive` so bare stop calls
-  on never-started runs don't spam the stream. Scenario:
-  `tests/lifecycle/scenarios/supervisor-stopped.test.ts`.
-- ~~Every `if (!latestRun)` short-circuit that stops the observer.~~
-  Covered by the above — those now emit `supervisor.stopped` with
-  reason `run_terminated`.
+- ~~Early-return sites in the supervisor observer.~~ Moot: the supervisor
+  (implementation and planning modes) was removed on 2026-11-23. Every
+  conversation is now a direct conversation with one CLI agent.
 
 ### Claude model gateway lifecycle
 
@@ -772,21 +778,18 @@ first prompt is persisted through the ordinary unified worker conversation strea
 | `sse-resume` | `Last-Event-ID` replays the gap after a mid-stream drop |
 | `restart-resync` | `stream.resync_required` fires after a server restart |
 | `chaos-reconnect-storm` | Seeded high-drop-rate chaos doesn't lose events |
-| `plan-review-blocked` | Leftover-state throws → 409 + named events on the wire |
 | `delete-conversation-fk` | FK fail → 409 + named events, not a raw 500 |
 | `recovery-exhaustion` | Cap reached → `recovery.gave_up` + `error.surfaced` in order |
-| `worker-reattach` | Observer revival closes orphaned human-input requests, emits `worker.human_input_reconciled`, then emits `worker.reattached` |
 | `session-types` | Direct / planning / implementation conversation creation |
 | `conversation-continuation` | Mid-conversation SSE drop + reconnect; nothing lost |
-| `conversation-title-fallback` | A CLI-named session is adopted; a prompt echo is not; exhausted sources emit `conversation.title_sources_missing` and the conversation keeps its initial title |
-| `plan-improvement-flow` | Review start + worker spawn + restart-resync end-to-end |
+| `conversation-title-fallback` | A CLI-named session is adopted; a prompt echo is not; exhausted sources emit `conversation.title_sources_missing`, and the harness title model names the conversation once the first reply is substantial or the turn ends |
 | `real-restart` | **Real subprocess** kill+respawn: sqlite persists, ring resets, client gets `stream.resync_required` |
 | `direct-mode-rerun` | User pressing "re-run" — same content sent twice persists as two rows in order |
+| `direct-in-turn-steer` | A steer reaches a running Claude turn through `_session/steering` with no cancel and an ordered transcript; an unsupported, failing or hung steer still delivers by cancel-and-replace |
 | `direct-retry-steer-preemption` | An HTTP steer aborts a mutex-holding retry, returns promptly, and delivers the replacement without failing the run |
 | `cross-cli-handoff-with-concurrent-planning` | An unrelated planning run in the same checkout neither vetoes the handoff nor gets stopped |
 | `flaky-network` | Seeded HTTP flake: server stays consistent, deterministic across seed |
 | `worker-spawn-failure` | Bridge `spawnAgent` rejection now emits `error.surfaced(worker.spawn.failed)` instead of going silent |
-| `supervisor-stopped` | Every observer stop site emits `supervisor.stopped` with a typed reason (`run_terminated`, `run_failed`, `cwd_mismatch`, `snapshot_invalid`, `quota_exhausted`, `fatal_bridge_error`, `explicit`) |
 
 ### Real protocol bug found via the harness
 

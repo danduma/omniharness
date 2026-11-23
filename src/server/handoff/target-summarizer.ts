@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
 import { askAgent, cancelAgent, spawnAgent } from "@/server/bridge-client";
-import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
+import { readRuntimeEnvFromSettings } from "@/server/settings/runtime-env";
 import type { HandoffTargetSelection, HybridHandoffPacketV1 } from "@/shared/handoff";
 import type { CompileHybridHandoffInput } from "./compiler";
 import { parseHandoffReply } from "./parser";

@@ -36,7 +36,6 @@ describe("resolveRunComposerSelection", () => {
       runId: "run-new",
       content: "start here",
       projectPath: null,
-      mode: "direct",
       preferredWorkerType: "claude",
       preferredWorkerModel: "claude-fable-5-1",
       preferredWorkerEffort: "high",
@@ -62,23 +61,15 @@ describe("resolveRunComposerSelection", () => {
     expect(selection.worker).toBe("codex");
   });
 
-  it("still falls back to auto for an Omni run whose preferred worker is not allowed", () => {
-    const selection = resolveRunComposerSelection({
-      run: createRun({ mode: "implementation", preferredWorkerType: "codex" }),
-      activeAllowedWorkerTypes: ["claude"],
-    });
-
-    expect(selection.worker).toBe("auto");
-  });
-
   it("re-hydrates a selection resolved against a stale catalogue once the real one arrives", () => {
-    const run = createRun({ mode: "implementation", preferredWorkerType: "codex", preferredWorkerModel: "gpt-5.6-sol" });
+    const run = createRun({ mode: "direct", preferredWorkerType: "codex", preferredWorkerModel: "gpt-5.6-sol" });
     const manager = new HomeUiStateManager();
     manager.selectRun(run.id);
 
     const stale = resolveRunComposerSelection({ run, activeAllowedWorkerTypes: ["claude"] });
     manager.hydrateComposerSelection({ runId: run.id, selection: stale, serverVersion: runComposerSelectionVersion(run, stale) });
-    expect(manager.getSnapshot().selectedCliAgent).toBe("auto");
+    // A conversation stays on its own CLI even while the catalogue is stale.
+    expect(manager.getSnapshot().selectedCliAgent).toBe("codex");
 
     const loaded = resolveRunComposerSelection({ run, activeAllowedWorkerTypes: ["codex", "claude"] });
     manager.hydrateComposerSelection({ runId: run.id, selection: loaded, serverVersion: runComposerSelectionVersion(run, loaded) });
@@ -100,7 +91,6 @@ describe("resolveNewConversationWorkerSelection", () => {
 
   function resolve(overrides: Partial<Parameters<typeof resolveNewConversationWorkerSelection>[0]> = {}) {
     return resolveNewConversationWorkerSelection({
-      composerMode: "direct",
       selectedCliAgent: "auto",
       selectedModel: "gpt-5.6-sol",
       autoSelectedWorkerType: "codex",
@@ -154,14 +144,5 @@ describe("resolveNewConversationWorkerSelection", () => {
       selectedCliAgent: "claude",
       selectedModel: "claude-opus-5",
     })).toBeNull();
-  });
-
-  it("returns auto to the omni composer when its worker disappears", () => {
-    expect(resolve({
-      composerMode: "omni",
-      selectedCliAgent: "claude",
-      selectedModel: "claude-opus-5",
-      activeAllowedWorkerTypes: ["codex"],
-    })).toEqual({ worker: "auto", model: "gpt-5.6-sol" });
   });
 });

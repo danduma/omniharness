@@ -15,9 +15,9 @@ import {
 } from "@/lib/conversation-workers";
 import { buildDirectTerminalUserMessages } from "@/lib/worker-terminal-messages";
 import { resolveProjectScope } from "@/lib/project-scope";
-import { buildConversationTimelineItems, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterPromotedPlanningTranscriptMessages, extractWorkerFailureDetail, getConversationTranscriptRunIds, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, parseProjectList, parseWorkerType, parseWorkerTypes, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought } from "./utils";
-import { COMPOSER_WORKER_OPTIONS, WORKER_OPTIONS } from "./constants";
-import type { AccountRecord, AgentSnapshot, ClarificationRecord, ComposerMode, ComposerWorkerOption, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, RunMode, RunRecord, SidebarGroup, SupervisorInterventionRecord } from "./types";
+import { compareNewestByCreatedAtThenId, extractWorkerFailureDetail, getLatestUnresolvedWorkerStuckEvent, getWorkerModelOptions, parseProjectList, parseWorkerType, parseWorkerTypes, shouldRenderMessageInMainConversation, shouldShowExecutionEventInRunLog, shouldShowRecoverableRunningState, stripRunFailurePrefix, summarizeThought } from "./utils";
+import { WORKER_OPTIONS } from "./constants";
+import type { AccountRecord, AgentSnapshot, ComposerWorkerOption, EventStreamState, ExecutionEventRecord, MessageRecord, NoticeDescriptor, PlanRecord, RunMode, RunRecord, SidebarGroup } from "./types";
 import type { WorkerCatalogResponse } from "./types";
 import { sessionStateManager } from "./SessionStateManager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
@@ -72,7 +72,6 @@ function hasSuccessfulRecoveryAfterFailure(run: RunRecord, events: ExecutionEven
 export interface UseHomeViewModelParams {
   state: EventStreamState;
   selectedRunId: string | null;
-  selectedConversationMode: ConversationModeOption;
   selectedCliAgent: ComposerWorkerOption;
   selectedModel: string;
   selectedEffort: string;
@@ -86,7 +85,6 @@ export interface UseHomeViewModelParams {
 export function useHomeViewModel({
   state,
   selectedRunId,
-  selectedConversationMode,
   selectedCliAgent,
   selectedModel: _selectedModel,
   selectedEffort: _selectedEffort,
@@ -107,20 +105,9 @@ export function useHomeViewModel({
   const selectedRunIsTerminal = isTerminalRunStatus(selectedRun?.status);
   const selectedRunNeedsRecovery = normalizeRunStatus(selectedRun?.status) === "needs_recovery";
 
-  const selectedRunPhase = selectedRun?.phase ?? null;
-  const isSupervisorRunning = Boolean(
-    selectedRun && selectedRun.mode === "implementation" && selectedRunPhase !== "planning" && selectedRun.status === "running",
-  );
-  const selectedRunMode: RunMode = selectedRun?.mode || "implementation";
-  // An Omni run is stored as mode "implementation"; its phase decides whether it
-  // is still planning or being supervised.
-  const isPlanningConversation = selectedRunMode === "planning"
-    || (selectedRunMode === "implementation" && selectedRunPhase === "planning");
-  const isImplementationConversation = selectedRunMode === "implementation" && selectedRunPhase !== "planning";
-  const isDirectConversation = selectedRunMode === "direct" || selectedRunMode === "commit";
-  const activeComposerMode: ComposerMode = selectedRun
-    ? isPlanningConversation ? "planning" : isDirectConversation ? "direct" : "implementation"
-    : selectedConversationMode;
+  const selectedRunMode: RunMode = selectedRun?.mode || "direct";
+  // Every conversation is a direct conversation with one CLI agent.
+  const isDirectConversation = Boolean(selectedRun);
   const hasSelectedRun = Boolean(selectedRun);
 
   const catalogWorkers = useMemo(
@@ -146,7 +133,7 @@ export function useHomeViewModel({
   );
 
   const activeAllowedWorkerTypes = useMemo(() => {
-    const configured = hasSelectedRun && selectedRunMode !== "implementation"
+    const configured = hasSelectedRun
       ? selectedRunAllowedWorkerTypes
       : configuredAllowedWorkerTypes;
     if (availableWorkerTypes.length === 0) {
@@ -156,20 +143,16 @@ export function useHomeViewModel({
     const availableSet = new Set(availableWorkerTypes);
     const filtered = configured.filter((type) => availableSet.has(type));
     return filtered.length > 0 ? filtered : [...availableWorkerTypes];
-  }, [availableWorkerTypes, configuredAllowedWorkerTypes, hasSelectedRun, selectedRunAllowedWorkerTypes, selectedRunMode]);
+  }, [availableWorkerTypes, configuredAllowedWorkerTypes, hasSelectedRun, selectedRunAllowedWorkerTypes]);
 
   const autoSelectedWorkerType = useMemo(() => {
     return activeAllowedWorkerTypes[0] ?? null;
   }, [activeAllowedWorkerTypes]);
 
-  const shouldOfferAutoWorkerOption = activeComposerMode !== "direct";
-
   const composerWorkerOptions = useMemo(() => {
     const allowedSet = new Set(activeAllowedWorkerTypes);
-    return shouldOfferAutoWorkerOption
-      ? COMPOSER_WORKER_OPTIONS.filter((option) => option.value === "auto" || allowedSet.has(option.value))
-      : WORKER_OPTIONS.filter((option) => allowedSet.has(option.value));
-  }, [activeAllowedWorkerTypes, shouldOfferAutoWorkerOption]);
+    return WORKER_OPTIONS.filter((option) => allowedSet.has(option.value));
+  }, [activeAllowedWorkerTypes]);
 
   const activeWorkerModelType = selectedCliAgent === "auto"
     ? autoSelectedWorkerType ?? activeAllowedWorkerTypes[0] ?? "codex"
@@ -234,25 +217,12 @@ export function useHomeViewModel({
     [selectedRunId, state.messages],
   );
 
-  const selectedRunClarifications = useMemo(
+  const filteredMessages = useMemo(
     () => (selectedRunId
-      ? ((state.clarifications || []) as ClarificationRecord[]).filter((clarification) => clarification.runId === selectedRunId)
+      ? ((state.messages || []) as MessageRecord[]).filter((message) => message.runId === selectedRunId)
       : []),
-    [selectedRunId, state.clarifications],
+    [selectedRunId, state.messages],
   );
-
-  const transcriptRunIds = useMemo(
-    () => new Set(getConversationTranscriptRunIds({ selectedRunId, selectedRun })),
-    [selectedRun, selectedRunId],
-  );
-
-  const filteredMessages = useMemo(() => {
-    const messages = selectedRunId
-      ? ((state.messages || []) as MessageRecord[]).filter((message) => transcriptRunIds.has(message.runId))
-      : [];
-
-    return filterPromotedPlanningTranscriptMessages({ messages, selectedRun });
-  }, [selectedRun, selectedRunId, state.messages, transcriptRunIds]);
 
   const selectedRunWorkers = useMemo(() => {
     if (!selectedRunId || !state.workers) {
@@ -325,7 +295,7 @@ export function useHomeViewModel({
     runId: selectedRunId,
     workerIds: selectedPlanWorkerIds,
     primaryWorkerId: primaryConversationAgent?.name ?? null,
-    eligibleConversationMode: isDirectConversation || isPlanningConversation,
+    eligibleConversationMode: isDirectConversation,
     workerIsTerminal: selectedRunIsTerminal || !solePlanWorker || !isWorkerActiveStatus(solePlanWorker.status),
     planState: acpPlanState,
   });
@@ -346,16 +316,14 @@ export function useHomeViewModel({
     [activeConversationWorkerIds, conversationAgents],
   );
 
-  const busyConversationWorkerId = !isImplementationConversation
-    ? conversationWorkerGroups.active.find((worker) => {
-        const status = normalizeWorkerStatus(worker.status);
-        return status === "starting" || status === "working" || status === "stuck";
-      })?.id ?? null
-    : null;
+  const busyConversationWorkerId = conversationWorkerGroups.active.find((worker) => {
+    const status = normalizeWorkerStatus(worker.status);
+    return status === "starting" || status === "working" || status === "stuck";
+  })?.id ?? null;
 
   const isConversationStoppable = selectedSession
     ? selectedSession.capabilities.includes("stop")
-    : isSupervisorRunning || Boolean(busyConversationWorkerId);
+    : Boolean(busyConversationWorkerId);
 
   const latestUserCheckpoint = selectedRunId
     ? [...((selectedRunMessages || []) as MessageRecord[])]
@@ -397,12 +365,6 @@ export function useHomeViewModel({
       .filter(shouldShowExecutionEventInRunLog)
       .sort(compareNewestByCreatedAtThenId)
   ), [selectedRunId, state.executionEvents]);
-
-  const selectedRunSupervisorInterventions = useMemo(() => (
-    ((state.supervisorInterventions || []) as SupervisorInterventionRecord[])
-      .filter((intervention) => intervention.runId === selectedRunId)
-      .sort(compareOldestByCreatedAtThenId)
-  ), [selectedRunId, state.supervisorInterventions]);
 
   const latestExecutionEvent = selectedRunExecutionEvents[0] ?? null;
   const completionEvent = selectedRunExecutionEvents.find((event) => event.eventType === "run_completed") ?? null;
@@ -454,11 +416,8 @@ export function useHomeViewModel({
     }
 
     // Only show "Reconnecting" when an auto-resume will actually run.
-    // Planning runs surface the real error and rely on the user to act.
-    const autoResumes = selectedRun.mode === "direct" || selectedRun.mode === "commit" || selectedRun.mode === "implementation";
     const failureKey = `${selectedRun.failedAt ?? ""}:${selectedRun.lastError ?? ""}`;
-    const staleFailure = autoResumes
-      && !isPermanentAutoResumeFailure(failureKey)
+    const staleFailure = !isPermanentAutoResumeFailure(failureKey)
       && failedWorkerAvailability?.availability.status === "ok";
     const workerLabel = failedWorkerAvailability?.label;
     const workerStatus = failedWorkerAvailability?.availability.message;
@@ -494,60 +453,10 @@ export function useHomeViewModel({
     };
   }, [failedWorkerAvailability, selectedRun, selectedRunExecutionEvents, state.accounts, workerFailureDetail]);
 
-  const awaitingUserQuestionMessage = useMemo(() => {
-    if (selectedRun?.status !== "awaiting_user") {
-      return null;
-    }
-    const messages = (selectedRunMessages || []) as MessageRecord[];
-    const latestUserAt = messages
-      .filter((m) => m.role === "user")
-      .reduce((max, m) => Math.max(max, new Date(m.createdAt).getTime()), 0);
-    const candidates = messages
-      .filter((m) => m.role === "supervisor"
-        && (m.kind === "clarification" || m.kind === "implementation_confirmation")
-        && new Date(m.createdAt).getTime() >= latestUserAt)
-      .sort(compareNewestByCreatedAtThenId);
-    if (candidates[0]) {
-      return candidates[0];
-    }
-
-    const fallbackCreatedAt = selectedRun?.updatedAt ?? selectedRun?.createdAt ?? new Date(0).toISOString();
-    const clarification = selectedRunClarifications
-      .filter((item) => item.status.trim().toLowerCase() === "pending" && item.question.trim().length > 0)
-      .map((item): MessageRecord => ({
-        id: item.id,
-        runId: item.runId,
-        role: "supervisor",
-        kind: "clarification",
-        content: item.question,
-        createdAt: item.createdAt ?? fallbackCreatedAt,
-      }))
-      .filter((item) => new Date(item.createdAt).getTime() >= latestUserAt)
-      .sort(compareNewestByCreatedAtThenId)[0];
-    return clarification ?? null;
-  }, [selectedRun?.createdAt, selectedRun?.status, selectedRun?.updatedAt, selectedRunClarifications, selectedRunMessages]);
-
-  const visibleMessages = useMemo(() => {
-    const messages = (filteredMessages || []) as MessageRecord[];
-    const renderedMessages = messages.filter(shouldRenderMessageInMainConversation);
-    if (
-      !awaitingUserQuestionMessage
-      || renderedMessages.some((message) => message.id === awaitingUserQuestionMessage.id)
-    ) {
-      return renderedMessages;
-    }
-    return [...renderedMessages, awaitingUserQuestionMessage].sort(compareOldestByCreatedAtThenId);
-  }, [awaitingUserQuestionMessage, filteredMessages]);
-
-  const conversationTimelineItems = useMemo(() => buildConversationTimelineItems({
-    messages: visibleMessages,
-    executionEvents: selectedRunExecutionEvents,
-    supervisorInterventions: selectedRunSupervisorInterventions,
-    workers: selectedRunWorkersForDisplay,
-    isPlanningRun: isPlanningConversation,
-  }), [isPlanningConversation, selectedRunExecutionEvents, selectedRunSupervisorInterventions, selectedRunWorkersForDisplay, visibleMessages]);
-
-  const conversationTimelineActivityCount = conversationTimelineItems.filter((item) => item.type === "activity").length;
+  const visibleMessages = useMemo(
+    () => ((filteredMessages || []) as MessageRecord[]).filter(shouldRenderMessageInMainConversation),
+    [filteredMessages],
+  );
 
   const directConversationMessages = useMemo(() => {
     if (!isDirectConversation) {
@@ -573,7 +482,6 @@ export function useHomeViewModel({
     return !active && Boolean(agent.lastError);
   }) ?? null;
 
-  const latestWaitEvent = selectedRunExecutionEvents.find((event) => event.eventType === "supervisor_wait") ?? null;
   const latestPromptDeferredEvent = selectedRunExecutionEvents.find((event) => event.eventType === "worker_prompt_deferred") ?? null;
 
   const isSelectedConversationPreviewAvailable = !selectedRunId || state.snapshotRunId === selectedRunId;
@@ -604,8 +512,7 @@ export function useHomeViewModel({
     latestExecutionEventCreatedAt: latestExecutionEvent?.createdAt,
   });
 
-  const isConversationThinking = isSupervisorRunning
-    || hasActiveWorker
+  const isConversationThinking = hasActiveWorker
     || Boolean(pendingPermissionAgent)
     || Boolean(pendingElicitationAgent)
     || hasStuckWorker
@@ -613,19 +520,6 @@ export function useHomeViewModel({
     || Boolean(latestPromptDeferredEvent)
     || selectedRun?.status === "awaiting_user"
     || selectedRun?.status === "failed";
-
-  // Don't gate the panel on `isSelectedConversationLoaded`: that flag
-  // demotes to false whenever the snapshot transitions to a cache view
-  // (e.g. during a brief SSE/cache re-hydration window), which would
-  // otherwise make the supervisor activity bar disappear mid-run.
-  // `shouldShowConversationExecutionPanel` is already conservative —
-  // it requires a selected run and some signal of activity — so the
-  // loaded-state gate is redundant for visibility.
-  const showConversationExecution = shouldShowConversationExecutionPanel({
-    selectedRun,
-    isConversationThinking,
-    executionEventCount: conversationTimelineActivityCount,
-  });
 
   const currentProjectScope = resolveProjectScope({
     draftProjectPath,
@@ -649,11 +543,7 @@ export function useHomeViewModel({
     selectedRun,
     selectedSession,
     selectedRunMode,
-    isImplementationConversation,
-    isPlanningConversation,
     isDirectConversation,
-    isSupervisorRunning,
-    activeComposerMode,
     catalogWorkers,
     availableWorkerTypes,
     configuredAllowedWorkerTypes,
@@ -682,22 +572,17 @@ export function useHomeViewModel({
     latestUserCheckpoint,
     liveThoughts,
     selectedRunExecutionEvents,
-    selectedRunSupervisorInterventions,
     latestExecutionEvent,
     completionEvent,
     failedWorkerAvailability,
     workerFailureDetail,
     conversationFailure,
     visibleMessages,
-    conversationTimelineItems,
-    conversationTimelineActivityCount,
     directConversationMessages,
     pendingPermissionAgent,
     pendingElicitationAgent,
     erroredAgent,
-    latestWaitEvent,
     latestPromptDeferredEvent,
-    awaitingUserQuestionMessage,
     isSelectedConversationPreviewAvailable,
     isSelectedConversationLoaded,
     latestStuckEvent,
@@ -705,7 +590,6 @@ export function useHomeViewModel({
     hasActiveWorker,
     showRecoverableRunningState,
     isConversationThinking,
-    showConversationExecution,
     currentProjectScope,
     activePlan,
     activeConversationCwd,

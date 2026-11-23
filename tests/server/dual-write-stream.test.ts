@@ -42,7 +42,6 @@ vi.mock("@/server/bridge-client", () => ({
 
 import {
   createQueuedConversationMessage,
-  drainQueuedImplementationMessages,
   drainQueuedWorkerMessages,
 } from "@/server/conversations/queued-messages";
 import { __resetWorkerTurnChainsForTests } from "@/server/conversations/worker-turn-gate";
@@ -61,27 +60,6 @@ async function createDirectRun() {
     id: runId,
     planId,
     mode: "direct",
-    status: "running",
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
-  return runId;
-}
-
-async function createImplementationRun() {
-  const planId = randomUUID();
-  const runId = randomUUID();
-  await db.insert(plans).values({
-    id: planId,
-    path: "docs/superpowers/plans/example.md",
-    status: "running",
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
-  await db.insert(runs).values({
-    id: runId,
-    planId,
-    mode: "implementation",
     status: "running",
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -196,27 +174,6 @@ describe("unified worker stream — dual-write on delivery", () => {
     const afterRetry = (await readWorkerOutputEntries(runId, workerId))
       .filter((entry) => (entry as any).type === "user_input");
     expect(afterRetry).toHaveLength(1);
-  });
-
-  it("implementation steering delivery appends user_input exactly once", async () => {
-    const runId = await createImplementationRun();
-    const workerId = await insertActiveWorker(runId);
-    await createQueuedConversationMessage({
-      runId,
-      action: "steer",
-      content: "Pause and run the failing test under --inspect.",
-      attachments: [],
-    });
-
-    const delivered = await drainQueuedImplementationMessages(runId);
-    expect(delivered).toBe(1);
-
-    const entries = await readWorkerOutputEntries(runId, workerId);
-    const userInputs = entries.filter((entry) => (entry as any).type === "user_input");
-    const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
-    expect(userInputs).toHaveLength(1);
-    expect((userInputs[0] as any).id).toBe(storedMessages.find((message) => message.role === "user")?.id);
-    expect((userInputs[0] as any).text).toBe("Pause and run the failing test under --inspect.");
   });
 
   it("appends a user_input entry on queued delivery (post-Phase-5: flag is gone, stream is unconditional)", async () => {

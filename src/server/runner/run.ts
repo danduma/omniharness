@@ -11,7 +11,7 @@ import { resumeAcceptedDirectMessageDeliveries } from "@/server/conversations/se
 import { repairLeakedConversationTitles } from "@/server/conversations/agent-session-title";
 import { compactGoalControlHistory, recoverGoalOutboxAtStartup, stopGoalOutboxDelivery } from "@/server/runs/goal-outbox";
 import { recoverPendingGoalControlsAtStartup } from "@/server/runs/goal-control-dispatch";
-import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
+import { ensureRuntimeWatchdogStarted } from "@/server/runtime/watchdog";
 import { getTerminalManager } from "@/server/terminal/terminal-manager";
 import { createOmniRuntime } from "@/runtime";
 import { buildRuntimeBootstrap } from "@/runtime/bootstrap";
@@ -145,7 +145,7 @@ export async function startRunnerProcess(
           `[runner] failed to repair leaked conversation titles: ${error instanceof Error ? error.message : String(error)}\n`,
         );
       });
-    await ensureSupervisorRuntimeStarted();
+    await ensureRuntimeWatchdogStarted();
     await ensureClaudeModelGatewayStartedAtBoot();
     await bridge.start();
     await resumeAcceptedDirectMessageDeliveries();

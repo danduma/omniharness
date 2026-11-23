@@ -11,14 +11,12 @@ import { getProjectGitWorkspaceConfig } from "@/server/projects/config";
 const {
   mockCreateAdHocPlan,
   mockCreateBranchWorktree,
-  mockStartSupervisorRun,
   mockSpawnAgent,
   mockAskAgent,
   mockGetAgent,
 } = vi.hoisted(() => ({
   mockCreateAdHocPlan: vi.fn(),
   mockCreateBranchWorktree: vi.fn(),
-  mockStartSupervisorRun: vi.fn(),
   mockSpawnAgent: vi.fn(),
   mockAskAgent: vi.fn(),
   mockGetAgent: vi.fn(),
@@ -43,10 +41,6 @@ vi.mock("@/server/git/workspaces", () => ({
       this.details = details;
     }
   },
-}));
-
-vi.mock("@/server/supervisor/start", () => ({
-  startSupervisorRun: mockStartSupervisorRun,
 }));
 
 vi.mock("@/server/bridge-client", () => ({
@@ -114,7 +108,6 @@ describe("conversation workspace orphan recovery", () => {
   beforeEach(async () => {
     mockCreateAdHocPlan.mockReset();
     mockCreateBranchWorktree.mockReset();
-    mockStartSupervisorRun.mockClear();
     mockSpawnAgent.mockReset();
     mockAskAgent.mockReset();
     mockGetAgent.mockReset();

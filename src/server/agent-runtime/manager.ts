@@ -30,7 +30,7 @@ import { sanitizeAcpStream } from "./acp-stream-sanitizer";
 import { applyCodexBridgeEnv, buildCodexAcpConfig, buildCodexConfigArgs, resolveCodexSessionMode, shouldSetRequestedMode } from "./codex";
 import { normalizeReasoningEffort } from "@/shared/reasoning-effort";
 import { buildGeminiArgs, isFullAccessAgentMode, resolveFullGeminiUuid } from "./gemini";
-import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
+import { isRecoverableBridgeConnectionError, retryBridgeRequest } from "@/server/bridge-client/retry";
 import { codexModelCatalogConfigArgs, commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, stripAmbientCodexSessionEnv, stripRunnerControlEnv, withCodexStandardTooling, withManagedPath } from "./tool-env";
 import {
   appendOutputEntry,
@@ -526,6 +526,24 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 const ABSORBED_PROMPT = Symbol("absorbed-prompt");
+
+/** ACP steering extension method: injects a message into the running turn. */
+export const ACP_STEER_METHOD = "_session/steering";
+
+export type SteerAgentResult =
+  /** `outputBoundaryEntryId`: the last output entry that existed when the
+   *  steer landed. Everything up to it was written before the steer, so the
+   *  control plane persists it ahead of the steer's transcript entry. */
+  | { name: string; outcome: "injected"; outputBoundaryEntryId: string | null }
+  | { name: string; outcome: "promptRequired"; reason: "unsupported" | "no_prompt_in_flight" | "adapter_idle" }
+  | { name: string; outcome: "failed"; reason: string };
+
+/** The steering capability is advertised in the top-level initialize `_meta`
+ *  (a sibling of `agentCapabilities`), not inside `agentCapabilities`. */
+function readSteeringSupport(initialization: Record<string, unknown> | null | undefined) {
+  const meta = asRecord(initialization?._meta);
+  return asRecord(meta?.steering)?.supported === true;
+}
 
 /** claude-agent-acp advertises `_meta.claudeCode.promptQueueing` at initialize. */
 function adapterQueuesPrompts(record: AgentRecord) {
@@ -1047,6 +1065,10 @@ export class AgentRuntimeManager {
   private readonly agentIdleTimeoutMs: number;
   private readonly agentExitGraceMs: number;
   private readonly absorbedPromptQuietMs: number;
+  /** How long a steer request may take before the caller falls back to
+   *  cancel-and-replace. The adapter answers as soon as the message is pushed
+   *  onto the session input, so this only trips on a wedged adapter. */
+  private readonly steerRequestTimeoutMs: number;
 
   constructor(
     private readonly options: {
@@ -1089,6 +1111,10 @@ export class AgentRuntimeManager {
     this.absorbedPromptQuietMs = readPositiveInteger(
       baseEnv.OMNIHARNESS_ABSORBED_PROMPT_QUIET_MS,
       30_000,
+    );
+    this.steerRequestTimeoutMs = readPositiveInteger(
+      baseEnv.OMNIHARNESS_STEER_TIMEOUT_MS,
+      10_000,
     );
     const sweepIntervalMs = readPositiveInteger(
       baseEnv.OMNIHARNESS_RUNTIME_SWEEP_INTERVAL_MS,
@@ -2105,6 +2131,7 @@ export class AgentRuntimeManager {
       stderrBuffer,
       protocolVersion,
       agentCapabilities: normalizeGoalAgentCapabilities(initRecord),
+      steeringSupported: readSteeringSupport(initRecord),
       authMethods: Array.isArray(initRecord?.authMethods) ? initRecord.authMethods : [],
       requestedModel,
       pendingModel: null,
@@ -2357,6 +2384,120 @@ export class AgentRuntimeManager {
     }
   }
 
+  private async buildPromptContentBlocks(
+    name: string,
+    prompt: string,
+    imageAttachments?: Array<{ path: string; mimeType: string }>,
+  ): Promise<Array<acp.ContentBlock>> {
+    const contentBlocks: Array<acp.ContentBlock> = [{ type: "text", text: prompt }];
+    if (imageAttachments?.length) {
+      for (const img of imageAttachments) {
+        try {
+          const buffer = await readFile(img.path);
+          const data = buffer.toString("base64");
+          contentBlocks.push({
+            type: "image",
+            data,
+            mimeType: img.mimeType || "image/png",
+          });
+        } catch (error) {
+          // Skip an unreadable image rather than failing the whole prompt,
+          // but never silently: the agent is about to answer a question
+          // about a picture it cannot see, and that must be diagnosable.
+          emitNamedEvent({
+            kind: "error.surfaced",
+            code: "worker.prompt.image_attachment_unreadable",
+            message: `Image attachment could not be read and was dropped from the prompt: ${img.path}`,
+            surface: "toast",
+            workerId: name,
+            cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+          });
+        }
+      }
+    }
+    return contentBlocks;
+  }
+
+  /**
+   * Steer the running turn: deliver `prompt` into the turn the agent is already
+   * running, the way Claude Code delivers a message typed while it works. The
+   * turn keeps going, so the model never sees a cancellation it would read as
+   * the user rejecting its work. The prompt request that owns the turn stays
+   * open and settles only after the model has answered the steer, so the
+   * steered reply streams through that request's output.
+   *
+   * Never throws for an adapter problem. Anything short of a confirmed
+   * injection returns `promptRequired` or `failed`, and the caller falls back
+   * to cancel-and-replace.
+   */
+  async steerAgent(
+    name: string,
+    prompt: string,
+    imageAttachments?: Array<{ path: string; mimeType: string }>,
+  ): Promise<SteerAgentResult> {
+    const record = this.agents.get(name);
+    if (!record) {
+      throw new RuntimeHttpError(404, `Agent not found: ${name}`);
+    }
+    assertAgentCanReceiveRequest(record);
+    if (!record.steeringSupported) {
+      emitNamedEvent({ kind: "acp.steer_skipped", workerId: name, reason: "unsupported" });
+      return { name, outcome: "promptRequired", reason: "unsupported" };
+    }
+    // Only a prompt we own carries the steer's reply back to the control plane.
+    // A turn the provider started on its own has no request to stream into.
+    if (!record.promptInFlight) {
+      emitNamedEvent({ kind: "acp.steer_skipped", workerId: name, reason: "no_prompt_in_flight" });
+      return { name, outcome: "promptRequired", reason: "no_prompt_in_flight" };
+    }
+    const contentBlocks = await this.buildPromptContentBlocks(name, prompt, imageAttachments);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let response: unknown;
+    try {
+      response = await Promise.race([
+        this.runAgentRequest(record, () => invokeAgentRequest(record.connection, ACP_STEER_METHOD, {
+          sessionId: record.sessionId,
+          prompt: contentBlocks,
+          // Without this the adapter starts a detached turn when it is idle,
+          // whose reply no prompt request would carry. With it the adapter
+          // hands the message back and the caller sends a normal prompt.
+          _meta: { steering: { idleBehavior: "promptRequired" } },
+        })),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error(`Steer request timed out after ${this.steerRequestTimeoutMs}ms`)), this.steerRequestTimeoutMs);
+          timeout.unref?.();
+        }),
+      ]);
+    } catch (error) {
+      const reason = describeUnknownError(error);
+      emitNamedEvent({ kind: "acp.method_failed", workerId: name, method: ACP_STEER_METHOD, notification: false, reason });
+      emitNamedEvent({ kind: "error.surfaced", code: "worker.steer.failed", workerId: name, surface: "log", message: reason, cause: null });
+      return { name, outcome: "failed", reason };
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+    const outcome = asRecord(response)?.outcome;
+    if (outcome === "injected") {
+      const outputBoundaryEntryId = record.outputEntries.at(-1)?.id ?? null;
+      // End the assistant message that was streaming when the steer landed, so
+      // the reply to the steer starts a new entry after the user's message
+      // instead of being glued onto the text written before it.
+      record.activeOutputEntryId = null;
+      record.updatedAt = nowIso();
+      emitNamedEvent({ kind: "acp.method_completed", workerId: name, method: ACP_STEER_METHOD, notification: false });
+      emitNamedEvent({ kind: "acp.steer_injected", workerId: name });
+      return { name, outcome: "injected", outputBoundaryEntryId };
+    }
+    if (outcome === "promptRequired") {
+      emitNamedEvent({ kind: "acp.steer_skipped", workerId: name, reason: "adapter_idle" });
+      return { name, outcome: "promptRequired", reason: "adapter_idle" };
+    }
+    const reason = `Unexpected steer outcome: ${JSON.stringify(outcome ?? null)}`;
+    emitNamedEvent({ kind: "acp.method_failed", workerId: name, method: ACP_STEER_METHOD, notification: false, reason });
+    emitNamedEvent({ kind: "error.surfaced", code: "worker.steer.failed", workerId: name, surface: "log", message: reason, cause: null });
+    return { name, outcome: "failed", reason };
+  }
+
   async askAgent(name: string, prompt: string, imageAttachments?: Array<{ path: string; mimeType: string }>, onChunk?: (chunk: string) => void): Promise<AskResult> {
     const record = this.agents.get(name);
     if (!record) {
@@ -2378,39 +2519,14 @@ export class AgentRuntimeManager {
     const unsubscribe = onChunk ? this.subscribeChunks(name, onChunk) : null;
 
     try {
-      const contentBlocks: Array<acp.ContentBlock> = [{ type: "text", text: prompt }];
-      if (imageAttachments?.length) {
-        for (const img of imageAttachments) {
-          try {
-            const buffer = await readFile(img.path);
-            const data = buffer.toString("base64");
-            contentBlocks.push({
-              type: "image",
-              data,
-              mimeType: img.mimeType || "image/png",
-            });
-          } catch (error) {
-            // Skip an unreadable image rather than failing the whole prompt,
-            // but never silently: the agent is about to answer a question
-            // about a picture it cannot see, and that must be diagnosable.
-            emitNamedEvent({
-              kind: "error.surfaced",
-              code: "worker.prompt.image_attachment_unreadable",
-              message: `Image attachment could not be read and was dropped from the prompt: ${img.path}`,
-              surface: "toast",
-              workerId: name,
-              cause: error instanceof Error ? { name: error.name, message: error.message } : null,
-            });
-          }
-        }
-      }
+      const contentBlocks = await this.buildPromptContentBlocks(name, prompt, imageAttachments);
       const promptParams = {
         sessionId: record.sessionId,
         prompt: contentBlocks,
       } as Parameters<acp.ClientSideConnection["prompt"]>[0];
       const absorption = this.watchForAbsorbedPrompt(record);
       let abandoned = false;
-      const promptRequest = retrySupervisorRequest(
+      const promptRequest = retryBridgeRequest(
         () => {
           // A retry re-sends the prompt. Once absorbed, the model has already
           // answered it, so sending it again would deliver the message twice.
@@ -2419,7 +2535,7 @@ export class AgentRuntimeManager {
         },
         {
           maxDelayMs: WORKER_CONNECTION_RESET_MAX_BACKOFF_MS,
-          retryIndefinitelyWhen: isRecoverableConnectionSupervisorError,
+          retryIndefinitelyWhen: isRecoverableBridgeConnectionError,
         },
       );
       let response: unknown;

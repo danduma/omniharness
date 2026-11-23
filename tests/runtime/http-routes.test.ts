@@ -12,25 +12,13 @@ import { handleAuthLogoutRequest } from "@/runtime/http/routes/auth-logout";
 import { handleAuthPairRequest } from "@/runtime/http/routes/auth-pair";
 import { handleAuthPairRedeemRequest } from "@/runtime/http/routes/auth-pair-redeem";
 import { handleNotificationsRequest } from "@/runtime/http/routes/notifications";
-import { handlePlansRequest } from "@/runtime/http/routes/plans";
-import { handleProjectMemoryRequest } from "@/runtime/http/routes/project-memory";
 import { handleBrowseFilesystemRequest, handleProjectFilesRequest, handleProjectImageRequest } from "@/runtime/http/routes/filesystem";
 import { handleGitRequest } from "@/runtime/http/routes/git";
 import { handleSettingsRequest } from "@/runtime/http/routes/settings";
 import { handleAccountsRequest } from "@/runtime/http/routes/accounts";
 import { handleAgentsRequest } from "@/runtime/http/routes/agents";
-import { handleLlmModelsRequest } from "@/runtime/http/routes/llm-models";
-import { handleCodexAuthStatusRequest } from "@/runtime/http/routes/codex-auth-status";
 import { createOmniRuntimeHttpRegistry } from "@/runtime/http/routes";
 import { __clearEventPayloadCachesForTests } from "@/runtime/http/routes/events";
-
-const { mockReadCodexCredentialsSync } = vi.hoisted(() => ({
-  mockReadCodexCredentialsSync: vi.fn(),
-}));
-
-vi.mock("@/server/supervisor/codex-auth", () => ({
-  readCodexCredentialsSync: mockReadCodexCredentialsSync,
-}));
 
 vi.mock("@/server/settings/crypto", () => ({
   shouldEncryptSetting: (key: string) => key.endsWith("_API_KEY"),
@@ -207,25 +195,6 @@ describe("portable runtime HTTP routes", () => {
     expect(settingsResponse.status).toBe(200);
   });
 
-  it("mounts migrated model and Codex auth routes in the shared runtime route registry", async () => {
-    const registry = createOmniRuntimeHttpRegistry();
-
-    const modelsResponse = await registry.handle(new Request("http://localhost/api/llm-models", {
-      method: "POST",
-      headers: {
-        origin: "http://localhost",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ provider: "gemini" }),
-    }), { surface: "test" });
-    const codexStatusResponse = await registry.handle(new Request("http://localhost/api/codex-auth/status"), {
-      surface: "test",
-    });
-
-    expect(modelsResponse.status).toBe(200);
-    expect(codexStatusResponse.status).toBe(200);
-  });
-
   it("mounts pairing and notification routes in the shared runtime route registry", async () => {
     const session = await createAuthSession({
       label: "Mounted pairing route",
@@ -258,80 +227,6 @@ describe("portable runtime HTTP routes", () => {
       supported: true,
       publicKey: expect.any(String),
     }));
-  });
-
-  it("serves plans through a Fetch-compatible handler", async () => {
-    const session = await createAuthSession({
-      label: "Portable plans route",
-      userAgent: "Vitest",
-      authMethod: "password_login",
-    });
-    await db.insert(plans).values([
-      {
-        id: "old-plan",
-        path: "vibes/ad-hoc/old.md",
-        status: "done",
-        createdAt: new Date("2026-05-12T09:00:00Z"),
-        updatedAt: new Date("2026-05-12T09:00:00Z"),
-      },
-      {
-        id: "new-plan",
-        path: "vibes/ad-hoc/new.md",
-        status: "running",
-        createdAt: new Date("2026-05-12T10:00:00Z"),
-        updatedAt: new Date("2026-05-12T10:00:00Z"),
-      },
-    ]);
-
-    const response = await handlePlansRequest(new Request("http://localhost/api/plans", {
-      headers: { cookie: `omni_session=${session.tokenValue}` },
-    }), { surface: "test" });
-    const payload = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(payload.map((plan: { id: string }) => plan.id)).toEqual(["new-plan", "old-plan"]);
-  });
-
-  it("updates and reads project memory through Fetch-compatible handlers", async () => {
-    const session = await createAuthSession({
-      label: "Portable memory route",
-      userAgent: "Vitest",
-      authMethod: "password_login",
-    });
-    const cookie = `omni_session=${session.tokenValue}`;
-    const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), "omni-runtime-memory-"));
-    try {
-      const saveResponse = await handleProjectMemoryRequest(new Request("http://localhost/api/projects/memory", {
-        method: "POST",
-        headers: {
-          cookie,
-          origin: "http://localhost",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          projectPath,
-          path: "notes/session.md",
-          content: "Remember the runtime route.\n",
-        }),
-      }), { surface: "test" });
-      const readResponse = await handleProjectMemoryRequest(new Request(
-        `http://localhost/api/projects/memory?projectPath=${encodeURIComponent(projectPath)}&path=${encodeURIComponent("notes/session.md")}`,
-        { headers: { cookie } },
-      ), { surface: "test" });
-
-      expect(saveResponse.status).toBe(200);
-      expect(readResponse.status).toBe(200);
-      await expect(readResponse.json()).resolves.toMatchObject({
-        enabled: true,
-        file: {
-          path: "notes/session.md",
-          content: "Remember the runtime route.\n",
-          truncated: false,
-        },
-      });
-    } finally {
-      fs.rmSync(projectPath, { recursive: true, force: true });
-    }
   });
 
   it("serves project image bytes and refuses non-image project files", async () => {
@@ -446,26 +341,6 @@ describe("portable runtime HTTP routes", () => {
     });
   });
 
-  it("mounts dynamic run clarification routes in the shared runtime route registry", async () => {
-    const registry = createOmniRuntimeHttpRegistry();
-    const response = await registry.handle(new Request("http://localhost/api/runs/run-1/answer", {
-      method: "POST",
-      headers: {
-        origin: "http://localhost",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({}),
-    }), { surface: "test" });
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: expect.objectContaining({
-        source: "Clarifications",
-        action: "Answer clarification",
-      }),
-    });
-  });
-
   it("mounts dynamic run lifecycle routes in the shared runtime route registry", async () => {
     const session = await createAuthSession({
       label: "Mounted run lifecycle route",
@@ -551,50 +426,6 @@ describe("portable runtime HTTP routes", () => {
     expect(payload.accounts[0]).not.toHaveProperty("auth_ref");
   });
 
-  it("mounts dynamic planning routes in the shared runtime route registry", async () => {
-    const session = await createAuthSession({
-      label: "Mounted planning route",
-      userAgent: "Vitest",
-      authMethod: "password_login",
-    });
-    const cookie = `omni_session=${session.tokenValue}`;
-    const registry = createOmniRuntimeHttpRegistry();
-
-    const reviewResponse = await registry.handle(new Request("http://localhost/api/planning/missing-run/review", {
-      method: "POST",
-      headers: {
-        cookie,
-        origin: "http://localhost",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({}),
-    }), { surface: "test" });
-    const promoteResponse = await registry.handle(new Request("http://localhost/api/planning/missing-run/promote", {
-      method: "POST",
-      headers: {
-        cookie,
-        origin: "http://localhost",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({}),
-    }), { surface: "test" });
-
-    expect(reviewResponse.status).toBe(500);
-    await expect(reviewResponse.json()).resolves.toEqual({
-      error: expect.objectContaining({
-        source: "Planning",
-        action: "Review planning conversation",
-      }),
-    });
-    expect(promoteResponse.status).toBe(404);
-    await expect(promoteResponse.json()).resolves.toEqual({
-      error: expect.objectContaining({
-        source: "Planning",
-        action: "Promote planning conversation",
-      }),
-    });
-  });
-
   it("serves redacted accounts through a Fetch-compatible handler", async () => {
     await db.insert(accounts).values({
       id: "account-1",
@@ -647,50 +478,6 @@ describe("portable runtime HTTP routes", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
-  });
-
-  it("serves local LLM model discovery through a Fetch-compatible handler", async () => {
-    const response = await handleLlmModelsRequest(new Request("http://localhost/api/llm-models", {
-      method: "POST",
-      headers: {
-        origin: "http://localhost",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ provider: "gemini" }),
-    }), { surface: "test" });
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      models: [{ id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" }],
-    });
-  });
-
-  it("serves non-sensitive Codex auth status through a Fetch-compatible handler", async () => {
-    mockReadCodexCredentialsSync.mockReturnValue({
-      accessToken: "secret-access-token",
-      refreshToken: "secret-refresh-token",
-      email: "test@example.com",
-      planType: "pro",
-      expiresAt: 123,
-      subscriptionActiveUntil: "2026-05-20",
-      lastRefresh: "2026-05-17T10:00:00Z",
-    });
-
-    const response = await handleCodexAuthStatusRequest(new Request("http://localhost/api/codex-auth/status"), {
-      surface: "test",
-    });
-
-    expect(response.status).toBe(200);
-    const payload = await response.json();
-    expect(payload).toEqual({
-      available: true,
-      email: "test@example.com",
-      planType: "pro",
-      expiresAt: 123,
-      subscriptionActiveUntil: "2026-05-20",
-      lastRefresh: "2026-05-17T10:00:00Z",
-    });
-    expect(JSON.stringify(payload)).not.toContain("secret");
   });
 
   it("creates, checks, and redeems pairing tokens through Fetch-compatible handlers", async () => {

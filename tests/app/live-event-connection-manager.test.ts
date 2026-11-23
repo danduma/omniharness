@@ -10,7 +10,7 @@ function createState(id: string): EventStreamState {
     runs: [{
       id,
       planId: "plan-1",
-      mode: "implementation",
+      mode: "direct",
       status: "running",
       createdAt: new Date(0).toISOString(),
       projectPath: null,
@@ -19,10 +19,7 @@ function createState(id: string): EventStreamState {
     accounts: [],
     agents: [],
     workers: [],
-    planItems: [],
-    clarifications: [],
     executionEvents: [],
-    supervisorInterventions: [],
     frontendErrors: [],
   };
 }

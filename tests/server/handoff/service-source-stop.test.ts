@@ -23,7 +23,7 @@ beforeEach(async () => {
     }),
     getAgent: vi.fn().mockRejectedValue(Object.assign(new Error("bridge transport unavailable"), { status: 503 })),
   }));
-  vi.doMock("@/server/supervisor/worker-availability", () => ({ isSpawnableWorkerType: () => ({ ok: true }) }));
+  vi.doMock("@/server/workers/availability", () => ({ isSpawnableWorkerType: () => ({ ok: true }) }));
   vi.doMock("@/server/quota/type-blocking", () => ({ isWorkerTypeQuotaBlocked: async () => false }));
   const database = await import("@/server/db");
   await database.dbReady;
@@ -36,7 +36,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.doUnmock("@/server/bridge-client");
-  vi.doUnmock("@/server/supervisor/worker-availability");
+  vi.doUnmock("@/server/workers/availability");
   vi.doUnmock("@/server/quota/type-blocking");
   if (originalRoot === undefined) delete process.env.OMNIHARNESS_ROOT;
   else process.env.OMNIHARNESS_ROOT = originalRoot;

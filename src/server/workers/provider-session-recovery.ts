@@ -6,7 +6,7 @@ import { emitNamedEvent } from "@/server/events/named-events";
 import { appendWorkerSessionMetadata } from "@/server/workers/session-metadata";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
-import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
+import { readRuntimeEnvFromSettings } from "@/server/settings/runtime-env";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
 import { refreshWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
 import { buildTranscriptReplayPrompt } from "./session-recovery";

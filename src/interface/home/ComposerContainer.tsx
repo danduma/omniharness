@@ -16,7 +16,6 @@ import {
 } from "./busy-message-behavior";
 import { homeUiSetters, homeUiStateManager, type HomeUiState } from "./HomeUiStateManager";
 import type {
-  ComposerMode,
   ComposerWorkerOption,
   ProjectFilesResponse,
   QueuedConversationMessageRecord,
@@ -48,7 +47,6 @@ export interface ComposerContainerProps {
   className: string;
   commandInputRef: React.RefObject<HTMLTextAreaElement | null>;
   selectedRunId: string | null;
-  selectedConversationMode: ComposerMode;
   currentProjectScope: string | null;
   projectFiles: string[];
   projectFilesIsFetched: boolean;
@@ -93,7 +91,6 @@ function ComposerContainerInner({
   className,
   commandInputRef,
   selectedRunId,
-  selectedConversationMode,
   currentProjectScope,
   projectFiles,
   projectFilesIsFetched,
@@ -170,7 +167,6 @@ function ComposerContainerInner({
     isConversationStoppable,
     hasContent: Boolean(command.trim() || attachments.length > 0),
     busyMessageAction,
-    forceSteer: selectedConversationMode === "implementation",
   });
 
   useEffect(() => {
@@ -271,7 +267,6 @@ function ComposerContainerInner({
       commandInputRef={commandInputRef}
       handleSubmit={handleSubmit}
       selectedRunId={selectedRunId}
-      selectedConversationMode={selectedConversationMode}
       showMentionPicker={showMentionPicker}
       currentProjectScope={currentProjectScope}
       workspaceProjectPath={currentProjectScope}

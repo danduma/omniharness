@@ -10,7 +10,8 @@ import {
   writeWorkerOutputEntries,
 } from "@/server/workers/output-store";
 
-const { mockAskAgent, mockGetAgent, mockCancelAgent, mockCancelAgentTurn, mockSpawnAgent } = vi.hoisted(() => ({
+const { mockAskAgent, mockGetAgent, mockCancelAgent, mockCancelAgentTurn, mockSpawnAgent, mockSteerAgentTurn } = vi.hoisted(() => ({
+  mockSteerAgentTurn: vi.fn(),
   mockAskAgent: vi.fn(),
   mockGetAgent: vi.fn(),
   mockCancelAgent: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("@/server/bridge-client", () => ({
   getAgent: mockGetAgent,
   cancelAgentTurn: mockCancelAgentTurn,
   spawnAgent: mockSpawnAgent,
+  steerAgentTurn: mockSteerAgentTurn,
 }));
 
 import {
@@ -40,7 +42,9 @@ import {
 import {
   __resetWorkerTurnChainsForTests,
   currentWorkerTurnSignal,
+  readWorkerTurnGeneration,
   runConversationMutation,
+  runWorkerTurn,
   runConversationRecoveryWorkerTurn,
   beginConversationRecoveryPreemption,
   waitForConversationBackgroundTasksForTests,
@@ -118,6 +122,8 @@ describe("queued conversation message interrupt", () => {
     });
     mockCancelAgentTurn.mockReset();
     mockCancelAgentTurn.mockResolvedValue({ ok: true, name: "worker", cancelledPermissions: 0 });
+    mockSteerAgentTurn.mockReset();
+    mockSteerAgentTurn.mockResolvedValue({ name: "worker", outcome: "promptRequired", reason: "unsupported" });
     mockCancelAgent.mockReset();
     mockCancelAgent.mockResolvedValue(undefined);
     mockSpawnAgent.mockReset();
@@ -678,5 +684,146 @@ describe("queued conversation message interrupt", () => {
     expect(getNamedEventsSince(0, { runId }).events).toContainEqual(expect.objectContaining({
       event: expect.objectContaining({ kind: "conversation.queued_delivery_recovered", messageId: queued.id }),
     }));
+  });
+
+  describe("in-turn steer (ACP _session/steering)", () => {
+    // Holds a live worker turn open, the way a direct conversation's running
+    // ask does, until the test releases it.
+    function holdLiveTurn(workerId: string) {
+      const release = deferred<void>();
+      let signal: AbortSignal | null = null;
+      const turn = runWorkerTurn(workerId, async (turnSignal) => {
+        signal = turnSignal;
+        await Promise.race([
+          release.promise,
+          new Promise<void>((resolve) => turnSignal.addEventListener("abort", () => resolve(), { once: true })),
+        ]);
+      });
+      return {
+        turn,
+        release: () => release.resolve(),
+        aborted: () => Boolean((signal as AbortSignal | null)?.aborted),
+      };
+    }
+
+    it("delivers into the running turn without cancelling it", async () => {
+      const runId = await createRun("direct");
+      const workerId = await createBusyWorker(runId);
+      const live = holdLiveTurn(workerId);
+      await delay(5);
+      const generationBefore = await readWorkerTurnGeneration(workerId);
+      mockSteerAgentTurn.mockResolvedValue({ name: workerId, outcome: "injected" });
+
+      const result = await interruptWithDraftMessage({
+        runId,
+        content: "Keep the old API exported too.",
+        targetWorkerId: workerId,
+        source: "api",
+      });
+
+      expect(result.interruption.status).toBe("injected");
+      expect(result.queuedMessage.status).toBe("delivered");
+      expect(result.message?.content).toBe("Keep the old API exported too.");
+      expect(mockSteerAgentTurn).toHaveBeenCalledTimes(1);
+      expect(mockSteerAgentTurn.mock.calls[0]?.[0]).toBe(workerId);
+      // The raw message goes in: no harness preamble, no steer notice.
+      expect(mockSteerAgentTurn.mock.calls[0]?.[1]).toBe("Keep the old API exported too.");
+      expect(mockCancelAgentTurn).not.toHaveBeenCalled();
+      expect(mockAskAgent).not.toHaveBeenCalled();
+      expect(live.aborted()).toBe(false);
+      expect(await readWorkerTurnGeneration(workerId)).toBe(generationBefore);
+
+      const stored = await db.select().from(queuedConversationMessages)
+        .where(eq(queuedConversationMessages.id, result.queuedMessage.id)).get();
+      expect(stored?.status).toBe("delivered");
+      expect(stored?.action).toBe("steer");
+      const storedMessage = await db.select().from(messages).where(eq(messages.id, result.queuedMessage.id)).get();
+      expect(storedMessage?.content).toBe("Keep the old API exported too.");
+      expect(storedMessage?.role).toBe("user");
+
+      const entries = await readWorkerOutputEntries(runId, workerId);
+      expect(entries).toContainEqual(expect.objectContaining({
+        id: result.queuedMessage.id,
+        type: "user_input",
+        text: "Keep the old API exported too.",
+      }));
+
+      const kinds = getNamedEventsSince(0, { runId }).events.map((entry) => entry.event.kind);
+      expect(kinds).toContain("queue.interrupt_injected");
+      expect(kinds).not.toContain("queue.interrupt_cancelled_turn");
+      expect(kinds).not.toContain("queue.interrupt_delivery_failed");
+
+      live.release();
+      await live.turn;
+      await waitForConversationBackgroundTasksForTests();
+      expect(mockAskAgent).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["the worker does not support steering", () => mockSteerAgentTurn.mockResolvedValue({ name: "w", outcome: "promptRequired", reason: "unsupported" })],
+      ["the adapter turn already ended", () => mockSteerAgentTurn.mockResolvedValue({ name: "w", outcome: "promptRequired", reason: "adapter_idle" })],
+      ["the adapter rejected the steer", () => mockSteerAgentTurn.mockResolvedValue({ name: "w", outcome: "failed", reason: "steering exploded" })],
+      ["the runtime request failed", () => mockSteerAgentTurn.mockRejectedValue(new Error("Steer turn failed: 500 boom"))],
+    ])("falls back to cancel-and-replace when %s", async (_label, arrange) => {
+      const runId = await createRun("direct");
+      const workerId = await createBusyWorker(runId);
+      const live = holdLiveTurn(workerId);
+      await delay(5);
+      arrange();
+
+      const result = await interruptWithDraftMessage({
+        runId,
+        content: "Switch to the failing test first.",
+        targetWorkerId: workerId,
+        source: "api",
+      });
+
+      expect(result.interruption.status).toBe("delivering");
+      expect(mockSteerAgentTurn).toHaveBeenCalledTimes(1);
+      expect(mockCancelAgentTurn).toHaveBeenCalledWith(workerId);
+      await live.turn;
+      expect(live.aborted()).toBe(true);
+      await waitForConversationBackgroundTasksForTests();
+
+      expect(mockAskAgent).toHaveBeenCalledTimes(1);
+      const prompt = mockAskAgent.mock.calls[0]?.[1] as string;
+      expect(prompt.startsWith("OmniHarness steer notice:")).toBe(true);
+      expect(prompt).toContain("Switch to the failing test first.");
+      const stored = await db.select().from(queuedConversationMessages)
+        .where(eq(queuedConversationMessages.id, result.queuedMessage.id)).get();
+      expect(stored?.status).toBe("delivered");
+      const kinds = getNamedEventsSince(0, { runId }).events.map((entry) => entry.event.kind);
+      expect(kinds).toContain("queue.interrupt_inject_fallback");
+      expect(kinds).not.toContain("queue.interrupt_injected");
+      expect(kinds).not.toContain("queue.interrupt_delivery_failed");
+    });
+
+    it("does not try an in-turn steer for supervised runs", async () => {
+      const runId = await createRun("implementation");
+      const workerId = await createBusyWorker(runId);
+      const live = holdLiveTurn(workerId);
+      await delay(5);
+      mockSteerAgentTurn.mockResolvedValue({ name: workerId, outcome: "injected" });
+
+      await interruptWithDraftMessage({ runId, content: "Change course.", targetWorkerId: workerId, source: "api" });
+      await live.turn;
+      await waitForConversationBackgroundTasksForTests();
+
+      expect(mockSteerAgentTurn).not.toHaveBeenCalled();
+      expect(mockCancelAgentTurn).toHaveBeenCalledWith(workerId);
+    });
+
+    it("does not try an in-turn steer when no worker turn is live", async () => {
+      const runId = await createRun("direct");
+      const workerId = await createBusyWorker(runId);
+      mockSteerAgentTurn.mockResolvedValue({ name: workerId, outcome: "injected" });
+
+      const result = await interruptWithDraftMessage({ runId, content: "Hello again.", targetWorkerId: workerId, source: "api" });
+      await waitForConversationBackgroundTasksForTests();
+
+      expect(result.interruption.status).toBe("delivering");
+      expect(mockSteerAgentTurn).not.toHaveBeenCalled();
+      expect(mockAskAgent).toHaveBeenCalledTimes(1);
+    });
   });
 });

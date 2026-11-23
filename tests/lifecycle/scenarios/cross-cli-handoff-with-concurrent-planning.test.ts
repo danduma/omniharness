@@ -74,7 +74,7 @@ vi.mock("@/server/bridge-client", () => ({
   BRIDGE_URL: "http://localhost:0",
 }));
 
-vi.mock("@/server/supervisor/worker-availability", () => ({ isSpawnableWorkerType: () => ({ ok: true }) }));
+vi.mock("@/server/workers/availability", () => ({ isSpawnableWorkerType: () => ({ ok: true }) }));
 vi.mock("@/server/quota/type-blocking", () => ({ isWorkerTypeQuotaBlocked: async () => false, clearResolvedQuotaIncidents: async () => undefined }));
 
 let server: LifecycleServer;

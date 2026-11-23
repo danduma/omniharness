@@ -5,11 +5,9 @@ import { db } from "@/server/db";
 import { messages as dbMessages, plans, runs, settings, workers } from "@/server/db/schema";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { createAdHocPlan } from "@/server/runs/ad-hoc-plan";
-import { startSupervisorRun } from "@/server/supervisor/start";
 import { askAgent, cancelAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
-import { resolveOmniRequest, type ConversationMode } from "./modes";
-import { normalizeWorkerType, parseAllowedWorkerTypes } from "@/server/supervisor/worker-types";
-import { buildPlannerSystemPrompt } from "@/server/prompts";
+import { normalizeConversationMode, type ConversationMode } from "./modes";
+import { normalizeWorkerType, parseAllowedWorkerTypes } from "@/shared/worker-types";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { userFacingProviderSessionErrorMessage } from "@/server/workers/session-recovery";
 import { createRunId, RUN_ID_PATTERN } from "@/server/runs/ids";
@@ -20,7 +18,6 @@ import { writeWorkerOutputEntries } from "@/server/workers/output-store";
 import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { emitNamedEvent } from "@/server/events/named-events";
-import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { getAppDataPath, getAppRoot } from "@/server/app-root";
 import { appendAttachmentContext, normalizeChatAttachments, resolveImageAttachments, serializeChatAttachments, type ChatAttachment, type ResolvedImageAttachment } from "@/lib/chat-attachments";
 import {
@@ -40,7 +37,7 @@ import {
   trackConversationBackgroundTask,
 } from "./worker-turn-gate";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
-import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
+import { readRuntimeEnvFromSettings } from "@/server/settings/runtime-env";
 import type { GitWorkspaceRunSnapshot, GitWorkspaceSnapshot, GitWorkspaceTarget, GitWorkspaceWarning } from "@/lib/git-workspace";
 import { createBranchWorktree, validateWorkspaceTarget } from "@/server/git/workspaces";
 import { setProjectGitWorkspaceDefaultTarget } from "@/server/projects/config";
@@ -68,16 +65,8 @@ import { resolveCredentialAuthFailureMessage } from "./credential-auth-failure";
 import { normalizeReasoningEffort } from "@/shared/reasoning-effort";
 
 
-function buildInitialWorkerPrompt(mode: ConversationMode, command: string, projectRoot: string) {
-  if (mode === "planning") {
-    return `${buildPlannerSystemPrompt(projectRoot)}\n\nUser request:\n${command}`;
-  }
-
-  if (mode === "direct" || mode === "commit") {
-    return buildDirectWorkerPrompt(command);
-  }
-
-  return command;
+function buildInitialWorkerPrompt(command: string) {
+  return buildDirectWorkerPrompt(command);
 }
 
 async function importExternalClaudeHistory(args: {
@@ -249,7 +238,7 @@ async function handleInitialWorkerQuotaError(args: {
 async function persistInitialWorkerSpawnFailure(args: {
   runId: string;
   workerId: string;
-  mode: "direct" | "planning" | "commit";
+  mode: ConversationMode;
   error: unknown;
 }) {
   const failureMessage = formatErrorMessage(args.error);
@@ -265,16 +254,6 @@ async function persistInitialWorkerSpawnFailure(args: {
     outputLog: failureMessage,
     updatedAt: now,
   }).where(eq(workers.id, args.workerId));
-
-  if (args.mode === "planning") {
-    const run = await db.select({ planId: runs.planId }).from(runs).where(eq(runs.id, args.runId)).get();
-    if (run?.planId) {
-      await db.update(plans).set({
-        status: "failed",
-        updatedAt: now,
-      }).where(eq(plans.id, run.planId));
-    }
-  }
 
   const spawnFailureCode = hasVerifiedDeadCredentialMarker(surfacedFailureMessage)
     ? "account.login_required"
@@ -328,7 +307,7 @@ function getDefaultConversationTitle(mode: ConversationMode, command: string) {
 }
 
 function shouldCaptureCommitWorkflowForMode(mode: ConversationMode) {
-  return mode === "implementation" || mode === "direct";
+  return mode === "direct";
 }
 
 async function readSettingValues() {
@@ -478,7 +457,7 @@ async function runInitialWorkerTurn(args: {
   workerType: string;
   cwd: string;
   agent: AgentRecord;
-  mode: "direct" | "planning" | "commit";
+  mode: ConversationMode;
   command: string;
   /** Sent verbatim instead of the mode's wrapped prompt, e.g. an opening `/goal`. */
   rawPrompt?: string;
@@ -493,15 +472,9 @@ async function runInitialWorkerTurn(args: {
       bridgeSessionMode: args.agent.sessionMode ?? null,
       updatedAt: new Date(),
     }).where(eq(workers.id, args.workerId));
-    if (args.mode === "planning") {
-      await db.update(runs).set({
-        status: "working",
-        updatedAt: new Date(),
-      }).where(eq(runs.id, args.runId));
-    }
     notifyEventStreamSubscribers();
 
-    const initialPrompt = args.rawPrompt ?? buildInitialWorkerPrompt(args.mode, args.command, args.cwd);
+    const initialPrompt = args.rawPrompt ?? buildInitialWorkerPrompt(args.command);
     const onAccepted = async () => {
       await appendLifecycleEntry({
         runId: args.runId,
@@ -597,18 +570,7 @@ async function runInitialWorkerTurn(args: {
     // bridge entries written by persistWorkerSnapshot above. The
     // legacy role:"worker" messages row is no longer written.
 
-    if (args.mode === "planning") {
-      const latestRun = await db.select().from(runs).where(eq(runs.id, args.runId)).get();
-      const latestWorker = await db.select().from(workers).where(eq(workers.id, args.workerId)).get();
-      if (latestRun) {
-        await refreshPlanningArtifactsForRun({
-          run: latestRun,
-          worker: latestWorker,
-          snapshot,
-          responseText: response.response,
-        });
-      }
-    } else {
+    {
       await updateDirectRunStatusFromWorkerOutput({
         runId: args.runId,
         workerId: args.workerId,
@@ -645,7 +607,7 @@ async function runInitialWorkerTurn(args: {
         updatedAt: now,
       }).where(eq(workers.id, args.workerId));
       await db.update(runs).set({
-        status: args.mode === "planning" ? "working" : "running",
+        status: "running",
         failedAt: null,
         lastError: null,
         updatedAt: now,
@@ -855,11 +817,7 @@ export async function createConversation(args: {
   const presetCommandId = args.presetCommandId?.trim() || null;
   const presetCommand = presetCommandId ? await resolvePresetCommand(presetCommandId) : null;
   const command = presetCommand ? presetCommand.prompt.trim() : args.command.trim();
-  // Resolve the client request (which may be the "omni" alias) into the stored
-  // run mode plus phase. `usePlanner` is true whenever the opening turn should
-  // run the interactive planner worker rather than the supervisor: legacy
-  // planning runs, or an Omni run that still needs a plan.
-  const resolvedRequest = resolveOmniRequest(presetCommand ? "commit" : args.mode, command);
+  const requestedMode = normalizeConversationMode(presetCommand ? "commit" : args.mode);
   const isExternalClaudeResume = Boolean(args.externalClaudeSessionId?.trim());
   const externalSessionId = args.externalClaudeSessionId?.trim() || null;
   const requestedExternalWorkerType = args.preferredWorkerType?.trim()
@@ -868,9 +826,7 @@ export async function createConversation(args: {
   const externalClaudeSession = externalSessionId && requestedExternalWorkerType === "claude"
     ? await loadExternalClaudeSession(externalSessionId)
     : null;
-  const mode = isExternalClaudeResume ? "direct" : resolvedRequest.runMode;
-  const phase = isExternalClaudeResume ? null : resolvedRequest.phase;
-  const usePlanner = !isExternalClaudeResume && (phase === "planning" || mode === "planning");
+  const mode: ConversationMode = isExternalClaudeResume ? "direct" : requestedMode;
   const effectivePreferredWorkerType = presetCommand?.workerType ?? args.preferredWorkerType;
   const effectivePreferredWorkerModel = presetCommand?.model ?? args.preferredWorkerModel;
   const effectivePreferredWorkerEffort = presetCommand?.effort ?? args.preferredWorkerEffort;
@@ -920,9 +876,9 @@ export async function createConversation(args: {
         ? "claude"
         : null;
     // A placeholder until the agent reports the title it generated for itself
-    // (see `adoptAgentGeneratedTitle`). OmniHarness used to spend a supervisor
-    // LLM call re-summarising this same text, which is both worse than the
-    // agent's own title and a second provider to keep working.
+    // (see `adoptAgentGeneratedTitle`). When the CLI never names the session,
+    // as Codex usually doesn't, the harness title model replaces it after the
+    // first reply.
     const defaultTitle = externalClaudeSession?.title?.trim()
       || presetCommand?.name.trim()
       || getDefaultConversationTitle(mode, command);
@@ -943,10 +899,7 @@ export async function createConversation(args: {
     }
 
     const planPath = createAdHocPlan(command, attachments);
-    // During the Omni planning phase no implementation has begun, so defer the
-    // git baseline + commit-workflow capture until the run transitions into
-    // implementation (see startImplementationPhase).
-    const capturesImplementationWorkflow = shouldCaptureCommitWorkflowForMode(mode) && !usePlanner;
+    const capturesImplementationWorkflow = shouldCaptureCommitWorkflowForMode(mode);
     const commitWorkflowSettings = capturesImplementationWorkflow
       ? await readCommitWorkflowSettings()
       : { autoCommitMilestones: false, pushOnCommit: false };
@@ -963,7 +916,7 @@ export async function createConversation(args: {
     await db.insert(plans).values({
       id: planId,
       path: planPath,
-      status: usePlanner ? "starting" : "running",
+      status: "running",
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -973,7 +926,6 @@ export async function createConversation(args: {
       id: runId,
       planId,
       mode,
-      phase,
       projectPath,
       title: defaultTitle,
       preferredWorkerType,
@@ -991,7 +943,7 @@ export async function createConversation(args: {
         : args.gitBaselineJsonOverride,
       gitWorkspaceJson: resolvedWorkspace.runSnapshot ? JSON.stringify(resolvedWorkspace.runSnapshot) : null,
       completionCommitSha: null,
-      status: usePlanner ? "starting" : "running",
+      status: "running",
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -1039,11 +991,7 @@ export async function createConversation(args: {
       createdAt: initialMessageCreatedAt,
     };
 
-    if (phase === "implementing") {
-      await db.insert(dbMessages).values(initialMessage);
-      notifyEventStreamSubscribers();
-      startSupervisorRun(runId);
-    } else {
+    {
       const { workerId, workerNumber } = await allocateWorkerIdentity(runId);
       const cwd = projectPath || process.cwd();
       const workerType = preferredWorkerType || allowedWorkerTypes[0] || "codex";
@@ -1118,108 +1066,28 @@ export async function createConversation(args: {
 
       const response = await buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });
 
-      if (!usePlanner) {
-        const initialDirectTurn = startDirectWorkerConversation({
-          runId,
-          workerId,
-          workerType,
-          cwd,
-          mode: workerMode,
-          preferredWorkerModel: effectivePreferredWorkerModel,
-          preferredWorkerEffort: effectivePreferredWorkerEffort,
-          preferredWorkerAccountId: workerAccountId,
-          command: workerPrompt,
-          imageAttachments: workerImageAttachments,
-          externalClaudeSessionId: args.externalClaudeSessionId,
-          goalObjective: mode === "direct" && !args.externalClaudeSessionId
-            ? readInitialGoalObjective(command, attachments.length > 0)
-            : null,
-        });
-        trackConversationBackgroundTask(initialDirectTurn, { runId }).catch((error) => {
-          console.error("Initial direct conversation worker failed:", error);
-        });
-      } else {
-        // Planning mode: spawn the agent off the critical path so the
-        // response returns instantly, mirroring direct mode. Spawn
-        // failures surface via `error.surfaced` instead of the HTTP
-        // response — the worker row already exists in `starting` and
-        // `worker.spawned` has already fired, so observers can render.
-        const initialPlanningTurn = (async () => {
-          let agent;
-          try {
-            const { env: envParams } = await readRuntimeEnvFromSettings();
-            agent = await spawnAgent({
-              type: workerType,
-              cwd,
-              name: workerId,
-              ...(workerMode ? { mode: workerMode } : {}),
-              env: envParams,
-              ...(workerAccountId ? { accountId: workerAccountId } : {}),
-              model: effectivePreferredWorkerModel?.trim() || undefined,
-              effort: effectivePreferredWorkerEffort?.trim().toLowerCase() || undefined,
-            });
-            if (await shouldCancelInitialWorkerStartup(runId, workerId)) {
-              try {
-                await cancelAgent(workerId);
-                emitNamedEvent({ kind: "worker.delete_race_cancelled", runId, workerId });
-              } catch (error) {
-                emitNamedEvent({
-                  kind: "error.surfaced",
-                  code: "conversation.delete.worker_cancel_failed",
-                  message: `A worker finished starting after its conversation was deleted and could not be stopped: ${formatErrorMessage(error)}`,
-                  surface: "toast",
-                  runId,
-                  workerId,
-                  cause: error instanceof Error ? { name: error.name, message: error.message } : undefined,
-                });
-              }
-              return;
-            }
-          } catch (error) {
-            if (await handleInitialWorkerQuotaError({
-              runId,
-              workerId,
-              workerType,
-              error,
-            })) {
-              return;
-            }
-
-            await persistInitialWorkerSpawnFailure({
-              runId,
-              workerId,
-              mode: "planning",
-              error,
-            });
-            console.error(`Spawn for planning conversation failed:`, error);
-            return;
-          }
-
-          try {
-            await runWorkerTurn(workerId, () => runInitialWorkerTurn({
-              runId,
-              workerId,
-              workerType,
-              cwd,
-              agent,
-              mode: "planning",
-              command: workerPrompt,
-              imageAttachments: workerImageAttachments,
-            }));
-          } catch (error) {
-            if (isWorkerTurnAbortedError(error) || isAgentBusyError(error)) {
-              return;
-            }
-            console.error(`Initial planning conversation turn failed:`, error);
-          }
-        })();
-        void trackConversationBackgroundTask(initialPlanningTurn, { runId });
-      }
+      const initialDirectTurn = startDirectWorkerConversation({
+        runId,
+        workerId,
+        workerType,
+        cwd,
+        mode: workerMode,
+        preferredWorkerModel: effectivePreferredWorkerModel,
+        preferredWorkerEffort: effectivePreferredWorkerEffort,
+        preferredWorkerAccountId: workerAccountId,
+        command: workerPrompt,
+        imageAttachments: workerImageAttachments,
+        externalClaudeSessionId: args.externalClaudeSessionId,
+        goalObjective: mode === "direct" && !args.externalClaudeSessionId
+          ? readInitialGoalObjective(command, attachments.length > 0)
+          : null,
+      });
+      trackConversationBackgroundTask(initialDirectTurn, { runId }).catch((error) => {
+        console.error("Initial direct conversation worker failed:", error);
+      });
 
       return response;
     }
-
-    return buildCreatedConversationResponse({ planId, runId, messageId: initialMessageId, mode });
   } catch (error) {
     if (createdWorktree && !runCreated) {
       throw pendingOrphanWorktreeError({

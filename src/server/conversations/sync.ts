@@ -2,7 +2,6 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { withSqliteBusyRetry } from "@/server/db/retry";
 import { messages, queuedConversationMessages, recoveryIncidents, runs, workers } from "@/server/db/schema";
-import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { refreshDerivedGoalPlan } from "@/server/runs/goal-plan-derivation";
 import { retryDeferredGoalControl } from "@/server/runs/goal-control-dispatch";
 import { listAgents, normalizeAgentRecord, type AgentRecord } from "@/server/bridge-client";
@@ -13,9 +12,7 @@ import { persistRunFailure } from "@/server/runs/failures";
 import { providerQuotaNoticeText } from "@/server/quota/reset-parser";
 import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import { isTerminalRunStatus } from "@/server/runs/status";
-import { isLongWorkerCompletionText } from "@/server/supervisor/worker-completion";
-import { startSupervisorRun } from "@/server/supervisor/start";
-import { isRecoverableConnectionSupervisorError, isTransientSupervisorError } from "@/server/supervisor/retry";
+import { isLongWorkerCompletionText } from "@/server/workers/completion";
 import {
   readWorkerOutputEntries,
   withWorkerOutputWriteFence,
@@ -46,10 +43,6 @@ import {
 
 const EMPTY_IDLE_WORKER_OUTPUT_DIAGNOSTIC = "Worker is idle with no recorded output.";
 const MISSING_IDLE_WORKER_OUTPUT_DIAGNOSTIC = "Worker is idle with no recorded output, and the bridge no longer has a live session for it.";
-
-function isDirectRunMode(mode: string | null | undefined) {
-  return mode === "direct" || mode === "commit";
-}
 
 /**
  * Bridge snapshots only know the provider's raw error. The run record may know
@@ -304,19 +297,19 @@ function resolveSyncedRunState(run: typeof runs.$inferSelect, agent: ReturnType<
   // acceptance, or between commentary and the next tool. The owned request
   // remains authoritative until it settles; structured input requests can
   // still pause it, but a question in streaming prose cannot.
-  if (isDirectRunMode(run.mode) && hasLiveWorkerTurn(agent.name) && !directWorkerOutputHasPendingHumanInput(agent)) {
+  if (hasLiveWorkerTurn(agent.name) && !directWorkerOutputHasPendingHumanInput(agent)) {
     return "running";
   }
 
-  if (isDirectRunMode(run.mode) && resolveDirectRunStatusFromWorkerOutput({ ...agent, workerStatus: agent.state }) === "awaiting_user") {
+  if (resolveDirectRunStatusFromWorkerOutput({ ...agent, workerStatus: agent.state }) === "awaiting_user") {
     return "awaiting_user";
   }
 
-  if (isDirectRunMode(run.mode) && directLiveAgentHasCompletedTurn(agent)) {
+  if (directLiveAgentHasCompletedTurn(agent)) {
     return "done";
   }
 
-  if (isDirectRunMode(run.mode) && agent.state === "idle" && hasAgentOutput(agent)) {
+  if (agent.state === "idle" && hasAgentOutput(agent)) {
     return "done";
   }
 
@@ -341,7 +334,7 @@ async function resolvePersistedRunState(run: typeof runs.$inferSelect, worker: t
     return "needs_recovery";
   }
 
-  if (isDirectRunMode(run.mode) && resolveDirectRunStatusFromWorkerOutput({ ...worker, workerStatus: worker.status }) === "awaiting_user") {
+  if (resolveDirectRunStatusFromWorkerOutput({ ...worker, workerStatus: worker.status }) === "awaiting_user") {
     return "awaiting_user";
   }
 
@@ -378,22 +371,6 @@ function isAgentBusyRunFailure(run: typeof runs.$inferSelect) {
   return run.status === "failed" && /\bagent is busy\b/i.test(run.lastError ?? "");
 }
 
-function isRecoverableImplementationTransientFailure(run: typeof runs.$inferSelect) {
-  const lastError = run.lastError ?? "";
-  return run.mode === "implementation"
-    && run.status === "failed"
-    && Boolean(lastError.trim())
-    && isTransientSupervisorError(new Error(lastError));
-}
-
-function isRecoverableImplementationConnectionFailure(run: typeof runs.$inferSelect) {
-  const lastError = run.lastError ?? "";
-  return run.mode === "implementation"
-    && run.status === "failed"
-    && Boolean(lastError.trim())
-    && isRecoverableConnectionSupervisorError(new Error(lastError));
-}
-
 function isCleanLiveAgent(agent: ReturnType<typeof normalizeAgentRecord>) {
   return agent.state !== "error" && !agent.lastError?.trim();
 }
@@ -412,6 +389,24 @@ function isActiveLiveAgent(agent: ReturnType<typeof normalizeAgentRecord>) {
 /** Stricter than `isActiveLiveAgent`: leftover text on an errored agent is not work. */
 function isCleanWorkingLiveAgent(agent: ReturnType<typeof normalizeAgentRecord>) {
   return isCleanLiveAgent(agent) && ["starting", "working", "stuck"].includes(normalizedStatus(agent.state));
+}
+
+/**
+ * A turn the agent ran on its own (Claude continuing after a background task
+ * finished, which a steer during a foreground tool also causes) can start and
+ * end between two sweeps, so the sweep never sees the agent working. Its
+ * finished text still shows: the runtime's `lastText` moved on while the
+ * persisted worker kept the previous turn's. One sync pass persists the
+ * snapshot, which brings the two back in line.
+ */
+function hasUnpersistedFinishedProviderTurn(
+  agent: ReturnType<typeof normalizeAgentRecord>,
+  worker: { id: string; lastText: string },
+) {
+  if (hasLiveWorkerTurn(worker.id)) return false;
+  if (!isCleanLiveAgent(agent) || normalizedStatus(agent.state) !== "idle") return false;
+  const finishedText = agent.lastText.trim();
+  return Boolean(finishedText) && finishedText !== worker.lastText.trim();
 }
 
 function isWorkerQueueDrainableStatus(status: string) {
@@ -601,7 +596,7 @@ function isIdleDirectWorkerWithStaleCurrentText(worker: typeof workers.$inferSel
 }
 
 async function clearStaleDirectCurrentText(run: typeof runs.$inferSelect, worker: typeof workers.$inferSelect) {
-  if (!isDirectRunMode(run.mode) || !isTerminalRunStatus(run.status) || !isIdleDirectWorkerWithStaleCurrentText(worker)) {
+  if (!isTerminalRunStatus(run.status) || !isIdleDirectWorkerWithStaleCurrentText(worker)) {
     return false;
   }
 
@@ -707,7 +702,6 @@ export function syncConversationSessionsFromBridge(): Promise<void> {
 
 type SyncConversationSessionsOptions = {
   selectedRunId?: string | null;
-  refreshPlanningArtifacts?: boolean;
 };
 
 let liveSyncQueue: Promise<void> = Promise.resolve();
@@ -732,7 +726,6 @@ async function syncConversationSessionsUnlocked(
 ) {
   const agents = rawAgents.map((agent) => normalizeAgentRecord(agent));
   const selectedRunId = options.selectedRunId?.trim() || null;
-  const refreshPlanningArtifacts = options.refreshPlanningArtifacts !== false;
   const allRuns = selectedRunId
     ? await db.select().from(runs).where(eq(runs.id, selectedRunId))
     : await db.select().from(runs);
@@ -809,102 +802,6 @@ async function syncConversationSessionsUnlocked(
     }
 
     const staleBusyFailure = isAgentBusyRunFailure(run);
-    const staleImplementationTransientFailure = isRecoverableImplementationTransientFailure(run);
-    const staleImplementationConnectionFailure = isRecoverableImplementationConnectionFailure(run);
-    if (run.mode === "implementation") {
-      const implementationWorkers = allWorkers.filter((candidate) => candidate.runId === run.id);
-      let syncedActiveLiveWorker = false;
-
-      for (const implementationWorker of implementationWorkers) {
-        const implementationAgent = agents.find((candidate) => candidate.name === implementationWorker.id);
-        const cancelledWorkerHasMatchingLiveSession = Boolean(
-          implementationAgent
-          && implementationWorker.bridgeSessionId
-          && implementationWorker.bridgeSessionMode
-          && implementationAgent.sessionId === implementationWorker.bridgeSessionId
-          && implementationAgent.sessionMode === implementationWorker.bridgeSessionMode,
-        );
-        if (isCancelledWorkerStatus(implementationWorker.status)
-          && !cancelledWorkerHasMatchingLiveSession) {
-          continue;
-        }
-        if (!implementationAgent || !isCleanLiveAgent(implementationAgent) || !isActiveLiveAgent(implementationAgent)) {
-          continue;
-        }
-
-        progress.at("persist_worker_output", run.id, implementationWorker.id);
-        await writeWorkerOutputEntries(run.id, implementationWorker.id, implementationAgent.outputEntries);
-        await withSqliteBusyRetry(() => db.update(workers).set({
-          status: implementationAgent.state,
-          cwd: implementationAgent.cwd || implementationWorker.cwd,
-          currentText: implementationAgent.currentText,
-          lastText: implementationAgent.lastText,
-          bridgeSessionId: implementationAgent.sessionId ?? implementationWorker.bridgeSessionId,
-          bridgeSessionMode: implementationAgent.sessionMode ?? implementationWorker.bridgeSessionMode,
-          updatedAt: new Date(),
-        }).where(eq(workers.id, implementationWorker.id)));
-        syncedActiveLiveWorker = true;
-      }
-
-      if (syncedActiveLiveWorker) {
-        if (run.status !== "running" || run.failedAt || run.lastError) {
-          await withSqliteBusyRetry(() => db.update(runs).set({
-            status: "running",
-            failedAt: null,
-            lastError: null,
-            updatedAt: new Date(),
-          }).where(eq(runs.id, run.id)));
-          await clearMatchingRunFailureMessage(run);
-          startSupervisorRun(run.id);
-        }
-        continue;
-      }
-
-      if (!staleImplementationTransientFailure) {
-        continue;
-      }
-
-      const implementationWorker = implementationWorkers[0];
-      const implementationAgent = implementationWorker
-        ? agents.find((candidate) => candidate.name === implementationWorker.id)
-        : null;
-      if (!implementationWorker || !implementationAgent || !isCleanLiveAgent(implementationAgent)) {
-        if (staleImplementationConnectionFailure) {
-          const resumableWorker = implementationWorkers.find((worker) => worker.bridgeSessionId?.trim());
-          if (resumableWorker) {
-            await withSqliteBusyRetry(() => db.update(runs).set({
-              status: "running",
-              failedAt: null,
-              lastError: null,
-              updatedAt: new Date(),
-            }).where(eq(runs.id, run.id)));
-            await clearMatchingRunFailureMessage(run);
-            startSupervisorRun(run.id);
-          }
-        }
-        continue;
-      }
-
-      progress.at("persist_worker_output", run.id, implementationWorker.id);
-      await writeWorkerOutputEntries(run.id, implementationWorker.id, implementationAgent.outputEntries);
-      await withSqliteBusyRetry(() => db.update(workers).set({
-        status: implementationAgent.state,
-        cwd: implementationAgent.cwd || implementationWorker.cwd,
-        currentText: implementationAgent.currentText,
-        lastText: implementationAgent.lastText,
-        updatedAt: new Date(),
-      }).where(eq(workers.id, implementationWorker.id)));
-      await withSqliteBusyRetry(() => db.update(runs).set({
-        status: "running",
-        failedAt: null,
-        lastError: null,
-        updatedAt: new Date(),
-      }).where(eq(runs.id, run.id)));
-      await clearMatchingRunFailureMessage(run);
-      startSupervisorRun(run.id);
-      continue;
-    }
-
     const worker = selectConversationWorker(run.id, allWorkers);
     if (!worker) {
       continue;
@@ -934,8 +831,7 @@ async function syncConversationSessionsUnlocked(
         || (normalizedStatus(worker.status) === "working" && worker.lastText === agent.lastText)
       ),
     );
-    const terminalQuotaNotice = isDirectRunMode(run.mode)
-      && agent
+    const terminalQuotaNotice = agent
       && ["idle", "error", "stopped"].includes(normalizedStatus(agent.state))
       && !isCancelledWorkerStatus(worker.status)
       && !staleResumedQuotaNotice
@@ -956,11 +852,11 @@ async function syncConversationSessionsUnlocked(
         prev: "done", next: "running", reason: "provider_background_quota_notice" });
     }
     const terminalDirectRunStillStreaming = Boolean(
-      isDirectRunMode(run.mode)
-      && agent
+      agent
       && (
         (options.selectedRunId === run.id && isActiveLiveAgent(agent))
         || (isReopenableSettledRunStatus(run.status) && isCleanWorkingLiveAgent(agent))
+        || (normalizedStatus(run.status) === "done" && hasUnpersistedFinishedProviderTurn(agent, worker))
       ),
     );
     if (isTerminalRunStatus(run.status) && !staleBusyFailure && !terminalDirectRunStillStreaming
@@ -991,8 +887,7 @@ async function syncConversationSessionsUnlocked(
     }
 
     if (
-      isDirectRunMode(run.mode)
-      && worker.status.trim().toLowerCase().split(":")[0]?.trim() === "idle"
+      worker.status.trim().toLowerCase().split(":")[0]?.trim() === "idle"
       && isIdleLiveAgentWithoutOutput(agent)
     ) {
       await withWorkerOutputWriteFence(run.id, worker.id, async () => {
@@ -1042,8 +937,8 @@ async function syncConversationSessionsUnlocked(
       continue;
     }
     const nextRunState = resolveSyncedRunState(run, agent);
-    const turnInFlight = isDirectRunMode(run.mode) && hasLiveWorkerTurn(worker.id);
-    const quiescedDirectWorker = !turnInFlight && isDirectRunMode(run.mode) && directLiveAgentHasCompletedTurn(agent);
+    const turnInFlight = hasLiveWorkerTurn(worker.id);
+    const quiescedDirectWorker = !turnInFlight && directLiveAgentHasCompletedTurn(agent);
     const nextWorkerStatus = quiescedDirectWorker ? "idle" : turnInFlight && agent.state === "idle" ? "working" : agent.state;
     const nextWorkerCwd = agent.cwd || worker.cwd;
     const nextWorkerCurrentText = quiescedDirectWorker ? "" : agent.currentText;
@@ -1112,29 +1007,7 @@ async function syncConversationSessionsUnlocked(
       });
     }
 
-    if (run.mode === "planning") {
-      if (refreshPlanningArtifacts) {
-        progress.at("refresh_planning_artifacts", run.id, worker.id);
-        const result = await refreshPlanningArtifactsForRun({
-          run,
-          worker,
-          snapshot: agent,
-          status: nextRunState === "running" ? "working" : undefined,
-        });
-        if (staleBusyFailure && result.status !== "failed") {
-          await clearMatchingRunFailureMessage(run);
-        }
-      }
-      await drainQueuedWorkerMessagesWithObservation({
-        runId: run.id,
-        workerId: worker.id,
-        workerStatus: agent.state,
-        source: "live_planning_sync",
-      });
-      continue;
-    }
-
-    if (isDirectRunMode(run.mode) && (nextRunState === "awaiting_user" || nextRunState === "done")) {
+    if ((nextRunState === "awaiting_user" || nextRunState === "done")) {
       progress.at("update_direct_run_status", run.id, worker.id);
       await updateDirectRunStatusFromWorkerOutput({
         runId: run.id,
@@ -1192,7 +1065,7 @@ async function syncConversationSessionsUnlocked(
 
   for (const run of allRuns) {
     const staleBusyFailure = isAgentBusyRunFailure(run);
-    if (quotaOwnedRunIds.has(run.id) || run.mode === "implementation" || (isTerminalRunStatus(run.status) && !staleBusyFailure)) {
+    if (quotaOwnedRunIds.has(run.id) || (isTerminalRunStatus(run.status) && !staleBusyFailure)) {
       continue;
     }
 
@@ -1244,17 +1117,6 @@ async function syncConversationSessionsUnlocked(
 
     progress.at("resolve_persisted_state", run.id, worker.id);
     const nextRunState = await resolvePersistedRunState(run, worker);
-    if (run.mode === "planning") {
-      if (refreshPlanningArtifacts) {
-        await refreshPlanningArtifactsForRun({
-          run,
-          worker,
-          status: nextRunState === "running" ? "working" : undefined,
-        });
-      }
-      continue;
-    }
-
     if (nextRunState === run.status) {
       await drainQueuedWorkerMessagesWithObservation({
         runId: run.id,
@@ -1265,7 +1127,7 @@ async function syncConversationSessionsUnlocked(
       continue;
     }
 
-    if (isDirectRunMode(run.mode) && (nextRunState === "awaiting_user" || nextRunState === "done")) {
+    if ((nextRunState === "awaiting_user" || nextRunState === "done")) {
       await updateDirectRunStatusFromWorkerOutput({
         runId: run.id,
         workerId: worker.id,

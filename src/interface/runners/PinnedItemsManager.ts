@@ -39,15 +39,20 @@ type PinnedEntryBase = {
 
 export type PinnedProjectEntry = PinnedEntryBase & {
   path: string;
-  /** Built from that server's own live snapshot. Null for the active server. */
+  /**
+   * Built from that server's own live snapshot. For the active server the
+   * sidebar prefers its fresher local state and falls back to this while that
+   * state is still loading after a server switch.
+   */
   group: ConversationGroup | null;
 };
 
 export type PinnedSessionEntry = PinnedEntryBase & {
   runId: string;
   /**
-   * From that server's own live snapshot. Null for the active server, and for
-   * a run the server no longer reports.
+   * From that server's own live snapshot; null for a run the server no longer
+   * reports. For the active server the sidebar prefers its local state and
+   * falls back to this while that state is still loading after a switch.
    */
   run: ConversationGroupRun | null;
 };
@@ -316,7 +321,7 @@ export class PinnedItemsManager extends StateManager<PinnedItemsSnapshot> {
       const sessionPins = this.readPreferences(connection.profileId, readPinnedSessions);
       if (projectPins.length === 0 && sessionPins.length === 0) continue;
       const active = connection.profileId === activeRunnerId;
-      const catalog = active ? null : this.remoteCatalogFor(connection);
+      const catalog = this.remoteCatalogFor(connection);
       const base = {
         profileId: connection.profileId,
         runnerName: connection.runnerName,
@@ -332,7 +337,7 @@ export class PinnedItemsManager extends StateManager<PinnedItemsSnapshot> {
           key: `${connection.profileId}\u0000project\u0000${pin.path}`,
           pinnedAt: pin.pinnedAt,
           path: pin.path,
-          group: catalog ? this.remoteGroupFor(catalog, pin.path) : null,
+          group: this.remoteGroupFor(catalog, pin.path),
         });
       }
       for (const pin of sessionPins) {
@@ -341,7 +346,7 @@ export class PinnedItemsManager extends StateManager<PinnedItemsSnapshot> {
           key: `${connection.profileId}\u0000session\u0000${pin.runId}`,
           pinnedAt: pin.pinnedAt,
           runId: pin.runId,
-          run: catalog?.runsById.get(pin.runId) ?? null,
+          run: catalog.runsById.get(pin.runId) ?? null,
         });
       }
     }

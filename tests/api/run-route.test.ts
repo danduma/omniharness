@@ -44,9 +44,6 @@ const {
   mockCancelAgentTerminalProcess,
   mockGetAgent,
   mockSpawnAgent,
-  mockStartSupervisorRun,
-  mockStopRunObserver,
-  mockCancelSupervisorWake,
   mockCreateBranchWorktree,
 } = vi.hoisted(() => ({
   mockAskAgent: vi.fn().mockResolvedValue({
@@ -88,9 +85,6 @@ const {
     stderrBuffer: [],
     stopReason: null,
   }),
-  mockStartSupervisorRun: vi.fn(),
-  mockStopRunObserver: vi.fn(),
-  mockCancelSupervisorWake: vi.fn(),
   mockCreateBranchWorktree: vi.fn(),
 }));
 
@@ -100,18 +94,6 @@ vi.mock("@/server/bridge-client", () => ({
   cancelAgentTerminalProcess: mockCancelAgentTerminalProcess,
   getAgent: mockGetAgent,
   spawnAgent: mockSpawnAgent,
-}));
-
-vi.mock("@/server/supervisor/start", () => ({
-  startSupervisorRun: mockStartSupervisorRun,
-}));
-
-vi.mock("@/server/supervisor/observer", () => ({
-  stopRunObserver: mockStopRunObserver,
-}));
-
-vi.mock("@/server/supervisor/wake", () => ({
-  cancelSupervisorWake: mockCancelSupervisorWake,
 }));
 
 vi.mock("@/server/git/workspaces", () => ({
@@ -441,157 +423,9 @@ describe("POST /api/runs/[id]", () => {
     expect(updatedRun?.archivedAt).toBeNull();
   });
 
-  it("stops the supervisor run and cancels active workers", async () => {
-    mockCancelAgent.mockClear();
-    mockStopRunObserver.mockClear();
-    mockCancelSupervisorWake.mockClear();
-    const planId = randomUUID();
-    const runId = randomUUID();
-    const activeWorkerId = randomUUID();
-    const finishedWorkerId = randomUUID();
-    const now = new Date();
-
-    await db.insert(plans).values({
-      id: planId,
-      path: "vibes/ad-hoc/stop-plan.md",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      mode: "implementation",
-      title: "Stop supervisor",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await db.insert(workers).values([
-      {
-        id: activeWorkerId,
-        runId,
-        type: "codex",
-        status: "working",
-        cwd: process.cwd(),
-        outputLog: "",
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        id: finishedWorkerId,
-        runId,
-        type: "codex",
-        status: "cancelled",
-        cwd: process.cwd(),
-        outputLog: "",
-        createdAt: now,
-        updatedAt: now,
-      },
-    ]);
-    await db.insert(settings).values({
-      key: `SUPERVISOR_WAKE_LEASE:${runId}`,
-      value: JSON.stringify({ leaseId: randomUUID(), expiresAt: Date.now() + 900_000 }),
-      updatedAt: now,
-    });
-
-    const request = new Request(`http://localhost/api/runs/${runId}`, {
-      method: "POST",
-      body: JSON.stringify({ action: "stop_supervisor" }),
-    });
-
-    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
-    expect(response.status).toBe(200);
-
-    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
-    const updatedWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
-    const stopEvent = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId)).get();
-    const staleLease = await db.select().from(settings).where(eq(settings.key, `SUPERVISOR_WAKE_LEASE:${runId}`)).get();
-
-    expect(mockCancelSupervisorWake).toHaveBeenCalledWith(runId);
-    expect(mockStopRunObserver).toHaveBeenCalledWith(runId);
-    expect(mockCancelAgent).toHaveBeenCalledWith(activeWorkerId);
-    expect(mockCancelAgent).not.toHaveBeenCalledWith(finishedWorkerId);
-    expect(updatedRun?.status).toBe("cancelled");
-    expect(updatedWorkers.find((worker) => worker.id === activeWorkerId)?.status).toBe("cancelled");
-    expect(staleLease).toBeUndefined();
-    expect(stopEvent?.eventType).toBe("supervisor_stopped");
-    expect(JSON.parse(stopEvent?.details || "{}")).toMatchObject({
-      userInitiated: true,
-      reason: "User stopped the supervisor.",
-    });
-  });
-
-  it("treats repeated supervisor stop requests as already settled", async () => {
-    mockCancelAgent.mockClear();
-    mockStopRunObserver.mockClear();
-    mockCancelSupervisorWake.mockClear();
-    const planId = randomUUID();
-    const runId = randomUUID();
-    const activeWorkerId = randomUUID();
-    const now = new Date();
-
-    await db.insert(plans).values({
-      id: planId,
-      path: "vibes/ad-hoc/repeated-stop-plan.md",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      mode: "implementation",
-      title: "Repeated stop supervisor",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await db.insert(workers).values({
-      id: activeWorkerId,
-      runId,
-      type: "codex",
-      status: "working",
-      cwd: process.cwd(),
-      outputLog: "",
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    const firstResponse = await POST(new Request(`http://localhost/api/runs/${runId}`, {
-      method: "POST",
-      body: JSON.stringify({ action: "stop_supervisor" }),
-    }), { params: Promise.resolve({ id: runId }) });
-    expect(firstResponse.status).toBe(200);
-
-    mockCancelAgent.mockClear();
-    mockStopRunObserver.mockClear();
-    mockCancelSupervisorWake.mockClear();
-
-    const secondResponse = await POST(new Request(`http://localhost/api/runs/${runId}`, {
-      method: "POST",
-      body: JSON.stringify({ action: "stop_supervisor" }),
-    }), { params: Promise.resolve({ id: runId }) });
-    const secondPayload = await secondResponse.json();
-    const stopEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
-
-    expect(secondResponse.status).toBe(200);
-    expect(secondPayload).toMatchObject({ ok: true, alreadyStopped: true, status: "cancelled" });
-    expect(mockCancelAgent).not.toHaveBeenCalled();
-    expect(mockCancelSupervisorWake).not.toHaveBeenCalled();
-    expect(mockStopRunObserver).not.toHaveBeenCalled();
-    expect(stopEvents.filter((event) => event.eventType === "supervisor_stopped")).toHaveLength(1);
-  });
-
   it("stops a quota-waiting run instead of treating it as already settled", async () => {
     __resetNamedEventsForTests();
     mockCancelAgent.mockClear();
-    mockStopRunObserver.mockClear();
-    mockCancelSupervisorWake.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = randomUUID();
@@ -647,7 +481,7 @@ describe("POST /api/runs/[id]", () => {
 
     const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
-      body: JSON.stringify({ action: "stop_supervisor" }),
+      body: JSON.stringify({ action: "stop_conversation" }),
     }), { params: Promise.resolve({ id: runId }) });
     const payload = await response.json();
     const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
@@ -663,10 +497,8 @@ describe("POST /api/runs/[id]", () => {
     expect(updatedIncident?.status).toBe("resolved");
     expect(updatedIncident?.resolvedAt).toBeInstanceOf(Date);
     expect(scheduledWake).toBeUndefined();
-    expect(mockCancelSupervisorWake).toHaveBeenCalledWith(runId);
-    expect(mockStopRunObserver).toHaveBeenCalledWith(runId);
     expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
-    expect(stopEvents.some((event) => event.eventType === "supervisor_stopped")).toBe(true);
+    expect(stopEvents.some((event) => event.eventType === "conversation_stopped")).toBe(true);
     expect(namedEvents).toContainEqual({
       kind: "recovery.resolved",
       runId,
@@ -676,7 +508,6 @@ describe("POST /api/runs/[id]", () => {
 
   it("terminalizes a needs-recovery run instead of treating it as already stopped", async () => {
     mockCancelAgent.mockClear();
-    mockStopRunObserver.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = randomUUID();
@@ -710,7 +541,7 @@ describe("POST /api/runs/[id]", () => {
 
     const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
-      body: JSON.stringify({ action: "stop_supervisor" }),
+      body: JSON.stringify({ action: "stop_conversation" }),
     }), { params: Promise.resolve({ id: runId }) });
     const payload = await response.json();
     const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
@@ -720,7 +551,6 @@ describe("POST /api/runs/[id]", () => {
     expect(payload).not.toHaveProperty("alreadyStopped");
     expect(updatedRun?.status).toBe("cancelled");
     expect(updatedWorker?.status).toBe("cancelled");
-    expect(mockStopRunObserver).toHaveBeenCalledWith(runId);
     expect(mockCancelAgent).toHaveBeenCalledWith(workerId);
   });
 
@@ -777,7 +607,7 @@ describe("POST /api/runs/[id]", () => {
 
     const stopRequest = POST(new Request(`http://localhost/api/runs/${runId}`, {
       method: "POST",
-      body: JSON.stringify({ action: "stop_supervisor" }),
+      body: JSON.stringify({ action: "stop_conversation" }),
     }), { params: Promise.resolve({ id: runId }) });
     releaseQuota();
 
@@ -869,8 +699,6 @@ describe("POST /api/runs/[id]", () => {
 
   it("stops a single direct worker without stopping the supervisor", async () => {
     mockCancelAgent.mockClear();
-    mockStopRunObserver.mockClear();
-    mockCancelSupervisorWake.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const targetWorkerId = randomUUID();
@@ -932,8 +760,6 @@ describe("POST /api/runs/[id]", () => {
 
     expect(mockCancelAgent).toHaveBeenCalledWith(targetWorkerId);
     expect(mockCancelAgent).not.toHaveBeenCalledWith(otherWorkerId);
-    expect(mockCancelSupervisorWake).not.toHaveBeenCalled();
-    expect(mockStopRunObserver).not.toHaveBeenCalled();
     expect(updatedRun?.status).toBe("running");
     expect(updatedWorkers.find((worker) => worker.id === targetWorkerId)?.status).toBe("cancelled");
     expect(updatedWorkers.find((worker) => worker.id === otherWorkerId)?.status).toBe("working");
@@ -1006,92 +832,8 @@ describe("POST /api/runs/[id]", () => {
     });
   });
 
-  it("emits worker.status and worker.terminal for each active worker stopped by stop_supervisor", async () => {
-    mockCancelAgent.mockClear();
-    mockStopRunObserver.mockClear();
-    mockCancelSupervisorWake.mockClear();
-    __resetNamedEventsForTests();
-
-    const planId = randomUUID();
-    const runId = randomUUID();
-    const activeWorkerA = randomUUID();
-    const activeWorkerB = randomUUID();
-    const finishedWorkerId = randomUUID();
-    const now = new Date();
-
-    await db.insert(plans).values({
-      id: planId,
-      path: "vibes/ad-hoc/stop-supervisor-events.md",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      mode: "implementation",
-      title: "Stop supervisor emits named events",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await db.insert(workers).values([
-      {
-        id: activeWorkerA,
-        runId,
-        type: "codex",
-        status: "working",
-        cwd: process.cwd(),
-        outputLog: "",
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        id: activeWorkerB,
-        runId,
-        type: "codex",
-        status: "idle",
-        cwd: process.cwd(),
-        outputLog: "",
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        id: finishedWorkerId,
-        runId,
-        type: "codex",
-        status: "cancelled",
-        cwd: process.cwd(),
-        outputLog: "",
-        createdAt: now,
-        updatedAt: now,
-      },
-    ]);
-
-    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
-      method: "POST",
-      body: JSON.stringify({ action: "stop_supervisor" }),
-    }), { params: Promise.resolve({ id: runId }) });
-    expect(response.status).toBe(200);
-
-    const terminalEvents = getNamedEventsSince(0).events
-      .map((entry) => entry.event)
-      .filter((event) => event.kind === "worker.terminal");
-
-    const terminalWorkerIds = terminalEvents.map((event) =>
-      event.kind === "worker.terminal" ? event.workerId : null,
-    );
-    expect(terminalWorkerIds).toContain(activeWorkerA);
-    expect(terminalWorkerIds).toContain(activeWorkerB);
-    expect(terminalWorkerIds).not.toContain(finishedWorkerId);
-  });
-
   it("marks a direct worker cancelled without waiting for the bridge stop to finish", async () => {
     mockCancelAgent.mockClear();
-    mockStopRunObserver.mockClear();
-    mockCancelSupervisorWake.mockClear();
     mockCancelAgent.mockImplementationOnce(() => new Promise(() => {}));
     const planId = randomUUID();
     const runId = randomUUID();
@@ -1156,118 +898,9 @@ describe("POST /api/runs/[id]", () => {
     expect(JSON.parse(stopEvent?.details || "{}")).toMatchObject({ runCancelled: true });
   });
 
-  it("pauses implementation work and asks for user direction when a worker is stopped", async () => {
-    mockCancelAgent.mockClear();
-    mockStopRunObserver.mockClear();
-    mockCancelSupervisorWake.mockClear();
-    const planId = randomUUID();
-    const runId = randomUUID();
-    const targetWorkerId = randomUUID();
-    const siblingWorkerId = randomUUID();
-    const finishedWorkerId = randomUUID();
-    const now = new Date();
-
-    await db.insert(plans).values({
-      id: planId,
-      path: "vibes/ad-hoc/stop-worker-pause.md",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      mode: "implementation",
-      title: "Pause after stop",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await db.insert(workers).values([
-      {
-        id: targetWorkerId,
-        runId,
-        type: "codex",
-        status: "working",
-        cwd: process.cwd(),
-        outputLog: "",
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        id: siblingWorkerId,
-        runId,
-        type: "codex",
-        status: "stuck",
-        cwd: process.cwd(),
-        outputLog: "",
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        id: finishedWorkerId,
-        runId,
-        type: "codex",
-        status: "cancelled",
-        cwd: process.cwd(),
-        outputLog: "",
-        createdAt: now,
-        updatedAt: now,
-      },
-    ]);
-
-    const request = new Request(`http://localhost/api/runs/${runId}`, {
-      method: "POST",
-      body: JSON.stringify({ action: "stop_worker", workerId: targetWorkerId }),
-    });
-
-    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
-    expect(response.status).toBe(200);
-
-    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
-    const updatedWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
-    const runMessages = await db.select().from(messages).where(eq(messages.runId, runId));
-    const runClarifications = await db.select().from(clarifications).where(eq(clarifications.runId, runId));
-    const stopEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
-
-    expect(mockCancelAgent).toHaveBeenCalledWith(targetWorkerId);
-    expect(mockCancelAgent).toHaveBeenCalledWith(siblingWorkerId);
-    expect(mockCancelAgent).not.toHaveBeenCalledWith(finishedWorkerId);
-    expect(mockCancelSupervisorWake).toHaveBeenCalledWith(runId);
-    expect(mockStopRunObserver).toHaveBeenCalledWith(runId);
-    expect(updatedRun?.status).toBe("awaiting_user");
-    expect(updatedWorkers.find((worker) => worker.id === targetWorkerId)?.status).toBe("cancelled");
-    expect(updatedWorkers.find((worker) => worker.id === siblingWorkerId)?.status).toBe("cancelled");
-    expect(updatedWorkers.find((worker) => worker.id === finishedWorkerId)?.status).toBe("cancelled");
-    expect(runMessages).toEqual([
-      expect.objectContaining({
-        role: "supervisor",
-        kind: "clarification",
-        content: expect.stringContaining("I paused the active workers"),
-      }),
-    ]);
-    expect(runClarifications).toEqual([
-      expect.objectContaining({
-        status: "pending",
-        question: expect.stringContaining("modify"),
-      }),
-    ]);
-    const workerStopEvent = stopEvents.find((event) => event.eventType === "worker_stop_requested");
-    expect(workerStopEvent).toBeTruthy();
-    expect(JSON.parse(workerStopEvent?.details || "{}")).toMatchObject({
-      userInitiated: true,
-      reason: "User stopped a worker.",
-      stoppedWorkerId: targetWorkerId,
-    });
-  });
-
   it("stops a worker terminal process without stopping the worker", async () => {
     mockCancelAgent.mockClear();
     mockCancelAgentTerminalProcess.mockClear();
-    mockStopRunObserver.mockClear();
-    mockCancelSupervisorWake.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const targetWorkerId = randomUUID();
@@ -1320,8 +953,6 @@ describe("POST /api/runs/[id]", () => {
 
     expect(mockCancelAgentTerminalProcess).toHaveBeenCalledWith(targetWorkerId, "93230", "tool-1");
     expect(mockCancelAgent).not.toHaveBeenCalled();
-    expect(mockCancelSupervisorWake).not.toHaveBeenCalled();
-    expect(mockStopRunObserver).not.toHaveBeenCalled();
     expect(updatedWorker?.status).toBe("working");
     expect(stopEvent?.eventType).toBe("worker_terminal_cancelled");
   });
@@ -1330,8 +961,6 @@ describe("POST /api/runs/[id]", () => {
     mockCancelAgent.mockClear();
     mockCancelAgentTerminalProcess.mockClear();
     mockCancelAgentTerminalProcess.mockRejectedValueOnce(new Error("Cancel terminal failed: terminal process not found: 91568"));
-    mockStopRunObserver.mockClear();
-    mockCancelSupervisorWake.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const targetWorkerId = randomUUID();
@@ -1386,8 +1015,6 @@ describe("POST /api/runs/[id]", () => {
 
     expect(mockCancelAgentTerminalProcess).toHaveBeenCalledWith(targetWorkerId, "91568", "tool-stale");
     expect(mockCancelAgent).not.toHaveBeenCalled();
-    expect(mockCancelSupervisorWake).not.toHaveBeenCalled();
-    expect(mockStopRunObserver).not.toHaveBeenCalled();
     expect(updatedWorker?.status).toBe("working");
     expect(stopEvent?.eventType).toBe("worker_terminal_cancelled");
     expect(eventDetails.alreadyStopped).toBe(true);
@@ -1450,119 +1077,7 @@ describe("POST /api/runs/[id]", () => {
     });
   });
 
-  it("resumes a supervisor-managed conversation from its existing workers", async () => {
-    mockAskAgent.mockClear();
-    mockCancelAgent.mockClear();
-    mockGetAgent.mockClear();
-    mockSpawnAgent.mockClear();
-    mockStartSupervisorRun.mockClear();
-    const planId = randomUUID();
-    const runId = randomUUID();
-    const workerId = randomUUID();
-    const userMessageId = randomUUID();
-    const laterMessageId = randomUUID();
-    const adHocRelativePath = path.join("vibes", "ad-hoc", `${randomUUID()}.md`);
-    const adHocAbsolutePath = getAppDataPath(adHocRelativePath);
-
-    fs.mkdirSync(path.dirname(adHocAbsolutePath), { recursive: true });
-    fs.writeFileSync(adHocAbsolutePath, "# temp\nretry the failing run");
-
-    await db.insert(plans).values({
-      id: planId,
-      path: adHocRelativePath,
-      status: "running",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      mode: "implementation",
-      title: "Retry test",
-      status: "failed",
-      lastError: "Get agent failed: fetch failed (caused by: read ECONNRESET)",
-      failedAt: new Date(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-
-    await db.insert(workers).values({
-      id: workerId,
-      runId,
-      type: "codex",
-      status: "working",
-      cwd: process.cwd(),
-      outputLog: "",
-      bridgeSessionId: "session-existing",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-
-    await db.insert(messages).values([
-      {
-        id: userMessageId,
-        runId,
-        role: "user",
-        kind: "checkpoint",
-        content: "retry the failing run",
-        createdAt: new Date("2026-04-21T10:00:00Z"),
-      },
-      {
-        id: laterMessageId,
-        runId,
-        role: "system",
-        kind: "error",
-        content: "Run failed: Get agent failed: fetch failed (caused by: read ECONNRESET)",
-        createdAt: new Date("2026-04-21T10:01:00Z"),
-      },
-    ]);
-
-    await db.insert(clarifications).values({
-      id: randomUUID(),
-      runId,
-      question: "Question?",
-      answer: null,
-      status: "pending",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-    await db.insert(settings).values({
-      key: `SUPERVISOR_WAKE_LEASE:${runId}`,
-      value: JSON.stringify({ leaseId: randomUUID(), expiresAt: Date.now() + 900_000 }),
-      updatedAt: new Date(),
-    });
-
-    const request = new Request(`http://localhost/api/runs/${runId}`, {
-      method: "POST",
-      body: JSON.stringify({ action: "retry", targetMessageId: userMessageId }),
-    });
-
-    const response = await POST(request, { params: Promise.resolve({ id: runId }) });
-    expect(response.status).toBe(200);
-
-    const updatedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
-    const remainingMessages = await db.select().from(messages).where(eq(messages.runId, runId));
-    const remainingWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
-    const remainingClarifications = await db.select().from(clarifications).where(eq(clarifications.runId, runId));
-    const staleLease = await db.select().from(settings).where(eq(settings.key, `SUPERVISOR_WAKE_LEASE:${runId}`)).get();
-
-    expect(await response.json()).toMatchObject({ ok: true, runId });
-    expect(mockCancelAgent).not.toHaveBeenCalled();
-    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
-    expect(updatedRun?.status).toBe("running");
-    expect(updatedRun?.lastError).toBeNull();
-    expect(updatedRun?.failedAt).toBeNull();
-    expect(remainingWorkers).toHaveLength(1);
-    expect(remainingWorkers[0]?.status).toBe("working");
-    expect(remainingWorkers[0]?.bridgeSessionId).toBe("session-existing");
-    expect(remainingClarifications).toHaveLength(1);
-    expect(staleLease).toBeUndefined();
-    expect(remainingMessages.map((message) => message.id)).toEqual([userMessageId]);
-  });
-
   it("blocks automatic retry of saved permanent account failures", async () => {
-    mockStartSupervisorRun.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const userMessageId = randomUUID();
@@ -1604,70 +1119,7 @@ describe("POST /api/runs/[id]", () => {
 
     expect(response.status).toBe(409);
     expect(payload.error.message).toContain("cannot be auto-retried");
-    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
     expect(storedRun?.status).toBe("failed");
-  });
-
-  it("allows manual retry of saved permanent account failures", async () => {
-    mockStartSupervisorRun.mockClear();
-    const planId = randomUUID();
-    const runId = randomUUID();
-    const userMessageId = randomUUID();
-    const errorMessage = 'Spawn failed: failed to start gemini agent via gemini: {"code":-32000,"message":"Gemini API key is missing or not configured."}';
-    const now = new Date();
-
-    await db.insert(plans).values({
-      id: planId,
-      path: "vibes/ad-hoc/manual-account-recovery.md",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      mode: "implementation",
-      title: "Manual account recovery",
-      status: "failed",
-      lastError: errorMessage,
-      failedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(messages).values([
-      {
-        id: userMessageId,
-        runId,
-        role: "user",
-        kind: "checkpoint",
-        content: "try after fixing credentials",
-        createdAt: new Date("2026-04-21T10:00:00Z"),
-      },
-      {
-        id: randomUUID(),
-        runId,
-        role: "system",
-        kind: "error",
-        content: `Run failed: ${errorMessage}`,
-        createdAt: new Date("2026-04-21T10:01:00Z"),
-      },
-    ]);
-
-    const response = await POST(new Request(`http://localhost/api/runs/${runId}`, {
-      method: "POST",
-      body: JSON.stringify({ action: "retry", targetMessageId: userMessageId, manualRecovery: true }),
-    }), { params: Promise.resolve({ id: runId }) });
-    const payload = await response.json();
-    const storedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
-    const remainingMessages = await db.select().from(messages).where(eq(messages.runId, runId));
-
-    expect(response.status).toBe(200);
-    expect(payload).toMatchObject({ ok: true, runId });
-    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
-    expect(storedRun?.status).toBe("running");
-    expect(storedRun?.lastError).toBeNull();
-    expect(storedRun?.failedAt).toBeNull();
-    expect(remainingMessages.map((message) => message.id)).toEqual([userMessageId]);
   });
 
   it("repairs direct retry session metadata from the worker stream", async () => {
@@ -1676,7 +1128,6 @@ describe("POST /api/runs/[id]", () => {
     mockCancelAgent.mockClear();
     mockGetAgent.mockClear();
     mockSpawnAgent.mockClear();
-    mockStartSupervisorRun.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const oldWorkerId = randomUUID();
@@ -1800,7 +1251,6 @@ describe("POST /api/runs/[id]", () => {
     const storedMessages = await db.select().from(messages).where(eq(messages.runId, runId)).orderBy(messages.createdAt);
 
     expect(mockCancelAgent).not.toHaveBeenCalled();
-    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
       name: oldWorkerId,
       resumeSessionId: "saved-stream-session",
@@ -1822,7 +1272,6 @@ describe("POST /api/runs/[id]", () => {
     mockCancelAgent.mockClear();
     mockGetAgent.mockClear();
     mockSpawnAgent.mockClear();
-    mockStartSupervisorRun.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const oldWorkerId = `${runId}-worker-1`;
@@ -1938,7 +1387,6 @@ describe("POST /api/runs/[id]", () => {
 
     expect(response.status).toBe(200);
     expect(mockCancelAgent).not.toHaveBeenCalled();
-    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
       name: latestWorkerId,
       type: "gemini",
@@ -1965,7 +1413,6 @@ describe("POST /api/runs/[id]", () => {
     mockCancelAgent.mockClear();
     mockGetAgent.mockClear();
     mockSpawnAgent.mockClear();
-    mockStartSupervisorRun.mockClear();
     mockSpawnAgent.mockRejectedValueOnce(new Error("Spawn failed: boom"));
     const planId = randomUUID();
     const runId = randomUUID();
@@ -2062,7 +1509,6 @@ describe("POST /api/runs/[id]", () => {
     mockCancelAgent.mockClear();
     mockGetAgent.mockClear();
     mockSpawnAgent.mockClear();
-    mockStartSupervisorRun.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;
@@ -2160,7 +1606,6 @@ describe("POST /api/runs/[id]", () => {
     const resumeEvents = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
 
     expect(mockCancelAgent).not.toHaveBeenCalled();
-    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
       name: workerId,
       type: "claude",
@@ -2198,7 +1643,6 @@ describe("POST /api/runs/[id]", () => {
     mockCancelAgent.mockClear();
     mockGetAgent.mockClear();
     mockSpawnAgent.mockClear();
-    mockStartSupervisorRun.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;
@@ -2324,7 +1768,6 @@ describe("POST /api/runs/[id]", () => {
     mockAskAgent.mockClear();
     mockGetAgent.mockClear();
     mockSpawnAgent.mockClear();
-    mockStartSupervisorRun.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;
@@ -2413,7 +1856,6 @@ describe("POST /api/runs/[id]", () => {
       mockCancelAgent.mockClear();
       mockGetAgent.mockClear();
       mockSpawnAgent.mockClear();
-      mockStartSupervisorRun.mockClear();
       const planId = randomUUID();
       const runId = randomUUID();
       const workerId = `${runId}-worker-1`;
@@ -2520,7 +1962,6 @@ describe("POST /api/runs/[id]", () => {
     mockCancelAgent.mockClear();
     mockGetAgent.mockClear();
     mockSpawnAgent.mockClear();
-    mockStartSupervisorRun.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const oldWorkerId = `${runId}-worker-1`;
@@ -2645,7 +2086,6 @@ describe("POST /api/runs/[id]", () => {
     mockCancelAgent.mockClear();
     mockGetAgent.mockClear();
     mockSpawnAgent.mockClear();
-    mockStartSupervisorRun.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;
@@ -2763,7 +2203,6 @@ describe("POST /api/runs/[id]", () => {
     mockCancelAgent.mockClear();
     mockGetAgent.mockClear();
     mockSpawnAgent.mockClear();
-    mockStartSupervisorRun.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const workerId = `${runId}-worker-1`;
@@ -2881,7 +2320,6 @@ describe("POST /api/runs/[id]", () => {
   });
 
   it("edits a user checkpoint in place before rerunning", async () => {
-    mockStartSupervisorRun.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const userMessageId = randomUUID();
@@ -2945,7 +2383,6 @@ describe("POST /api/runs/[id]", () => {
     expect(remainingMessages.map((message) => message.id)).toEqual([userMessageId]);
     expect(remainingMessages.at(-1)?.role).toBe("user");
     expect(fs.readFileSync(adHocAbsolutePath, "utf-8")).toContain("new prompt");
-    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
     const replayPrompt = String(mockAskAgent.mock.calls.at(-1)?.[1] ?? "");
     expect(replayPrompt).toContain("Next user prompt:\nnew prompt");
   });
@@ -2954,7 +2391,6 @@ describe("POST /api/runs/[id]", () => {
     mockAskAgent.mockClear();
     mockGetAgent.mockClear();
     mockSpawnAgent.mockClear();
-    mockStartSupervisorRun.mockClear();
     mockSpawnAgent.mockResolvedValueOnce({
       name: "rerun-worker",
       type: "codex",
@@ -3046,7 +2482,6 @@ describe("POST /api/runs/[id]", () => {
     mockCancelAgent.mockClear();
     mockGetAgent.mockClear();
     mockSpawnAgent.mockClear();
-    mockStartSupervisorRun.mockClear();
     const planId = randomUUID();
     const runId = randomUUID();
     const userMessageId = randomUUID();
@@ -3116,7 +2551,6 @@ describe("POST /api/runs/[id]", () => {
     expect(forkedMessages.map((message) => message.role)).toEqual(["user"]);
     expect(forkedMessages[0]?.content).toBe("source prompt");
     expect(fs.readFileSync(getAppDataPath(forkedPlan!.path), "utf-8")).toContain("source prompt");
-    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
     expect(mockSpawnAgent).not.toHaveBeenCalled();
     expect(mockAskAgent).not.toHaveBeenCalled();
   });

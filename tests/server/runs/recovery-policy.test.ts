@@ -22,13 +22,11 @@ describe("recovery policy", () => {
 
   it("normalizes legacy policies with quota defaults", async () => {
     const saved = await saveRecoveryPolicy({
-      autoRecoverImplementationRuns: true,
       autoRecoverDirectRuns: false,
       maxAutoAttemptsPerIncident: 3,
       baseBackoffMs: 5_000,
       maxBackoffMs: 60_000,
       sessionResumeFirst: true,
-      restartFromCheckpointWhenSessionMissing: true,
       preserveQueuedMessages: true,
     });
 
@@ -43,36 +41,19 @@ describe("recovery policy", () => {
   it("persists normalized policy settings", async () => {
     const saved = await saveRecoveryPolicy({
       ...DEFAULT_RECOVERY_POLICY,
-      autoRecoverImplementationRuns: false,
+      autoRecoverDirectRuns: false,
       maxAutoAttemptsPerIncident: 5,
     });
 
-    expect(saved.autoRecoverImplementationRuns).toBe(false);
+    expect(saved.autoRecoverDirectRuns).toBe(false);
     await expect(getRecoveryPolicy()).resolves.toMatchObject({
-      autoRecoverImplementationRuns: false,
+      autoRecoverDirectRuns: false,
       maxAutoAttemptsPerIncident: 5,
     });
-  });
-
-  it("chooses restart from checkpoint for implementation missing-session recovery", () => {
-    const decision = decideRecoveryAction({
-      runMode: "implementation",
-      policy: DEFAULT_RECOVERY_POLICY,
-      autoAttemptCount: 0,
-      recoveryState: {
-        kind: "lost_worker_rerunnable",
-        status: "open",
-        message: "missing",
-        recommendedAction: "restart_from_checkpoint",
-      },
-    });
-
-    expect(decision.action).toBe("restart_from_checkpoint");
   });
 
   it("resumes saved direct worker sessions even when direct reruns need manual recovery", () => {
     const decision = decideRecoveryAction({
-      runMode: "direct",
       policy: { ...DEFAULT_RECOVERY_POLICY, autoRecoverDirectRuns: false },
       autoAttemptCount: 0,
       recoveryState: {
@@ -92,7 +73,6 @@ describe("recovery policy", () => {
     // `needs_user` here was not a prompt but a dead end: Resume re-classified
     // the run, landed on `queue_blocked` again, and returned needs_user again.
     const decision = decideRecoveryAction({
-      runMode: "direct",
       policy: DEFAULT_RECOVERY_POLICY,
       autoAttemptCount: 0,
       recoveryState: {
@@ -110,7 +90,6 @@ describe("recovery policy", () => {
 
   it("lets a forced resume act on a blocked direct queue with auto-recovery disabled", () => {
     const decision = decideRecoveryAction({
-      runMode: "direct",
       policy: { ...DEFAULT_RECOVERY_POLICY, autoRecoverDirectRuns: false },
       autoAttemptCount: 9,
       force: true,
@@ -129,14 +108,13 @@ describe("recovery policy", () => {
 
   it("stops automation when attempt budget is exhausted", () => {
     const decision = decideRecoveryAction({
-      runMode: "implementation",
       policy: { ...DEFAULT_RECOVERY_POLICY, maxAutoAttemptsPerIncident: 1 },
       autoAttemptCount: 1,
       recoveryState: {
-        kind: "lost_worker_rerunnable",
+        kind: "lost_worker_resumable",
         status: "open",
         message: "missing",
-        recommendedAction: "restart_from_checkpoint",
+        recommendedAction: "resume_session",
       },
     });
 
@@ -157,7 +135,6 @@ describe("recovery policy", () => {
 
   it("waits for quota reset without consuming normal recovery attempt budget", () => {
     const decision = decideRecoveryAction({
-      runMode: "implementation",
       policy: { ...DEFAULT_RECOVERY_POLICY, maxAutoAttemptsPerIncident: 1 },
       autoAttemptCount: 99,
       recoveryState: {

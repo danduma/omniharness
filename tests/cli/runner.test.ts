@@ -11,8 +11,8 @@ vi.mock("@/server/conversations/create", () => ({
   createConversation: createConversationMock,
 }));
 
-vi.mock("@/server/supervisor/runtime-watchdog", () => ({
-  ensureSupervisorRuntimeStarted: ensureSupervisorRuntimeStartedMock,
+vi.mock("@/server/runtime/watchdog", () => ({
+  ensureRuntimeWatchdogStarted: ensureSupervisorRuntimeStartedMock,
 }));
 
 function createIo() {

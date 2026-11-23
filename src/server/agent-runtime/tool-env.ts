@@ -375,11 +375,16 @@ function nativeCodexCandidates(env: EnvLike): string[] {
         possiblePackageRoots.push(dirname(dirname(codexCommand)));
       }
 
+      // Codex 0.170 moved the native binary from vendor/<triple>/codex/ to
+      // vendor/<triple>/bin/; keep both layouts.
+      const platformPackage = `@openai/codex-${platform() === "darwin" ? "darwin" : platform()}-${arch() === "arm64" ? "arm64" : "x64"}`;
       for (const packageRoot of possiblePackageRoots) {
-        candidates.push(
-          join(packageRoot, "node_modules", `@openai/codex-${platform() === "darwin" ? "darwin" : platform()}-${arch() === "arm64" ? "arm64" : "x64"}`, "vendor", triple, "codex", binaryName),
-          join(packageRoot, "vendor", triple, "codex", binaryName),
-        );
+        for (const binaryDir of ["bin", "codex"]) {
+          candidates.push(
+            join(packageRoot, "node_modules", platformPackage, "vendor", triple, binaryDir, binaryName),
+            join(packageRoot, "vendor", triple, binaryDir, binaryName),
+          );
+        }
       }
     }
   }

@@ -2,14 +2,14 @@ import { recordExecutionEvent } from "@/server/events/execution-event-store";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { askAgent, getAgent, spawnAgent, type AgentRecord } from "@/server/bridge-client";
 import { db } from "@/server/db";
-import { executionEvents, messages, queuedConversationMessages, recoveryIncidents, runs, workers } from "@/server/db/schema";
+import { messages, queuedConversationMessages, recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { normalizeRunStatus } from "@/server/runs/status";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
 import { readWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
-import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
+import { readRuntimeEnvFromSettings } from "@/server/settings/runtime-env";
 import {
   resolveDirectRunStatusFromWorkerOutput,
   updateDirectRunStatusFromWorkerOutput,
@@ -53,13 +53,8 @@ import {
 } from "./recovery-state";
 import {
   requeueRecoverableQueuedMessages,
-  restartImplementationRunFromLatestCheckpoint,
   setRunNeedsRecovery,
 } from "./recovery-actions";
-
-function isCorruptResumeFileError(value: string | null | undefined) {
-  return /failed to load resumed session data from file/i.test(value ?? "");
-}
 
 async function spawnOrAdoptRuntimeAgent(args: {
   workerId: string;
@@ -283,7 +278,7 @@ function incidentKindForState(state: RecoveryState): RecoveryIncidentKind {
   if (state.kind === "lost_worker_resumable" && state.sessionId) {
     return "session_missing";
   }
-  if (state.kind === "lost_worker_rerunnable" || state.kind === "needs_recovery") {
+  if (state.kind === "needs_recovery") {
     return "worker_lost";
   }
   return "stale_running";
@@ -358,7 +353,6 @@ async function markNeedsUser(args: {
     args.workerId
     && (
       args.state.kind === "lost_worker_resumable"
-      || args.state.kind === "lost_worker_rerunnable"
       || args.state.kind === "needs_recovery"
       || args.state.kind === "queue_blocked"
     )
@@ -390,29 +384,6 @@ async function markNeedsUser(args: {
       recoveryState: args.state.kind,
       recommendedAction: args.state.recommendedAction,
     },
-  });
-}
-
-async function recordRecoveryPausedForUser(args: {
-  runId: string;
-  workerId?: string | null;
-  state: RecoveryState;
-  source?: string;
-}) {
-  const existing = await db.select().from(executionEvents).where(eq(executionEvents.runId, args.runId));
-  const alreadyRecorded = existing.some((event) => (
-    event.eventType === "recovery_paused_for_user"
-    && event.workerId === (args.workerId ?? null)
-  ));
-  if (alreadyRecorded) {
-    return;
-  }
-
-  await insertRecoveryExecutionEvent(args.runId, args.workerId, "recovery_paused_for_user", {
-    summary: "Skipped automatic recovery because the run is awaiting user input.",
-    source: args.source ?? "reconciler",
-    recoveryState: args.state.kind,
-    recommendedAction: args.state.recommendedAction,
   });
 }
 
@@ -457,68 +428,25 @@ async function resumeSavedWorkerSession(args: {
     return { action: "none" as const, runId: args.run.id, workerId: args.worker.id };
   }
 
-  let resumed: AgentRecord;
-  let recreatedFromMissingSession = false;
-  try {
-    resumed = await spawnOrAdoptRuntimeAgent({
-      workerId: args.worker.id,
-      expectedTurnGeneration,
-      spawn: () => spawnAgent({
-        type: args.worker.type,
-        cwd: args.worker.cwd,
-        name: args.worker.id,
-        ...(workerMode ? { mode: workerMode } : {}),
-        env: envParams,
-        ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
-        ...(launchSelection.model ? { model: launchSelection.model } : {}),
-        ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
-        resumeSessionId: sessionId,
-      }) as Promise<AgentRecord>,
-    });
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    if (!isCorruptResumeFileError(reason) || args.run.mode !== "implementation") {
-      throw error;
-    }
-
-    await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "worker_session_missing", {
-      summary: `Saved bridge session for ${args.worker.id} is no longer available`,
-      reason,
-      sessionId,
-    });
-    const recreationClaimed = await db.update(workers).set({
-      status: "starting",
-      bridgeSessionId: null,
-      bridgeSessionMode: null,
-      updatedAt: new Date(),
-    }).where(and(
-      eq(workers.id, args.worker.id),
-      eq(workers.turnGeneration, expectedTurnGeneration),
-    )).returning({ id: workers.id }).get();
-    if (!recreationClaimed) {
-      return { action: "none" as const, runId: args.run.id, workerId: args.worker.id };
-    }
-    resumed = await spawnOrAdoptRuntimeAgent({
-      workerId: args.worker.id,
-      expectedTurnGeneration,
-      spawn: () => spawnAgent({
-        type: args.worker.type,
-        cwd: args.worker.cwd,
-        name: args.worker.id,
-        ...(workerMode ? { mode: workerMode } : {}),
-        env: envParams,
-        ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
-        ...(launchSelection.model ? { model: launchSelection.model } : {}),
-        ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
-      }) as Promise<AgentRecord>,
-    });
-    recreatedFromMissingSession = true;
-  }
+  const resumed: AgentRecord = await spawnOrAdoptRuntimeAgent({
+    workerId: args.worker.id,
+    expectedTurnGeneration,
+    spawn: () => spawnAgent({
+      type: args.worker.type,
+      cwd: args.worker.cwd,
+      name: args.worker.id,
+      ...(workerMode ? { mode: workerMode } : {}),
+      env: envParams,
+      ...(launchSelection.accountId ? { accountId: launchSelection.accountId } : {}),
+      ...(launchSelection.model ? { model: launchSelection.model } : {}),
+      ...(launchSelection.effort ? { effort: launchSelection.effort } : {}),
+      resumeSessionId: sessionId,
+    }) as Promise<AgentRecord>,
+  });
   const continueInterruptedDirectTurn = recoveredDirectTurnNeedsPrompt(args.run, resumed);
   const nextRunStatus = continueInterruptedDirectTurn
     ? "running"
-    : args.run.mode === "direct" || args.run.mode === "commit"
-    ? resolveDirectRunStatusFromWorkerOutput({
+    : resolveDirectRunStatusFromWorkerOutput({
       workerStatus: resumed.state,
       renderedOutput: resumed.renderedOutput,
       currentText: resumed.currentText,
@@ -526,8 +454,7 @@ async function resumeSavedWorkerSession(args: {
       outputEntries: resumed.outputEntries,
       pendingPermissions: resumed.pendingPermissions,
       pendingElicitations: resumed.pendingElicitations,
-    })
-    : "running";
+    });
 
   if (resumed.outputEntries) {
     const outputPersisted = await writeWorkerOutputEntries(
@@ -554,7 +481,7 @@ async function resumeSavedWorkerSession(args: {
       status: continueInterruptedDirectTurn ? "working" : resumed.state,
       currentText: resumed.currentText,
       lastText: resumed.lastText,
-      bridgeSessionId: resumed.sessionId ?? (recreatedFromMissingSession ? null : sessionId),
+      bridgeSessionId: resumed.sessionId ?? sessionId,
       bridgeSessionMode: resumed.sessionMode ?? args.worker.bridgeSessionMode ?? null,
       updatedAt: new Date(),
     }).where(and(
@@ -566,18 +493,10 @@ async function resumeSavedWorkerSession(args: {
     }
 
     emitNamedEvent({
-      kind: recreatedFromMissingSession ? "worker.recreated" : "worker.reattached",
+      kind: "worker.reattached",
       runId: args.run.id,
       workerId: args.worker.id,
     });
-    if (recreatedFromMissingSession) {
-      await insertRecoveryExecutionEvent(args.run.id, args.worker.id, "worker_session_recreated", {
-        summary: `Started a fresh runtime worker for ${args.worker.id} after its saved session was rejected.`,
-        rejectedSessionId: sessionId,
-        newSessionId: resumed.sessionId ?? null,
-        reason: "recovery_resume_missing_agent",
-      });
-    }
     await db.update(runs).set({
       status: nextRunStatus,
       failedAt: null,
@@ -856,48 +775,6 @@ async function restartDirectWorker(args: {
   };
 }
 
-async function restartFromCheckpoint(args: {
-  run: typeof runs.$inferSelect;
-  workerId?: string | null;
-  state: RecoveryState;
-  incidentId: string;
-  preserveQueuedMessages: boolean;
-}) {
-  await markRecoveryIncidentRecovering({
-    incidentId: args.incidentId,
-    runId: args.run.id,
-    workerId: args.workerId,
-    decision: "restart_from_checkpoint",
-    details: {
-      queuedMessageId: args.state.queuedMessageId ?? null,
-      preserveQueuedMessages: args.preserveQueuedMessages,
-    },
-  });
-  await insertRecoveryExecutionEvent(args.run.id, args.workerId, "recovery_auto_restart_started", {
-    summary: "Restarting implementation run from latest user checkpoint.",
-    incidentId: args.incidentId,
-    queuedMessageId: args.state.queuedMessageId ?? null,
-  });
-  await db.update(runs).set({
-    status: "recovering",
-    updatedAt: new Date(),
-  }).where(eq(runs.id, args.run.id));
-
-  const result = await restartImplementationRunFromLatestCheckpoint({
-    runId: args.run.id,
-    workerId: args.workerId,
-    preserveQueuedMessages: args.preserveQueuedMessages,
-  });
-  await markRecoveryIncidentResolved({
-    incidentId: args.incidentId,
-    runId: args.run.id,
-    workerId: args.workerId,
-    summary: "Restarted implementation run from latest user checkpoint.",
-    details: result,
-  });
-  return { action: "restart_from_checkpoint" as const, ...result };
-}
-
 /** incidentId → the backoff deadline already recorded for it. */
 const loggedBackoffWindows = new Map<string, number>();
 
@@ -948,17 +825,6 @@ export async function reconcileRunRecovery(args: {
     }
   }
 
-  if (run.mode === "implementation" && normalizeRunStatus(run.status) === "awaiting_user") {
-    await recordRecoveryPausedForUser({
-      runId: run.id,
-      workerId: state.workerId,
-      state,
-      source: args.source,
-    });
-    notifyEventStreamSubscribers();
-    return { action: "none" as const, runId: run.id, recoveryState: state };
-  }
-
   const incident = await openRecoveryIncident({
     runId: run.id,
     workerId: state.workerId,
@@ -974,7 +840,6 @@ export async function reconcileRunRecovery(args: {
   });
   const policy = await getRecoveryPolicy();
   const decision = decideRecoveryAction({
-    runMode: run.mode,
     recoveryState: state,
     policy,
     autoAttemptCount: incident.autoAttemptCount,
@@ -1051,18 +916,6 @@ export async function reconcileRunRecovery(args: {
       return { ...result, recoveryState: state };
     }
 
-    if (decision.action === "restart_from_checkpoint") {
-      const result = await restartFromCheckpoint({
-        run,
-        workerId: state.workerId,
-        state,
-        incidentId: incident.id,
-        preserveQueuedMessages: policy.preserveQueuedMessages,
-      });
-      notifyEventStreamSubscribers();
-      return { ...result, recoveryState: state };
-    }
-
     if (decision.action === "mark_failed") {
       await markRecoveryIncidentFailed({
         incidentId: incident.id,
@@ -1088,10 +941,9 @@ export async function reconcileRunRecovery(args: {
     const savedSessionRejected = state.kind === "lost_worker_resumable"
       && (isRecoverableAgentMissingError(reason) || isRejectedSavedSessionErrorMessage(reason));
 
-    if (savedSessionRejected && run.mode !== "implementation") {
-      // A direct run has no checkpoint to fall back to, so its only route back
-      // was the user — and Resume could not fix a session the provider has
-      // already deleted. Replace the worker instead, keeping the transcript.
+    if (savedSessionRejected) {
+      // Resume cannot fix a session the provider has already deleted, so
+      // replace the worker instead, keeping the transcript.
       const worker = runWorkers.find((candidate) => candidate.id === state.workerId);
       if (worker) {
         try {
@@ -1115,35 +967,6 @@ export async function reconcileRunRecovery(args: {
           notifyEventStreamSubscribers();
           return { action: "needs_user" as const, runId: run.id, recoveryState: state };
         }
-      }
-    }
-
-    if (
-      savedSessionRejected
-      && run.mode === "implementation"
-      && policy.restartFromCheckpointWhenSessionMissing
-    ) {
-      try {
-        const restartResult = await restartFromCheckpoint({
-          run,
-          workerId: state.workerId,
-          state: { ...state, kind: "lost_worker_rerunnable", sessionId: null },
-          incidentId: incident.id,
-          preserveQueuedMessages: policy.preserveQueuedMessages,
-        });
-        notifyEventStreamSubscribers();
-        return { ...restartResult, recoveryState: state };
-      } catch (restartError) {
-        const restartReason = restartError instanceof Error ? restartError.message : String(restartError);
-        await markNeedsUser({
-          incidentId: incident.id,
-          runId: run.id,
-          workerId: state.workerId,
-          reason: restartReason,
-          state,
-        });
-        notifyEventStreamSubscribers();
-        return { action: "needs_user" as const, runId: run.id, recoveryState: state };
       }
     }
 

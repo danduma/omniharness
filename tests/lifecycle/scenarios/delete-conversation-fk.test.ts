@@ -21,18 +21,9 @@ import { clearLifecycleSchema, seedDirectRun } from "../harness/fixtures";
 import { __resetNamedEventsForTests } from "@/server/events/named-events";
 
 // The DELETE handler fires `cancelSupervisorWake` early, which itself
-// kicks off a db.delete via `cancelDurableSupervisorWake`. We want our
+// kicks off a db.delete via `cancelQuotaWake`. We want our
 // fault injection to land on the *main* delete chain (messages,
 // clarifications, ...), so stub the supervisor-side delete to a no-op.
-vi.mock("@/server/supervisor/wake", () => ({
-  cancelSupervisorWake: vi.fn(),
-}));
-vi.mock("@/server/supervisor/observer", async () => {
-  const actual = await vi.importActual<typeof import("@/server/supervisor/observer")>(
-    "@/server/supervisor/observer",
-  );
-  return { ...actual, stopRunObserver: vi.fn() };
-});
 vi.mock("@/server/bridge-client", async () => {
   const actual = await vi.importActual<typeof import("@/server/bridge-client")>(
     "@/server/bridge-client",

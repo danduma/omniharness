@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildConversationTimelineItems, buildOptimisticCreatedConversationSnapshot, buildOptimisticSentConversationMessage, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, filterPromotedPlanningTranscriptMessages, formatExecutionWorkerLabel, getConversationTranscriptRunIds, getExecutionEventDetailRows, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseBrowserConversationRoute, parseCollapsedProjectPaths, reorderExplicitProjectPaths, resolveComposerEffortForPair, resolveComposerEffortLabel, resolveComposerEffortValue, resolveComposerModelAfterWorkerChange, resolveComposerModelValue, resolveOptimisticSentConversationMessage, resolveSavedComposerModel, resolveSelectedWorkerModel, shouldClearMissingSelectedRunFromAuthoritativeSnapshot, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowConversationExecutionPanel, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState, summarizeExecutionEvent, summarizeInlineEvent } from "@/interface/home/utils";
-import type { EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord, SupervisorInterventionRecord } from "@/interface/home/types";
-import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
+import { appendCreatedConversationSnapshot, appendSentConversationMessageSnapshot, buildOptimisticCreatedConversationSnapshot, buildOptimisticSentConversationMessage, classifyExecutionEvent, compareNewestByCreatedAtThenId, compareOldestByCreatedAtThenId, filterOptimisticallyDeletedRuns, getLatestUnresolvedWorkerStuckEvent, getRunDurationLabel, mergePendingCreatedConversationSnapshots, mergePendingSentConversationMessages, parseBrowserConversationRoute, parseCollapsedProjectPaths, reorderExplicitProjectPaths, resolveComposerEffortForPair, resolveComposerEffortLabel, resolveComposerEffortValue, resolveComposerModelAfterWorkerChange, resolveComposerModelValue, resolveOptimisticSentConversationMessage, resolveSavedComposerModel, resolveSelectedWorkerModel, shouldClearMissingSelectedRunFromAuthoritativeSnapshot, shouldOpenExecutionDetailsForRun, shouldRenderMessageInMainConversation, shouldShowExecutionEventInRunLog, shouldShowLatestRecoveryAction, shouldShowRecoverableRunningState } from "@/interface/home/utils";
+import type { EventStreamState, ExecutionEventRecord, MessageRecord, RunRecord } from "@/interface/home/types";
 
 function buildRun(overrides: Partial<RunRecord>): RunRecord {
   return {
@@ -35,33 +34,6 @@ function buildMessage(overrides: Partial<MessageRecord>): MessageRecord {
     kind: "supervisor_action",
     content: "worker-1 is already busy; waiting before sending another prompt.",
     createdAt: "2026-04-27T00:00:10.000Z",
-    ...overrides,
-  };
-}
-
-function buildSupervisorIntervention(overrides: Partial<SupervisorInterventionRecord>): SupervisorInterventionRecord {
-  return {
-    id: "intervention-1",
-    runId: "run-1",
-    workerId: "run-1-worker-9",
-    interventionType: "continue",
-    prompt: "Please continue from the next unchecked item.",
-    createdAt: "2026-04-27T00:00:12.000Z",
-    ...overrides,
-  };
-}
-
-function buildWorker(overrides: Partial<ConversationWorkerRecord>): ConversationWorkerRecord {
-  return {
-    id: "run-1-worker-9",
-    runId: "run-1",
-    type: "codex",
-    status: "working",
-    title: "Implement mobile-desktop feature parity plan",
-    initialPrompt: "Please implement the mobile plan.",
-    workerNumber: 9,
-    createdAt: "2026-04-27T00:00:10.000Z",
-    updatedAt: "2026-04-27T00:00:20.000Z",
     ...overrides,
   };
 }
@@ -159,57 +131,6 @@ describe("home utils", () => {
     expect([...records].sort(compareNewestByCreatedAtThenId).map((record) => record.id)).toEqual(["c", "b", "a"]);
   });
 
-  it("includes the parent planning run in promoted implementation transcripts", () => {
-    expect(getConversationTranscriptRunIds({
-      selectedRunId: "implementation-run",
-      selectedRun: buildRun({
-        id: "implementation-run",
-        mode: "implementation",
-        parentRunId: "planning-run",
-      }),
-    })).toEqual(["planning-run", "implementation-run"]);
-  });
-
-  it("hides copied promotion checkpoint messages when the parent planning transcript is visible", () => {
-    const selectedRun = buildRun({
-      id: "implementation-run",
-      mode: "implementation",
-      parentRunId: "planning-run",
-      createdAt: "2026-05-11T05:52:18.000Z",
-    });
-    const messages = [
-      buildMessage({
-        id: "planning-user",
-        runId: "planning-run",
-        role: "user",
-        kind: "checkpoint",
-        content: "Plan the intermediate scene assets section.",
-        createdAt: "2026-05-11T05:51:00.000Z",
-      }),
-      buildMessage({
-        id: "planning-worker",
-        runId: "planning-run",
-        role: "worker",
-        kind: "planning",
-        content: "Created the spec and implementation plan.",
-        createdAt: "2026-05-11T05:51:30.000Z",
-      }),
-      buildMessage({
-        id: "implementation-copy",
-        runId: "implementation-run",
-        role: "user",
-        kind: "checkpoint",
-        content: "Plan the intermediate scene assets section.",
-        createdAt: "2026-05-11T05:52:18.000Z",
-      }),
-    ];
-
-    expect(filterPromotedPlanningTranscriptMessages({
-      messages,
-      selectedRun,
-    }).map((message) => message.id)).toEqual(["planning-user", "planning-worker"]);
-  });
-
   it("formats completed supervisor run duration from the completion timestamp", () => {
     expect(getRunDurationLabel(
       buildRun({ status: "done", updatedAt: "2026-04-27T03:00:00.000Z" }),
@@ -223,14 +144,6 @@ describe("home utils", () => {
       null,
       new Date("2026-04-27T00:45:00.000Z").getTime(),
     )).toBe("Running for 45 minutes");
-  });
-
-  it("keeps supervisor activity visible for failed conversations with execution events", () => {
-    expect(shouldShowConversationExecutionPanel({
-      selectedRun: buildRun({ status: "failed" }),
-      isConversationThinking: false,
-      executionEventCount: 1,
-    })).toBe(true);
   });
 
   it("does not show latest recovery while the selected conversation is still loading", () => {
@@ -284,255 +197,6 @@ describe("home utils", () => {
     })).toBe(true);
   });
 
-  it("summarizes clarification activity without repeating the full question", () => {
-    expect(summarizeExecutionEvent({
-      id: "event-1",
-      runId: "run-1",
-      eventType: "clarification_requested",
-      details: JSON.stringify({ summary: "Do you want me to implement the design?" }),
-      createdAt: "2026-04-27T00:00:00.000Z",
-    })).toBe("Waiting for your reply");
-  });
-
-  it("intersperses useful supervisor activity with conversation messages by timestamp", () => {
-    const timeline = buildConversationTimelineItems({
-      messages: [
-        {
-          id: "message-1",
-          runId: "run-1",
-          role: "user",
-          kind: "checkpoint",
-          content: "Start this",
-          createdAt: "2026-04-27T00:00:00.000Z",
-        },
-        {
-          id: "message-2",
-          runId: "run-1",
-          role: "worker",
-          kind: "worker_output",
-          workerId: "worker-1",
-          content: "Prompted worker-1:\nDo the thing\n\nResponse:\nDone",
-          createdAt: "2026-04-27T00:00:20.000Z",
-        },
-      ],
-      executionEvents: [
-        buildExecutionEvent({
-          id: "event-1",
-          workerId: "worker-1",
-          eventType: "worker_prompted",
-          details: JSON.stringify({ summary: "Sent follow-up to worker-1" }),
-          createdAt: "2026-04-27T00:00:10.000Z",
-        }),
-        buildExecutionEvent({
-          id: "event-2",
-          workerId: "worker-1",
-          eventType: "worker_output_changed",
-          details: JSON.stringify({ summary: "worker-1 produced new output" }),
-          createdAt: "2026-04-27T00:00:15.000Z",
-        }),
-      ],
-    });
-
-    expect(timeline.map((item) => `${item.type}:${item.id}`)).toEqual([
-      "message:message-1",
-      "message:message-2",
-    ]);
-  });
-
-  it("surfaces worker starts and supervisor steering in the main conversation timeline", () => {
-    const timeline = buildConversationTimelineItems({
-      messages: [
-        buildMessage({
-          id: "message-1",
-          role: "user",
-          kind: "checkpoint",
-          content: "Implement the mobile parity plan.",
-          createdAt: "2026-04-27T00:00:00.000Z",
-        }),
-        buildMessage({
-          id: "message-2",
-          role: "supervisor",
-          kind: "clarification",
-          content: "I need clarification before implementation can continue.",
-          createdAt: "2026-04-27T00:00:05.000Z",
-        }),
-      ],
-      executionEvents: [
-        buildExecutionEvent({
-          id: "event-start",
-          workerId: "run-1-worker-9",
-          eventType: "worker_spawned",
-          details: JSON.stringify({
-            summary: "Spawned worker. CLI: Codex | Worker: run-1-worker-9 | Title: Implement mobile-desktop feature parity plan.",
-          }),
-          createdAt: "2026-04-27T00:00:10.000Z",
-        }),
-      ],
-      supervisorInterventions: [
-        buildSupervisorIntervention({
-          id: "intervention-steer",
-          workerId: "run-1-worker-9",
-          interventionType: "recovery",
-          prompt: "Stop compiling to x86_64. The user explicitly instructed: make sure it all compiles to arm64 not x86.",
-          createdAt: "2026-04-27T00:00:15.000Z",
-        }),
-      ],
-    });
-
-    expect(timeline.map((item) => item.type === "message" ? item.message.content : item.text)).toEqual([
-      "Implement the mobile parity plan.",
-      "I need clarification before implementation can continue.",
-      "Starting worker 9 to implement mobile-desktop feature parity plan.",
-      "Steering worker 9 to recover: Stop compiling to x86_64. The user explicitly instructed: make sure it all compiles to arm64 not x86.",
-    ]);
-  });
-
-  it("derives worker start activity from worker rows when old spawn events are outside the live event window", () => {
-    const timeline = buildConversationTimelineItems({
-      messages: [
-        buildMessage({
-          id: "message-1",
-          role: "user",
-          kind: "checkpoint",
-          content: "Implement the mobile parity plan.",
-          createdAt: "2026-04-27T00:00:00.000Z",
-        }),
-      ],
-      executionEvents: [],
-      workers: [
-        buildWorker({
-          id: "run-1-worker-9",
-          workerNumber: 9,
-          title: "Implement mobile-desktop feature parity plan",
-          createdAt: "2026-04-27T00:00:10.000Z",
-        }),
-      ],
-    });
-
-    expect(timeline.map((item) => item.type === "message" ? item.message.content : item.text)).toEqual([
-      "Implement the mobile parity plan.",
-      "Starting worker 9 to implement mobile-desktop feature parity plan.",
-    ]);
-  });
-
-  it("labels planning run worker starts as the planning agent", () => {
-    const timeline = buildConversationTimelineItems({
-      messages: [
-        buildMessage({
-          id: "message-1",
-          role: "user",
-          kind: "checkpoint",
-          content: "How should we implement this?",
-          createdAt: "2026-04-27T00:00:00.000Z",
-        }),
-      ],
-      executionEvents: [
-        buildExecutionEvent({
-          id: "event-start",
-          workerId: "run-1-worker-1",
-          eventType: "worker_spawned",
-          details: JSON.stringify({ summary: "Spawned planning worker." }),
-          createdAt: "2026-04-27T00:00:10.000Z",
-        }),
-      ],
-      workers: [
-        buildWorker({
-          id: "run-1-worker-1",
-          workerNumber: 1,
-          title: null,
-          initialPrompt: null,
-          createdAt: "2026-04-27T00:00:10.000Z",
-        }),
-      ],
-      isPlanningRun: true,
-    });
-
-    expect(timeline.map((item) => item.type === "message" ? item.message.content : item.text)).toEqual([
-      "How should we implement this?",
-      "Starting planning agent.",
-    ]);
-  });
-
-  it("omits supervisor wait chatter from the main conversation timeline", () => {
-    const timeline = buildConversationTimelineItems({
-      messages: [
-        {
-          id: "message-1",
-          runId: "run-1",
-          role: "system",
-          kind: "supervisor_action",
-          content: "Waiting 5s before the next check: Worker is actively checking available browser tooling/deps.",
-          createdAt: "2026-04-27T00:00:10.000Z",
-        },
-      ],
-      executionEvents: [
-        buildExecutionEvent({
-          id: "event-1",
-          eventType: "supervisor_wait",
-          details: JSON.stringify({
-            seconds: 5,
-            summary: "Worker is actively checking available browser tooling/deps.",
-          }),
-          createdAt: "2026-04-27T00:00:10.000Z",
-        }),
-      ],
-    });
-
-    expect(timeline).toEqual([]);
-  });
-
-  it("keeps routine supervisor logs out of the main conversation timeline", () => {
-    const timeline = buildConversationTimelineItems({
-      messages: [],
-      executionEvents: [
-        buildExecutionEvent({
-          id: "event-inspected",
-          eventType: "supervisor_repo_inspected",
-          details: JSON.stringify({ summary: "Inspected repository with rg supervisor_wait." }),
-          createdAt: "2026-04-27T00:00:10.000Z",
-        }),
-        buildExecutionEvent({
-          id: "event-prompted",
-          workerId: "worker-1",
-          eventType: "worker_prompted",
-          details: JSON.stringify({ summary: "Sent follow-up to worker-1" }),
-          createdAt: "2026-04-27T00:00:11.000Z",
-        }),
-        buildExecutionEvent({
-          id: "event-read",
-          eventType: "supervisor_file_read",
-          details: JSON.stringify({ path: "docs/plan.md", summary: "Read docs/plan.md for supervisor context." }),
-          createdAt: "2026-04-27T00:00:12.000Z",
-        }),
-        buildExecutionEvent({
-          id: "event-blocked",
-          workerId: "worker-1",
-          eventType: "worker_spawn_blocked",
-          details: JSON.stringify({ summary: "Blocked duplicate worker spawn because worker-1 is active." }),
-          createdAt: "2026-04-27T00:00:13.000Z",
-        }),
-      ],
-    });
-
-    expect(timeline).toEqual([]);
-  });
-
-  it("keeps supervisor file reads out of the main conversation timeline", () => {
-    const timeline = buildConversationTimelineItems({
-      messages: [],
-      executionEvents: [
-        buildExecutionEvent({
-          id: "event-read",
-          eventType: "supervisor_file_read",
-          details: JSON.stringify({ summary: "Read docs/spec.md for supervisor context." }),
-          createdAt: "2026-04-27T00:00:12.000Z",
-        }),
-      ],
-    });
-
-    expect(timeline).toEqual([]);
-  });
-
   it("classifies routine supervisor and worker events away from the transcript", () => {
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_prompt_deferred" }))).toBe("dynamic_status");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_spawned" }))).toBe("inline_event");
@@ -548,18 +212,6 @@ describe("home utils", () => {
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_output_changed" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_turn_completed" }))).toBe("run_log");
     expect(classifyExecutionEvent(buildExecutionEvent({ eventType: "worker_idle" }))).toBe("run_log");
-  });
-
-  it("summarizes deferred steering without exposing ignored busy errors", () => {
-    expect(summarizeExecutionEvent(buildExecutionEvent({
-      eventType: "worker_prompt_deferred",
-      workerId: "run-1-worker-9",
-      details: JSON.stringify({
-        summary: "run-1-worker-9 is already busy; waiting before sending another prompt.",
-        prompt: "Stop compiling to x86_64.",
-        error: "Ask failed: Agent is busy",
-      }),
-    }))).toBe("Waiting to steer worker 9; worker is busy.");
   });
 
   it("does not treat a worker as stuck after newer output from the same worker", () => {
@@ -621,25 +273,6 @@ describe("home utils", () => {
     expect(latestStuckEvent).toBeNull();
   });
 
-  it("classifies actionable events as inline feed signals with summaries", () => {
-    const actionableEvents = [
-      "worker_permission_requested",
-      "worker_permission_approved",
-      "worker_permission_denied",
-      "worker_environment_mismatch",
-    ];
-
-    for (const eventType of actionableEvents) {
-      const event = buildExecutionEvent({
-        eventType,
-        workerId: "worker-1",
-        details: JSON.stringify({ summary: `${eventType} summary`, reason: `${eventType} reason` }),
-      });
-      expect(classifyExecutionEvent(event)).toBe("inline_event");
-      expect(summarizeInlineEvent(event)).toBeTruthy();
-    }
-  });
-
   it("keeps retryable worker poll failures out of the run log", () => {
     expect(shouldShowExecutionEventInRunLog(buildExecutionEvent({
       eventType: "worker_poll_failed",
@@ -673,61 +306,6 @@ describe("home utils", () => {
         details: JSON.stringify({ summary: `${eventType} summary` }),
       }))).toBe(false);
     }
-  });
-
-  it("keeps duplicate stuck worker events out of the main conversation timeline", () => {
-    const timeline = buildConversationTimelineItems({
-      messages: [],
-      executionEvents: [
-        buildExecutionEvent({
-          id: "stuck-1",
-          workerId: "worker-1",
-          eventType: "worker_stuck",
-          details: JSON.stringify({ summary: "worker-1 appears stuck after 90 seconds without meaningful progress" }),
-          createdAt: "2026-04-27T00:00:10.000Z",
-        }),
-        buildExecutionEvent({
-          id: "stuck-2",
-          workerId: "worker-1",
-          eventType: "worker_stuck",
-          details: JSON.stringify({ summary: "worker-1 appears stuck after 90 seconds without meaningful progress" }),
-          createdAt: "2026-04-27T00:00:11.000Z",
-        }),
-        buildExecutionEvent({
-          id: "stuck-3",
-          workerId: "worker-1",
-          eventType: "worker_stuck",
-          details: JSON.stringify({ summary: "worker-1 appears stuck after 90 seconds without meaningful progress" }),
-          createdAt: "2026-04-27T00:00:12.000Z",
-        }),
-      ],
-    });
-
-    expect(timeline).toEqual([]);
-  });
-
-  it("keeps missing worker session events out of the main conversation timeline", () => {
-    const timeline = buildConversationTimelineItems({
-      messages: [],
-      executionEvents: [
-        buildExecutionEvent({
-          id: "missing-1",
-          workerId: "worker-1",
-          eventType: "worker_session_missing",
-          details: JSON.stringify({ summary: "Saved bridge session for worker-1 is no longer available" }),
-          createdAt: "2026-04-27T00:00:10.000Z",
-        }),
-        buildExecutionEvent({
-          id: "missing-2",
-          workerId: "worker-1",
-          eventType: "worker_session_missing",
-          details: JSON.stringify({ summary: "Saved bridge session for worker-1 is no longer available" }),
-          createdAt: "2026-04-27T00:00:10.000Z",
-        }),
-      ],
-    });
-
-    expect(timeline).toEqual([]);
   });
 
   it("hides legacy operational system messages from the main conversation", () => {
@@ -859,10 +437,7 @@ describe("home utils", () => {
       accounts: [],
       agents: [],
       workers: [],
-      planItems: [],
-      clarifications: [],
       executionEvents: [],
-      supervisorInterventions: [],
     };
 
     const next = appendSentConversationMessageSnapshot(liveState, {
@@ -891,10 +466,7 @@ describe("home utils", () => {
       accounts: [],
       agents: [],
       workers: [],
-      planItems: [],
-      clarifications: [],
       executionEvents: [],
-      supervisorInterventions: [],
     };
 
     const next = appendSentConversationMessageSnapshot(liveState, {
@@ -927,10 +499,7 @@ describe("home utils", () => {
       accounts: [],
       agents: [],
       workers: [],
-      planItems: [],
-      clarifications: [],
       executionEvents: [],
-      supervisorInterventions: [],
     };
 
     const preserved = mergePendingSentConversationMessages(staleState, pendingMessages);
@@ -969,10 +538,7 @@ describe("home utils", () => {
       accounts: [],
       agents: [],
       workers: [],
-      planItems: [],
-      clarifications: [],
       executionEvents: [],
-      supervisorInterventions: [],
       messageScope: { runIds: ["other-run"], complete: true },
     };
 
@@ -1007,10 +573,7 @@ describe("home utils", () => {
       accounts: [],
       agents: [],
       workers: [],
-      planItems: [],
-      clarifications: [],
       executionEvents: [],
-      supervisorInterventions: [],
       messageScope: { runIds: ["run-1"], complete: true },
     };
 
@@ -1032,10 +595,7 @@ describe("home utils", () => {
       accounts: [],
       agents: [],
       workers: [],
-      planItems: [],
-      clarifications: [],
       executionEvents: [],
-      supervisorInterventions: [],
     };
 
     const next = appendCreatedConversationSnapshot(liveState, {
@@ -1046,7 +606,6 @@ describe("home utils", () => {
       run: buildRun({
         id: "run-1",
         planId: "plan-1",
-        mode: "implementation",
         projectPath: "/workspace/app",
         title: "New conversation",
       }),
@@ -1075,7 +634,6 @@ describe("home utils", () => {
       runId: "run-1",
       content: "Start a direct control session",
       projectPath: "/workspace/app",
-      mode: "direct",
       now: new Date("2026-04-27T00:01:00.000Z"),
     });
     const pendingSnapshots = new Map([["run-1", optimisticSnapshot]]);
@@ -1086,17 +644,13 @@ describe("home utils", () => {
       accounts: [],
       agents: [],
       workers: [],
-      planItems: [],
-      clarifications: [],
       executionEvents: [],
-      supervisorInterventions: [],
     };
 
     const preserved = mergePendingCreatedConversationSnapshots(staleState, pendingSnapshots);
 
     expect(preserved.runs[0]).toMatchObject({
       id: "run-1",
-      mode: "direct",
       status: "starting",
       projectPath: "/workspace/app",
       title: "Start a direct control session",
@@ -1112,7 +666,6 @@ describe("home utils", () => {
       runId: "run-1",
       content: "Start this",
       projectPath: "/workspace/app",
-      mode: "direct",
       now: new Date("2026-04-27T00:01:00.000Z"),
     });
     const optimisticState = appendCreatedConversationSnapshot({
@@ -1122,10 +675,7 @@ describe("home utils", () => {
       accounts: [],
       agents: [],
       workers: [],
-      planItems: [],
-      clarifications: [],
       executionEvents: [],
-      supervisorInterventions: [],
     }, optimisticSnapshot);
 
     const serverState = appendCreatedConversationSnapshot(optimisticState, {
@@ -1163,10 +713,7 @@ describe("home utils", () => {
       accounts: [],
       agents: [],
       workers: [],
-      planItems: [],
-      clarifications: [],
       executionEvents: [],
-      supervisorInterventions: [],
     };
 
     const preserved = mergePendingCreatedConversationSnapshots(staleState, pendingSnapshots);
@@ -1231,10 +778,7 @@ describe("home utils", () => {
       accounts: [],
       agents: [],
       workers: [],
-      planItems: [],
-      clarifications: [],
       executionEvents: [],
-      supervisorInterventions: [],
     };
 
     mergePendingCreatedConversationSnapshots({
@@ -1286,10 +830,7 @@ describe("home utils", () => {
       accounts: [],
       agents: [],
       workers: [],
-      planItems: [],
-      clarifications: [],
       executionEvents: [],
-      supervisorInterventions: [],
       messageScope: { runIds: ["run-b"], complete: true },
     };
 
@@ -1341,10 +882,7 @@ describe("home utils", () => {
       accounts: [],
       agents: [],
       workers: [],
-      planItems: [],
-      clarifications: [],
       executionEvents: [],
-      supervisorInterventions: [],
     };
 
     mergePendingCreatedConversationSnapshots({
@@ -1396,10 +934,7 @@ describe("home utils", () => {
       accounts: [],
       agents: [],
       workers: [],
-      planItems: [],
-      clarifications: [],
       executionEvents: [],
-      supervisorInterventions: [],
     };
 
     const finished = mergePendingCreatedConversationSnapshots({
@@ -1424,7 +959,6 @@ describe("home utils", () => {
       runId: "run-1",
       content: "Start this",
       projectPath: "/workspace/app",
-      mode: "direct",
       now: new Date("2026-04-27T00:01:00.000Z"),
     })]]);
     const emptyState: EventStreamState = {
@@ -1434,10 +968,7 @@ describe("home utils", () => {
       accounts: [],
       agents: [],
       workers: [],
-      planItems: [],
-      clarifications: [],
       executionEvents: [],
-      supervisorInterventions: [],
     };
 
     const listed = mergePendingCreatedConversationSnapshots({
@@ -1474,10 +1005,7 @@ describe("home utils", () => {
       accounts: [],
       agents: [],
       workers: [],
-      planItems: [],
-      clarifications: [],
       executionEvents: [],
-      supervisorInterventions: [],
     };
     const visibleState: EventStreamState = {
       ...staleState,
@@ -1522,20 +1050,9 @@ describe("home utils", () => {
         { id: "worker-1", runId: "run-1", type: "codex", status: "idle", createdAt: "", updatedAt: "" },
         { id: "worker-2", runId: "run-2", type: "codex", status: "idle", createdAt: "", updatedAt: "" },
       ],
-      planItems: [
-        { id: "item-1", planId: "plan-1", title: "keep", phase: null, status: "pending" },
-        { id: "item-2", planId: "plan-2", title: "delete", phase: null, status: "pending" },
-      ],
-      clarifications: [
-        { id: "clarification-1", runId: "run-2", question: "delete?", answer: null, status: "pending" },
-      ],
       executionEvents: [
         { id: "event-1", runId: "run-1", workerId: "worker-1", eventType: "keep", createdAt: "" },
         { id: "event-2", runId: "run-2", workerId: "worker-2", eventType: "delete", createdAt: "" },
-      ],
-      supervisorInterventions: [
-        { id: "intervention-1", runId: "run-1", workerId: "worker-1", interventionType: "continue", prompt: "keep", createdAt: "" },
-        { id: "intervention-2", runId: "run-2", workerId: "worker-2", interventionType: "continue", prompt: "delete", createdAt: "" },
       ],
     };
 
@@ -1545,17 +1062,13 @@ describe("home utils", () => {
     expect(filtered.messages.map((message) => message.id)).toEqual(["message-1"]);
     expect(filtered.workers.map((worker) => worker.id)).toEqual(["worker-1"]);
     expect(filtered.plans.map((plan) => plan.id)).toEqual(["plan-1"]);
-    expect(filtered.planItems.map((item) => item.id)).toEqual(["item-1"]);
-    expect(filtered.clarifications).toEqual([]);
     expect(filtered.executionEvents.map((event) => event.id)).toEqual(["event-1"]);
-    expect(filtered.supervisorInterventions.map((event) => event.id)).toEqual(["intervention-1"]);
   });
 
   it("builds an optimistic created conversation snapshot for the sidebar before the server responds", () => {
     const createdAt = "2026-05-26T00:00:00.000Z";
     const snapshot = buildOptimisticCreatedConversationSnapshot({
       runId: "client-run-1",
-      mode: "direct",
       projectPath: "/workspace/app",
       preferredWorkerType: "codex",
       createdAt,
@@ -1572,16 +1085,12 @@ describe("home utils", () => {
       accounts: [],
       agents: [],
       workers: [],
-      planItems: [],
-      clarifications: [],
       executionEvents: [],
-      supervisorInterventions: [],
     }, snapshot);
 
     expect(snapshot.run).toEqual(expect.objectContaining({
       id: "client-run-1",
       planId: "client-run-1:optimistic-plan",
-      mode: "direct",
       status: "starting",
       projectPath: "/workspace/app",
       title: "New conversation",
@@ -1601,7 +1110,6 @@ describe("home utils", () => {
       runId: "run-account-selection",
       content: "Start with my selected Claude account",
       projectPath: null,
-      mode: "direct",
       preferredWorkerType: "claude",
       preferredWorkerAccountId: "claude-sub-1",
       createdAt: "2026-07-11T12:00:00.000Z",
@@ -1615,62 +1123,6 @@ describe("home utils", () => {
     expect(parseCollapsedProjectPaths("{bad json")).toEqual(new Set());
   });
 
-  it("summarizes missing saved worker sessions without presenting them as bridge failures", () => {
-    expect(summarizeExecutionEvent({
-      id: "event-1",
-      runId: "run-1",
-      workerId: "worker-1",
-      eventType: "worker_session_missing",
-      details: JSON.stringify({
-        summary: "Saved bridge session for worker-1 is no longer available",
-      }),
-      createdAt: "2026-04-27T00:00:00.000Z",
-    })).toBe("worker-1 session is no longer available");
-  });
-
-  it("summarizes fresh worker sessions after saved-session rejection", () => {
-    expect(summarizeExecutionEvent({
-      id: "event-1",
-      runId: "run-1",
-      workerId: "worker-1",
-      eventType: "worker_session_recreated",
-      details: JSON.stringify({
-        summary: "Started a fresh runtime worker for worker-1 after its saved session was rejected.",
-      }),
-      createdAt: "2026-04-27T00:00:00.000Z",
-    })).toBe("Started a fresh session for worker-1");
-  });
-
-  it("uses short worker labels in execution event summaries", () => {
-    const workerId = "5b1bf465-75cc-4484-b4b0-514d04a0ddf4-worker-3";
-
-    expect(formatExecutionWorkerLabel(workerId)).toBe("worker-3");
-    expect(summarizeExecutionEvent(buildExecutionEvent({
-      workerId,
-      eventType: "worker_stopped",
-      details: JSON.stringify({
-        summary: `${workerId} stopped`,
-      }),
-    }))).toBe("worker-3 stopped");
-  });
-
-  it("renders useful execution event details without repeating the summary", () => {
-    const rows = getExecutionEventDetailRows(buildExecutionEvent({
-      workerId: "run-1-worker-3",
-      eventType: "worker_environment_mismatch",
-      details: JSON.stringify({
-        summary: "run-1-worker-3 launched in the wrong directory",
-        workerCwd: ".",
-        resolvedWorkerCwd: "/workspace/app",
-        cancelError: null,
-      }),
-    }));
-
-    expect(rows).toEqual([
-      expect.objectContaining({ key: "workerCwd", label: "Worker cwd", value: "." }),
-      expect.objectContaining({ key: "resolvedWorkerCwd", label: "Resolved cwd", value: "/workspace/app" }),
-    ]);
-  });
 });
 
 describe("optimistic sent conversation messages", () => {
@@ -1681,10 +1133,7 @@ describe("optimistic sent conversation messages", () => {
     accounts: [],
     agents: [],
     workers: [],
-    planItems: [],
-    clarifications: [],
     executionEvents: [],
-    supervisorInterventions: [],
   });
 
   it("builds a user message row that renders through the direct conversation path", () => {

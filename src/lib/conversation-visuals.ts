@@ -1,4 +1,4 @@
-export type ConversationVisualKind = "supervisor" | "direct" | "commit";
+export type ConversationVisualKind = "direct" | "commit";
 
 type ConversationVisualRun = {
   id: string;
@@ -11,9 +11,5 @@ export function isCommitConversation(run: ConversationVisualRun) {
 }
 
 export function getConversationVisualKind(run: ConversationVisualRun): ConversationVisualKind {
-  if (isCommitConversation(run)) {
-    return "commit";
-  }
-
-  return run.mode === "direct" ? "direct" : "supervisor";
+  return isCommitConversation(run) ? "commit" : "direct";
 }

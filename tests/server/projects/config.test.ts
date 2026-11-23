@@ -6,7 +6,6 @@ import {
   getProjectGitWorkspaceConfig,
   getProjectConfigPath,
   getProjectSetting,
-  isProjectMemoryEnabled,
   readProjectConfig,
   resolveProjectGitWorkspaceDefault,
   setProjectGitWorkspaceDefaultTarget,
@@ -33,14 +32,14 @@ describe("project config", () => {
   });
 
   it("creates .omniharness/ lazily on write", () => {
-    writeProjectConfig(projectPath, { version: 1, supervisor: { memoryEnabled: false } });
+    writeProjectConfig(projectPath, { version: 1, git: { workspace: { worktreeParent: "/worktrees" } } });
     expect(fs.existsSync(getProjectConfigPath(projectPath))).toBe(true);
     const config = readProjectConfig(projectPath);
-    expect(config.supervisor?.memoryEnabled).toBe(false);
+    expect(config.git?.workspace?.worktreeParent).toBe("/worktrees");
   });
 
   it("creates a project .gitignore entry when .omniharness/ is first created", () => {
-    writeProjectConfig(projectPath, { version: 1, supervisor: { memoryEnabled: false } });
+    writeProjectConfig(projectPath, { version: 1, git: { workspace: { worktreeParent: "/worktrees" } } });
 
     expect(fs.readFileSync(path.join(projectPath, ".gitignore"), "utf8")).toBe(".omniharness/\n");
   });
@@ -48,7 +47,7 @@ describe("project config", () => {
   it("adds .omniharness/ to an existing project .gitignore on first creation", () => {
     fs.writeFileSync(path.join(projectPath, ".gitignore"), "node_modules/\n", "utf8");
 
-    writeProjectConfig(projectPath, { version: 1, supervisor: { memoryEnabled: false } });
+    writeProjectConfig(projectPath, { version: 1, git: { workspace: { worktreeParent: "/worktrees" } } });
 
     expect(fs.readFileSync(path.join(projectPath, ".gitignore"), "utf8")).toBe("node_modules/\n.omniharness/\n");
   });
@@ -56,7 +55,7 @@ describe("project config", () => {
   it("does not duplicate an existing project .gitignore entry", () => {
     fs.writeFileSync(path.join(projectPath, ".gitignore"), "node_modules/\n.omniharness/\n", "utf8");
 
-    writeProjectConfig(projectPath, { version: 1, supervisor: { memoryEnabled: false } });
+    writeProjectConfig(projectPath, { version: 1, git: { workspace: { worktreeParent: "/worktrees" } } });
 
     expect(fs.readFileSync(path.join(projectPath, ".gitignore"), "utf8")).toBe("node_modules/\n.omniharness/\n");
   });
@@ -68,29 +67,15 @@ describe("project config", () => {
   });
 
   it("supports dotted getters and setters", () => {
-    setProjectSetting(projectPath, "supervisor.memoryEnabled", false);
-    expect(getProjectSetting(projectPath, "supervisor.memoryEnabled", true)).toBe(false);
-    setProjectSetting(projectPath, "supervisor.memoryEnabled", true);
-    expect(getProjectSetting(projectPath, "supervisor.memoryEnabled", false)).toBe(true);
+    setProjectSetting(projectPath, "git.workspace.worktreeParent", "/a");
+    expect(getProjectSetting(projectPath, "git.workspace.worktreeParent", "")).toBe("/a");
+    setProjectSetting(projectPath, "git.workspace.worktreeParent", "/b");
+    expect(getProjectSetting(projectPath, "git.workspace.worktreeParent", "")).toBe("/b");
   });
 
   it("returns the default for unset keys", () => {
-    expect(getProjectSetting(projectPath, "supervisor.memoryEnabled", true)).toBe(true);
-    expect(getProjectSetting(projectPath, "supervisor.memoryEnabled", false)).toBe(false);
-  });
-
-  it("isProjectMemoryEnabled defaults to true when no config", () => {
-    expect(isProjectMemoryEnabled(projectPath)).toBe(true);
-  });
-
-  it("isProjectMemoryEnabled respects an explicit false", () => {
-    setProjectSetting(projectPath, "supervisor.memoryEnabled", false);
-    expect(isProjectMemoryEnabled(projectPath)).toBe(false);
-  });
-
-  it("isProjectMemoryEnabled returns false when no project path is given", () => {
-    expect(isProjectMemoryEnabled(null)).toBe(false);
-    expect(isProjectMemoryEnabled("")).toBe(false);
+    expect(getProjectSetting(projectPath, "git.workspace.worktreeParent", "/default")).toBe("/default");
+    expect(getProjectSetting(projectPath, "git.workspace.worktreeParent", "")).toBe("");
   });
 
   it("persists git workspace defaults under project config", () => {

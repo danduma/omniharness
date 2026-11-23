@@ -52,37 +52,11 @@ describe("OmniHarnessAcpAgent", () => {
     };
   }
 
-  it("advertises OmniHarness modes as ACP session modes", async () => {
-    const agent = new OmniHarnessAcpAgent(createConnection());
-
-    const initialized = await agent.initialize({
-      protocolVersion: acp.PROTOCOL_VERSION,
-      clientCapabilities: {},
-    });
-    const session = await agent.newSession({
-      cwd: "/workspace/app",
-      mcpServers: [],
-    });
-
-    expect(initialized.agentInfo?.name).toBe("OmniHarness");
-    expect(session.sessionId).toMatch(/^[0-9a-f]{12}$/);
-    expect(initialized.agentCapabilities?.loadSession).toBe(true);
-    expect(initialized.agentCapabilities?.sessionCapabilities?.list).toEqual({});
-    expect(initialized.agentCapabilities?.sessionCapabilities?.resume).toEqual({});
-    expect(initialized.agentCapabilities?.sessionCapabilities?.fork).toEqual({});
-    expect(session.modes?.currentModeId).toBe("implementation");
-    expect(session.modes?.availableModes.map((mode) => mode.id)).toEqual([
-      "implementation",
-      "planning",
-      "direct",
-    ]);
-  });
-
   it("starts a same-backed Omni conversation from an ACP prompt", async () => {
     const createConversation = vi.fn().mockResolvedValue({
       planId: "plan-1",
       runId: "run-1",
-      mode: "planning",
+      mode: "direct",
     });
     const waitForTurn = vi.fn(async ({ emit }: { emit: (text: string) => Promise<void> }) => {
       await emit("worker update");
@@ -95,13 +69,13 @@ describe("OmniHarnessAcpAgent", () => {
       waitForTurn,
     });
     const session = await agent.newSession({ cwd: "/workspace/app", mcpServers: [] });
-    await agent.setSessionMode({ sessionId: session.sessionId, modeId: "planning" });
+    await agent.setSessionMode({ sessionId: session.sessionId, modeId: "direct" });
 
     const response = await agent.prompt(textPrompt(session.sessionId, "make a plan for ACP control"));
 
     expect(response.stopReason).toBe("end_turn");
     expect(createConversation).toHaveBeenCalledWith(expect.objectContaining({
-      mode: "planning",
+      mode: "direct",
       command: "make a plan for ACP control",
       projectPath: "/workspace/app",
     }));
@@ -164,7 +138,7 @@ describe("OmniHarnessAcpAgent", () => {
   });
 
   it("loads a persisted Omni run and replays message history", async () => {
-    const runId = await insertRun({ mode: "planning" });
+    const runId = await insertRun({ mode: "direct" });
     await db.insert(messages).values([
       {
         id: randomUUID(),
@@ -192,7 +166,7 @@ describe("OmniHarnessAcpAgent", () => {
       mcpServers: [],
     });
 
-    expect(response?.modes?.currentModeId).toBe("planning");
+    expect(response?.modes?.currentModeId).toBe("direct");
     expect(sessionUpdate).toHaveBeenCalledWith({
       sessionId: runId,
       update: {
@@ -232,11 +206,11 @@ describe("OmniHarnessAcpAgent", () => {
   });
 
   it("forks an ACP session without sharing the source run", async () => {
-    const runId = await insertRun({ mode: "planning" });
+    const runId = await insertRun({ mode: "direct" });
     const createConversation = vi.fn().mockResolvedValue({
       planId: "fork-plan",
       runId: "fork-run",
-      mode: "planning",
+      mode: "direct",
     });
     const agent = new OmniHarnessAcpAgent(createConnection(), {
       createConversation,
@@ -252,9 +226,9 @@ describe("OmniHarnessAcpAgent", () => {
 
     expect(fork?.sessionId).not.toBe(runId);
     expect(fork?.sessionId).toMatch(/^[0-9a-f]{12}$/);
-    expect(fork?.modes?.currentModeId).toBe("planning");
+    expect(fork?.modes?.currentModeId).toBe("direct");
     expect(createConversation).toHaveBeenCalledWith(expect.objectContaining({
-      mode: "planning",
+      mode: "direct",
       command: "forked prompt",
       projectPath: "/workspace/app",
     }));

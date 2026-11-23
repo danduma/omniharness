@@ -15,8 +15,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/server/auth/guards", () => ({
   requireApiSession: vi.fn().mockResolvedValue({ response: null, account: { id: "test", role: "admin" } }),
 }));
-vi.mock("@/server/supervisor/runtime-watchdog", () => ({
-  ensureSupervisorRuntimeStarted: vi.fn().mockResolvedValue(undefined),
+vi.mock("@/server/runtime/watchdog", () => ({
+  ensureRuntimeWatchdogStarted: vi.fn().mockResolvedValue(undefined),
 }));
 import { eventsRoute as GET } from "@/../tests/helpers/runtime-routes";
 import {

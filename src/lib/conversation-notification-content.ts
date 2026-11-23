@@ -21,7 +21,7 @@ export function notificationEventDetail(details: unknown): string {
   return notificationPreview(record.question) || notificationPreview(record.summary);
 }
 
-export type ConversationNotificationKind = "complete" | "response" | "input" | "permission" | "failed";
+export type ConversationNotificationKind = "response" | "input" | "permission" | "failed";
 
 export function conversationNotificationContent(
   options: { kind: ConversationNotificationKind; title: string; detail?: string; runner?: string | null },

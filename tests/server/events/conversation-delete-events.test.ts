@@ -15,12 +15,6 @@ vi.mock("@/server/bridge-client", () => ({
   cancelAgent: vi.fn().mockResolvedValue(undefined),
   cancelAgentTerminalProcess: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("@/server/supervisor/observer", () => ({
-  stopRunObserver: vi.fn(),
-}));
-vi.mock("@/server/supervisor/wake", () => ({
-  cancelSupervisorWake: vi.fn(),
-}));
 
 const RUN_ID = "run-delete-events";
 

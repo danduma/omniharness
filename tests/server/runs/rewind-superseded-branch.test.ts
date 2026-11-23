@@ -11,13 +11,11 @@ const {
   mockAskAgent,
   mockGetAgent,
   mockCancelAgent,
-  mockStartSupervisorRun,
 } = vi.hoisted(() => ({
   mockSpawnAgent: vi.fn(),
   mockAskAgent: vi.fn(),
   mockGetAgent: vi.fn(),
   mockCancelAgent: vi.fn().mockResolvedValue(undefined),
-  mockStartSupervisorRun: vi.fn(),
 }));
 
 vi.mock("@/server/runs/ad-hoc-plan", () => ({
@@ -30,10 +28,6 @@ vi.mock("@/server/bridge-client", () => ({
   askAgent: mockAskAgent,
   getAgent: mockGetAgent,
   cancelAgent: mockCancelAgent,
-}));
-
-vi.mock("@/server/supervisor/start", () => ({
-  startSupervisorRun: mockStartSupervisorRun,
 }));
 
 import { recoverRun } from "@/server/runs/recovery";
@@ -55,7 +49,6 @@ describe("rewinding a conversation supersedes the discarded branch", () => {
     mockAskAgent.mockReset();
     mockGetAgent.mockReset();
     mockCancelAgent.mockClear();
-    mockStartSupervisorRun.mockClear();
     __resetNamedEventsForTests();
     await db.delete(executionEvents);
     await db.delete(messages);

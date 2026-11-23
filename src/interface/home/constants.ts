@@ -83,29 +83,6 @@ export function getDefaultWorkersSidebarWidth(viewportWidth?: number | null) {
 }
 
 export const DEFAULT_SERVER_SETTINGS: Record<string, string> = {
-  SUPERVISOR_LLM_PROVIDER: "gemini",
-  SUPERVISOR_LLM_MODEL: "gemini-3.5-flash",
-  SUPERVISOR_LLM_BASE_URL: "",
-  SUPERVISOR_LLM_API_KEY: "",
-  SUPERVISOR_LLM_THINKING_EFFORT: "medium",
-  SUPERVISOR_LLM_TEMPERATURE: "",
-  SUPERVISOR_LLM_MAX_OUTPUT_TOKENS: "",
-  SUPERVISOR_FALLBACK_LLM_PROVIDER: "openai",
-  SUPERVISOR_FALLBACK_LLM_MODEL: "gpt-5.4-mini",
-  SUPERVISOR_FALLBACK_LLM_BASE_URL: "",
-  SUPERVISOR_FALLBACK_LLM_API_KEY: "",
-  SUPERVISOR_FALLBACK_LLM_THINKING_EFFORT: "medium",
-  SUPERVISOR_FALLBACK_LLM_TEMPERATURE: "",
-  SUPERVISOR_FALLBACK_LLM_MAX_OUTPUT_TOKENS: "",
-  SUPERVISOR_MEMORY_LLM_USE_CUSTOM: "false",
-  SUPERVISOR_MEMORY_LLM_PROVIDER: "",
-  SUPERVISOR_MEMORY_LLM_MODEL: "",
-  SUPERVISOR_MEMORY_LLM_BASE_URL: "",
-  SUPERVISOR_MEMORY_LLM_API_KEY: "",
-  SUPERVISOR_MEMORY_LLM_THINKING_EFFORT: "medium",
-  SUPERVISOR_MEMORY_LLM_TEMPERATURE: "",
-  SUPERVISOR_MEMORY_LLM_MAX_OUTPUT_TOKENS: "",
-  CREDIT_STRATEGY: "swap_account",
   WORKER_DEFAULT_TYPE: "codex",
   WORKER_ALLOWED_TYPES: "",
   WORKER_YOLO_MODE: "true",
@@ -122,13 +99,11 @@ export const DEFAULT_SERVER_SETTINGS: Record<string, string> = {
   [GIT_AUTO_COMMIT_MILESTONES_SETTING]: "false",
   [GIT_PUSH_ON_COMMIT_SETTING]: "false",
   RECOVERY_POLICY: JSON.stringify({
-    autoRecoverImplementationRuns: true,
     autoRecoverDirectRuns: false,
     maxAutoAttemptsPerIncident: 3,
     baseBackoffMs: 5000,
     maxBackoffMs: 60000,
     sessionResumeFirst: true,
-    restartFromCheckpointWhenSessionMissing: true,
     preserveQueuedMessages: true,
   }),
   PROJECTS: "[]",
@@ -198,92 +173,4 @@ const COMPOSER_EFFORT_STORAGE_KEY_PREFIX = "omni-composer-effort";
 export function getEffortStorageKey(worker: string, model: string): string {
   return `${COMPOSER_EFFORT_STORAGE_KEY_PREFIX}:${worker}:${model}`;
 }
-export const COMPOSER_MODE_STORAGE_KEY = "omni-composer-mode";
 export const RUN_PATH_PATTERN = /^\/session\/([0-9a-fA-F]{12}|[0-9a-fA-F-]{36})\/?$/;
-
-export const LLM_PROVIDER_OPTIONS = [
-  { value: "gemini", label: "Gemini" },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "openai", label: "OpenAI" },
-  { value: "codex", label: "Codex (ChatGPT subscription)" },
-  { value: "openrouter", label: "OpenRouter" },
-  { value: "openai-compatible", label: "OpenAI-Compatible" },
-] as const;
-
-export type LlmProviderId = (typeof LLM_PROVIDER_OPTIONS)[number]["value"];
-
-export const LLM_PROVIDER_MODEL_CATALOG: Record<LlmProviderId, Array<{ value: string; label: string }>> = {
-  gemini: [
-    { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
-    { value: "gemini-3", label: "Gemini 3" },
-    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
-  ],
-  anthropic: [
-    { value: "claude-opus-5-5", label: "Opus 5.5" },
-    { value: "claude-fable-5-2", label: "Fable 5.2" },
-    { value: "claude-fable-5-1", label: "Fable 5.1" },
-    { value: "claude-fable-5", label: "Fable 5" },
-    { value: "claude-opus-5", label: "Opus 5" },
-    { value: "claude-sonnet-5-5", label: "Sonnet 5.5" },
-    { value: "claude-sonnet-5", label: "Sonnet 5" },
-    { value: "claude-haiku-5-5", label: "Haiku 5.5" },
-    { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
-  ],
-  openai: [
-    { value: "gpt-6-sol", label: "GPT-6 Sol" },
-    { value: "gpt-6-luna", label: "GPT-6 Luna" },
-    { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-    { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-    { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
-    { value: "gpt-5.5", label: "GPT-5.5" },
-    { value: "gpt-5.4", label: "GPT-5.4" },
-    { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
-    { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
-  ],
-  codex: [
-    { value: "gpt-6.2-sol", label: "GPT-6.2 Sol" },
-    { value: "gpt-6.2-astra", label: "GPT-6.2 Astra" },
-    { value: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
-    { value: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
-    { value: "gpt-6-sol", label: "GPT-6 Sol" },
-    { value: "gpt-6-luna", label: "GPT-6 Luna" },
-    { value: "gpt-6-astra", label: "GPT-6 Astra" },
-    { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-    { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-    { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
-  ],
-  openrouter: [
-    { value: "anthropic/claude-opus-5-5", label: "Opus 5.5" },
-    { value: "anthropic/claude-fable-5-2", label: "Fable 5.2" },
-    { value: "anthropic/claude-fable-5-1", label: "Fable 5.1" },
-    { value: "anthropic/claude-fable-5", label: "Fable 5" },
-    { value: "anthropic/claude-opus-5", label: "Opus 5" },
-    { value: "anthropic/claude-sonnet-5-5", label: "Sonnet 5.5" },
-    { value: "anthropic/claude-sonnet-5", label: "Sonnet 5" },
-    { value: "anthropic/claude-haiku-5-5", label: "Haiku 5.5" },
-    { value: "openai/gpt-6-sol", label: "GPT-6 Sol" },
-    { value: "openai/gpt-6-luna", label: "GPT-6 Luna" },
-    { value: "openai/gpt-5.5", label: "GPT-5.5" },
-    { value: "google/gemini-3.5-flash", label: "Gemini 3.5 Flash" },
-  ],
-  "openai-compatible": [],
-};
-
-export const LLM_DEFAULT_MODEL: Record<LlmProviderId, string> = {
-  gemini: "gemini-3.5-flash",
-  anthropic: "claude-opus-5-5",
-  openai: "gpt-5.6-sol",
-  codex: "gpt-5.6-sol",
-  openrouter: "anthropic/claude-opus-5-5",
-  "openai-compatible": "",
-};
-
-export const LLM_THINKING_EFFORT_OPTIONS = [
-  { value: "off", label: "Off" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-  { value: "xhigh", label: "Extra High" },
-  { value: "max", label: "Max" },
-] as const;

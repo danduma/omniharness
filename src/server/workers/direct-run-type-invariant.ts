@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { runs, workers } from "@/server/db/schema";
 import { emitNamedEvent } from "@/server/events/named-events";
-import { normalizeWorkerType } from "@/server/supervisor/worker-types";
+import { normalizeWorkerType } from "@/shared/worker-types";
 
 export class DirectRunHandoffRequiredError extends Error {
   readonly code = "handoff_required";

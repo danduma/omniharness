@@ -36,7 +36,6 @@ function buildMutations(overrides: Record<string, unknown> = {}) {
     selectedRunId: null,
     selectedCliAgent: "claude",
     selectedWorkerAccountId: "auto",
-    selectedConversationMode: "direct",
     selectedModel: "claude-fable-5-1",
     selectedEffort: "High",
     autoSelectedWorkerType: "claude",
@@ -131,7 +130,6 @@ describe("a conversation launches on the model the composer is showing", () => {
       clientMessageId: "msg-2",
       attachments: [],
       launch: {
-        conversationMode: "direct",
         workerType: "claude",
         isAutoWorkerSelection: true,
         model: null,

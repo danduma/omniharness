@@ -95,8 +95,7 @@ export type SurfacedErrorCode =
   | "queue.interrupt.refused"
   | "queue.interrupt.cancel_failed"
   | "queue.interrupt.delivery_failed"
-  | "supervisor.gave_up"
-  | "supervisor.wake.failed"
+  | "quota.wake.failed"
   | "surface.bridge_failed"
   | "worker.spawn.failed"
   | "worker.spawn.resource_exhausted"
@@ -128,6 +127,7 @@ export type SurfacedErrorCode =
   | "worker.plan.binding_hydration_failed"
   | "worker.prompt.image_attachment_unreadable"
   | "worker.cancel.failed"
+  | "worker.steer.failed"
   | "worker.output_content_unavailable"
   | "worker.model.version_unavailable"
   // The requested model's *family* is not offered at all. Substituting another
@@ -603,70 +603,24 @@ export type WorkerEvent =
       reason: string;
     };
 
-export type SupervisorStopReason =
-  | "run_terminated"
-  | "run_failed"
-  | "cwd_mismatch"
-  | "snapshot_invalid"
-  | "quota_exhausted"
-  | "fatal_bridge_error"
-  | "explicit";
-
-export type SupervisorEvent =
-  | { kind: "supervisor.stopped"; runId: string; reason: SupervisorStopReason }
-  | { kind: "supervisor.watchdog_sweep_failed"; reason: string }
+export type BackgroundSweepEvent =
+  | { kind: "runtime.watchdog_sweep_failed"; reason: string }
+  | { kind: "quota.wake_claimed"; runId: string; reason: string; source: string | null }
   | {
-      kind: "supervisor.wake_lease_acquired";
-      runId: string;
-      source: "insert" | "replace_expired" | "replace_malformed";
-    }
-  | {
-      kind: "supervisor.wake_lease_blocked";
-      runId: string;
-      reason: "active_lease" | "insert_conflict" | "claim_race";
-    }
-  | { kind: "supervisor.wake_lease_released"; runId: string }
-  | {
-      kind: "supervisor.wake_lease_release_skipped";
-      runId: string;
-      reason: "missing" | "malformed" | "not_owner";
-    }
-  | { kind: "supervisor.wake_lease_recovered"; runId: string; reason: "orphaned_completion" | "orphaned_pre_worker" | "orphaned_worker_session_recreated" }
-  | {
-      kind: "supervisor.wake_skipped";
-      runId: string;
-      reason: "in_flight" | "lease_blocked" | "quota_wait_future_wake" | "run_not_runnable" | "handoff_in_progress";
-    }
-  | { kind: "supervisor.wake_scheduled"; runId: string; delayMs: number; source: "volatile" | "lease_retry" }
-  | {
-      kind: "supervisor.durable_wake_schedule_failed";
-      runId: string;
-      reason: string;
-      source: string | null;
-      error: string;
-    }
-  | { kind: "supervisor.durable_wake_claimed"; runId: string; reason: string; source: string | null }
-  | {
-      // A due quota wake was claimed (and therefore deleted) but the handler
-      // could not act on it. The run keeps its open incident and is left for
+      // A due quota wake was claimed (and therefore deleted) but there was
+      // nothing to resume. The run keeps any open incident and is left for
       // `resumeElapsedQuotaWaits` to sweep.
-      kind: "supervisor.quota_wake_dropped";
+      kind: "quota.wake_dropped";
       runId: string;
       reason: "run_missing" | "no_open_incident";
       status: string | null;
     }
   | {
-      kind: "supervisor.quota_wake_swept";
+      kind: "quota.wake_swept";
       runId: string;
       status: string;
-      action: "resumed" | "cleared" | "rescheduled";
+      action: "resumed" | "cleared";
     };
-
-export type PlanEvent =
-  | { kind: "plan.ready"; runId: string; planId: string | null }
-  | { kind: "plan.review.started"; runId: string; reviewRunId: string }
-  | { kind: "plan.review.finished"; runId: string; reviewRunId: string; status: string }
-  | { kind: "plan.review.blocked"; runId: string; reason: string };
 
 export type GoalEvent =
   | {
@@ -832,7 +786,6 @@ export type ConversationEvent =
       accountId: string | null;
     }
   | { kind: "conversation.awaiting_user"; runId: string; workerId?: string; reason: "worker_requested_input" }
-  | { kind: "notification.suppressed"; runId: string; reason: "run_not_completed"; eventType: string }
   | { kind: "conversation.read"; runId: string; lastReadAt: string }
   | { kind: "conversation.message_delivery_reclaimed"; runId: string; messageId: string }
   | { kind: "conversation.message_restored_from_stream"; runId: string; messageId: string; workerId: string }
@@ -954,6 +907,25 @@ export type ConversationEvent =
       workerId: string;
       queuedMessageId: string;
       totalInterruptLatencyMs: number;
+      source: string;
+    }
+  // The steer went into the worker's running turn (no cancel); the turn's
+  // owner persists the reply when the turn settles.
+  | {
+      kind: "queue.interrupt_injected";
+      runId: string;
+      workerId: string;
+      queuedMessageId: string;
+      totalInterruptLatencyMs: number;
+      source: string;
+    }
+  // An in-turn steer was not possible; the steer continues as cancel-and-replace.
+  | {
+      kind: "queue.interrupt_inject_fallback";
+      runId: string;
+      workerId: string;
+      queuedMessageId: string;
+      reason: string;
       source: string;
     }
   | {
@@ -1129,7 +1101,12 @@ export type AcpEvent =
   // claude-agent-acp folded a prompt into a turn Claude was already running
   // and never settled the prompt, so the runtime settled it after `quietMs`
   // with no new turn starting.
-  | { kind: "acp.prompt_absorbed"; workerId: string; quietMs: number };
+  | { kind: "acp.prompt_absorbed"; workerId: string; quietMs: number }
+  // A steer was delivered into the running turn via `_session/steering`.
+  | { kind: "acp.steer_injected"; workerId: string }
+  // The runtime did not attempt or complete an in-turn steer; the control
+  // plane falls back to cancel-and-replace.
+  | { kind: "acp.steer_skipped"; workerId: string; reason: "unsupported" | "no_prompt_in_flight" | "adapter_idle" };
 
 export type ClaudeModelGatewayEvent =
   | { kind: "claude_gateway.install_started"; operationId: string }
@@ -1161,8 +1138,7 @@ export type NamedEvent =
   | RuntimeEvent
   | AuthEvent
   | WorkerEvent
-  | SupervisorEvent
-  | PlanEvent
+  | BackgroundSweepEvent
   | GoalEvent
   | RecoveryEvent
   | AccountEvent

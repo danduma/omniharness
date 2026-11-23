@@ -136,9 +136,6 @@ export function createRuntimeDomains({
       resume(input, options) {
         return post(`/api/runs/${encode(input.runId)}/resume`, input.body ?? {}, options);
       },
-      answer(input, options) {
-        return post(`/api/runs/${encode(input.runId)}/answer`, input.body, options);
-      },
     },
     handoffs: {
       getActive(input, options) {
@@ -345,34 +342,12 @@ export function createRuntimeDomains({
         return post("/api/git", input, options);
       },
     },
-    planning: {
-      list(options) {
-        return get("/api/plans", options);
-      },
-      promote(input, options) {
-        return post(`/api/planning/${encode(input.runId)}/promote`, input.body, options);
-      },
-      review(input, options) {
-        return post(`/api/planning/${encode(input.runId)}/review`, input.body, options);
-      },
-    },
     settings: {
       load(options) {
         return get("/api/settings", options);
       },
       save(input, options) {
         return post("/api/settings", input, options);
-      },
-      projectMemory: {
-        load(input, options) {
-          return get(`/api/projects/memory${buildRuntimeQuery({
-            projectPath: input.projectPath,
-            path: input.path,
-          })}`, options);
-        },
-        save(input, options) {
-          return post("/api/projects/memory", input, options);
-        },
       },
       claudeGateway: {
         load(options) {
@@ -419,9 +394,6 @@ export function createRuntimeDomains({
           purge: true,
           confirmAccountId: input.confirmAccountId,
         }, options) as ReturnType<RuntimeAPIs["accounts"]["purge"]>;
-      },
-      codexStatus(options) {
-        return get("/api/codex-auth/status", options);
       },
     },
     notifications: {

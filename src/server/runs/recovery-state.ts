@@ -2,7 +2,6 @@ export type RecoveryStateKind =
   | "healthy"
   | "recovering"
   | "lost_worker_resumable"
-  | "lost_worker_rerunnable"
   | "quota_waiting"
   | "needs_recovery"
   | "queue_blocked"
@@ -11,7 +10,6 @@ export type RecoveryStateKind =
 export type RecoveryRecommendedAction =
   | "none"
   | "resume_session"
-  | "restart_from_checkpoint"
   | "wait_for_quota_reset"
   | "manual_resume"
   | "inspect_error";
@@ -119,16 +117,6 @@ function isActivePersistedWorker(worker: RecoveryWorkerLike, nowMs: number) {
   return true;
 }
 
-function latestUserCheckpoint(messages: RecoveryMessageLike[]) {
-  return messages
-    .filter((message) => message.role === "user")
-    .sort((a, b) => {
-      const aTime = timestampMs(a.createdAt) ?? 0;
-      const bTime = timestampMs(b.createdAt) ?? 0;
-      return bTime - aTime;
-    })[0] ?? null;
-}
-
 /**
  * A queued message that failed with an agent-missing error is only evidence of a
  * recovery condition while its target worker is still absent. Once the worker is
@@ -182,8 +170,9 @@ type ClassifyRunRecoveryArgs = {
   run: RecoveryRunLike;
   workers: RecoveryWorkerLike[];
   liveAgents: RecoveryLiveAgentLike[];
-  messages?: RecoveryMessageLike[];
   queuedMessages?: RecoveryQueuedMessageLike[];
+  /** Accepted for callers that already load it; classification no longer reads it. */
+  messages?: RecoveryMessageLike[];
   nowMs?: number;
 };
 
@@ -191,7 +180,6 @@ function classifyRunRecoveryEvidence({
   run,
   workers,
   liveAgents,
-  messages = [],
   queuedMessages = [],
   nowMs = Date.now(),
 }: ClassifyRunRecoveryArgs): RecoveryState {
@@ -263,18 +251,6 @@ function classifyRunRecoveryEvidence({
       };
     }
 
-    if (run.mode === "implementation" && latestUserCheckpoint(messages)) {
-      return {
-        kind: "lost_worker_rerunnable",
-        status: "open",
-        message: "The worker is missing from the runtime. Restart from the latest checkpoint.",
-        recommendedAction: "restart_from_checkpoint",
-        workerId: worker.id,
-        queuedMessageId: workerBlockedMessage?.id ?? null,
-        reason: workerBlockedMessage?.lastError ?? "Worker was marked active but is not present in the bridge runtime.",
-      };
-    }
-
     return {
       kind: "needs_recovery",
       status: "needs_user",
@@ -302,24 +278,12 @@ function classifyRunRecoveryEvidence({
     }
   }
 
-  if (blockedMessage && run.mode !== "implementation") {
+  if (blockedMessage) {
     return {
       kind: "queue_blocked",
       status: "needs_user",
       message: "A queued message could not be delivered because its worker is missing.",
       recommendedAction: "manual_resume",
-      workerId: blockedMessage.targetWorkerId,
-      queuedMessageId: blockedMessage.id,
-      reason: blockedMessage.lastError,
-    };
-  }
-
-  if (blockedMessage && run.mode === "implementation" && latestUserCheckpoint(messages)) {
-    return {
-      kind: "lost_worker_rerunnable",
-      status: "open",
-      message: "A queued message is blocked on a missing worker. Restart from the latest checkpoint.",
-      recommendedAction: "restart_from_checkpoint",
       workerId: blockedMessage.targetWorkerId,
       queuedMessageId: blockedMessage.id,
       reason: blockedMessage.lastError,

@@ -5,7 +5,7 @@ One logical headless runner owns SQLite, auth, supervision, PTYs, and agent
 processes; the shared Vite interface runs in the web/PWA, Electron, iOS,
 Android, and VS Code and can stay connected to multiple runners.
 
-Use it when you want one durable place to start coding-agent runs, watch worker output, recover conversations, inspect execution events, and keep local agent processes behind a clear supervisory layer.
+Use it when you want one durable place to start coding-agent runs, watch worker output, recover conversations, inspect execution events, and keep local agent processes under one durable control surface.
 
 ## What You Get
 
@@ -189,7 +189,7 @@ Create a local env file only if you want password auth, phone pairing, public-or
 cp .env.example .env
 ```
 
-Local agent CLIs that are already logged in usually work without API keys. If you want the supervisor model or runtime workers to use provider keys from the environment, fill in the relevant variables in `.env`.
+Local agent CLIs that are already logged in usually work without API keys. If you want workers to use provider keys from the environment, fill in the relevant variables in `.env`.
 
 ## Password Auth
 

@@ -21,10 +21,7 @@ import { askAgent, cancelAgent, getAgent, spawnAgent, type AgentRecord } from "@
 import { createAdHocPlan, rewriteAdHocPlan } from "@/server/runs/ad-hoc-plan";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
 import { createRunId } from "@/server/runs/ids";
-import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
-import { startSupervisorRun } from "@/server/supervisor/start";
 import { getAppDataPath } from "@/server/app-root";
-import { buildPlannerSystemPrompt } from "@/server/prompts";
 import {
   appendAttachmentContext,
   normalizeChatAttachments,
@@ -33,7 +30,7 @@ import {
   serializeChatAttachments,
   type ChatAttachment,
 } from "@/lib/chat-attachments";
-import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/server/supervisor/worker-types";
+import { parseAllowedWorkerTypes, normalizeWorkerType } from "@/shared/worker-types";
 import { allocateWorkerIdentity } from "@/server/workers/ids";
 import {
   appendWorkerEntryWithResult,
@@ -62,7 +59,7 @@ import { updateDirectRunStatusFromWorkerOutput } from "@/server/conversations/di
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
 import { refreshWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
-import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
+import { readRuntimeEnvFromSettings } from "@/server/settings/runtime-env";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { createBranchWorktree } from "@/server/git/workspaces";
 import { pendingOrphanWorktreeError } from "@/server/git/orphan-recovery";
@@ -249,21 +246,8 @@ async function clearRunDerivedState(runId: string, planId: string) {
   await db.delete(planItems).where(eq(planItems.planId, planId));
 }
 
-function buildDirectWorkerPrompt(mode: string, content: string, projectRoot: string) {
-  if (mode === "planning") {
-    return `${buildPlannerSystemPrompt(projectRoot)}\n\nUser request:\n${content}`;
-  }
-
-  return content;
-}
-
-function buildDirectMessagePrompt(
-  mode: string,
-  message: typeof messages.$inferSelect,
-  content: string,
-  projectRoot: string,
-) {
-  const withAttachments = appendAttachmentContext(
+function buildDirectMessagePrompt(message: typeof messages.$inferSelect, content: string) {
+  return appendAttachmentContext(
     content,
     parseChatAttachmentsJson(message.attachmentsJson),
     {
@@ -271,7 +255,6 @@ function buildDirectMessagePrompt(
       imagesInlined: true,
     },
   );
-  return buildDirectWorkerPrompt(mode, withAttachments, projectRoot);
 }
 
 function workerEntryAttachments(message: typeof messages.$inferSelect) {
@@ -466,7 +449,7 @@ async function startDirectRerun(
         resolvePath: (storagePath) => getAppDataPath(storagePath),
         imagesInlined: true,
       });
-      const nextUserPrompt = buildDirectWorkerPrompt(run.mode, workerContent, cwd);
+      const nextUserPrompt = workerContent;
       const replayTargetMessageId = options.replayTargetMessageId ?? null;
       const replay = replayTargetMessageId
         ? await buildConversationTranscriptReplayPromptBeforeEntry({
@@ -897,7 +880,7 @@ async function resumeDirectRunFromSavedSession(
         replayPrompt = await buildTranscriptReplayPrompt({
           runId: run.id,
           workerId: worker.id,
-          nextUserPrompt: buildDirectMessagePrompt(run.mode, targetMessage, content, worker.cwd),
+          nextUserPrompt: buildDirectMessagePrompt(targetMessage, content),
         });
       }
     } else {
@@ -997,7 +980,7 @@ async function resumeDirectRunFromSavedSession(
     return { runId: run.id };
   }
 
-  const retryPrompt = replayPrompt ?? buildDirectMessagePrompt(run.mode, targetMessage, content, worker.cwd);
+  const retryPrompt = replayPrompt ?? buildDirectMessagePrompt(targetMessage, content);
   const retryImages = resolveImageAttachments(parseChatAttachmentsJson(targetMessage.attachmentsJson), getAppDataPath);
   let response;
   try {
@@ -1142,82 +1125,6 @@ async function resumeDirectRunFromSavedSession(
   await resolveOpenRecoveryIncidentsForRun(run.id, worker.id, `Recovered ${worker.id}.`);
 
   return { runId: run.id };
-}
-
-async function startImplementationRerun(
-  run: typeof runs.$inferSelect,
-  plan: typeof plans.$inferSelect,
-  args: RecoverRunArgs,
-  targetMessage: typeof messages.$inferSelect,
-  nextContent: string,
-) {
-  await cancelRunWorkers(args.runId);
-
-  const laterMessages = await db.select().from(messages).where(eq(messages.runId, args.runId));
-  const laterMessageIds = laterMessages
-    .filter((message) => message.createdAt > targetMessage.createdAt)
-    .map((message) => message.id);
-
-  if (laterMessageIds.length > 0) {
-    await db.delete(messages).where(inArray(messages.id, laterMessageIds));
-  }
-
-  await supersedeDiscardedBranch(args.runId, args.targetMessageId);
-
-  if (args.action === "edit") {
-    await db.update(messages).set({
-      content: nextContent,
-      editedFromMessageId: args.targetMessageId,
-    }).where(eq(messages.id, args.targetMessageId));
-  }
-
-  await clearRunDerivedState(args.runId, run.planId);
-  await clearSupervisorWakeLease(args.runId);
-  await db.update(plans).set({
-    status: "running",
-    updatedAt: new Date(),
-  }).where(eq(plans.id, plan.id));
-  await db.update(runs).set({
-    status: "running",
-    failedAt: null,
-    lastError: null,
-    updatedAt: new Date(),
-  }).where(eq(runs.id, args.runId));
-
-  startSupervisorRun(args.runId);
-
-  return { runId: args.runId };
-}
-
-async function resumeImplementationRun(run: typeof runs.$inferSelect, plan: typeof plans.$inferSelect) {
-  await clearSupervisorWakeLease(run.id);
-  await clearMatchingRunFailureMessage(run);
-  await db.update(plans).set({
-    status: "running",
-    updatedAt: new Date(),
-  }).where(eq(plans.id, plan.id));
-  await db.update(runs).set({
-    status: "running",
-    failedAt: null,
-    lastError: null,
-    updatedAt: new Date(),
-  }).where(eq(runs.id, run.id));
-
-  startSupervisorRun(run.id);
-  return { runId: run.id };
-}
-
-async function clearMatchingRunFailureMessage(run: typeof runs.$inferSelect) {
-  if (!run.lastError) {
-    return;
-  }
-
-  await db.delete(messages).where(and(
-    eq(messages.runId, run.id),
-    eq(messages.role, "system"),
-    eq(messages.kind, "error"),
-    eq(messages.content, `Run failed: ${run.lastError}`),
-  ));
 }
 
 async function resolveOpenRecoveryIncidentsForRun(runId: string, workerId: string, summary: string) {
@@ -1599,23 +1506,6 @@ async function recoverRunUnlocked(args: RecoverRunArgs, recoveryEpoch?: number) 
     throw new Error("Content cannot be empty");
   }
 
-  if (run.mode === "implementation") {
-    if (args.action !== "retry" && args.action !== "resume" && args.action !== "edit") {
-      throw new Error("Fork recovery is only available in direct control conversations");
-    }
-
-    // `resumeImplementationRun` never rewound in the first place, so retry and
-    // resume are the same operation here.
-    if (args.action === "retry" || args.action === "resume") {
-      return resumeImplementationRun(run, plan);
-    }
-
-    return startImplementationRerun(run, plan, args, targetMessage, nextContent);
-  }
-
-  if (run.mode !== "direct" && run.mode !== "commit") {
-    throw new Error("Recovery actions are only available in direct control conversations");
-  }
   const targetAttachments = parseChatAttachmentsJson(targetMessage.attachmentsJson);
   if (recoveryEpoch === undefined) {
     throw new Error("Direct recovery is missing its admission generation");
@@ -1676,7 +1566,6 @@ async function recoverRunUnlocked(args: RecoverRunArgs, recoveryEpoch?: number) 
   }
 
   await clearRunDerivedState(args.runId, run.planId);
-  await clearSupervisorWakeLease(args.runId);
   await db.update(runs).set({
     status: "running",
     failedAt: null,

@@ -208,7 +208,6 @@ describe("shouldShowDirectControlPendingAssistant", () => {
       isPending: true,
       mutationRunId: "run-a",
       selectedRunId: "run-b",
-      isImplementationConversation: false,
       selectedWorkerIds: ["run-b-worker-1"],
     })).toBeNull();
 
@@ -216,7 +215,6 @@ describe("shouldShowDirectControlPendingAssistant", () => {
       isPending: true,
       mutationRunId: "run-a",
       selectedRunId: "run-a",
-      isImplementationConversation: false,
       selectedWorkerIds: ["run-a-worker-1"],
     })).toBe("run-a-worker-1");
   });
@@ -226,7 +224,6 @@ describe("shouldShowDirectControlPendingAssistant", () => {
       isPending: true,
       mutationRunId: "run-a",
       selectedRunId: "run-a",
-      isImplementationConversation: false,
       selectedWorkerIds: ["run-a-worker-1"],
       pendingMessageId: "message-1",
       unacknowledgedMessageIds: new Set(),
@@ -236,7 +233,6 @@ describe("shouldShowDirectControlPendingAssistant", () => {
       isPending: true,
       mutationRunId: "run-a",
       selectedRunId: "run-a",
-      isImplementationConversation: false,
       selectedWorkerIds: ["run-a-worker-1"],
       pendingMessageId: "message-1",
       unacknowledgedMessageIds: new Set(["message-1"]),

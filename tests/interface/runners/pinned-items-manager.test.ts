@@ -111,8 +111,9 @@ describe("PinnedItemsManager", () => {
     ]);
     expect(projects[0]!.group?.runs.map((run) => run.title)).toEqual(["Beta work"]);
     expect(projects[0]!.readMarkers).toEqual({ "run-b": "2026-10-02T00:00:00.000Z" });
-    // The active server's groups come from the sidebar's own live state.
-    expect(projects[1]!.group).toBeNull();
+    // The active server's group is still built from its snapshot so the
+    // sidebar has something to show while its local state loads after a switch.
+    expect(projects[1]!.group).toEqual({ path: "/work/alpha", name: "alpha", runs: [] });
   });
 
   it("lists session pins from every server, resolving another server's run from its snapshot", async () => {
@@ -136,6 +137,19 @@ describe("PinnedItemsManager", () => {
     await manager.setSessionPinned("two", "run-b", false);
     expect(manager.isSessionPinned("two", "run-b")).toBe(false);
     expect(manager.getSnapshot().sessions.map((entry) => entry.runId)).toEqual(["run-a", "run-missing"]);
+  });
+
+  it("keeps resolving a server's pinned runs from its snapshot when it becomes the active server", async () => {
+    const { manager, registry } = setup([connection("one"), betaServer()]);
+    await manager.setSessionPinned("two", "run-b", true);
+    await manager.setProjectPinned("two", "/work/beta", true);
+
+    registry.patch({ activeRunnerId: "two" });
+
+    const { sessions, projects } = manager.getSnapshot();
+    expect(sessions[0]).toMatchObject({ runId: "run-b", active: true });
+    expect(sessions[0]!.run?.title).toBe("Beta work");
+    expect(projects[0]!.group?.runs.map((run) => run.title)).toEqual(["Beta work"]);
   });
 
   it("follows the server's live status and name", async () => {

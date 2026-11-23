@@ -1,4 +1,4 @@
-import type { SupportedWorkerType } from "@/server/supervisor/worker-types";
+import type { SupportedWorkerType } from "@/shared/worker-types";
 
 export type HandoffSource = "worker" | "synthetic";
 

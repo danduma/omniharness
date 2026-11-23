@@ -10,10 +10,7 @@ function baseState(): EventStreamState {
     accounts: [],
     agents: [],
     workers: [],
-    planItems: [],
-    clarifications: [],
     executionEvents: [],
-    supervisorInterventions: [],
     sessions: [],
   };
 }

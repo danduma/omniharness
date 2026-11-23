@@ -37,10 +37,12 @@ export type ApiContractChangeClassification =
 export const ROUTE_CONTRACT_DECLARATION = {
   fixtureSchemaVersion: 1,
   // Bumped by adding the Claude account auth routes (auth-operation, logout,
-  // purge, connect) and the project image preview route.
-  // These are additive capabilities, so the revision window is unchanged:
-  // an older client simply never calls the new routes.
-  fingerprint: "fnv1a32:1b6ec906",
+  // purge, connect) and the project image preview route, then by removing the
+  // supervisor routes (supervisor, planning, plans, project memory, run answer,
+  // Codex auth status, LLM models). The removals only take away endpoints for
+  // features no client offers any more, so the revision window is unchanged
+  // rather than locking out paired clients that never call them.
+  fingerprint: "fnv1a32:76efbdf2",
   classification: "additive-capability",
   capability: "project_file_image_preview",
   apiRevision: 1,
