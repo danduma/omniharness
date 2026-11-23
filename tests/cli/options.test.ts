@@ -5,7 +5,7 @@ describe("parseOmniCliArgs", () => {
   it("parses conversation parity flags for all web modes", () => {
     const parsed = parseOmniCliArgs([
       "--mode",
-      "planning",
+      "commit",
       "--cwd",
       "/tmp/project",
       "--worker",
@@ -23,12 +23,12 @@ describe("parseOmniCliArgs", () => {
       "https://runner.example.test",
       "--token-file",
       "/tmp/omni-token",
-      "help me plan the CLI ACP surface",
+      "commit the CLI ACP surface",
     ]);
 
     expect(parsed).toEqual({
-      command: "help me plan the CLI ACP surface",
-      mode: "planning",
+      command: "commit the CLI ACP surface",
+      mode: "commit",
       projectPath: "/tmp/project",
       preferredWorkerType: "codex",
       preferredWorkerModel: "gpt-5.4",
@@ -41,30 +41,6 @@ describe("parseOmniCliArgs", () => {
       tokenStdin: false,
       legacyToken: null,
     });
-  });
-
-  it("keeps the legacy single plan path shorthand as an implementation request", () => {
-    const parsed = parseOmniCliArgs(["docs/superpowers/plans/example.md"]);
-
-    expect(parsed.command).toBe("implement docs/superpowers/plans/example.md");
-    expect(parsed.mode).toBe("implementation");
-    expect(parsed.watch).toBe(true);
-  });
-
-  it("parses compact implementation mode and worker flags", () => {
-    const parsed = parseOmniCliArgs(["-i", "-w", "codex", "implement plan.md"]);
-
-    expect(parsed.command).toBe("implement plan.md");
-    expect(parsed.mode).toBe("implementation");
-    expect(parsed.preferredWorkerType).toBe("codex");
-  });
-
-  it("parses compact planning mode and worker flags", () => {
-    const parsed = parseOmniCliArgs(["-p", "-w", "gemini", "write a plan"]);
-
-    expect(parsed.command).toBe("write a plan");
-    expect(parsed.mode).toBe("planning");
-    expect(parsed.preferredWorkerType).toBe("gemini");
   });
 
   it("defaults normal commands to direct mode", () => {

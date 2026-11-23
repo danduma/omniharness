@@ -1,12 +1,11 @@
 import { type AppErrorDescriptor, normalizeAppError } from "@/lib/app-errors";
 import type { ChatAttachment } from "@/lib/chat-attachments";
-import { formatHumanDuration, type ConversationWorkerRecord } from "@/lib/conversation-workers";
+import { formatHumanDuration } from "@/lib/conversation-workers";
 import { isTerminalRunStatus } from "@/lib/run-status";
 import { getLatestUnresolvedWorkerStuckEvent } from "@/lib/worker-stuck-events";
 import { normalizeReasoningEffort } from "@/shared/reasoning-effort";
 import { DEFAULT_COMPOSER_EFFORT, EFFORT_OPTIONS, RUN_PATH_PATTERN, WORKER_OPTIONS, FALLBACK_WORKER_MODEL_OPTIONS } from "./constants";
-import type { AgentSnapshot, ConversationModeOption, EventStreamState, ExecutionEventRecord, MessageRecord, PlanItemRecord, PlanRecord, QueuedConversationMessageRecord, RunRecord, SupervisorInterventionRecord, WorkerModelCatalog, WorkerType } from "./types";
-import { t } from "@/lib/i18n";
+import type { AgentSnapshot, EventStreamState, ExecutionEventRecord, MessageRecord, PlanRecord, QueuedConversationMessageRecord, RunRecord, WorkerModelCatalog, WorkerType } from "./types";
 
 export { getLatestUnresolvedWorkerStuckEvent };
 
@@ -69,20 +68,13 @@ export function removeRunFromHomeState(current: EventStreamState, runId: string)
     runs: (current.runs || []).filter((run: RunRecord) => run.id !== runId),
     messages: (current.messages || []).filter((message: { runId: string }) => message.runId !== runId),
     workers: (current.workers || []).filter((worker: { runId: string }) => worker.runId !== runId),
-    clarifications: (current.clarifications || []).filter((item: { runId: string }) => item.runId !== runId),
     executionEvents: (current.executionEvents || []).filter((item: { runId: string; workerId?: string | null }) =>
-      item.runId !== runId && (!item.workerId || !workerIds.includes(item.workerId))
-    ),
-    supervisorInterventions: (current.supervisorInterventions || []).filter((item: { runId: string; workerId?: string | null }) =>
       item.runId !== runId && (!item.workerId || !workerIds.includes(item.workerId))
     ),
     queuedMessages: (current.queuedMessages || []).filter((item) => item.runId !== runId),
     plans: runToDelete
       ? (current.plans || []).filter((plan: PlanRecord) => plan.id !== runToDelete.planId)
       : current.plans,
-    planItems: runToDelete
-      ? (current.planItems || []).filter((item: PlanItemRecord) => item.planId !== runToDelete.planId)
-      : current.planItems,
     readMarkers: Object.fromEntries(
       Object.entries(current.readMarkers ?? {}).filter(([candidateRunId]) => candidateRunId !== runId),
     ),
@@ -107,62 +99,14 @@ export function restoreRunSlice(
     ...current,
     runs: addUnique(current.runs, [capturedRun], (run) => run.id),
     plans: addUnique(current.plans, captured.plans.filter((plan) => plan.id === planId), (plan) => plan.id),
-    planItems: addUnique(current.planItems, captured.planItems.filter((item) => item.planId === planId), (item) => item.id),
     messages: addUnique(current.messages, captured.messages.filter((message) => message.runId === runId), (message) => message.id),
     workers: addUnique(current.workers, captured.workers.filter((worker) => worker.runId === runId), (worker) => worker.id),
-    clarifications: addUnique(current.clarifications, captured.clarifications.filter((item) => item.runId === runId), (item) => item.id),
     executionEvents: addUnique(current.executionEvents, captured.executionEvents.filter((item) => item.runId === runId || Boolean(item.workerId && workerIds.has(item.workerId))), (item) => item.id),
-    supervisorInterventions: addUnique(current.supervisorInterventions, captured.supervisorInterventions.filter((item) => item.runId === runId || Boolean(item.workerId && workerIds.has(item.workerId))), (item) => item.id),
     queuedMessages: addUnique(current.queuedMessages ?? [], (captured.queuedMessages ?? []).filter((item) => item.runId === runId), (item) => item.id),
     readMarkers: captured.readMarkers?.[runId]
       ? { ...(current.readMarkers ?? {}), [runId]: captured.readMarkers[runId] }
       : current.readMarkers,
   };
-}
-
-export function getConversationTranscriptRunIds({
-  selectedRunId,
-  selectedRun,
-}: {
-  selectedRunId: string | null;
-  selectedRun: RunRecord | null;
-}) {
-  if (!selectedRunId) {
-    return [] as string[];
-  }
-
-  if (selectedRun?.mode === "implementation" && selectedRun.parentRunId?.trim()) {
-    return [selectedRun.parentRunId.trim(), selectedRunId];
-  }
-
-  return [selectedRunId];
-}
-
-export function filterPromotedPlanningTranscriptMessages({
-  messages,
-  selectedRun,
-}: {
-  messages: MessageRecord[];
-  selectedRun: RunRecord | null;
-}) {
-  const parentRunId = selectedRun?.parentRunId?.trim();
-  if (!selectedRun || !parentRunId || selectedRun.mode !== "implementation") {
-    return messages;
-  }
-
-  const parentUserMessageKeys = new Set(
-    messages
-      .filter((message) => message.runId === parentRunId && message.role === "user")
-      .map((message) => `${message.kind ?? ""}\n${message.content.trim()}`),
-  );
-
-  return messages.filter((message) => {
-    if (message.runId !== selectedRun.id || message.role !== "user") {
-      return true;
-    }
-
-    return !parentUserMessageKeys.has(`${message.kind ?? ""}\n${message.content.trim()}`);
-  });
 }
 
 export function filterOptimisticallyDeletedRuns(
@@ -407,7 +351,6 @@ export function buildOptimisticCreatedConversationSnapshot(args: {
   runId: string;
   content?: string;
   projectPath: string | null;
-  mode: ConversationModeOption;
   preferredWorkerType?: string | null;
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
@@ -417,8 +360,6 @@ export function buildOptimisticCreatedConversationSnapshot(args: {
 }): CreatedConversationSnapshot {
   const timestamp = args.createdAt ?? (args.now ?? new Date()).toISOString();
   const planId = `${args.runId}:optimistic-plan`;
-  const storedMode: RunRecord["mode"] = args.mode === "omni" ? "implementation" : args.mode;
-  const phase: RunRecord["phase"] = args.mode === "omni" ? "planning" : null;
   return {
     plan: {
       id: planId,
@@ -429,8 +370,7 @@ export function buildOptimisticCreatedConversationSnapshot(args: {
     run: {
       id: args.runId,
       planId,
-      mode: storedMode,
-      phase,
+      mode: "direct",
       status: "starting",
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -577,39 +517,6 @@ export function mergePendingCreatedConversationSnapshots(
   return nextState;
 }
 
-const ACTIVE_RUN_STATUSES_FOR_EXECUTION_PANEL = new Set([
-  "running",
-  "starting",
-  "recovering",
-  "needs_recovery",
-  "awaiting_user",
-  "reviewing_plan",
-  "revising_plan",
-  "stuck",
-  "quota_waiting",
-]);
-
-export function shouldShowConversationExecutionPanel({
-  selectedRun,
-  isConversationThinking,
-  executionEventCount,
-}: {
-  selectedRun: RunRecord | null;
-  isConversationThinking: boolean;
-  executionEventCount: number;
-}) {
-  if (!selectedRun) {
-    return false;
-  }
-  // A non-terminal run is always "running enough" to deserve the panel,
-  // even if the derived signals (active workers, recent events) flicker
-  // across a snapshot refresh or a supervisor wake/sleep gap.
-  if (ACTIVE_RUN_STATUSES_FOR_EXECUTION_PANEL.has(selectedRun.status)) {
-    return true;
-  }
-  return isConversationThinking || executionEventCount > 0;
-}
-
 const RECOVERABLE_RUNNING_GRACE_MS = 30_000;
 
 export function shouldShowRecoverableRunningState({
@@ -707,10 +614,6 @@ export function shouldOpenExecutionDetailsForRun({
   return Boolean(selectedRun?.status === "failed" && executionEventCount > 0);
 }
 
-export type ConversationTimelineItem =
-  | { type: "message"; id: string; createdAt: string; message: MessageRecord }
-  | { type: "activity"; id: string; createdAt: string; event?: ExecutionEventRecord; text: string };
-
 export type ConversationSignalDestination =
   | "main_conversation"
   | "inline_event"
@@ -779,15 +682,6 @@ const INLINE_CONVERSATION_EVENT_TYPES = new Set([
   "worker_spawned",
 ]);
 
-const MESSAGE_MIRRORED_CONVERSATION_TIMELINE_EVENT_TYPES = new Set([
-  "clarification_requested",
-  "run_completed",
-  "worker_cancelled",
-  "worker_permission_approved",
-  "worker_permission_denied",
-  "worker_spawned",
-]);
-
 const USER_VISIBLE_MESSAGE_ROLES = new Set([
   "user",
   "supervisor",
@@ -848,118 +742,6 @@ export function compareOldestByCreatedAtThenId<T extends { createdAt: string; id
 export function compareNewestByCreatedAtThenId<T extends { createdAt: string; id: string }>(a: T, b: T) {
   const timeDelta = timestampMs(b.createdAt) - timestampMs(a.createdAt);
   return timeDelta !== 0 ? timeDelta : b.id.localeCompare(a.id);
-}
-
-function hasNearbyMirroredMessage(event: ExecutionEventRecord, messages: MessageRecord[]) {
-  if (!MESSAGE_MIRRORED_CONVERSATION_TIMELINE_EVENT_TYPES.has(event.eventType)) {
-    return false;
-  }
-
-  const eventTime = timestampMs(event.createdAt);
-  return messages.some((message) => (
-    message.runId === event.runId
-    && (message.kind === "supervisor_action" || message.kind === "clarification" || message.kind === "completion")
-    && Math.abs(timestampMs(message.createdAt) - eventTime) <= 2_000
-  ));
-}
-
-function shouldShowExecutionEventInTimeline(event: ExecutionEventRecord, messages: MessageRecord[]) {
-  if (classifyExecutionEvent(event) !== "inline_event") {
-    return false;
-  }
-
-  return !hasNearbyMirroredMessage(event, messages);
-}
-
-export function buildConversationTimelineItems({
-  messages,
-  executionEvents,
-  supervisorInterventions = [],
-  workers = [],
-  isPlanningRun = false,
-}: {
-  messages: MessageRecord[];
-  executionEvents: ExecutionEventRecord[];
-  supervisorInterventions?: SupervisorInterventionRecord[];
-  workers?: ConversationWorkerRecord[];
-  isPlanningRun?: boolean;
-}): ConversationTimelineItem[] {
-  const items: ConversationTimelineItem[] = messages
-    .filter(shouldRenderMessageInMainConversation)
-    .map((message) => ({
-      type: "message",
-      id: message.id,
-      createdAt: message.createdAt,
-      message,
-    }));
-  const sortedExecutionEvents = [...executionEvents].sort((a, b) => {
-    const timeDelta = timestampMs(a.createdAt) - timestampMs(b.createdAt);
-    return timeDelta !== 0 ? timeDelta : a.id.localeCompare(b.id);
-  });
-  const workerIdsWithSpawnEvents = new Set(
-    executionEvents
-      .filter((event) => event.eventType === "worker_spawned" && event.workerId)
-      .map((event) => event.workerId as string),
-  );
-
-  for (const worker of workers) {
-    if (!worker.createdAt || workerIdsWithSpawnEvents.has(worker.id)) {
-      continue;
-    }
-
-    items.push({
-      type: "activity",
-      id: `worker-start:${worker.id}`,
-      createdAt: worker.createdAt,
-      text: summarizeWorkerStartRecord(worker, isPlanningRun),
-    });
-  }
-
-  for (const event of sortedExecutionEvents) {
-    if (!shouldShowExecutionEventInTimeline(event, messages)) {
-      continue;
-    }
-
-    const text = (event.eventType === "worker_spawned"
-      ? summarizeWorkerSpawnEvent(event, isPlanningRun)
-      : summarizeInlineEvent(event))?.trim() ?? "";
-    if (!text) {
-      continue;
-    }
-
-    items.push({
-      type: "activity",
-      id: event.id,
-      createdAt: event.createdAt,
-      event,
-      text,
-    });
-  }
-
-  for (const intervention of supervisorInterventions) {
-    const text = summarizeSupervisorIntervention(intervention);
-    if (!text) {
-      continue;
-    }
-
-    items.push({
-      type: "activity",
-      id: intervention.id,
-      createdAt: intervention.createdAt,
-      text,
-    });
-  }
-
-  return items.sort((a, b) => {
-    const timeDelta = timestampMs(a.createdAt) - timestampMs(b.createdAt);
-    if (timeDelta !== 0) {
-      return timeDelta;
-    }
-    if (a.type !== b.type) {
-      return a.type === "message" ? -1 : 1;
-    }
-    return a.id.localeCompare(b.id);
-  });
 }
 
 export function stripRunFailurePrefix(value: string | null | undefined) {
@@ -1134,383 +916,6 @@ export function formatExecutionWorkerLabel(workerId: string | null | undefined) 
 
   const match = normalized.match(/(?:^|-)worker-(\d+)$/);
   return match ? `worker-${match[1]}` : normalized;
-}
-
-export function formatExecutionEventType(eventType: string) {
-  if (eventType === "supervisor_turn_stopped") {
-    return "Turn pause";
-  }
-  return eventType.replace(/[._]/g, " ");
-}
-
-function formatConversationWorkerLabel(workerId: string | null | undefined) {
-  const normalized = workerId?.trim();
-  if (!normalized) {
-    return "worker";
-  }
-
-  const match = normalized.match(/(?:^|-)worker-(\d+)$/);
-  return match ? `worker ${match[1]}` : normalized;
-}
-
-function normalizeSentence(value: string) {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return "";
-  }
-
-  return /[.!?]$/.test(normalized) ? normalized : `${normalized}.`;
-}
-
-function lowerFirst(value: string) {
-  return value ? `${value.charAt(0).toLowerCase()}${value.slice(1)}` : value;
-}
-
-function extractSpawnTitle(summary: string) {
-  const match = summary.match(/(?:^|\|\s*)Title:\s*(.+?)(?:\.\s*(?:\||$)|\s*\||$)/i);
-  return match?.[1]?.trim() ?? "";
-}
-
-function summarizeTaskText(value: string) {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return "";
-  }
-
-  const truncated = normalized.length > 180 ? `${normalized.slice(0, 180).trim()}...` : normalized;
-  return normalizeSentence(truncated);
-}
-
-function summarizeWorkerSpawnEvent(event: ExecutionEventRecord, isPlanningRun = false) {
-  if (isPlanningRun) {
-    return t("conversation.activity.startPlanningAgent");
-  }
-
-  const details = parseExecutionEventDetails(event.details);
-  const summary = typeof details.summary === "string" ? details.summary.trim() : "";
-  const purpose = typeof details.purpose === "string" ? details.purpose.trim() : "";
-  const title = typeof details.title === "string" && details.title.trim()
-    ? details.title.trim()
-    : extractSpawnTitle(summary);
-  const task = summarizeTaskText(purpose || title);
-  const workerLabel = formatConversationWorkerLabel(event.workerId);
-
-  return task
-    ? `Starting ${workerLabel} to ${lowerFirst(task)}`
-    : `Starting ${workerLabel}.`;
-}
-
-function summarizeWorkerStartRecord(worker: ConversationWorkerRecord, isPlanningRun = false) {
-  if (isPlanningRun) {
-    return t("conversation.activity.startPlanningAgent");
-  }
-
-  const workerLabel = typeof worker.workerNumber === "number"
-    ? `worker ${worker.workerNumber}`
-    : formatConversationWorkerLabel(worker.id);
-  const task = summarizeTaskText(worker.title || worker.initialPrompt || "");
-
-  return task
-    ? `Starting ${workerLabel} to ${lowerFirst(task)}`
-    : `Starting ${workerLabel}.`;
-}
-
-function summarizeSupervisorIntervention(intervention: SupervisorInterventionRecord) {
-  const workerLabel = formatConversationWorkerLabel(intervention.workerId);
-  const prompt = summarizeTaskText(intervention.prompt);
-  if (!prompt) {
-    return `Steering ${workerLabel}.`;
-  }
-
-  if (intervention.interventionType === "recovery") {
-    return `Steering ${workerLabel} to recover: ${prompt}`;
-  }
-
-  if (intervention.interventionType === "completion_gap") {
-    return `Steering ${workerLabel} to close the remaining gap: ${prompt}`;
-  }
-
-  return `Steering ${workerLabel}: ${prompt}`;
-}
-
-function normalizeDetailText(value: string) {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function formatDetailLabel(key: string) {
-  const explicitLabels: Record<string, string> = {
-    cancelError: "Cancel error",
-    currentText: "Current",
-    lastText: "Last",
-    text: "Text",
-    projectPath: "Project",
-    resolvedWorkerCwd: "Resolved cwd",
-    stopReason: "Stop reason",
-    workerCwd: "Worker cwd",
-  };
-
-  if (explicitLabels[key]) {
-    return explicitLabels[key];
-  }
-
-  return key
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/_/g, " ")
-    .replace(/^./, (first) => first.toUpperCase());
-}
-
-function stringifyDetailValue(value: unknown) {
-  if (value === null || value === undefined) {
-    return "";
-  }
-
-  if (typeof value === "string") {
-    return value.trim();
-  }
-
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-
-  return JSON.stringify(value, null, 2);
-}
-
-export function getExecutionEventDetailRows(event: ExecutionEventRecord) {
-  const details = parseExecutionEventDetails(event.details);
-  const summary = summarizeExecutionEvent(event);
-  const summaryDetail = typeof details.summary === "string" ? normalizeDetailText(details.summary) : "";
-  const seenValues = new Set([normalizeDetailText(summary), summaryDetail].filter(Boolean));
-  const rows: Array<{ key: string; label: string; value: string; multiline: boolean }> = [];
-
-  for (const [key, rawValue] of Object.entries(details)) {
-    if (key === "summary") {
-      continue;
-    }
-
-    const value = stringifyDetailValue(rawValue);
-    if (!value) {
-      continue;
-    }
-
-    const normalizedValue = normalizeDetailText(value);
-    if (!normalizedValue || seenValues.has(normalizedValue)) {
-      continue;
-    }
-
-    seenValues.add(normalizedValue);
-    rows.push({
-      key,
-      label: formatDetailLabel(key),
-      value: normalizedValue.length > 360 ? `${normalizedValue.slice(0, 360)}...` : value,
-      multiline: value.includes("\n") || value.length > 120 || typeof rawValue === "object",
-    });
-  }
-
-  return rows;
-}
-
-function extractSupervisorReadPath(details: Record<string, unknown>, summary: string) {
-  const candidateKeys = ["path", "requestedPath", "filePath", "absolutePath"];
-  for (const key of candidateKeys) {
-    const value = details[key];
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
-    }
-  }
-
-  const summaryMatch = summary.match(/^Read\s+(.+?)(?:\s+for\b|$)/i);
-  return summaryMatch?.[1]?.trim() ?? "";
-}
-
-export function summarizeExecutionEvent(event: ExecutionEventRecord) {
-  const details = parseExecutionEventDetails(event.details);
-  const summary = typeof details.summary === "string" ? details.summary.trim() : "";
-  const reason = typeof details.reason === "string" ? details.reason.trim() : "";
-  const error = typeof details.error === "string" ? details.error.trim() : "";
-  const seconds = typeof details.seconds === "number" ? details.seconds : null;
-  const mode = typeof details.mode === "string" ? details.mode.trim() : "";
-  const workerLabel = formatExecutionWorkerLabel(event.workerId);
-
-  if (event.eventType === "supervisor_file_read") {
-    const readPath = extractSupervisorReadPath(details, summary);
-    return readPath ? `Read ${readPath}` : "Read file";
-  }
-
-  if (event.eventType === "supervisor_turn_stopped") {
-    return summary || "Supervisor delayed a repeated tool request";
-  }
-
-  if (event.eventType === "supervisor_wait") {
-    const waitReason = summary || reason || "Waiting before the next supervisor check";
-    return seconds ? `Waiting ${seconds}s: ${waitReason}` : waitReason;
-  }
-
-  if (event.eventType === "run_failed") {
-    return `Run failed${reason || summary || error ? `: ${reason || summary || error}` : ""}`;
-  }
-
-  if (event.eventType === "run_completed") {
-    return `Completed${summary ? `: ${summary}` : ""}`;
-  }
-
-  if (event.eventType === "auto_commit_created") {
-    const shortSha = typeof details.shortSha === "string" ? details.shortSha : "";
-    const subject = typeof details.subject === "string" ? details.subject : "";
-    return t("commit.status.autoCommitCreated", { commit: [shortSha, subject].filter(Boolean).join(" ") });
-  }
-
-  if (event.eventType === "auto_commit_skipped") {
-    return t("commit.status.autoCommitSkipped", { reason: reason || summary || "skipped" });
-  }
-
-  if (event.eventType === "auto_commit_failed") {
-    return t("commit.status.autoCommitFailed", { reason: reason || summary || error || "failed" });
-  }
-
-  if (event.eventType === "auto_commit_push_created") {
-    const shortSha = typeof details.shortSha === "string" ? details.shortSha : "";
-    return t("commit.status.pushCreated", { commit: shortSha });
-  }
-
-  if (event.eventType === "auto_commit_push_failed") {
-    return t("commit.status.pushFailed", { reason: error || summary || "failed" });
-  }
-
-  if (event.eventType === "worker_prompt_failed") {
-    return `Failed to send task to ${workerLabel}${error ? `: ${error}` : ""}`;
-  }
-
-  if (event.eventType === "worker_prompt_deferred") {
-    return `Waiting to steer ${formatConversationWorkerLabel(event.workerId)}; worker is busy.`;
-  }
-
-  if (event.eventType === "worker_environment_mismatch") {
-    return `${workerLabel} launched in the wrong directory`;
-  }
-
-  if (event.eventType === "worker_spawned") {
-    return `Started ${workerLabel}`;
-  }
-
-  if (event.eventType === "worker_prompted") {
-    return `Sent task to ${workerLabel}`;
-  }
-
-  if (event.eventType === "worker_mode_changed") {
-    return `Changed ${workerLabel} to ${mode || "requested"} mode`;
-  }
-
-  if (event.eventType === "worker_permission_requested") {
-    return `${workerLabel} requested permission`;
-  }
-
-  if (event.eventType === "worker_permission_approved") {
-    return `Approved permission for ${workerLabel}`;
-  }
-
-  if (event.eventType === "worker_permission_auto_approved") {
-    return `Auto-approved permission for ${workerLabel}`;
-  }
-
-  if (event.eventType === "worker_session_resumed") {
-    return `Resumed ${workerLabel} from saved session`;
-  }
-
-  if (event.eventType === "worker_session_recreated") {
-    return `Started a fresh session for ${workerLabel}`;
-  }
-
-  if (event.eventType === "worker_session_missing") {
-    return `${workerLabel} session is no longer available`;
-  }
-
-  if (event.eventType === "worker_permission_denied") {
-    return `Denied permission for ${workerLabel}`;
-  }
-
-  if (event.eventType === "worker_cancelled") {
-    return `Cancelled ${workerLabel}`;
-  }
-
-  if (event.eventType === "worker_output_changed") {
-    return `${workerLabel} produced new output`;
-  }
-
-  if (event.eventType === "worker_turn_completed") {
-    return `${workerLabel} completed a turn`;
-  }
-
-  if (event.eventType === "worker_idle") {
-    return `${workerLabel} is waiting`;
-  }
-
-  if (event.eventType === "worker_stuck") {
-    return `${workerLabel} appears stuck`;
-  }
-
-  if (event.eventType === "worker_error") {
-    return `${workerLabel} reported an error`;
-  }
-
-  if (event.eventType === "worker_stopped") {
-    return `${workerLabel} stopped`;
-  }
-
-  if (event.eventType === "worker_failover_started") {
-    const outgoingType = typeof details.outgoingType === "string" ? details.outgoingType : "";
-    const newType = typeof details.newType === "string" ? details.newType : "";
-    return t("events.failover.started", {
-      outgoing: outgoingType || workerLabel,
-      incoming: newType || "next worker",
-    });
-  }
-
-  if (event.eventType === "worker_handoff_emitted") {
-    const source = typeof details.source === "string" ? details.source : "";
-    const key = source === "synthetic" ? "events.failover.handoffSynthetic" : "events.failover.handoffEmitted";
-    return t(key, { outgoing: workerLabel });
-  }
-
-  if (event.eventType === "worker_failover_completed") {
-    const outgoingType = typeof details.outgoingType === "string" ? details.outgoingType : "";
-    const newType = typeof details.newType === "string" ? details.newType : "";
-    return t("events.failover.completed", {
-      outgoing: outgoingType || workerLabel,
-      incoming: newType || "next worker",
-    });
-  }
-
-  if (event.eventType === "clarification_requested") {
-    return "Waiting for your reply";
-  }
-
-  return summary || reason || error || event.eventType.replace(/_/g, " ");
-}
-
-export function summarizeInlineEvent(event: ExecutionEventRecord) {
-  if (classifyExecutionEvent(event) !== "inline_event") {
-    return null;
-  }
-
-  if (event.eventType === "worker_spawned") {
-    return summarizeWorkerSpawnEvent(event);
-  }
-
-  return summarizeExecutionEvent(event);
-}
-
-export function formatExecutionTimestamp(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  return new Intl.DateTimeFormat("en-GB", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(date);
 }
 
 function parseTimestampMs(value: string | null | undefined) {

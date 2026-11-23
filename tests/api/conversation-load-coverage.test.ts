@@ -18,12 +18,8 @@ import { writeWorkerOutputEntries } from "@/server/workers/output-store";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { __resetNamedEventsForTests } from "@/server/events/named-events";
 
-vi.mock("@/server/supervisor/runtime-watchdog", () => ({
-  ensureSupervisorRuntimeStarted: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock("@/server/supervisor/start", () => ({
-  startSupervisorRun: vi.fn(),
+vi.mock("@/server/runtime/watchdog", () => ({
+  ensureRuntimeWatchdogStarted: vi.fn().mockResolvedValue(undefined),
 }));
 
 import {

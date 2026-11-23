@@ -42,11 +42,6 @@ describe("HomeUiStateManager", () => {
     });
   });
 
-  it("defaults selectedConversationMode to 'direct'", () => {
-    const manager = new HomeUiStateManager();
-    expect(manager.getSnapshot().selectedConversationMode).toBe("direct");
-  });
-
   it("updates composer command and cursor with a single notification", () => {
     const manager = new HomeUiStateManager();
     let notifications = 0;
@@ -93,13 +88,13 @@ describe("HomeUiStateManager", () => {
     manager.selectRun("run-a");
     manager.hydrateComposerSelection({
       runId: "run-a",
-      selection: { conversationMode: "direct", worker: "codex", accountId: "auto", model: "old", effort: "High" },
+      selection: { worker: "codex", accountId: "auto", model: "old", effort: "High" },
       serverVersion: "1",
     });
     manager.setComposerSelectionField("effort", "Max");
     manager.hydrateComposerSelection({
       runId: "run-a",
-      selection: { conversationMode: "direct", worker: "claude", accountId: "auto", model: "new", effort: "Low" },
+      selection: { worker: "claude", accountId: "auto", model: "new", effort: "Low" },
       serverVersion: "2",
     });
 
@@ -115,13 +110,13 @@ describe("HomeUiStateManager", () => {
     manager.selectRun("run-a");
     manager.hydrateComposerSelection({
       runId: "run-a",
-      selection: { conversationMode: "direct", worker: "codex", accountId: "auto", model: "model-a", effort: "High" },
+      selection: { worker: "codex", accountId: "auto", model: "model-a", effort: "High" },
       serverVersion: "1",
     });
     manager.selectRun("run-b");
     manager.hydrateComposerSelection({
       runId: "run-b",
-      selection: { conversationMode: "direct", worker: "claude", accountId: "account-b", model: "model-b", effort: "Low" },
+      selection: { worker: "claude", accountId: "account-b", model: "model-b", effort: "Low" },
       serverVersion: "1",
     });
 
@@ -138,7 +133,7 @@ describe("HomeUiStateManager", () => {
 
   it("clears a dirty selection that returns to the unchanged server value", () => {
     const manager = new HomeUiStateManager();
-    const baseline = { conversationMode: "direct", worker: "codex", accountId: "auto", model: "model-a", effort: "High" } as const;
+    const baseline = { worker: "codex", accountId: "auto", model: "model-a", effort: "High" } as const;
     manager.selectRun("run-a");
     manager.hydrateComposerSelection({ runId: "run-a", selection: baseline, serverVersion: "1" });
     manager.setComposerSelectionField("model", "model-b");
@@ -201,7 +196,7 @@ describe("HomeUiStateManager", () => {
   it("restores the new-session draft after visiting another conversation", () => {
     const manager = new HomeUiStateManager();
     manager.setComposerDraft({ command: "pasted prompt", commandCursor: 13 });
-    manager.setComposerSelectionField("conversationMode", "omni");
+    manager.setComposerSelectionField("effort", "Low");
 
     manager.selectRun("run-a");
     expect(manager.getSnapshot().command).toBe("");
@@ -210,7 +205,6 @@ describe("HomeUiStateManager", () => {
     expect(manager.getSnapshot()).toMatchObject({
       command: "pasted prompt",
       commandCursor: 13,
-      selectedConversationMode: "omni",
     });
   });
 
@@ -234,7 +228,7 @@ it("a new conversation opened from an existing one starts on the last launched w
   manager.selectRun("run-1");
   manager.hydrateComposerSelection({
     runId: "run-1",
-    selection: { conversationMode: "direct", worker: "codex", accountId: "auto", model: "gpt-5.6-sol", effort: "High" },
+    selection: { worker: "codex", accountId: "auto", model: "gpt-5.6-sol", effort: "High" },
     serverVersion: "v1",
   });
 

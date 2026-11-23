@@ -36,10 +36,7 @@ function emptyBootstrap(selectedRunId: string | null = null) {
     accounts: [],
     agents: [],
     workers: [],
-    planItems: [],
-    clarifications: [],
     executionEvents: [],
-    supervisorInterventions: [],
   };
   return {
     id: "pwa-browser-test",

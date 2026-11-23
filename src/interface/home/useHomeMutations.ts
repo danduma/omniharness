@@ -25,7 +25,6 @@ import { appearancePreferencesManager } from "./AppearancePreferencesManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
 import { gitWorkspaceManager, type GitWorkspaceLaunchRequest } from "./GitWorkspaceManager";
 import type { BusyMessageAction } from "./busy-message-behavior";
-import type { PlanningReviewAgentSelection } from "@/shared/planning-review";
 import {
   appendCreatedConversationSnapshot,
   appendSentConversationMessageSnapshot,
@@ -41,7 +40,6 @@ import {
 import type {
   AgentSnapshot,
   ComposerWorkerOption,
-  ConversationModeOption,
   EventStreamState,
   MessageRecord,
   RunRecord,
@@ -50,7 +48,7 @@ import type {
 import {
   applyElicitationOptimisticUpdate,
   applyPermissionOptimisticUpdate,
-  applyStopSupervisorOptimisticUpdate,
+  applyStopConversationOptimisticUpdate,
   applyStopWorkerOptimisticUpdate,
   isAlreadyResolvedHumanInputError,
   mergeLoadedWorkerHistoryAgent,
@@ -61,7 +59,6 @@ import {
   shouldClearSubmittedComposer,
   shouldRestoreSelectionAfterOptimisticRemovalError,
   shouldSelectProjectMutationResult,
-  shouldSelectSourceRunMutationResult,
 } from "./mutations/optimistic-state";
 
 export {
@@ -83,7 +80,6 @@ export interface UseHomeMutationsParams {
   selectedRunId: string | null;
   selectedCliAgent: ComposerWorkerOption;
   selectedWorkerAccountId: string;
-  selectedConversationMode: ConversationModeOption;
   selectedModel: string;
   selectedEffort: string;
   autoSelectedWorkerType: string | null;
@@ -103,7 +99,6 @@ export function useHomeMutations({
   selectedRunId,
   selectedCliAgent,
   selectedWorkerAccountId,
-  selectedConversationMode,
   selectedModel,
   selectedEffort,
   autoSelectedWorkerType,
@@ -137,7 +132,6 @@ export function useHomeMutations({
     clearAttachments,
   } = homeUiSetters;
   const composerLaunchSelection = useMemo(() => resolveComposerLaunchSelection({
-    conversationMode: selectedConversationMode,
     selectedCliAgent,
     selectedModel,
     selectedEffort,
@@ -150,7 +144,6 @@ export function useHomeMutations({
     activeWorkerModelValues,
     autoSelectedWorkerType,
     selectedCliAgent,
-    selectedConversationMode,
     selectedEffort,
     selectedModel,
     selectedWorkerAccountId,
@@ -512,7 +505,6 @@ export function useHomeMutations({
         ? workspaceState?.selectedTargetsByProject[payload.projectPath] ?? null
         : null;
       return runtimeApis.conversations.create({
-          mode: payload.launch.conversationMode,
           command: payload.content,
           projectPath: payload.projectPath,
           requestedRunId: payload.requestedRunId,
@@ -534,7 +526,6 @@ export function useHomeMutations({
         runId: requestedRunId,
         content: payload.content,
         projectPath: payload.projectPath,
-        mode: payload.launch.conversationMode,
         preferredWorkerType: payload.launch.workerType,
         preferredWorkerModel: payload.launch.model,
         preferredWorkerEffort: payload.launch.effort,
@@ -858,16 +849,16 @@ export function useHomeMutations({
     },
   });
 
-  const stopSupervisor = useMutation({
+  const stopConversation = useMutation({
     onMutate: ({ runId }: { runId: string }) => {
       const previousState = state;
-      setState((current) => applyStopSupervisorOptimisticUpdate(current, runId));
+      setState((current) => applyStopConversationOptimisticUpdate(current, runId));
       return { previousState };
     },
     mutationFn: async ({ runId }: { runId: string }) =>
       runtimeApis.runs.act({
         runId,
-        body: { action: "stop_supervisor" },
+        body: { action: "stop_conversation" },
       }) as Promise<{ ok: true }>,
     onError: (_error, _variables, context) => {
       if (context?.previousState) setState(context.previousState);
@@ -988,39 +979,6 @@ export function useHomeMutations({
     },
   });
 
-  const promotePlanningConversation = useMutation({
-    onMutate: (_payload: { runId: string; planPath: string | null }) => ({
-      selectedRunIdAtStart: homeUiStateManager.getSnapshot().selectedRunId,
-    }),
-    mutationFn: async (payload: { runId: string; planPath: string | null }) =>
-      runtimeApis.planning.promote({
-        runId: payload.runId,
-        body: { planPath: payload.planPath },
-      }) as Promise<{ runId?: string }>,
-    onSuccess: (data, variables, context) => {
-      if (data.runId && shouldSelectSourceRunMutationResult({
-        sourceRunId: variables.runId,
-        selectedRunIdAtStart: context?.selectedRunIdAtStart ?? null,
-        currentSelectedRunId: homeUiStateManager.getSnapshot().selectedRunId,
-        resultRunId: data.runId,
-      })) {
-        setSelectedRunId(data.runId);
-        replaceBrowserConversationPath(data.runId, null);
-      }
-    },
-  });
-
-  const startPlanningReview = useMutation({
-    mutationFn: async (payload: { runId: string; agentSelection: PlanningReviewAgentSelection; rounds: number }) =>
-      runtimeApis.planning.review({
-        runId: payload.runId,
-        body: {
-          agentSelection: payload.agentSelection,
-          rounds: payload.rounds,
-        },
-      }) as Promise<{ ok: true; reviewRunId: string }>,
-  });
-
   const handleLoadWorkerHistory = async (workerId: string) => {
     const normalizedWorkerId = workerId.trim();
     if (!normalizedWorkerId || loadingWorkerHistoryIdsRef.current.has(normalizedWorkerId)) {
@@ -1100,13 +1058,11 @@ export function useHomeMutations({
     interruptQueuedMessage,
     autoCommitChat,
     runPresetCommand,
-    stopSupervisor,
+    stopConversation,
     stopWorker,
     stopWorkerTerminalProcess,
     respondElicitation,
     respondPermission,
-    promotePlanningConversation,
-    startPlanningReview,
     handleLoadWorkerHistory,
   };
 }

@@ -68,7 +68,6 @@ test("composer uses a filled textarea shell with inline cli agent, model, and ef
   expect(pageSource).toContain("const FALLBACK_WORKER_MODEL_OPTIONS: WorkerModelCatalog = {");
   expect(pageSource).toContain('workerModels?: Partial<WorkerModelCatalog>');
   expect(pageSource).toContain('const EFFORT_OPTIONS = ["Low", "Medium", "High", "Extra High", "Max"]');
-  expect(pageSource).toContain('codex: "gpt-5.6-sol"');
   expect(pageSource).toContain('bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/[0.45]');
   expect(pageSource).toContain('placeholder:text-[#c4c4c2]');
 });
@@ -144,9 +143,7 @@ test("composer never sends an account that belongs to a different worker type", 
 });
 
 test("direct mode requires an explicit cli agent and tightens dropdown alignment", () => {
-  expect(pageSource).toContain('const shouldOfferAutoWorkerOption = activeComposerMode !== "direct"');
-  expect(pageSource).toContain('return shouldOfferAutoWorkerOption');
-  expect(pageSource).toContain('if (args.composerMode === "direct") {');
+  expect(pageSource).toContain("return WORKER_OPTIONS.filter((option) => allowedSet.has(option.value));");
   expect(pageSource).toContain('const current = args.selectedCliAgent === "auto" ? fallbackWorker : args.selectedCliAgent;');
   // The worker the composer is coerced onto owns the model picker, or a new
   // session comes up as "Codex · claude-opus-5 (unavailable)".
@@ -330,16 +327,11 @@ test("starting a new session restores the unsent new-session draft", () => {
     expect(block).not.toContain("setCommand(");
     expect(block).not.toContain("setCommandCursor(");
     expect(block).not.toContain("clearAttachments(");
-    expect(block).not.toContain("setSelectedConversationMode(");
   }
 });
 
 test("composer submit button sends text, stops live conversations, and disables when idle empty", () => {
-  expect(pageSource).toContain("const isSupervisorRunning = Boolean(");
-  expect(pageSource).toContain('selectedRunMode === "implementation"');
-  expect(pageSource).toContain('selectedRunPhase !== "planning"');
-  expect(pageSource).toContain('selectedRun.status === "running"');
-  expect(pageSource).toContain("const busyConversationWorkerId = !isImplementationConversation");
+  expect(pageSource).toContain("const busyConversationWorkerId = conversationWorkerGroups.active.find");
   expect(pageSource).toContain("const isSelectedConversationMessageTransportPending = isMutationPendingForSelectedRun({");
   expect(pageSource).toContain("mutationRunId: sendConversationMessage.variables?.runId");
   expect(pageSource).toContain("const isSendingSelectedConversationMessage = isSelectedConversationMessageTransportPending");
@@ -348,17 +340,16 @@ test("composer submit button sends text, stops live conversations, and disables 
   expect(pageSource).toContain("selectedWorkerIds: selectedRunWorkersForDisplay.map((worker) => worker.id)");
   expect(pageSource).toContain("const directRunningConversationWorkerId = isDirectConversation");
   expect(pageSource).toContain("const stoppableConversationWorkerId = busyConversationWorkerId ?? pendingConversationWorkerId ?? directRunningConversationWorkerId");
-  expect(pageSource).toContain("const isConversationStoppable = isSupervisorRunning || Boolean(stoppableConversationWorkerId)");
-  expect(pageSource).toContain("const isStopConversationPending = isStoppingSelectedSupervisor || isStoppingSelectedWorker");
+  expect(pageSource).toContain("const isConversationStoppable = Boolean(stoppableConversationWorkerId)");
+  expect(pageSource).toContain("const isStopConversationPending = isStoppingSelectedConversation || isStoppingSelectedWorker");
   expect(pageSource).toContain('const isStopButtonVisible = composerBehavior.buttonKind === "stop"');
   expect(pageSource).toContain("const showSeparateStopButton = isConversationStoppable && !isStopButtonVisible");
   expect(pageSource).toContain('const isSubmitButtonDisabled = isStopButtonVisible\n    ? isStopConversationPending');
   expect(pageSource).toContain("resolveBusyComposerBehavior({");
-  expect(pageSource).toContain('forceSteer: selectedConversationMode === "implementation"');
   expect(pageSource).toContain("disabled={isSubmitButtonDisabled}");
   expect(pageSource).toContain("aria-label={sendButtonAriaLabel}");
   expect(pageSource).toContain('composerBehavior.submitAction === "stop"');
-  expect(pageSource).toContain("stopSupervisorMutate({ runId: selectedRunId })");
+  expect(pageSource).toContain("stopConversationMutate({ runId: selectedRunId })");
   expect(pageSource).toContain("stopWorkerMutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId })");
   expect(pageSource).toContain("if (selectedRunId) {");
   expect(pageSource).toContain("sendConversationMessageMutate({ runId: selectedRunId, content, clientMessageId: createSentConversationMessageId(), attachments, busyAction })");
@@ -424,14 +415,6 @@ test("worker cards expose individual stop controls", () => {
   expect(pageSource).toContain('aria-label={`Stop ${displayId}`}');
 });
 
-test("promotePlanningConversation.isPending is scoped to the selected run before use in isComposerSubmitBlocked", () => {
-  expect(pageSource).toContain("const isPromotePlanningPendingForSelectedRun = isMutationPendingForSelectedRun({");
-  expect(pageSource).toContain("mutationRunId: promotePlanningConversation.variables?.runId,");
-  expect(pageSource).toContain("isPromotePlanningPendingForSelectedRun || isStopConversationPending");
-  // Unscoped isPending must not appear in the isComposerSubmitBlocked expression.
-  expect(pageSource).not.toContain("promotePlanningConversation.isPending || isStopConversationPending");
-});
-
 test("recoverRun.isPending is scoped to the selected run before suppressing auto-resume", () => {
   expect(pageSource).toContain("const isRecoverRunPendingForSelectedRun = isMutationPendingForSelectedRun({");
   expect(pageSource).toContain("mutationRunId: recoverRun.variables?.runId,");
@@ -447,10 +430,4 @@ test("resumeRunRecovery.isPending is scoped to the selected run before being pas
   expect(pageSource).toContain("resumeRunRecovery={{ isPending: isResumeRunRecoveryPendingForSelectedRun }}");
   // Unscoped object must not be forwarded.
   expect(pageSource).not.toContain("resumeRunRecovery={resumeRunRecovery}");
-});
-
-test("preflight confirmation answering uses the already-scoped send-message pending flag", () => {
-  expect(pageSource).toContain("isPreflightConfirmationAnswering={isSendingSelectedConversationMessage}");
-  // Unscoped global must not be used for this prop.
-  expect(pageSource).not.toContain("isPreflightConfirmationAnswering={sendConversationMessage.isPending}");
 });

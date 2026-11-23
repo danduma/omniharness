@@ -6,7 +6,6 @@ import {
   clampConversationSidebarWidth,
   clampWorkersSidebarWidth,
   getEffortStorageKey,
-  COMPOSER_MODE_STORAGE_KEY,
   COMPOSER_MODEL_STORAGE_KEY,
   COMPOSER_WORKER_STORAGE_KEY,
   EFFORT_OPTIONS,
@@ -22,7 +21,7 @@ import { LiveEventConnectionManager, LiveEventCursorManager } from "./LiveEventC
 import { acpPlanManager } from "./AcpPlanManager";
 import { goalPlanManager } from "./GoalPlanManager";
 import { refetchFailedQueries } from "@/lib/failed-query-retry";
-import type { ComposerWorkerOption, ConversationModeOption, EventStreamState } from "./types";
+import type { ComposerWorkerOption, EventStreamState } from "./types";
 import { buildConversationPath, buildInlineError, parseBrowserConversationRoute, parseCollapsedProjectPaths, resolveComposerEffortForPair, resolveSavedComposerModel } from "./utils";
 import { safeSetBrowserStorageItem } from "@/lib/browser-storage";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
@@ -63,7 +62,6 @@ interface UseHomeLifecycleProps {
   setIsResizingLeftSidebar: React.Dispatch<React.SetStateAction<boolean>>;
   isResizingRightSidebar: boolean;
   setIsResizingRightSidebar: React.Dispatch<React.SetStateAction<boolean>>;
-  selectedConversationMode: ConversationModeOption;
   selectedCliAgent: ComposerWorkerOption;
   selectedModel: string;
   selectedEffort: string;
@@ -118,7 +116,6 @@ export function useHomeLifecycle({
   setIsResizingLeftSidebar,
   isResizingRightSidebar,
   setIsResizingRightSidebar,
-  selectedConversationMode,
   selectedCliAgent,
   selectedModel,
   selectedEffort,
@@ -271,7 +268,6 @@ export function useHomeLifecycle({
         setDraftProjectPath(route.draftProjectPath);
       }
       setSelectedRunId(null);
-      homeUiStateManager.setComposerSelectionField("conversationMode", "direct", { userEdited: false });
     }
     // A server switch remounts HomeApp. Browser defaults must never overwrite
     // the session selection that selectRun just restored.
@@ -568,14 +564,6 @@ export function useHomeLifecycle({
     }
     applyDocumentTheme(themeMode);
   }, [themeMode, setRuntimeErrors]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    safeSetBrowserStorageItem(window.localStorage, COMPOSER_MODE_STORAGE_KEY, selectedConversationMode);
-  }, [selectedConversationMode]);
 
   // The saved worker and model are written by the launch itself
   // (`adoptSelectionForCreatedRun`). Mirroring every composer change here let

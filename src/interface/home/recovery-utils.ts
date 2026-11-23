@@ -16,7 +16,6 @@ export function recoveryTitleKey(state: RunRecoveryState | null | undefined) {
   if (state.status === "failed") return "recovery.notice.title.failed";
   if (state.kind === "queue_blocked") return "recovery.notice.title.queueBlocked";
   if (state.kind === "lost_worker_resumable") return "recovery.notice.title.workerDisconnected";
-  if (state.kind === "lost_worker_rerunnable") return "recovery.notice.title.workerDisconnected";
   return "recovery.notice.title.needsRecovery";
 }
 
@@ -29,7 +28,6 @@ export function recoveryDescriptionKey(state: RunRecoveryState | null | undefine
   if (state.lastError?.trim()) return stripProviderFailureMarkers(state.lastError);
   if (state.status === "recovering") return "recovery.notice.description.recovering";
   if (state.kind === "lost_worker_resumable") return "recovery.notice.description.lostWorkerResumable";
-  if (state.kind === "lost_worker_rerunnable") return "recovery.notice.description.lostWorkerRerunnable";
   return "recovery.notice.description.needsRecovery";
 }
 

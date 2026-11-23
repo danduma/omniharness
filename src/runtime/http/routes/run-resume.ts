@@ -1,7 +1,7 @@
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
-import { resumeSupervisorRun } from "@/server/supervisor/resume";
+import { resumeRunManually } from "@/server/runs/manual-resume";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 
 export const handleRunResumeRequest: OmniHttpHandler = async (request, context) => {
@@ -31,13 +31,13 @@ export const handleRunResumeRequest: OmniHttpHandler = async (request, context) 
       });
     }
 
-    const result = await resumeSupervisorRun(runId);
+    const result = await resumeRunManually(runId);
     notifyEventStreamSubscribers();
 
     return Response.json({ ok: true, runId, recovery: result });
   } catch (error) {
     return errorResponse(error, {
-      status: 500,
+      status: typeof (error as { status?: unknown })?.status === "number" ? (error as { status: number }).status : 500,
       source: "Runs",
       action: "Resume run",
     });

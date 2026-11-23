@@ -4,7 +4,7 @@ import { getBrowserLocalStorage, safeSetBrowserStorageItem } from "@/lib/browser
 import { StateManager, type StateUpdate } from "@/lib/state-manager";
 import { goalPlanManager } from "./GoalPlanManager";
 import { COMPOSER_MODEL_STORAGE_KEY, COMPOSER_WORKER_STORAGE_KEY, DEFAULT_CONVERSATION_SIDEBAR_WIDTH, DEFAULT_SERVER_SETTINGS, DEFAULT_TERMINAL_PANEL_WIDTH, DEFAULT_WORKERS_SIDEBAR_WIDTH, PROJECT_SESSION_DISPLAY_BATCH_SIZE } from "./constants";
-import type { ComposerWorkerOption, ConversationModeOption, ConversationSidebarTab, EventStreamState, LlmProfileTab, MessageRecord, SettingsTab, SidebarRun } from "./types";
+import type { ComposerWorkerOption, ConversationSidebarTab, EventStreamState, MessageRecord, SettingsTab, SidebarRun } from "./types";
 import type { CreatedConversationSnapshot } from "./utils";
 
 export type ThemeMode = "day" | "night";
@@ -18,10 +18,7 @@ export const INITIAL_EVENT_STREAM_STATE: EventStreamState = {
   accounts: [],
   agents: [],
   workers: [],
-  planItems: [],
-  clarifications: [],
   executionEvents: [],
-  supervisorInterventions: [],
   queuedMessages: [],
   recoveryIncidents: [],
   recoveryState: null,
@@ -39,7 +36,6 @@ export type ComposerDraft = {
 };
 
 export type ComposerSelection = {
-  conversationMode: ConversationModeOption;
   worker: ComposerWorkerOption;
   accountId: string;
   model: string;
@@ -56,7 +52,6 @@ const EMPTY_COMPOSER_DRAFT: ComposerDraft = {
   mentionIndex: 0,
   attachments: [],
   selection: {
-    conversationMode: "direct",
     worker: "auto",
     accountId: "auto",
     model: "gpt-5.6-sol",
@@ -74,7 +69,6 @@ export type HomeUiState = {
   showPairDeviceDialog: boolean;
   showExternalSessionsPicker: boolean;
   activeSettingsTab: SettingsTab;
-  activeLlmProfileTab: LlmProfileTab;
   apiKeys: Record<string, string>;
   showFolderPicker: boolean;
   selectedRunId: string | null;
@@ -109,7 +103,6 @@ export type HomeUiState = {
   expandedDirectMessageIds: Set<string>;
   routeReady: boolean;
   hasReceivedInitialEventStreamPayload: boolean;
-  selectedConversationMode: ConversationModeOption;
   selectedCliAgent: ComposerWorkerOption;
   selectedWorkerAccountId: string;
   selectedModel: string;
@@ -135,7 +128,6 @@ const initialHomeUiState: HomeUiState = {
   showPairDeviceDialog: false,
   showExternalSessionsPicker: false,
   activeSettingsTab: "general",
-  activeLlmProfileTab: "supervisor",
   apiKeys: { ...DEFAULT_SERVER_SETTINGS },
   showFolderPicker: false,
   selectedRunId: null,
@@ -170,7 +162,6 @@ const initialHomeUiState: HomeUiState = {
   expandedDirectMessageIds: new Set(),
   routeReady: false,
   hasReceivedInitialEventStreamPayload: false,
-  selectedConversationMode: "direct",
   selectedCliAgent: "auto",
   selectedWorkerAccountId: "auto",
   selectedModel: "gpt-5.6-sol",
@@ -297,7 +288,6 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
 
   private activeSelection(state: HomeUiState): ComposerSelection {
     return {
-      conversationMode: state.selectedConversationMode,
       worker: state.selectedCliAgent,
       accountId: state.selectedWorkerAccountId,
       model: state.selectedModel,
@@ -341,15 +331,13 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
         serverSelectionVersion: stored?.serverSelectionVersion ?? null,
       };
 
-      const selectionStatePatch: Partial<HomeUiState> = field === "conversationMode"
-        ? { selectedConversationMode: nextValue as ConversationModeOption }
-        : field === "worker"
-          ? { selectedCliAgent: nextValue as ComposerWorkerOption }
-          : field === "accountId"
-            ? { selectedWorkerAccountId: nextValue as string }
-            : field === "model"
-              ? { selectedModel: nextValue as string }
-              : { selectedEffort: nextValue as string };
+      const selectionStatePatch: Partial<HomeUiState> = field === "worker"
+        ? { selectedCliAgent: nextValue as ComposerWorkerOption }
+        : field === "accountId"
+          ? { selectedWorkerAccountId: nextValue as string }
+          : field === "model"
+            ? { selectedModel: nextValue as string }
+            : { selectedEffort: nextValue as string };
 
       return {
         ...current,
@@ -462,7 +450,6 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
       return {
         ...current,
         ...(active ? {
-          selectedConversationMode: nextSelection.conversationMode,
           selectedCliAgent: nextSelection.worker,
           selectedWorkerAccountId: nextSelection.accountId,
           selectedModel: nextSelection.model,
@@ -560,7 +547,6 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
         commandCursor: nextDraft.commandCursor,
         mentionIndex: nextDraft.mentionIndex,
         attachments: nextDraft.attachments,
-        selectedConversationMode: nextDraft.selection.conversationMode,
         selectedCliAgent: nextDraft.selection.worker,
         selectedWorkerAccountId: nextDraft.selection.accountId,
         selectedModel: nextDraft.selection.model,
@@ -660,7 +646,6 @@ export const homeUiSetters = {
   setShowPairDeviceDialog: homeUiStateManager.createSetter("showPairDeviceDialog"),
   setShowExternalSessionsPicker: homeUiStateManager.createSetter("showExternalSessionsPicker"),
   setActiveSettingsTab: homeUiStateManager.createSetter("activeSettingsTab"),
-  setActiveLlmProfileTab: homeUiStateManager.createSetter("activeLlmProfileTab"),
   setApiKeys: homeUiStateManager.createSetter("apiKeys"),
   setShowFolderPicker: homeUiStateManager.createSetter("showFolderPicker"),
   setSelectedRunId: (value: string | null) => {
@@ -701,7 +686,6 @@ export const homeUiSetters = {
   setExpandedDirectMessageIds: homeUiStateManager.createSetter("expandedDirectMessageIds"),
   setRouteReady: homeUiStateManager.createSetter("routeReady"),
   setHasReceivedInitialEventStreamPayload: homeUiStateManager.createSetter("hasReceivedInitialEventStreamPayload"),
-  setSelectedConversationMode: (value: StateUpdate<ConversationModeOption>) => homeUiStateManager.setComposerSelectionField("conversationMode", value),
   setSelectedCliAgent: (value: StateUpdate<ComposerWorkerOption>) => homeUiStateManager.setComposerSelectionField("worker", value),
   setSelectedWorkerAccountId: (value: StateUpdate<string>) => homeUiStateManager.setComposerSelectionField("accountId", value),
   setSelectedModel: (value: StateUpdate<string>) => homeUiStateManager.setComposerSelectionField("model", value),

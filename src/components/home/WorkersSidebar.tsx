@@ -5,7 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkerCard } from "@/components/WorkerCard";
 import { workersSidebarManager } from "@/components/component-state-managers";
 import { WORKER_OPTIONS } from "@/interface/home/constants";
-import type { AgentSnapshot, SupervisorInterventionRecord } from "@/interface/home/types";
+import type { AgentSnapshot } from "@/interface/home/types";
 import { buildWorkerLists, getWorkerRuntimeLabel, type ConversationWorkerRecord } from "@/lib/conversation-workers";
 import { buildWorkerTerminalUserMessages } from "@/lib/worker-terminal-messages";
 import { cn } from "@/lib/utils";
@@ -16,7 +16,6 @@ import { t, useI18nSnapshot } from "@/lib/i18n";
 export interface WorkersSidebarProps {
   workers: ConversationWorkerRecord[];
   agents: AgentSnapshot[];
-  supervisorInterventions: SupervisorInterventionRecord[];
   preferredModel: string | null;
   preferredEffort: string | null;
   projectRoot?: string | null;
@@ -59,7 +58,6 @@ export function ConversationWorkerCard({
   terminalHeightClass,
   fillAvailable = false,
   fallbackPreview,
-  supervisorInterventions = [],
   onStopWorker,
   onStopTerminalProcess,
   onRespondElicitation,
@@ -81,7 +79,6 @@ export function ConversationWorkerCard({
   terminalHeightClass: string;
   fillAvailable?: boolean;
   fallbackPreview?: string | null;
-  supervisorInterventions?: SupervisorInterventionRecord[];
   onStopWorker?: (workerId: string) => void;
   onStopTerminalProcess?: (workerId: string, terminalProcess: WorkerTerminalProcess) => void;
   onRespondElicitation?: WorkersSidebarProps["onRespondElicitation"];
@@ -117,8 +114,7 @@ export function ConversationWorkerCard({
   const userMessages = useMemo(() => buildWorkerTerminalUserMessages({
     worker,
     agent: fallbackAgent,
-    supervisorInterventions,
-  }), [fallbackAgent, supervisorInterventions, worker]);
+  }), [fallbackAgent, worker]);
 
   return (
     <WorkerCard
@@ -159,7 +155,7 @@ export function ConversationWorkerCard({
  * from `sharedSidebarProps`, whose callbacks are now stable, so the shallow
  * comparison actually holds.
  */
-const WorkersSidebar = memo(function WorkersSidebar({ workers, agents, supervisorInterventions, preferredModel, preferredEffort, projectRoot, onStopWorker, onStopTerminalProcess, onRespondElicitation, onRespondPermission, onLoadWorkerHistory, stoppingWorkerId, stoppingTerminalProcess, onClose, showHeader = true }: WorkersSidebarProps) {
+const WorkersSidebar = memo(function WorkersSidebar({ workers, agents, preferredModel, preferredEffort, projectRoot, onStopWorker, onStopTerminalProcess, onRespondElicitation, onRespondPermission, onLoadWorkerHistory, stoppingWorkerId, stoppingTerminalProcess, onClose, showHeader = true }: WorkersSidebarProps) {
   useI18nSnapshot();
   const { activeTab: requestedActiveTab, focusedWorkerId } = useManagerSnapshot(workersSidebarManager);
   const workerGroups = buildWorkerLists(workers);
@@ -198,7 +194,6 @@ const WorkersSidebar = memo(function WorkersSidebar({ workers, agents, superviso
         preferredModel={preferredModel}
         preferredEffort={preferredEffort}
         projectRoot={projectRoot}
-        supervisorInterventions={supervisorInterventions}
         defaultOpen={isFocusedWorker || activeTab === "active" || hasSingleVisibleWorker}
         terminalHeightClass={terminalHeightClass}
         fillAvailable={hasSingleVisibleWorker || isFocusedWorker}

@@ -1,7 +1,7 @@
 import { normalizeAcpGoalMetadata } from "@/server/agent-runtime/acp/goal-state";
 import { emitNamedEvent } from "@/server/events/named-events";
 import { redactGoalErrorMessage } from "@/server/runs/goal-errors";
-import { isAgentBusyError, isMissingAgentError } from "@/server/supervisor/retry";
+import { isAgentBusyError, isMissingAgentError } from "@/server/bridge-client/retry";
 import type { GoalMutationAction, GoalSnapshot } from "@/shared/goal-plan";
 
 interface GoalAcpAgentSnapshot {

@@ -3,7 +3,6 @@ import { and, asc, eq } from "drizzle-orm";
 import { askAgent, cancelAgent, getAgent, respondElicitation, spawnAgent } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import {
-  clarifications,
   messages,
   queuedConversationMessages,
   runs,
@@ -11,9 +10,6 @@ import {
   workers,
 } from "@/server/db/schema";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
-import { answerClarification } from "@/server/clarifications/store";
-import { resumeRunAfterClarification } from "@/server/clarifications/loop";
-import { startSupervisorRun } from "@/server/supervisor/start";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { readWorkerOutputEntries } from "@/server/workers/output-store";
@@ -21,15 +17,14 @@ import { appendWorkerSessionMetadata, readWorkerSessionMetadata } from "@/server
 import { buildTranscriptReplayPrompt, canRecreateRejectedSavedSession, isRejectedSavedSessionErrorMessage, materializeProviderSessionFromWorkerStream } from "@/server/workers/session-recovery";
 import { appendAskResponseFallbackEntry } from "@/server/workers/response-fallback";
 import { formatErrorMessage, persistRunFailure } from "@/server/runs/failures";
-import { refreshPlanningArtifactsForRun } from "@/server/planning/refresh";
 import { readWorkerYoloModeEnabled, resolveWorkerLaunchMode } from "@/server/worker-launch-mode";
 import { resolveWorkerLaunchSelection } from "@/server/workers/launch-selection";
 import { readWorkerAllocatedAccountId } from "@/server/workers/allocated-account";
 import { allocateWorkerAccount } from "@/server/accounts/account-allocator";
-import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
+import { readRuntimeEnvFromSettings } from "@/server/settings/runtime-env";
 import { appendAttachmentContext, normalizeChatAttachments, parseChatAttachmentsJson, resolveImageAttachments, serializeChatAttachments, type ChatAttachment } from "@/lib/chat-attachments";
 import { getAppDataPath } from "@/server/app-root";
-import { normalizeWorkerType, SUPPORTED_WORKER_TYPES, type SupportedWorkerType } from "@/server/supervisor/worker-types";
+import { normalizeWorkerType, SUPPORTED_WORKER_TYPES, type SupportedWorkerType } from "@/shared/worker-types";
 import {
   createQueuedConversationMessage,
   workerStreamHasOutputAfterInput,
@@ -53,9 +48,6 @@ import {
 import { updateDirectRunStatusFromWorkerOutput } from "./direct-run-status";
 import { isManualStopCommand } from "@/interface/home/busy-message-behavior";
 import { emitNamedEvent } from "@/server/events/named-events";
-import { cancelSupervisorWake } from "@/server/supervisor/wake";
-import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
-import { stopRunObserver } from "@/server/supervisor/observer";
 import { buildDirectWorkerPrompt } from "./direct-worker-prompt";
 import { extractQuotaResetInfo } from "@/server/quota/reset-parser";
 import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
@@ -84,25 +76,8 @@ type DirectWorkerSnapshot = Awaited<ReturnType<typeof getAgent>>;
 type ElicitationSchema = NonNullable<DirectWorkerSnapshot["pendingElicitations"]>[number]["requestedSchema"];
 type ElicitationContent = Record<string, string | number | boolean | string[]>;
 
-function isDirectRunMode(mode: string | null | undefined) {
-  return mode === "direct" || mode === "commit";
-}
-
 function canonicalProviderModelAlias(value: string | null | undefined) {
   return value?.trim().toLowerCase().replace(/^openai\//, "") || null;
-}
-
-// An Omni run is stored as mode "implementation" for its whole life; its
-// `phase` distinguishes the interactive planning stage (planner worker, no
-// supervisor) from the supervised implementation stage. Route follow-up
-// messages by phase, not raw mode, so a reply during planning reaches the
-// planner instead of being treated as a supervisor steer.
-function isPlanningRun(run: { mode?: string | null; phase?: string | null }) {
-  return run.mode === "planning" || (run.mode === "implementation" && run.phase === "planning");
-}
-
-function isSupervisedRun(run: { mode?: string | null; phase?: string | null }) {
-  return run.mode === "implementation" && run.phase !== "planning";
 }
 
 function isAgentBusyError(error: unknown) {
@@ -835,7 +810,7 @@ async function askDirectWorkerWithResume(
   promptOverride?: string | null,
   expectedTurnGeneration?: number,
 ) {
-  const workerPrompt = promptOverride ?? (isDirectRunMode(run.mode) ? buildDirectWorkerPrompt(content) : content);
+  const workerPrompt = promptOverride ?? buildDirectWorkerPrompt(content);
   try {
     return await askAgentWithAuthRetry(worker.id, workerPrompt, imageAttachments, expectedTurnGeneration);
   } catch (error) {
@@ -1083,31 +1058,18 @@ async function continueWorkerConversation({
     // bridge entries written by persistWorkerSnapshot above carry the
     // response text. The legacy role:"worker" messages row is gone.
 
-    if (isPlanningRun(run)) {
-      const latestRun = await db.select().from(runs).where(eq(runs.id, run.id)).get();
-      const latestWorker = await db.select().from(workers).where(eq(workers.id, worker.id)).get();
-      if (latestRun) {
-        await refreshPlanningArtifactsForRun({
-          run: latestRun,
-          worker: latestWorker,
-          snapshot,
-          responseText: response.response,
-        });
-      }
-    } else if (isDirectRunMode(run.mode)) {
-      await updateDirectRunStatusFromWorkerOutput({
-        runId: run.id,
-        workerId: worker.id,
-        workerStatus: snapshot?.state ?? response.state,
-        responseText: response.response,
-        renderedOutput: snapshot?.renderedOutput,
-        currentText: snapshot?.currentText,
-        lastText: snapshot?.lastText,
-        outputEntries: snapshot?.outputEntries,
-        pendingPermissions: snapshot?.pendingPermissions,
-        pendingElicitations: snapshot?.pendingElicitations,
-      });
-    }
+    await updateDirectRunStatusFromWorkerOutput({
+      runId: run.id,
+      workerId: worker.id,
+      workerStatus: snapshot?.state ?? response.state,
+      responseText: response.response,
+      renderedOutput: snapshot?.renderedOutput,
+      currentText: snapshot?.currentText,
+      lastText: snapshot?.lastText,
+      outputEntries: snapshot?.outputEntries,
+      pendingPermissions: snapshot?.pendingPermissions,
+      pendingElicitations: snapshot?.pendingElicitations,
+    });
 
     notifyEventStreamSubscribers();
   } catch (error) {
@@ -1134,7 +1096,7 @@ async function continueWorkerConversation({
         updatedAt: now,
       }).where(eq(workers.id, worker.id));
       await db.update(runs).set({
-        status: isPlanningRun(run) ? "working" : "running",
+        status: "running",
         failedAt: null,
         lastError: null,
         updatedAt: now,
@@ -1681,62 +1643,6 @@ async function stopConversationFromManualStopCommand(run: RunRecord) {
     };
   }
 
-  if (isSupervisedRun(run)) {
-    cancelSupervisorWake(run.id);
-    stopRunObserver(run.id);
-    await clearSupervisorWakeLease(run.id);
-    const runWorkers = await db.select().from(workers).where(eq(workers.runId, run.id));
-    const activeWorkers = runWorkers.filter((worker) => isStoppableWorkerStatus(worker.status));
-    for (const worker of activeWorkers) {
-      void cancelAgent(worker.id).catch(() => undefined);
-      await db.update(workers).set({
-        status: "cancelled",
-        updatedAt: new Date(),
-      }).where(eq(workers.id, worker.id));
-      emitNamedEvent({
-        kind: "worker.status",
-        runId: run.id,
-        workerId: worker.id,
-        prev: worker.status,
-        next: "cancelled",
-      });
-      emitNamedEvent({
-        kind: "worker.terminal",
-        runId: run.id,
-        workerId: worker.id,
-        status: "cancelled",
-      });
-    }
-
-    const now = new Date();
-    await db.update(runs).set({
-      status: "cancelled",
-      updatedAt: now,
-    }).where(eq(runs.id, run.id));
-    await recordExecutionEvent({
-      runId: run.id,
-      workerId: null,
-      planItemId: null,
-      eventType: "supervisor_stopped",
-      details: {
-        summary: "Stopped supervisor from exact stop command.",
-        reason: "User sent an exact stop command.",
-        userInitiated: true,
-        cancelledWorkerIds: activeWorkers.map((worker) => worker.id),
-        source: "manual_stop_message",
-      },
-      createdAt: now,
-    });
-    notifyEventStreamSubscribers();
-    return {
-      ok: true as const,
-      stopped: true as const,
-      runId: run.id,
-      workerId: null,
-      runCancelled: true,
-    };
-  }
-
   const worker = await selectConversationWorker(run.id);
   if (!worker || !isStoppableWorkerStatus(worker.status)) {
     return {
@@ -1867,7 +1773,7 @@ export async function resumeAcceptedDirectMessageDeliveries(options: { messageId
   for (const message of accepted) {
     if (options.messageIds && !options.messageIds.includes(message.id)) continue;
     const run = await db.select({ mode: runs.mode }).from(runs).where(eq(runs.id, message.runId)).get();
-    if (!run || !isDirectRunMode(run.mode)) continue;
+    if (!run) continue;
     const deliveryOptions = parseDurableDeliveryOptions(message.deliveryOptionsJson);
     try {
       await sendConversationMessage({
@@ -1953,7 +1859,6 @@ async function sendConversationMessageUnlocked(args: SendConversationMessageArgs
     operationFingerprint,
   });
   const retryableAcceptedMessage = acceptedRetry?.message
-    && isDirectRunMode(run.mode)
     && (acceptedRetry.message.deliveryStatus === "accepted" || acceptedRetry.message.deliveryStatus === "failed")
     ? acceptedRetry.message
     : null;
@@ -1962,17 +1867,10 @@ async function sendConversationMessageUnlocked(args: SendConversationMessageArgs
     const stopped = await stopConversationFromManualStopCommand(run);
     return stopped;
   }
-  if (isPlanningRun(run) && (run.status === "reviewing_plan" || run.status === "revising_plan")) {
-    throw Object.assign(new Error("Plan review is in progress. Please wait for the review to complete before sending further messages."), { status: 409 });
-  }
-
   // Validate worker-dependent delivery before committing a preference patch.
   // A rejected send must not have a settings side effect.
-  const workerRequired = busyAction === "steer"
-    || isDirectRunMode(run.mode)
-    || isPlanningRun(run);
-  let preflightWorker = workerRequired ? await selectConversationWorker(runId) : null;
-  if (workerRequired && !preflightWorker) {
+  const preflightWorker = await selectConversationWorker(runId);
+  if (!preflightWorker) {
     throw Object.assign(new Error("Conversation worker not found"), { status: 404 });
   }
 
@@ -1988,37 +1886,9 @@ async function sendConversationMessageUnlocked(args: SendConversationMessageArgs
   }
 
   try {
-  if (isSupervisedRun(run) && (busyAction === "queue" || busyAction === "steer")) {
-    if (busyAction === "steer") {
-      const worker = preflightWorker!;
-      return interruptWithDraftMessage({
-        runId,
-        content: trimmedContent,
-        attachments: normalizedAttachments,
-        targetWorkerId: worker.id,
-        source: "api",
-        clientMessageId: userMessageId,
-        operationFingerprint,
-      });
-    }
-
-    const queuedMessage = await createQueuedConversationMessage({
-      runId,
-      action: "steer",
-      content: trimmedContent,
-      attachments: normalizedAttachments,
-      clientMessageId: userMessageId,
-      operationFingerprint,
-    });
-    startSupervisorRun(runId);
-    return { ok: true, queuedMessage };
-  }
-
   if (busyAction === "queue") {
-    const worker = preflightWorker!;
-    if (isDirectRunMode(run.mode) || isPlanningRun(run)) {
-      await reconcileWorkerUserMessagesInStream(runId, worker.id);
-    }
+    const worker = preflightWorker;
+    await reconcileWorkerUserMessagesInStream(runId, worker.id);
 
     const queuedMessage = await createQueuedConversationMessage({
       runId,
@@ -2042,54 +1912,7 @@ async function sendConversationMessageUnlocked(args: SendConversationMessageArgs
     return { ok: true, queuedMessage };
   }
 
-  if (isSupervisedRun(run)) {
-    const pendingClarification = await db
-      .select()
-      .from(clarifications)
-      .where(and(eq(clarifications.runId, runId), eq(clarifications.status, "pending")))
-      .orderBy(asc(clarifications.createdAt), asc(clarifications.id))
-      .get();
-    const createdAt = new Date();
-    const message = {
-      id: userMessageId,
-      runId,
-      role: "user",
-      kind: pendingClarification ? "clarification_answer" : "checkpoint",
-      content: trimmedContent,
-      attachmentsJson,
-      operationFingerprint,
-      deliveryOptionsJson,
-      createdAt,
-    };
-
-    const activation = await activateRunAndPersistMessage({
-      run,
-      nextStatus: "running",
-      activatedAt: createdAt,
-      persist: () => db.insert(messages).values(message),
-    });
-    run = activation.run;
-
-    if (pendingClarification) {
-      await answerClarification(pendingClarification.id, trimmedContent);
-      const resumeResult = await resumeRunAfterClarification(runId);
-      notifyEventStreamSubscribers();
-      return {
-        ok: true,
-        message: serializeMessageRecord({ ...message, attachmentsJson }),
-        ...resumeResult,
-      };
-    }
-
-    startSupervisorRun(runId);
-    notifyEventStreamSubscribers();
-    return {
-      ok: true,
-      message: serializeMessageRecord({ ...message, attachmentsJson }),
-    };
-  }
-
-  let worker = preflightWorker!;
+  let worker = preflightWorker;
   if (retryableAcceptedMessage && await workerStreamHasProgressAfterMessage(runId, worker.id, retryableAcceptedMessage.id)) {
     await setMessageDeliveryStatus(retryableAcceptedMessage.id, "delivered");
     return acceptedRetry!.result;
@@ -2098,11 +1921,9 @@ async function sendConversationMessageUnlocked(args: SendConversationMessageArgs
   // already cancelled when the request began may be resumed; one cancelled by
   // a later Stop may not.
   const allowCancelledWorkerResume = isWorkerCancelled(worker);
-  if (isDirectRunMode(run.mode) || isPlanningRun(run)) {
-    await reconcileWorkerUserMessagesInStream(runId, worker.id);
-  }
+  await reconcileWorkerUserMessagesInStream(runId, worker.id);
 
-  if (isDirectRunMode(run.mode) && run.status === "awaiting_user") {
+  if (run.status === "awaiting_user") {
     const elicitationAnswer = await answerDirectWorkerElicitation({
       run,
       worker,
@@ -2156,7 +1977,7 @@ async function sendConversationMessageUnlocked(args: SendConversationMessageArgs
     kind: "checkpoint",
     content: trimmedContent,
     attachmentsJson,
-    deliveryStatus: isDirectRunMode(run.mode) ? "accepted" : "delivered",
+    deliveryStatus: "accepted",
     operationFingerprint,
     deliveryOptionsJson,
     createdAt: userMessageCreatedAt,
@@ -2165,29 +1986,27 @@ async function sendConversationMessageUnlocked(args: SendConversationMessageArgs
   if (!retryableAcceptedMessage) {
     const activation = await activateRunAndPersistMessage({
       run,
-      nextStatus: isPlanningRun(run) ? "working" : "running",
+      nextStatus: "running",
       activatedAt: userMessageCreatedAt,
       persist: async () => {
       // Stream-first: append the user_input entry BEFORE the DB insert so that
       // a crash between the two writes leaves at most a harmless orphan stream
       // entry rather than a DB row the worker can never see. The stream entry
       // is keyed by message id so retries remain idempotent.
-      if (isDirectRunMode(run.mode)) {
-        await appendUserInputOnDelivery({
-          id: userMessage.id,
-          runId: run.id,
-          workerId: worker.id,
-          text: trimmedContent,
-          deliveredAt: userMessageCreatedAt,
-          attachments: normalizedAttachments.map((attachment) => ({
-            id: attachment.id,
-            filename: attachment.name,
-            mimeType: attachment.mimeType,
-            sizeBytes: attachment.size,
-            storagePath: attachment.storagePath,
-          })),
-        });
-      }
+      await appendUserInputOnDelivery({
+        id: userMessage.id,
+        runId: run.id,
+        workerId: worker.id,
+        text: trimmedContent,
+        deliveredAt: userMessageCreatedAt,
+        attachments: normalizedAttachments.map((attachment) => ({
+          id: attachment.id,
+          filename: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.size,
+          storagePath: attachment.storagePath,
+        })),
+      });
         await db.insert(messages).values(userMessage);
       },
     });
@@ -2195,72 +2014,26 @@ async function sendConversationMessageUnlocked(args: SendConversationMessageArgs
   }
   notifyEventStreamSubscribers();
 
-  if (isDirectRunMode(run.mode)) {
-    const selectedWorker = await reconcileDirectWorkerSelection({
-      run,
-      worker,
-      nextUserPrompt: buildDirectWorkerPrompt(workerContent),
-    });
-    const promptOverride = selectedWorker?.replayPrompt ?? null;
-    if (selectedWorker) {
-      worker = selectedWorker.worker;
-    }
-    notifyEventStreamSubscribers();
-    const expectedTurnGeneration = worker.turnGeneration;
-    await setMessageDeliveryStatus(userMessage.id, "delivering");
+  const selectedWorker = await reconcileDirectWorkerSelection({
+    run,
+    worker,
+    nextUserPrompt: buildDirectWorkerPrompt(workerContent),
+  });
+  const promptOverride = selectedWorker?.replayPrompt ?? null;
+  if (selectedWorker) {
+    worker = selectedWorker.worker;
+  }
+  notifyEventStreamSubscribers();
+  const expectedTurnGeneration = worker.turnGeneration;
+  await setMessageDeliveryStatus(userMessage.id, "delivering");
 
-    if (busyAction === "steer") {
-      // Steer runs in the background for the same reason a plain follow-up
-      // does: awaiting it held the HTTP response open for the whole turn, which
-      // read to the client as a send that never completed. The message is
-      // already persisted and streamed, so the caller has everything it needs.
-      // A worker that reports busy anyway falls back to a queued row, which
-      // reaches the client over the event stream.
-      trackConversationBackgroundTask(
-        runWorkerTurn(worker.id, () => continueWorkerConversation({
-          run,
-          worker,
-          content: workerContent,
-          userInputText: trimmedContent,
-          userInputId: userMessage.id,
-          attachments: normalizedAttachments,
-          // Already appended above.
-          appendUserInputBeforeAsk: false,
-          allowCancelledWorkerResume,
-          promptOverride,
-          expectedTurnGeneration,
-        })).then(
-          () => setMessageDeliveryStatus(userMessage.id, "delivered"),
-          async (error) => {
-          await setMessageDeliveryStatus(userMessage.id, "failed");
-            if (!isAgentBusyError(error)) {
-              console.error("Direct conversation steer failed:", error);
-              return;
-            }
-            await db.delete(messages).where(eq(messages.id, userMessage.id));
-            await createQueuedConversationMessage({
-              runId,
-              targetWorkerId: worker.id,
-              action: "steer",
-              content: trimmedContent,
-              attachments: normalizedAttachments,
-              clientMessageId: userMessage.id,
-              operationFingerprint,
-            });
-            notifyEventStreamSubscribers();
-          },
-        ),
-        { runId },
-      );
-
-      return {
-        ok: true,
-        message: serializeMessageRecord({ ...userMessage, attachmentsJson }),
-      };
-    }
-
-    // Direct follow-up follows the same "append-immediately" path. The
-    // turn runs in the background.
+  if (busyAction === "steer") {
+    // Steer runs in the background for the same reason a plain follow-up
+    // does: awaiting it held the HTTP response open for the whole turn, which
+    // read to the client as a send that never completed. The message is
+    // already persisted and streamed, so the caller has everything it needs.
+    // A worker that reports busy anyway falls back to a queued row, which
+    // reaches the client over the event stream.
     trackConversationBackgroundTask(
       runWorkerTurn(worker.id, () => continueWorkerConversation({
         run,
@@ -2277,21 +2050,16 @@ async function sendConversationMessageUnlocked(args: SendConversationMessageArgs
       })).then(
         () => setMessageDeliveryStatus(userMessage.id, "delivered"),
         async (error) => {
-          await setMessageDeliveryStatus(userMessage.id, "failed");
+        await setMessageDeliveryStatus(userMessage.id, "failed");
           if (!isAgentBusyError(error)) {
-            console.error("Direct conversation follow-up failed:", error);
+            console.error("Direct conversation steer failed:", error);
             return;
           }
-          // The agent was running a turn the runner had not seen yet, such as
-          // one Claude started for a background-task notification. Marking the
-          // message failed and stopping there dropped it without a word, so
-          // queue it for the worker exactly as a busy steer is queued; the
-          // queue drains when the worker goes idle.
           await db.delete(messages).where(eq(messages.id, userMessage.id));
           await createQueuedConversationMessage({
             runId,
             targetWorkerId: worker.id,
-            action: "queue",
+            action: "steer",
             content: trimmedContent,
             attachments: normalizedAttachments,
             clientMessageId: userMessage.id,
@@ -2308,6 +2076,55 @@ async function sendConversationMessageUnlocked(args: SendConversationMessageArgs
       message: serializeMessageRecord({ ...userMessage, attachmentsJson }),
     };
   }
+
+  // Direct follow-up follows the same "append-immediately" path. The
+  // turn runs in the background.
+  trackConversationBackgroundTask(
+    runWorkerTurn(worker.id, () => continueWorkerConversation({
+      run,
+      worker,
+      content: workerContent,
+      userInputText: trimmedContent,
+      userInputId: userMessage.id,
+      attachments: normalizedAttachments,
+      // Already appended above.
+      appendUserInputBeforeAsk: false,
+      allowCancelledWorkerResume,
+      promptOverride,
+      expectedTurnGeneration,
+    })).then(
+      () => setMessageDeliveryStatus(userMessage.id, "delivered"),
+      async (error) => {
+        await setMessageDeliveryStatus(userMessage.id, "failed");
+        if (!isAgentBusyError(error)) {
+          console.error("Direct conversation follow-up failed:", error);
+          return;
+        }
+        // The agent was running a turn the runner had not seen yet, such as
+        // one Claude started for a background-task notification. Marking the
+        // message failed and stopping there dropped it without a word, so
+        // queue it for the worker exactly as a busy steer is queued; the
+        // queue drains when the worker goes idle.
+        await db.delete(messages).where(eq(messages.id, userMessage.id));
+        await createQueuedConversationMessage({
+          runId,
+          targetWorkerId: worker.id,
+          action: "queue",
+          content: trimmedContent,
+          attachments: normalizedAttachments,
+          clientMessageId: userMessage.id,
+          operationFingerprint,
+        });
+        notifyEventStreamSubscribers();
+      },
+    ),
+    { runId },
+  );
+
+  return {
+    ok: true,
+    message: serializeMessageRecord({ ...userMessage, attachmentsJson }),
+  };
 
   try {
     await runWorkerTurn(worker.id, () => continueWorkerConversation({

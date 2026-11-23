@@ -242,7 +242,6 @@ async function callEveryDomainMethod(apis: RuntimeAPIs) {
   await apis.runs.update({ runId: "run/1", patch: { title: "x" } });
   await apis.runs.remove({ runId: "run/1" });
   await apis.runs.resume({ runId: "run/1" });
-  await apis.runs.answer({ runId: "run/1", body: { answer: "yes" } });
   await apis.conversations.create({ projectPath: "/tmp/a" });
   await apis.conversations.sendMessage({ runId: "run-1" });
   await apis.conversations.sendTo({ runId: "run/1", body: { text: "hi" } });
@@ -277,13 +276,8 @@ async function callEveryDomainMethod(apis: RuntimeAPIs) {
   await apis.files.upload(formData);
   await apis.files.attachment({ path: "stored/a.png", mimeType: "image/png" });
   await apis.git.execute({ action: "status" });
-  await apis.planning.list();
-  await apis.planning.promote({ runId: "run/1", body: { planPath: null } });
-  await apis.planning.review({ runId: "run/1", body: { rounds: 1 } });
   await apis.settings.load();
   await apis.settings.save({ theme: "night" });
-  await apis.settings.projectMemory.load({ projectPath: "/tmp/a", path: "notes/a.md" });
-  await apis.settings.projectMemory.save({ projectPath: "/tmp/a", action: "write" });
   await apis.settings.claudeGateway.load();
   await apis.settings.claudeGateway.execute({ action: "status" });
   await apis.accounts.list();
@@ -297,7 +291,6 @@ async function callEveryDomainMethod(apis: RuntimeAPIs) {
   await apis.accounts.actOnAuthOperation({ accountId: "account/1", action: "retry" });
   await apis.accounts.logout({ accountId: "account/1" });
   await apis.accounts.purge({ accountId: "account/1", confirmAccountId: "account/1" });
-  await apis.accounts.codexStatus();
   await apis.notifications.load();
   await apis.notifications.subscribe({ subscription: {} });
   await apis.notifications.unsubscribe({ endpoint: "https://push.invalid" });
@@ -317,7 +310,7 @@ describe.each([
     const { apis, calls } = createHarness();
     await callEveryDomainMethod(apis);
 
-    expect(calls).toHaveLength(67);
+    expect(calls).toHaveLength(60);
     expect(calls.map(({ method, path }) => `${method} ${path}`)).toEqual(
       expect.arrayContaining([
         "GET /api/auth/session",
@@ -332,7 +325,6 @@ describe.each([
         "POST /api/fs/directories",
         "POST /api/attachments",
         "POST /api/git",
-        "POST /api/planning/run%2F1/review",
         "GET /api/settings",
         "POST /api/accounts/account%2F1/status",
         "POST /api/accounts/claude/connect",
@@ -340,7 +332,6 @@ describe.each([
         "POST /api/accounts/account%2F1/auth-operation",
         "POST /api/accounts/account%2F1/logout",
         "POST /api/accounts/account%2F1/purge",
-        "GET /api/codex-auth/status",
         "POST /api/integrations/claude-model-gateway",
         "DELETE /api/notifications",
         "POST /api/terminals/terminal%2F1/resize",

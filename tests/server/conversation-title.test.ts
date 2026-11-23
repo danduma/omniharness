@@ -6,40 +6,32 @@ import { messages, plans, runs, settings } from "@/server/db/schema";
 import { generateConversationTitle, queueConversationTitleGeneration } from "@/server/conversation-title";
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 
-const titleMocks = vi.hoisted(() => ({
-  generate: vi.fn(),
-  agentConstructors: vi.fn(),
+const codexMocks = vi.hoisted(() => ({
+  readCodexCredentialsSync: vi.fn(() => null as null | { accessToken: string; accountId: string }),
+  ensureFreshCodexCredentials: vi.fn(async () => ({ accessToken: "codex-token", accountId: "codex-account" })),
 }));
 
-vi.mock("@mastra/core/agent", () => ({
-  Agent: class {
-    constructor(options?: unknown) {
-      titleMocks.agentConstructors(options);
-    }
-
-    generate = titleMocks.generate;
-  },
+vi.mock("@/server/auth/codex-auth", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/server/auth/codex-auth")>(),
+  readCodexCredentialsSync: codexMocks.readCodexCredentialsSync,
+  ensureFreshCodexCredentials: codexMocks.ensureFreshCodexCredentials,
 }));
 
-vi.mock("@/server/supervisor/runtime-settings", () => ({
-  hydrateRuntimeEnvFromSettings: () => ({
-    env: {
-      SUPERVISOR_LLM_PROVIDER: "gemini",
-      SUPERVISOR_LLM_MODEL: "gemini-3.5-flash",
-      SUPERVISOR_LLM_API_KEY: "gemini-key",
-      GEMINI_API_KEY: "gemini-key",
-    },
-    decryptionFailures: [],
-  }),
-}));
+function codexTitleResponse(title: string) {
+  const [first, ...rest] = title.split(" ");
+  return new Response([
+    `data: ${JSON.stringify({ type: "response.output_text.delta", delta: `${first} ` })}`,
+    `data: ${JSON.stringify({ type: "response.output_text.delta", delta: rest.join(" ") })}`,
+    'data: {"type":"response.completed"}',
+  ].join("\n\n"));
+}
 
 describe("conversation title generation", () => {
   const originalMockLlm = process.env.MOCK_LLM;
 
   beforeEach(async () => {
     vi.unstubAllEnvs();
-    titleMocks.generate.mockReset();
-    titleMocks.agentConstructors.mockReset();
+    codexMocks.readCodexCredentialsSync.mockReturnValue(null);
     delete (process.env as Record<string, string | undefined>).MOCK_LLM;
     await db.delete(messages);
     await db.delete(runs);
@@ -49,37 +41,12 @@ describe("conversation title generation", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     if (originalMockLlm === undefined) {
       delete (process.env as Record<string, string | undefined>).MOCK_LLM;
     } else {
       (process.env as Record<string, string | undefined>).MOCK_LLM = originalMockLlm;
     }
-  });
-
-  it("uses the configured supervisor model and grounds the title in the opening exchange", async () => {
-    titleMocks.generate.mockResolvedValue({ object: { title: "Restore Conversation Titles" } });
-
-    const result = await generateConversationTitle({
-      userMessage: "Titles never load for new conversations.",
-      assistantReply: "I traced the provider title sources and both are empty.",
-    });
-
-    expect(result).toEqual({ title: "Restore Conversation Titles", error: null });
-    expect(titleMocks.agentConstructors).toHaveBeenCalledWith(expect.objectContaining({
-      model: {
-        id: "google/gemini-3.5-flash",
-        apiKey: "gemini-key",
-        url: undefined,
-      },
-    }));
-    expect(titleMocks.generate).toHaveBeenCalledWith(
-      expect.stringContaining("Titles never load for new conversations."),
-      expect.objectContaining({ structuredOutput: expect.any(Object) }),
-    );
-    expect(titleMocks.generate).toHaveBeenCalledWith(
-      expect.stringContaining("I traced the provider title sources and both are empty."),
-      expect.any(Object),
-    );
   });
 
   async function insertConversation(userMessage: string) {
@@ -113,9 +80,27 @@ describe("conversation title generation", () => {
     return runId;
   }
 
-  it("surfaces model failure and persists a local fallback title", async () => {
+  it("titles through the Codex subscription and grounds the title in the opening exchange", async () => {
+    codexMocks.readCodexCredentialsSync.mockReturnValue({ accessToken: "codex-token", accountId: "codex-account" });
+    const fetchMock = vi.fn(async () => codexTitleResponse("Restore Conversation Titles"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await generateConversationTitle({
+      userMessage: "Titles never load for new conversations.",
+      assistantReply: "I traced the provider title sources and both are empty.",
+    });
+
+    expect(result).toEqual({ title: "Restore Conversation Titles", error: null });
+    const [, request] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(request.body));
+    expect(body).toMatchObject({ store: false, stream: true });
+    expect(JSON.stringify(body.input)).toContain("Titles never load for new conversations.");
+    expect(JSON.stringify(body.input)).toContain("I traced the provider title sources and both are empty.");
+    expect(new Headers(request.headers).get("chatgpt-account-id")).toBe("codex-account");
+  });
+
+  it("surfaces a missing Codex sign-in and persists a local fallback title", async () => {
     const runId = await insertConversation("Investigate missing title metadata from providers");
-    titleMocks.generate.mockRejectedValue(new Error("model unavailable"));
 
     await queueConversationTitleGeneration({
       runId,
@@ -126,8 +111,9 @@ describe("conversation title generation", () => {
       transcriptCandidateStatus: "not_applicable",
     });
 
-    const run = await db.select({ title: runs.title }).from(runs).where(eq(runs.id, runId)).get();
-    expect(run?.title).toBe("Investigate Missing Title Metadata From Providers");
+    const run = await db.select({ title: runs.title, titleSource: runs.titleSource })
+      .from(runs).where(eq(runs.id, runId)).get();
+    expect(run).toEqual({ title: "Investigate Missing Title Metadata From Providers", titleSource: "harness_fallback" });
     expect(getNamedEventsSince(0).events.map((entry) => entry.event)).toContainEqual(
       expect.objectContaining({
         kind: "error.surfaced",
@@ -138,14 +124,35 @@ describe("conversation title generation", () => {
     );
   });
 
+  it("persists the generated title as a harness title", async () => {
+    const runId = await insertConversation("Investigate missing title metadata from providers");
+    codexMocks.readCodexCredentialsSync.mockReturnValue({ accessToken: "codex-token", accountId: "codex-account" });
+    vi.stubGlobal("fetch", vi.fn(async () => codexTitleResponse("Provider Title Recovery")));
+
+    await queueConversationTitleGeneration({
+      runId,
+      workerId: `${runId}-worker-1`,
+      workerType: "codex",
+      assistantReply: "Neither provider title source produced a usable value.",
+      streamCandidateStatus: "missing",
+      transcriptCandidateStatus: "not_applicable",
+    });
+
+    const run = await db.select({ title: runs.title, titleSource: runs.titleSource })
+      .from(runs).where(eq(runs.id, runId)).get();
+    expect(run).toEqual({ title: "Provider Title Recovery", titleSource: "harness_llm" });
+  });
+
   it("does not overwrite a newer title when the model response arrives late", async () => {
     const runId = await insertConversation("Fix title generation race");
-    let resolveGeneration: (value: { object: { title: string } }) => void = () => {
-      throw new Error("Title generation promise was not initialized.");
+    codexMocks.readCodexCredentialsSync.mockReturnValue({ accessToken: "codex-token", accountId: "codex-account" });
+    let resolveResponse: (response: Response) => void = () => {
+      throw new Error("Title response promise was not initialized.");
     };
-    titleMocks.generate.mockImplementation(() => new Promise((resolve) => {
-      resolveGeneration = resolve;
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => {
+      resolveResponse = resolve;
     }));
+    vi.stubGlobal("fetch", fetchMock);
 
     const pending = queueConversationTitleGeneration({
       runId,
@@ -155,9 +162,9 @@ describe("conversation title generation", () => {
       streamCandidateStatus: "missing",
       transcriptCandidateStatus: "not_applicable",
     });
-    await vi.waitFor(() => expect(titleMocks.generate).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     await db.update(runs).set({ title: "Manual title wins" }).where(eq(runs.id, runId));
-    resolveGeneration({ object: { title: "Late generated title" } });
+    resolveResponse(codexTitleResponse("Late Generated Title"));
     await pending;
 
     const run = await db.select({ title: runs.title }).from(runs).where(eq(runs.id, runId)).get();

@@ -2,20 +2,16 @@ import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
   accounts,
-  clarifications,
   messages,
-  planItems,
   plans,
   queuedConversationMessages,
   conversationReadMarkers,
   recoveryIncidents,
   runs,
   processSessions,
-  supervisorInterventions,
   workers,
 } from "@/server/db/schema";
 import { listExecutionEventsForSnapshot } from "@/server/events/execution-event-store";
-import { listSupervisorInterventionsForSnapshot } from "@/server/supervisor/intervention-store";
 import { serializeMessageRecord } from "@/server/conversations/message-records";
 import { isTerminalRunStatus } from "@/lib/run-status";
 import type { EventStreamState } from "@/shared/home-types";
@@ -24,7 +20,6 @@ import { readWorkerLatestSeq } from "@/server/workers/output-store";
 import type { BusyMessageAction } from "@/interface/home/busy-message-behavior";
 import type { RunMode } from "@/interface/home/types";
 import { withEventPayloadChecksum } from "@/server/events/payload-checksum";
-import { buildAwaitingUserQuestionInvariantErrors } from "@/server/events/lifecycle-invariants";
 import { serializeSessionRecord } from "@/server/session-providers/session-records";
 import { reconcileOrphanedProcessSessions } from "@/server/session-providers/process-store";
 import { reconcilePersistedReloadZombies } from "@/server/runs/persisted-zombie-reconciler";
@@ -33,11 +28,8 @@ import { stripUnusedRunSnapshotFields } from "@/server/events/run-snapshot-field
 import { goalControl } from "@/server/runs/goal-control";
 
 const EXECUTION_EVENT_LIMIT = 100;
-const SUPERVISOR_INTERVENTION_LIMIT = 50;
-const PLANNING_REVIEW_FINDING_LIMIT = 50;
 const WORKER_INITIAL_PROMPT_PREVIEW_LIMIT = 1_000;
 const EXECUTION_EVENT_DETAIL_LIMIT = 1_000;
-const SUPERVISOR_INTERVENTION_TEXT_LIMIT = 2_000;
 
 export type EventPayloadOptions = {
   selectedRunId?: string | null;
@@ -150,15 +142,6 @@ function compactExecutionEvent(event: Awaited<ReturnType<typeof listExecutionEve
   };
 }
 
-function compactSupervisorIntervention(intervention: typeof supervisorInterventions.$inferSelect) {
-  return {
-    ...intervention,
-    prompt: truncateText(intervention.prompt, SUPERVISOR_INTERVENTION_TEXT_LIMIT),
-    summary: truncateText(intervention.summary, SUPERVISOR_INTERVENTION_TEXT_LIMIT),
-    createdAt: intervention.createdAt.toISOString(),
-  };
-}
-
 function compactRecoveryIncident(incident: typeof recoveryIncidents.$inferSelect) {
   return {
     id: incident.id,
@@ -240,13 +223,7 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
   const allRuns = await db.select().from(runs).where(isNull(runs.archivedAt)).orderBy(desc(runs.lastActivityAt), desc(runs.createdAt), desc(runs.id));
   const selectedRun = requestedSelectedRunId ? allRuns.find((run) => run.id === requestedSelectedRunId) ?? null : null;
   const selectedRunId = selectedRun?.id ?? null;
-  const selectedPlanId = selectedRun?.planId ?? null;
-  const transcriptRunIds = selectedRunId
-    ? [
-        ...(selectedRun?.mode === "implementation" && selectedRun.parentRunId ? [selectedRun.parentRunId] : []),
-        selectedRunId,
-      ]
-    : [];
+  const transcriptRunIds = selectedRunId ? [selectedRunId] : [];
 
   const runIds = selectedRunId ? new Set([selectedRunId]) : null;
 
@@ -254,10 +231,7 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
     msgs,
     allAccounts,
     allWorkers,
-    allPlanItems,
-    allClarifications,
     allExecutionEvents,
-    allSupervisorInterventions,
     allQueuedMessages,
     allRecoveryIncidents,
     allProcessSessions,
@@ -271,17 +245,8 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
     selectedRunId
       ? db.select(WORKER_SNAPSHOT_COLUMNS).from(workers).where(eq(workers.runId, selectedRunId)).orderBy(asc(workers.createdAt), asc(workers.id))
       : db.select(WORKER_SNAPSHOT_COLUMNS).from(workers).orderBy(asc(workers.createdAt), asc(workers.id)),
-    selectedPlanId
-      ? db.select().from(planItems).where(eq(planItems.planId, selectedPlanId))
-      : [],
-    selectedRunId
-      ? db.select().from(clarifications).where(eq(clarifications.runId, selectedRunId)).orderBy(desc(clarifications.createdAt), desc(clarifications.id))
-      : [],
     selectedRunId
       ? listExecutionEventsForSnapshot(selectedRunId, EXECUTION_EVENT_LIMIT)
-      : [],
-    selectedRunId
-      ? listSupervisorInterventionsForSnapshot(selectedRunId, SUPERVISOR_INTERVENTION_LIMIT)
       : [],
     selectedRunId
       ? db.select().from(queuedConversationMessages)
@@ -330,12 +295,6 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
       .filter((result) => result.latestSeq > 0)
       .map((result) => [result.workerId, result.latestSeq] as const),
   );
-  const lifecycleErrors = buildAwaitingUserQuestionInvariantErrors({
-    runs: allRuns,
-    messages: msgs,
-    clarifications: allClarifications,
-    selectedRunId,
-  });
   const readMarkers = Object.fromEntries(
     allReadMarkers.map((marker) => [marker.runId, marker.lastReadAt.toISOString()]),
   );
@@ -349,10 +308,7 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
     accounts: allAccounts.map(toAccountDto),
     agents: [],
     workers: allWorkers.map(compactWorkerRecord),
-    planItems: allPlanItems,
-    clarifications: allClarifications,
     executionEvents: allExecutionEvents.slice(0, EXECUTION_EVENT_LIMIT).map(compactExecutionEvent),
-    supervisorInterventions: allSupervisorInterventions.map(compactSupervisorIntervention),
     queuedMessages: allQueuedMessages
       .filter((message) => message.status === "pending" || message.status === "delivering")
       .map(serializeQueuedConversationMessage),
@@ -360,7 +316,7 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
     recoveryState: runIds && !isTerminalRunStatus(selectedRun?.status)
       ? deriveRecoveryState(allRecoveryIncidents)
       : null,
-    frontendErrors: lifecycleErrors,
+    frontendErrors: [],
     snapshotRunId: selectedRunId,
     messageScope: {
       runIds: transcriptRunIds,
@@ -375,13 +331,6 @@ export async function buildPersistedEventPayload(options: EventPayloadOptions = 
         complete: allExecutionEvents.length < EXECUTION_EVENT_LIMIT,
         oldestCreatedAt: allExecutionEvents.length > 0
           ? allExecutionEvents[allExecutionEvents.length - 1]!.createdAt.toISOString()
-          : null,
-      },
-      supervisorInterventions: {
-        limit: SUPERVISOR_INTERVENTION_LIMIT,
-        complete: allSupervisorInterventions.length < SUPERVISOR_INTERVENTION_LIMIT,
-        oldestCreatedAt: allSupervisorInterventions.length > 0
-          ? allSupervisorInterventions[allSupervisorInterventions.length - 1]!.createdAt.toISOString()
           : null,
       },
     },

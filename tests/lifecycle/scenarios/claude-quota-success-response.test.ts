@@ -6,9 +6,7 @@ import { readWorkerOutputEntries } from "@/server/workers/output-store";
 import { waitForConversationBackgroundTasksForTests } from "@/server/conversations/worker-turn-gate";
 import { cleanupRunArtifacts } from "@/server/artifacts/cleanup";
 import { __resetNamedEventsForTests } from "@/server/events/named-events";
-import { executeSupervisorWake } from "@/server/supervisor/wake";
-import { pollRunWorkers, stopRunObserver } from "@/server/supervisor/observer";
-import { resetDurableSupervisorWakeSchedulerForTests } from "@/server/supervisor/wake-schedule";
+import { executeQuotaWake, resetQuotaWakeSchedulerForTests } from "@/server/quota/wake-schedule";
 import { conversationMessagesRouteModule, eventsRouteModule } from "@/../tests/helpers/runtime-routes";
 import { clearLifecycleSchema, seedDirectRun } from "../harness/fixtures";
 import { startLifecycleHarness, type LifecycleServer } from "../harness/server";
@@ -18,7 +16,6 @@ vi.mock("@/server/bridge-client", async () => {
   const actual = await vi.importActual<typeof import("@/server/bridge-client")>("@/server/bridge-client");
   return { ...actual, getAgent: vi.fn(), spawnAgent: vi.fn(), listAgents: vi.fn().mockResolvedValue([]) };
 });
-vi.mock("@/server/supervisor/start", () => ({ startSupervisorRun: vi.fn() }));
 
 import { BRIDGE_URL, getAgent, spawnAgent } from "@/server/bridge-client";
 
@@ -32,8 +29,7 @@ const deliveredPrompts: string[] = [];
 
 async function cleanup() {
   await waitForConversationBackgroundTasksForTests();
-  if (runId) stopRunObserver(runId, { reason: "explicit" });
-  resetDurableSupervisorWakeSchedulerForTests();
+  resetQuotaWakeSchedulerForTests();
   if (runId) expect((await cleanupRunArtifacts(runId)).errors).toEqual([]);
   await db.delete(supervisorScheduledWakes);
   await db.delete(recoveryIncidents);
@@ -98,20 +94,6 @@ afterEach(async () => {
 });
 
 describe("Claude quota notice in a successful ACP response", () => {
-  it("registers an idle provider-started turn's quota notice through the observer", async () => {
-    const workerId = `${runId}-worker-1`;
-    await db.update(runs).set({ mode: "implementation", status: "running" }).where(eq(runs.id, runId));
-    await db.update(workers).set({ status: "working" }).where(eq(workers.id, workerId));
-    const snapshot = await getAgent(workerId);
-    vi.mocked(getAgent).mockResolvedValue({ ...snapshot, lastText: notice });
-    await client.subscribe({ runId });
-    await pollRunWorkers(runId, vi.fn());
-    expect((await db.select().from(runs).where(eq(runs.id, runId)).get())?.status).toBe("quota_waiting");
-    expect((await db.select().from(workers).where(eq(workers.id, workerId)).get())?.status).toBe("cred-exhausted");
-    expect((await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get())?.wakeAt.toISOString()).toBe("2026-10-04T23:00:01.000Z");
-    await client.waitFor("recovery.opened");
-  });
-
   it("parks the direct session, persists its reset wake, and resumes the saved session when due", async () => {
     await client.subscribe({ runId });
     const response = await client.fetch(`/api/conversations/${runId}/messages`, {
@@ -135,7 +117,7 @@ describe("Claude quota notice in a successful ACP response", () => {
     await waitForConversationBackgroundTasksForTests();
 
     vi.setSystemTime(wake.wakeAt);
-    await executeSupervisorWake(runId);
+    await executeQuotaWake(runId);
 
     expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ name: workerId, resumeSessionId: "saved-claude-session" }));
     expect(deliveredPrompts).toHaveLength(2);

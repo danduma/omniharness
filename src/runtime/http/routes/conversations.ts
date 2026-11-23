@@ -7,7 +7,6 @@ import type { SessionType } from "@/server/session-providers/types";
 import { emitNamedEvent } from "@/server/events/named-events";
 import type { GitWorkspaceTarget } from "@/lib/git-workspace";
 import { GitWorkspaceError } from "@/server/git/workspaces";
-import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
 import { RUN_ID_PATTERN } from "@/server/runs/ids";
 import { RuntimeHttpError } from "@/server/agent-runtime/types";
 
@@ -161,12 +160,6 @@ export const handleConversationsRequest: OmniHttpHandler = async (request) => {
         status: 400,
         source: "Conversations",
         action: "Start a conversation",
-      });
-    }
-
-    if (sessionType === "omni" && mode === "implementation") {
-      ensureSupervisorRuntimeStarted().catch((error) => {
-        console.error("Supervisor runtime startup failed while creating a conversation:", error);
       });
     }
 

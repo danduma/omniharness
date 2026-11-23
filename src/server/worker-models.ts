@@ -1,6 +1,6 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import type { SupportedWorkerType } from "@/server/supervisor/worker-types";
+import type { SupportedWorkerType } from "@/shared/worker-types";
 import { mergeClaudeGatewayModels, type ClaudeGatewayModelInput } from "@/lib/claude-model-gateway";
 import { labelFromModelId, normalizeWorkerModelLabel as normalizeLabel } from "@/shared/model-label";
 import {

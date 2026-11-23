@@ -1,7 +1,7 @@
 import { prewarmWorker } from "@/server/bridge-client";
 import { errorResponse } from "@/server/api-errors";
 import { requireApiSession } from "@/server/auth/guards";
-import { readRuntimeEnvFromSettings } from "@/server/supervisor/runtime-settings";
+import { readRuntimeEnvFromSettings } from "@/server/settings/runtime-env";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 
 export const handlePrewarmWorkerRequest: OmniHttpHandler = async (request) => {

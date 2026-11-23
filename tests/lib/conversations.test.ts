@@ -10,7 +10,7 @@ describe("buildConversationGroups", () => {
         {
           id: "run-1",
           planId: "plan-1",
-          mode: "implementation",
+          mode: "direct",
           status: "running",
           createdAt: "2026-04-20T14:34:11.000Z",
           projectPath: "/workspace/app",
@@ -28,7 +28,7 @@ describe("buildConversationGroups", () => {
       id: "run-1",
       title: "Fix Search Layout",
       path: "vibes/ad-hoc/2026-04-20T14-34-11.md",
-      mode: "implementation",
+      mode: "direct",
       preferredWorkerType: "codex",
     });
   });

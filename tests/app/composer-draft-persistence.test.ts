@@ -12,7 +12,6 @@ import { HomeUiStateManager, NEW_CONVERSATION_DRAFT_KEY } from "@/interface/home
 
 const NOW = 1_800_000_000_000;
 const SELECTION = {
-  conversationMode: "direct" as const,
   worker: "auto" as const,
   accountId: "auto",
   model: "gpt-5.6-sol",
@@ -127,7 +126,6 @@ describe("collectComposerDrafts", () => {
       command: "half-typed prompt",
       commandCursor: 4,
       selectedRunId: null,
-      selectedConversationMode: "direct",
       selectedCliAgent: "auto",
       selectedWorkerAccountId: "auto",
       selectedModel: "gpt-5.6-sol",
@@ -149,7 +147,6 @@ describe("collectComposerDrafts", () => {
       command: "",
       commandCursor: 0,
       selectedRunId: "run-a",
-      selectedConversationMode: "direct",
       selectedCliAgent: "auto",
       selectedWorkerAccountId: "auto",
       selectedModel: "gpt-5.6-sol",
@@ -167,7 +164,6 @@ describe("collectComposerDrafts", () => {
       command: "",
       commandCursor: 0,
       selectedRunId: null,
-      selectedConversationMode: "direct",
       selectedCliAgent: "auto",
       selectedWorkerAccountId: "auto",
       selectedModel: "gpt-5.6-sol",

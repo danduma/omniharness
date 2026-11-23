@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
-import { isTransientSupervisorError } from "@/server/supervisor/retry";
+import { isTransientBridgeError } from "@/server/bridge-client/retry";
 import { autoCommitMilestone, parseGitBaselineJson, type AutoCommitResult } from "./auto-commit";
 import { assertRunNotHandoffFenced, HandoffInProgressError } from "@/server/handoff/fence";
 import { withWorkspaceMutationLock } from "@/server/handoff/workspace-lock";
@@ -80,7 +80,7 @@ async function blockedAutoCommitReason(run: RunRecord): Promise<string | null> {
   }
 
   const lastError = run.lastError?.trim();
-  if (lastError && !isTransientSupervisorError(new Error(lastError))) {
+  if (lastError && !isTransientBridgeError(new Error(lastError))) {
     return `the conversation stopped with an unrecoverable error (${lastError.slice(0, 120)})`;
   }
 
@@ -115,7 +115,7 @@ function resultSummary(result: AutoCommitResult) {
 
 async function runMilestoneAutoCommitInternal(runId: string, summary: string) {
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-  if (!run || (run.mode !== "implementation" && run.mode !== "direct") || !run.projectPath) {
+  if (!run || run.mode !== "direct" || !run.projectPath) {
     return null;
   }
 

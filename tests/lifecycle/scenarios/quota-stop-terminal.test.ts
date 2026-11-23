@@ -195,7 +195,7 @@ describe("lifecycle harness — quota wait remains terminal after user stop", ()
     const response = await client.fetch(`/api/runs/${runId}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "stop_supervisor" }),
+      body: JSON.stringify({ action: "stop_conversation" }),
     });
     expect(response.status).toBe(200);
 

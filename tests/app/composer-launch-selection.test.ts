@@ -8,7 +8,6 @@ const CLAUDE_MODELS = ["claude-opus-5", "claude-fable-5-1", "claude-sonnet-5"];
 
 function resolve(overrides: Partial<Parameters<typeof resolveComposerLaunchSelection>[0]> = {}) {
   return resolveComposerLaunchSelection({
-    conversationMode: "direct",
     selectedCliAgent: "claude",
     selectedModel: "claude-fable-5-1",
     selectedEffort: "High",

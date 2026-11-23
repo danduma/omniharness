@@ -50,7 +50,7 @@ describe("notification lifecycle triggers", () => {
     await db.insert(runs).values({
       id: "run-1",
       planId: "plan-1",
-      mode: "implementation",
+      mode: "direct",
       projectPath: "/repo",
       title: "Build phone notifications",
       status,
@@ -59,29 +59,12 @@ describe("notification lifecycle triggers", () => {
     });
   }
 
-  it("sends a push payload when a run completes", async () => {
-    await createRun("done");
-
-    await notifyRunLifecycleEvent({
-      runId: "run-1",
-      eventType: "run_completed",
-      details: { summary: "All checks passed." },
-    });
-
-    expect(deliverNotificationToSubscriptions).toHaveBeenCalledWith({
-      title: "Build phone notifications — completed",
-      body: "All checks passed.",
-      tag: "omniharness-run-1-complete",
-      url: "/session/run-1",
-    });
-  });
-
   it("sends a push payload when a run starts waiting for input", async () => {
     await createRun("awaiting_user");
 
     await notifyRunLifecycleEvent({
       runId: "run-1",
-      eventType: "clarification_requested",
+      eventType: "worker_elicitation_requested",
       details: { summary: "Which deployment target?" },
     });
 
@@ -96,14 +79,6 @@ describe("notification lifecycle triggers", () => {
     await createRun("running");
     await notifyRunLifecycleEvent({ runId: "run-1", eventType: "run_completed", details: { summary: "Old result" } });
     expect(deliverNotificationToSubscriptions).not.toHaveBeenCalled();
-  });
-
-  it("shows the pending question for grouped clarification events", async () => {
-    await createRun("awaiting_user");
-    const now = new Date();
-    await db.insert(clarifications).values({ id: "question-1", runId: "run-1", question: "Deploy to staging or production?", status: "pending", createdAt: now, updatedAt: now });
-    await notifyRunLifecycleEvent({ runId: "run-1", eventType: "clarifications_requested", details: { count: 1 } });
-    expect(deliverNotificationToSubscriptions).toHaveBeenCalledWith(expect.objectContaining({ body: "Deploy to staging or production?" }));
   });
 
 });

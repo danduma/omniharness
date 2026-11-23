@@ -1,4 +1,4 @@
-import type { AgentSnapshot, MessageRecord, SupervisorInterventionRecord } from "@/interface/home/types";
+import type { AgentSnapshot, MessageRecord } from "@/interface/home/types";
 import type { ConversationWorkerRecord } from "@/lib/conversation-workers";
 
 export type WorkerTerminalUserMessage = {
@@ -52,11 +52,9 @@ function compareTerminalUserMessages(left: WorkerTerminalUserMessage, right: Wor
 export function buildWorkerTerminalUserMessages({
   worker,
   agent,
-  supervisorInterventions = [],
 }: {
   worker: ConversationWorkerRecord;
   agent?: AgentSnapshot | null;
-  supervisorInterventions?: SupervisorInterventionRecord[];
 }): WorkerTerminalUserMessage[] {
   const outputTimes = loadedWorkerOutputTimes(agent);
   const messages: WorkerTerminalUserMessage[] = [];
@@ -67,22 +65,6 @@ export function buildWorkerTerminalUserMessages({
       id: `${worker.id}:initial-prompt`,
       content: initialPrompt,
       createdAt: worker.createdAt,
-    });
-  }
-
-  for (const intervention of supervisorInterventions) {
-    if (intervention.workerId !== worker.id || !intervention.prompt.trim()) {
-      continue;
-    }
-
-    if (!hasLoadedOutputContext(intervention.createdAt, outputTimes)) {
-      continue;
-    }
-
-    messages.push({
-      id: intervention.id,
-      content: intervention.prompt,
-      createdAt: intervention.createdAt,
     });
   }
 

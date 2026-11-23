@@ -45,7 +45,6 @@ import {
 } from "./HomeUiStateManager";
 import { appearancePreferencesManager, getAppearanceTextSizeStyle } from "./AppearancePreferencesManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
-import { preflightConfirmationActionsManager } from "./PreflightConfirmationActionsManager";
 import {
   filterOptimisticallyDeletedRuns,
   createClientRunId,
@@ -62,7 +61,6 @@ import {
   type CreatedConversationSnapshot,
 } from "./utils";
 import { useAppErrors } from "./useAppErrors";
-import { useConversationExecutionStatus } from "./useConversationExecutionStatus";
 import { useHomeLifecycle } from "./useHomeLifecycle";
 import { shallowEqualRecord, useManagerSelector, useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { useRunRecoveryState } from "./useRunRecoveryState";
@@ -223,7 +221,6 @@ export function HomeApp({
     showOnboarding,
     showPairDeviceDialog,
     activeSettingsTab,
-    activeLlmProfileTab,
     apiKeys,
     showFolderPicker,
     selectedRunId,
@@ -251,10 +248,8 @@ export function HomeApp({
     moveRunProjectPath,
     editingMessageId,
     editingMessageValue,
-    expandedDirectMessageIds,
     routeReady,
     hasReceivedInitialEventStreamPayload,
-    selectedConversationMode,
     selectedCliAgent,
     selectedWorkerAccountId,
     selectedModel,
@@ -278,7 +273,6 @@ export function HomeApp({
     setShowPairDeviceDialog,
     setShowExternalSessionsPicker,
     setActiveSettingsTab,
-    setActiveLlmProfileTab,
     setApiKeys,
     setShowFolderPicker,
     setSelectedRunId,
@@ -304,7 +298,6 @@ export function HomeApp({
     setExpandedDirectMessageIds,
     setRouteReady,
     setHasReceivedInitialEventStreamPayload,
-    setSelectedConversationMode,
     setSelectedWorkerAccountId,
     setSelectedModel,
     setSelectedEffort,
@@ -467,7 +460,6 @@ export function HomeApp({
 
   useEffect(() => {
     conversationNotificationManager.hydrateFromBrowser();
-    preflightConfirmationActionsManager.hydrateFromBrowser();
   }, []);
 
   // Filter event stream state
@@ -537,7 +529,6 @@ export function HomeApp({
   const vm = useHomeViewModel({
     state,
     selectedRunId,
-    selectedConversationMode,
     selectedCliAgent,
     selectedModel,
     selectedEffort,
@@ -561,11 +552,7 @@ export function HomeApp({
   const {
     runs,
     selectedRun,
-    isImplementationConversation,
-    isPlanningConversation,
     isDirectConversation,
-    isSupervisorRunning,
-    activeComposerMode,
     catalogWorkers,
     availableWorkerTypes,
     configuredAllowedWorkerTypes,
@@ -578,33 +565,19 @@ export function HomeApp({
     activeProjects,
     selectedRunWorkers: selectedRunWorkersForDisplay,
     conversationAgents,
-    activeConversationAgents,
     busyConversationWorkerId,
     latestUserCheckpoint,
-    liveThoughts,
     selectedRunExecutionEvents,
-    latestExecutionEvent,
-    completionEvent,
     failedWorkerAvailability,
     workerFailureDetail,
     conversationFailure: rawConversationFailure,
     directConversationMessages,
-    pendingPermissionAgent,
-    pendingElicitationAgent,
-    erroredAgent,
-    latestWaitEvent,
-    latestPromptDeferredEvent,
-    awaitingUserQuestionMessage,
     isSelectedConversationPreviewAvailable: isSnapshotScopedToSelectedConversation,
     isSelectedConversationLoaded,
-    latestStuckEvent,
     hasStuckWorker,
     showRecoverableRunningState,
-    showConversationExecution,
     activeConversationCwd,
     workspaceSideWindowAvailable,
-    conversationTimelineItems,
-    conversationWorkerGroups,
   } = vm;
 
   const setSelectedCliAgent = useCallback((worker: typeof selectedCliAgent) => {
@@ -717,7 +690,6 @@ export function HomeApp({
     selectedRunId,
     selectedCliAgent,
     selectedWorkerAccountId: effectiveSelectedWorkerAccountId,
-    selectedConversationMode,
     selectedModel,
     selectedEffort,
     autoSelectedWorkerType,
@@ -752,12 +724,10 @@ export function HomeApp({
     interruptQueuedMessage,
     autoCommitChat,
     runPresetCommand,
-    stopSupervisor,
+    stopConversation,
     stopWorker,
     respondElicitation,
     respondPermission,
-    promotePlanningConversation,
-    startPlanningReview,
   } = mutations;
 
   // Conversation actions
@@ -825,7 +795,6 @@ export function HomeApp({
     setIsResizingLeftSidebar,
     isResizingRightSidebar,
     setIsResizingRightSidebar,
-    selectedConversationMode,
     selectedCliAgent,
     selectedModel,
     selectedEffort,
@@ -888,7 +857,6 @@ export function HomeApp({
     state,
     selectedRunId,
     selectedRun,
-    activeComposerMode,
     selectedCliAgent,
     selectedModel,
     autoSelectedWorkerType,
@@ -1010,7 +978,7 @@ export function HomeApp({
   });
   autoResumeRuntimeFactsRef.current = {
     activeRunId: selectedRunId,
-    isAutoResumableConversation: Boolean(selectedRun && (isImplementationConversation || isDirectConversation)),
+    isAutoResumableConversation: Boolean(selectedRun && isDirectConversation),
     selectedRunStatus: selectedRun?.status ?? null,
     failureKey: selectedAutoResumeFailureKey,
     targetMessageId: latestUserCheckpoint?.id ?? null,
@@ -1022,7 +990,7 @@ export function HomeApp({
   useEffect(() => {
     if (
       !selectedRunId || !selectedRun
-      || (!isImplementationConversation && !isDirectConversation)
+      || !isDirectConversation
       || selectedRun.status !== "failed"
       || failedWorkerAvailability?.availability.status !== "ok"
       || isPermanentAutoResumeFailure(selectedAutoResumeFailureKey)
@@ -1079,7 +1047,6 @@ export function HomeApp({
     autoResumeExhaustedRunIds,
     failedWorkerAvailability?.availability.status,
     isDirectConversation,
-    isImplementationConversation,
     isRecoverRunPendingForSelectedRun,
     latestUserCheckpoint,
     recoverRun,
@@ -1108,27 +1075,7 @@ export function HomeApp({
     };
   }, [autoResumeExhaustedRunIds, rawConversationFailure, selectedRun?.lastError, selectedRunId]);
 
-  const { selectedRecoveryState, selectedRecoveryIncidents } = useRunRecoveryState({ state, selectedRunId });
-  const { liveExecutionStatus } = useConversationExecutionStatus({
-    selectedRun,
-    latestExecutionEvent,
-    erroredAgent,
-    pendingPermissionAgent,
-    pendingElicitationAgent,
-    hasStuckWorker,
-    latestStuckEvent,
-    showRecoverableRunningState,
-    latestWaitEvent,
-    latestPromptDeferredEvent,
-    completionEvent,
-    queuedMessageCount: selectedQueuedMessages.filter(
-      (m) => m.status === "pending" || m.status === "delivering",
-    ).length,
-    activeConversationAgents,
-    liveThoughts,
-    awaitingUserQuestionMessage,
-    isSelectedConversationLoaded,
-  });
+  const { selectedRecoveryState } = useRunRecoveryState({ state, selectedRunId });
 
   const appErrors = useAppErrors({
     state,
@@ -1174,9 +1121,9 @@ export function HomeApp({
     renameRunError: scopedMutationError(renameRun.error, renameRun.variables?.runId, selectedRunId),
     archiveRunError: scopedMutationError(archiveRun.error, archiveRun.variables?.runId, selectedRunId),
     deleteRunError: scopedMutationError(deleteRun.error, deleteRun.variables?.runId, selectedRunId),
-    stopSupervisorError: scopedMutationError(
-      stopSupervisor.error,
-      stopSupervisor.variables?.runId,
+    stopConversationError: scopedMutationError(
+      stopConversation.error,
+      stopConversation.variables?.runId,
       selectedRunId,
     ),
     stopWorkerError: scopedMutationError(stopWorker.error, stopWorker.variables?.runId, selectedRunId),
@@ -1206,9 +1153,9 @@ export function HomeApp({
     mutationRunId: interruptQueuedMessage.variables?.runId,
     selectedRunId,
   });
-  const isStoppingSelectedSupervisor = isMutationPendingForSelectedRun({
-    isPending: stopSupervisor.isPending,
-    mutationRunId: stopSupervisor.variables?.runId,
+  const isStoppingSelectedConversation = isMutationPendingForSelectedRun({
+    isPending: stopConversation.isPending,
+    mutationRunId: stopConversation.variables?.runId,
     selectedRunId,
   });
   const isStoppingSelectedWorker = isMutationPendingForSelectedRun({
@@ -1220,27 +1167,20 @@ export function HomeApp({
     isPending: sendConversationMessage.isPending,
     mutationRunId: sendConversationMessage.variables?.runId,
     selectedRunId,
-    isImplementationConversation,
     selectedWorkerIds: selectedRunWorkersForDisplay.map((worker) => worker.id),
     pendingMessageId: pendingConversationMessageId,
     unacknowledgedMessageIds: unacknowledgedConversationMessageIds,
   });
   const directRunningConversationWorkerId = isDirectConversation
-    && (selectedRun?.mode === "direct" || selectedRun?.mode === "commit")
-    && selectedRun.status === "running"
+    && selectedRun?.status === "running"
     ? selectedRunWorkersForDisplay[0]?.id ?? null
     : null;
   const stoppableConversationWorkerId = busyConversationWorkerId ?? pendingConversationWorkerId ?? directRunningConversationWorkerId;
-  const isConversationStoppable = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
-  const isStopConversationPending = isStoppingSelectedSupervisor || isStoppingSelectedWorker;
+  const isConversationStoppable = Boolean(stoppableConversationWorkerId);
+  const isStopConversationPending = isStoppingSelectedConversation || isStoppingSelectedWorker;
   const isStartingCurrentProjectConversation = runCommand.isPending
     && (!selectedRunId || selectedRunId === runCommand.variables?.requestedRunId)
     && (runCommand.variables?.projectPath ?? null) === (currentProjectScope ?? null);
-  const isPromotePlanningPendingForSelectedRun = isMutationPendingForSelectedRun({
-    isPending: promotePlanningConversation.isPending,
-    mutationRunId: promotePlanningConversation.variables?.runId,
-    selectedRunId,
-  });
   const isResumeRunRecoveryPendingForSelectedRun = isMutationPendingForSelectedRun({
     isPending: resumeRunRecovery.isPending,
     mutationRunId: resumeRunRecovery.variables?.runId,
@@ -1249,8 +1189,8 @@ export function HomeApp({
   // Busy is a spinner; blocked is a lock. A send in flight only spins, because
   // its request stays open for as long as the worker takes to answer and the
   // user must be able to type and send the next message during that window.
-  const isComposerSendBusy = isStartingCurrentProjectConversation || isSendingSelectedConversationMessage || isSendingSelectedQueuedMessage || isPromotePlanningPendingForSelectedRun || isStopConversationPending;
-  const isComposerSubmitBlocked = isStartingCurrentProjectConversation || isPromotePlanningPendingForSelectedRun || isStopConversationPending;
+  const isComposerSendBusy = isStartingCurrentProjectConversation || isSendingSelectedConversationMessage || isSendingSelectedQueuedMessage || isStopConversationPending;
+  const isComposerSubmitBlocked = isStartingCurrentProjectConversation || isStopConversationPending;
   const busyMessageAction = parseBusyMessageAction(apiKeys.BUSY_MESSAGE_ACTION);
   const presetCommands = useMemo(
     () => readPresetCommands(apiKeys)
@@ -1258,11 +1198,11 @@ export function HomeApp({
       .map((preset) => ({ id: preset.id, name: preset.name.trim() })),
     [apiKeys],
   );
-  const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);
+  const hasBusyConversation = Boolean(stoppableConversationWorkerId);
   const lockedDirectWorkerLabel = WORKER_OPTIONS.find((o) => o.value === (selectedCliAgent === "auto" ? autoSelectedWorkerType : selectedCliAgent))?.label
     || WORKER_OPTIONS.find((o) => o.value === autoSelectedWorkerType)?.label
     || "Direct worker";
-  const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct";
+  const shouldLockDirectWorker = Boolean(selectedRunId);
   const selectedRunStatus = selectedRun?.status ?? null;
   const directControlPendingAssistantStatus = resolveDirectControlPendingAssistantStatus({
     isDirectConversation,
@@ -1280,7 +1220,7 @@ export function HomeApp({
   const pairDeviceAvailabilityError = !authEnabled
     ? "Phone pairing requires OmniHarness auth. Set OMNIHARNESS_AUTH_PASSWORD or OMNIHARNESS_AUTH_PASSWORD_HASH and restart, then open Connect Phone again."
     : authConfigurationError;
-  const stopSupervisorMutate = stopSupervisor.mutate;
+  const stopConversationMutate = stopConversation.mutate;
   const stopWorkerMutate = stopWorker.mutate;
   const interruptQueuedMessageMutate = interruptQueuedMessage.mutate;
   const cancelQueuedMessageMutate = cancelQueuedMessage.mutate;
@@ -1289,21 +1229,18 @@ export function HomeApp({
 
   const handleStopConversation = useCallback(() => {
     if (!selectedRunId || isStopConversationPending) return;
-    if (isSupervisorRunning) { stopSupervisorMutate({ runId: selectedRunId }); return; }
     if (stoppableConversationWorkerId) stopWorkerMutate({ runId: selectedRunId, workerId: stoppableConversationWorkerId });
   }, [
     isStopConversationPending,
-    isSupervisorRunning,
     selectedRunId,
-    stopSupervisorMutate,
     stopWorkerMutate,
     stoppableConversationWorkerId,
   ]);
 
   const handleStopRecoveryWait = useCallback(() => {
     if (!selectedRunId || isStopConversationPending) return;
-    stopSupervisorMutate({ runId: selectedRunId });
-  }, [isStopConversationPending, selectedRunId, stopSupervisorMutate]);
+    stopConversationMutate({ runId: selectedRunId });
+  }, [isStopConversationPending, selectedRunId, stopConversationMutate]);
 
   const handleComposerEditQueuedMessage = useCallback((message: { id: string; runId: string; content: string }) => {
     const nextCommand = message.content;
@@ -1349,7 +1286,6 @@ export function HomeApp({
       className={className}
       commandInputRef={commandInputRef}
       selectedRunId={selectedRunId}
-      selectedConversationMode={activeComposerMode}
       currentProjectScope={currentProjectScope}
       projectFiles={composerProjectFiles}
       projectFilesIsFetched={projectFilesQuery.isFetched}
@@ -1572,16 +1508,12 @@ export function HomeApp({
           loadedProjects={explicitProjects}
           onSelectWelcomeProject={actions.beginConversationInProject}
           isDirectConversation={isDirectConversation}
-          isPlanningConversation={isPlanningConversation}
-          isImplementationConversation={isImplementationConversation}
           appErrors={appErrors}
           conversationFailure={conversationFailure}
           onCredentialReauthenticate={hasCredentialReauthFailure ? handleCredentialReauthenticate : undefined}
           directConversationMessages={directConversationMessages}
           locallySentUserMessageIds={locallySentUserMessageIds}
           sendingUserMessageIds={sendingUserMessageIds}
-          expandedDirectMessageIds={expandedDirectMessageIds}
-          toggleDirectMessageExpansion={actions.toggleDirectMessageExpansion}
           primaryConversationAgent={vm.primaryConversationAgent}
           primaryConversationWorkerId={vm.primaryConversationAgent?.name ?? null}
           planSurfaceOwner={vm.planSurfaceOwner}
@@ -1590,19 +1522,8 @@ export function HomeApp({
           isHydratingConversations={isHydratingConversations}
           isSelectedConversationPreviewAvailable={isSelectedConversationPreviewAvailable}
           isSelectedConversationLoaded={isSelectedConversationLoaded}
-          promotePlanningConversation={promotePlanningConversation}
-          onStartReview={(prefs) => {
-            if (selectedRunId) {
-              startPlanningReview.mutate({ runId: selectedRunId, ...prefs });
-            }
-          }}
-          reviewRuns={state.reviewRuns}
-          reviewRounds={state.reviewRounds}
-          reviewFindings={state.reviewFindings}
-          conversationTimelineItems={conversationTimelineItems}
           recoverRun={recoverRun}
           recoveryState={selectedRecoveryState}
-          recoveryIncidents={selectedRecoveryIncidents}
           resumeRunRecovery={{ isPending: isResumeRunRecoveryPendingForSelectedRun }}
           stopRunRecovery={{ isPending: isStopConversationPending }}
           showRecoverableRunningState={showRecoverableRunningState}
@@ -1630,20 +1551,9 @@ export function HomeApp({
           setEditingMessageValue={setEditingMessageValue}
           handleCancelEditingMessage={actions.handleCancelEditingMessage}
           handleSaveEditedMessage={(messageId) => actions.handleSaveEditedMessage(messageId, editingMessageValue)}
-          handlePreflightConfirmationAnswer={(content) => {
-            if (selectedRunId) {
-              sendMessageToConversation({ runId: selectedRunId, content, clientMessageId: createSentConversationMessageId(), attachments: [] });
-            }
-          }}
-          isPreflightConfirmationAnswering={isSendingSelectedConversationMessage}
           conversationAgents={conversationAgents}
           showDirectControlWorkingIndicator={showDirectControlWorkingIndicator}
           directControlPendingAssistantStatus={directControlPendingAssistantStatus}
-          showConversationExecution={showConversationExecution}
-          liveExecutionStatus={liveExecutionStatus}
-          liveThoughts={liveThoughts}
-          executionEvents={selectedRunExecutionEvents}
-          activeWorkers={conversationWorkerGroups.active}
           emptyComposer={renderComposer("mt-2 w-full pt-0 sm:pt-0")}
           projectRoot={currentProjectScope}
           onOpenProjectFile={actions.handleOpenProjectFile}
@@ -1733,8 +1643,6 @@ export function HomeApp({
         onOpenChange={setShowSettings}
         activeSettingsTab={activeSettingsTab}
         setActiveSettingsTab={setActiveSettingsTab}
-        activeLlmProfileTab={activeLlmProfileTab}
-        setActiveLlmProfileTab={setActiveLlmProfileTab}
         settingsDraft={settingsDraft}
         setSetting={(key, value) => settingsDraftManager.setField(key, value)}
         discardSettingsDraft={() => settingsDraftManager.discardDraft()}
@@ -1749,7 +1657,6 @@ export function HomeApp({
         settingsDiagnostics={settingsDiagnostics}
         resourceSnapshot={settingsQuery.data?.resourceSnapshot}
         saveSettings={saveSettings}
-        activeProjectPath={activeConversationCwd ?? null}
         claudeAccountAuthManager={claudeAccountAuthManager}
         themeMode={themeMode}
       />

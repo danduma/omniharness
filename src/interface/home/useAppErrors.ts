@@ -19,7 +19,7 @@ interface UseAppErrorsProps {
   renameRunError: unknown;
   archiveRunError?: unknown;
   deleteRunError: unknown;
-  stopSupervisorError?: unknown;
+  stopConversationError?: unknown;
   stopWorkerError?: unknown;
 }
 
@@ -43,7 +43,7 @@ export function useAppErrors({
   renameRunError,
   archiveRunError,
   deleteRunError,
-  stopSupervisorError,
+  stopConversationError,
   stopWorkerError,
 }: UseAppErrorsProps) {
   return useMemo(() => {
@@ -136,10 +136,10 @@ export function useAppErrors({
       }));
     }
 
-    if (stopSupervisorError) {
-      errors.push(buildInlineError(stopSupervisorError, {
+    if (stopConversationError) {
+      errors.push(buildInlineError(stopConversationError, {
         source: "Runs",
-        action: "Stop supervisor",
+        action: "Stop conversation",
       }));
     }
 
@@ -168,7 +168,7 @@ export function useAppErrors({
     runCommandError,
     sendConversationMessageError,
     settingsError,
-    stopSupervisorError,
+    stopConversationError,
     stopWorkerError,
     runtimeErrors,
     state.frontendErrors,

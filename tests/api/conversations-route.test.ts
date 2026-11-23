@@ -27,8 +27,7 @@ import { __resetArtifactStreamCachesForTests } from "@/server/artifacts/stream-m
 const AUTO_COMMIT_PROJECT_PROMPT = buildDefaultPresetCommands()[0].prompt;
 
 const {
-  mockStartSupervisorRun,
-  mockEnsureSupervisorRuntimeStarted,
+  mockEnsureRuntimeWatchdogStarted,
   mockSpawnAgent,
   mockAskAgent,
   mockCancelAgent,
@@ -38,8 +37,7 @@ const {
   mockCreateBranchWorktree,
   mockLoadExternalClaudeSession,
 } = vi.hoisted(() => ({
-  mockStartSupervisorRun: vi.fn(),
-  mockEnsureSupervisorRuntimeStarted: vi.fn().mockResolvedValue(undefined),
+  mockEnsureRuntimeWatchdogStarted: vi.fn().mockResolvedValue(undefined),
   mockNotifyEventStreamSubscribers: vi.fn(),
   mockValidateWorkspaceTarget: vi.fn(),
   mockCreateBranchWorktree: vi.fn(),
@@ -80,12 +78,8 @@ const {
   }),
 }));
 
-vi.mock("@/server/supervisor/start", () => ({
-  startSupervisorRun: mockStartSupervisorRun,
-}));
-
-vi.mock("@/server/supervisor/runtime-watchdog", () => ({
-  ensureSupervisorRuntimeStarted: mockEnsureSupervisorRuntimeStarted,
+vi.mock("@/server/runtime/watchdog", () => ({
+  ensureRuntimeWatchdogStarted: mockEnsureRuntimeWatchdogStarted,
 }));
 
 vi.mock("@/server/bridge-client", () => ({
@@ -194,8 +188,7 @@ function buildWorkspaceTarget(overrides: Partial<GitWorkspaceTarget> = {}): GitW
 describe("POST /api/conversations", () => {
   beforeEach(async () => {
     await waitForConversationBackgroundTasksForTests();
-    mockStartSupervisorRun.mockClear();
-    mockEnsureSupervisorRuntimeStarted.mockClear();
+    mockEnsureRuntimeWatchdogStarted.mockClear();
     mockSpawnAgent.mockClear();
     mockAskAgent.mockClear();
     mockCancelAgent.mockClear();
@@ -573,47 +566,6 @@ describe("POST /api/conversations", () => {
     expect(events.some((event) => event.eventType === "git_workspace_selected")).toBe(true);
   });
 
-  it("starts an implementation conversation and wakes the supervisor", async () => {
-    const request = new Request("http://localhost/api/conversations", {
-      method: "POST",
-      body: JSON.stringify({
-        mode: "implementation",
-        command: "Implement docs/superpowers/plans/foo.md",
-        projectPath: "/workspace/app",
-        preferredWorkerType: "codex",
-        allowedWorkerTypes: ["codex"],
-      }),
-    });
-
-    const response = await POST(request);
-    expect(response.status).toBe(200);
-
-    const payload = await response.json();
-    const run = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
-
-    expect(payload.runId).toMatch(/^[0-9a-f]{12}$/);
-    expect(run?.mode).toBe("implementation");
-    expect(payload.plan).toEqual(expect.objectContaining({
-      id: payload.planId,
-      path: expect.any(String),
-    }));
-    expect(payload.run).toEqual(expect.objectContaining({
-      id: payload.runId,
-      planId: payload.planId,
-      mode: "implementation",
-      title: "Implement docs/superpowers/plans/foo.md",
-    }));
-    expect(payload.message).toEqual(expect.objectContaining({
-      runId: payload.runId,
-      role: "user",
-      kind: "checkpoint",
-      content: "Implement docs/superpowers/plans/foo.md",
-    }));
-    expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
-    expect(mockSpawnAgent).not.toHaveBeenCalled();
-    expect(mockNotifyEventStreamSubscribers).toHaveBeenCalledTimes(1);
-  });
-
   it("honors a requested run id for immediate client-side session routing", async () => {
     const requestedRunId = "abc123abc123";
     const response = await POST(new Request("http://localhost/api/conversations", {
@@ -634,46 +586,6 @@ describe("POST /api/conversations", () => {
     expect(payload.runId).toBe(requestedRunId);
     expect(payload.run).toEqual(expect.objectContaining({ id: requestedRunId }));
     expect(run?.id).toBe(requestedRunId);
-  });
-
-  it("persists and returns a new implementation conversation before supervisor startup completes", async () => {
-    mockEnsureSupervisorRuntimeStarted.mockImplementationOnce(() => new Promise(() => {}));
-    const request = new Request("http://localhost/api/conversations", {
-      method: "POST",
-      body: JSON.stringify({
-        mode: "implementation",
-        command: "Start immediately",
-        projectPath: "/workspace/app",
-        preferredWorkerType: "codex",
-        allowedWorkerTypes: ["codex"],
-      }),
-    });
-
-    const response = await Promise.race([
-      POST(request),
-      delay(100).then(() => "timeout" as const),
-    ]);
-
-    expect(response).not.toBe("timeout");
-    if (response === "timeout") return;
-
-    expect(response.status).toBe(200);
-    const payload = await response.json();
-    const run = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
-    const message = await db.select().from(messages).where(eq(messages.runId, payload.runId)).get();
-
-    expect(run).toEqual(expect.objectContaining({
-      id: payload.runId,
-      mode: "implementation",
-      projectPath: "/workspace/app",
-      title: "Start immediately",
-    }));
-    expect(message).toEqual(expect.objectContaining({
-      role: "user",
-      kind: "checkpoint",
-      content: "Start immediately",
-    }));
-    expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
   });
 
   it("uses the first prompt line as the temporary conversation title", async () => {
@@ -707,7 +619,6 @@ describe("POST /api/conversations", () => {
     const request = new Request("http://localhost/api/conversations", {
       method: "POST",
       body: JSON.stringify({
-        mode: "implementation",
         command: "Check where this session is running",
         preferredWorkerType: "codex",
         allowedWorkerTypes: ["codex"],
@@ -722,195 +633,6 @@ describe("POST /api/conversations", () => {
 
     expect(run?.projectPath).toBe(getAppRoot());
     expect(payload.run.projectPath).toBe(getAppRoot());
-    expect(mockStartSupervisorRun).toHaveBeenCalledWith(payload.runId);
-  });
-
-  it("starts a planning conversation with one direct worker and no supervisor", async () => {
-    const request = new Request("http://localhost/api/conversations", {
-      method: "POST",
-      body: JSON.stringify({
-        mode: "planning",
-        command: "Help me write a plan for the conversation modes work",
-        projectPath: "/workspace/app",
-        preferredWorkerType: "codex",
-        preferredWorkerModel: "gpt-5.4",
-        preferredWorkerEffort: "high",
-      }),
-    });
-
-    const response = await POST(request);
-    expect(response.status).toBe(200);
-
-    const payload = await response.json();
-    const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
-    const createdWorkers = await db.select().from(workers).where(eq(workers.runId, payload.runId));
-
-    expect(createdRun?.mode).toBe("planning");
-    expect(createdRun?.projectPath).toBe("/workspace/app");
-    expect(createdWorkers).toHaveLength(1);
-    expect(createdWorkers[0]?.cwd).toBe("/workspace/app");
-    await waitFor(() => mockAskAgent.mock.calls.length, (count) => count > 0);
-    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
-      type: "codex",
-      cwd: "/workspace/app",
-      model: "gpt-5.4",
-      effort: "high",
-    }));
-    expect(mockAskAgent).toHaveBeenCalledTimes(1);
-    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
-  });
-
-  it("returns a planning conversation before the first planner turn completes", async () => {
-    const resolveAskRef: Array<(value: { response: string; state: string }) => void> = [];
-    mockAskAgent.mockImplementationOnce(() => new Promise<{ response: string; state: string }>((resolve) => {
-      resolveAskRef[0] = resolve;
-    }));
-    mockGetAgent.mockResolvedValueOnce({
-      name: "worker-1",
-      type: "codex",
-      state: "idle",
-      cwd: "/workspace/app",
-      lastText: "Let's shape the plan.",
-      currentText: "",
-      renderedOutput: "",
-      outputEntries: [
-        {
-          id: "entry-plan",
-          type: "message",
-          text: "Let's shape the plan.",
-          timestamp: new Date(0).toISOString(),
-        },
-      ],
-      stderrBuffer: [],
-      stopReason: "end_turn",
-    });
-
-    const request = new Request("http://localhost/api/conversations", {
-      method: "POST",
-      body: JSON.stringify({
-        mode: "planning",
-        command: "Help me write a plan for the conversation modes work",
-        projectPath: "/workspace/app",
-        preferredWorkerType: "codex",
-      }),
-    });
-
-    const responsePromise = POST(request);
-    let payload!: { runId: string };
-
-    try {
-      await expect(Promise.race([
-        responsePromise.then(() => "resolved"),
-        delay(500).then(() => "pending"),
-      ])).resolves.toBe("resolved");
-
-      payload = await (await responsePromise).json();
-      const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
-      const initialMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
-
-      expect(["starting", "working"]).toContain(createdRun?.status);
-      expect(initialMessages.filter((message) => message.role === "worker")).toHaveLength(0);
-    } finally {
-      // The route returns before the background turn reaches askAgent, so the
-      // resolver does not exist yet at this point. Resolving blind used to leave
-      // the mocked ask pending forever, hanging the background task and every
-      // test after it in this file.
-      await waitFor(() => resolveAskRef[0], (resolve) => Boolean(resolve));
-      resolveAskRef[0]?.({ response: "Let's shape the plan.", state: "idle" });
-      await responsePromise.catch(() => null);
-    }
-
-    const completedRun = await waitFor(
-      () => db.select().from(runs).where(eq(runs.id, payload.runId)).get(),
-      (run) => run?.status === "awaiting_user",
-    );
-    const storedMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
-
-    expect(completedRun?.status).toBe("awaiting_user");
-    // Worker response now lives in the unified worker stream (per-worker
-    // JSONL), not the `messages` table.
-    expect(storedMessages.some((message) => message.role === "worker" && message.content === "Let's shape the plan.")).toBe(false);
-  });
-
-  it("does not mark a new planning conversation failed when the first planner turn is already busy", async () => {
-    mockAskAgent.mockRejectedValueOnce(new Error("Ask failed: Agent is busy: planner-worker"));
-
-    const request = new Request("http://localhost/api/conversations", {
-      method: "POST",
-      body: JSON.stringify({
-        mode: "planning",
-        command: "Help me write a plan for the conversation modes work",
-        projectPath: "/workspace/app",
-        preferredWorkerType: "codex",
-      }),
-    });
-
-    const response = await POST(request);
-    expect(response.status).toBe(200);
-
-    const payload = await response.json();
-    await waitFor(
-      () => db.select().from(runs).where(eq(runs.id, payload.runId)).get(),
-      (run) => run?.status === "working",
-    );
-
-    const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
-    const createdWorkers = await db.select().from(workers).where(eq(workers.runId, payload.runId));
-    const storedMessages = await db.select().from(messages).where(eq(messages.runId, payload.runId));
-
-    expect(createdRun?.status).toBe("working");
-    expect(createdRun?.lastError).toBeNull();
-    expect(createdRun?.failedAt).toBeNull();
-    expect(createdWorkers[0]?.status).toBe("working");
-    expect(storedMessages.filter((message) => message.kind === "error")).toHaveLength(0);
-  });
-
-  it("marks a planning conversation failed and emits a surfaced error when initial spawn rejects", async () => {
-    mockSpawnAgent.mockRejectedValueOnce(new Error("planner bridge unreachable"));
-
-    const response = await POST(new Request("http://localhost/api/conversations", {
-      method: "POST",
-      body: JSON.stringify({
-        mode: "planning",
-        command: "Help me write a plan that cannot spawn",
-        projectPath: "/workspace/app",
-        preferredWorkerType: "codex",
-      }),
-    }));
-
-    expect(response.status).toBe(200);
-    const payload = await response.json();
-    const workerId = `${payload.runId}-worker-1`;
-
-    await waitForConversationBackgroundTasksForTests();
-
-    const createdRun = await db.select().from(runs).where(eq(runs.id, payload.runId)).get();
-    const createdPlan = await db.select().from(plans).where(eq(plans.id, payload.planId)).get();
-    const createdWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
-    const namedEvents = getNamedEventsSince(0, { runId: payload.runId }).events.map((entry) => entry.event);
-
-    expect(createdRun).toEqual(expect.objectContaining({
-      status: "failed",
-      lastError: "planner bridge unreachable",
-    }));
-    expect(createdPlan?.status).toBe("failed");
-    expect(createdWorker).toEqual(expect.objectContaining({
-      status: "error",
-      outputLog: "planner bridge unreachable",
-    }));
-    expect(namedEvents).toContainEqual(expect.objectContaining({
-      kind: "worker.status",
-      workerId,
-      prev: "starting",
-      next: "error",
-    }));
-    expect(namedEvents).toContainEqual(expect.objectContaining({
-      kind: "error.surfaced",
-      code: "worker.spawn.failed",
-      runId: payload.runId,
-      workerId,
-    }));
-    expect(mockAskAgent).not.toHaveBeenCalled();
   });
 
   it("emits a specific surfaced error when initial spawn is refused for low resources", async () => {
@@ -973,7 +695,6 @@ describe("POST /api/conversations", () => {
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
     await waitFor(() => mockAskAgent.mock.calls.length, (count) => count > 0);
     expect(mockAskAgent).toHaveBeenCalledTimes(1);
-    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
   });
 
   it("resumes an external Claude session as a direct Claude worker when the picker omits mode", async () => {
@@ -1034,8 +755,7 @@ describe("POST /api/conversations", () => {
     expect(payload.run.mode).toBe("direct");
     expect(payload.run.title).toBe("Claude Desktop bug investigation");
     expect(mockLoadExternalClaudeSession).toHaveBeenCalledWith(externalClaudeSessionId);
-    expect(mockEnsureSupervisorRuntimeStarted).not.toHaveBeenCalled();
-    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+    expect(mockEnsureRuntimeWatchdogStarted).not.toHaveBeenCalled();
     await waitFor(() => mockSpawnAgent.mock.calls.length, (count) => count > 0);
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
       type: "claude",
@@ -1109,8 +829,7 @@ describe("POST /api/conversations", () => {
     const payload = await response.json();
 
     expect(payload.run.mode).toBe("direct");
-    expect(mockEnsureSupervisorRuntimeStarted).not.toHaveBeenCalled();
-    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
+    expect(mockEnsureRuntimeWatchdogStarted).not.toHaveBeenCalled();
     await waitFor(() => mockSpawnAgent.mock.calls.length, (count) => count > 0);
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
       type: "gemini",
@@ -1310,7 +1029,7 @@ describe("POST /api/conversations", () => {
 
   it("returns a direct conversation without waiting for supervisor runtime startup", async () => {
     const resolveStartupRef: Array<() => void> = [];
-    mockEnsureSupervisorRuntimeStarted.mockImplementationOnce(() => new Promise<void>((resolve) => {
+    mockEnsureRuntimeWatchdogStarted.mockImplementationOnce(() => new Promise<void>((resolve) => {
       resolveStartupRef[0] = resolve;
     }));
 
@@ -1334,7 +1053,7 @@ describe("POST /api/conversations", () => {
 
       const response = await responsePromise;
       expect(response.status).toBe(200);
-      expect(mockEnsureSupervisorRuntimeStarted).not.toHaveBeenCalled();
+      expect(mockEnsureRuntimeWatchdogStarted).not.toHaveBeenCalled();
     } finally {
       resolveStartupRef[0]?.();
       await responsePromise.catch(() => null);

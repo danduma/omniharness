@@ -1,4 +1,4 @@
-import type { ComposerWorkerOption, ConversationModeOption, WorkerType } from "./types";
+import type { ComposerWorkerOption, WorkerType } from "./types";
 import { resolveComposerEffortValue, resolveSelectedWorkerModel } from "./utils";
 
 /**
@@ -15,7 +15,6 @@ import { resolveComposerEffortValue, resolveSelectedWorkerModel } from "./utils"
  * re-render that happens between `mutate()` and the request.
  */
 export type ComposerLaunchSelection = {
-  conversationMode: ConversationModeOption;
   workerType: WorkerType | null;
   isAutoWorkerSelection: boolean;
   /** `null` means "keep the model this conversation already runs on". */
@@ -26,7 +25,6 @@ export type ComposerLaunchSelection = {
 };
 
 export function resolveComposerLaunchSelection(args: {
-  conversationMode: ConversationModeOption;
   selectedCliAgent: ComposerWorkerOption;
   selectedModel: string;
   selectedEffort: string;
@@ -50,7 +48,6 @@ export function resolveComposerLaunchSelection(args: {
     : resolvedModel || null;
 
   return {
-    conversationMode: args.conversationMode,
     workerType,
     isAutoWorkerSelection,
     model,

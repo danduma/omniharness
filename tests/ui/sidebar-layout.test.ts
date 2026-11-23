@@ -19,7 +19,6 @@ const pageSource = [
   "src/interface/home/constants.ts",
   "src/interface/home/types.ts",
   "src/interface/home/useAppErrors.ts",
-  "src/interface/home/useConversationExecutionStatus.ts",
   "src/interface/home/useHomeLifecycle.ts",
   "src/interface/home/useRunSelectionEffects.ts",
   "src/interface/home/useHomeMutations.ts",
@@ -62,10 +61,6 @@ const workersSidebarSource = fs.readFileSync(
 );
 const sideWindowSource = fs.readFileSync(
   path.resolve(process.cwd(), "src/components/home/SideWindow.tsx"),
-  "utf8"
-);
-const planningArtifactsSource = fs.readFileSync(
-  path.resolve(process.cwd(), "src/components/PlanningArtifactsPanel.tsx"),
   "utf8"
 );
 const folderPickerSource = fs.readFileSync(
@@ -179,11 +174,9 @@ test("desktop conversation rail constrains overflowing run content", () => {
   expect(cliBrandIconsSource).toContain("Codex");
   expect(cliBrandIconsSource).toContain("OPENCODE_ICON_SRC");
   expect(pageSource).toContain("Claude Code");
-  expect(pageSource).toContain('stroke="currentColor"');
   expect(workerCardSource).toContain('promptPreview?: string | null;');
   expect(workerCardSource).toContain('userMessages?: TerminalUserMessage[];');
   expect(workersSidebarSource).toContain('promptPreview={worker.initialPrompt}');
-  expect(workersSidebarSource).toContain('supervisorInterventions={supervisorInterventions}');
   expect(workersSidebarSource).toContain("buildWorkerTerminalUserMessages");
   expect(workerCardSource).toContain("<Terminal");
   expect(workerCardSource).toContain('import { useWorkerStream } from "@/interface/home/WorkerEntriesManager";');
@@ -356,7 +349,6 @@ test("workspace side window owns the Files tab and open documents", () => {
   expect(pageSource).toContain("fileViewerPanelManager.toggleWordWrap()");
   expect(pageSource).toContain("void activeQuery.refetch()");
   expect(pageSource).toContain('className="omni-conversation-text-scale min-h-0 flex-1 overflow-auto bg-muted/15 [scrollbar-width:thin]"');
-  expect(pageSource).toContain('"min-w-0 overflow-hidden break-words [overflow-wrap:anywhere] leading-relaxed"');
   expect(pageSource).not.toContain('"overflow-x-auto leading-relaxed"');
   expect(pageSource).toContain('"syntax-highlight py-3 font-mono text-[length:var(--omni-conversation-font-size)] leading-[var(--omni-conversation-line-height)]"');
   expect(pageSource).toContain('t("fileViewer.menu.wordWrap")');
@@ -656,32 +648,6 @@ test("conversation has a floating latest-output indicator above the composer", (
   expect(conversationMainSource).toContain("bg-primary text-primary-foreground");
 });
 
-test("main conversation does not duplicate worker panes from the sidebar or planning transcript", () => {
-  expect(pageSource).not.toContain('<AgentSurface');
-  expect(pageSource).not.toContain('title="Planning agent"');
-  expect(pageSource).toContain('function PlannerOutputMessage');
-  expect(pageSource).toContain("<Terminal");
-  expect(pageSource).toContain("activityFilter={shouldShowPlanningTerminalActivity}");
-  expect(pageSource).toContain("thoughtsDefaultOpen");
-  expect(pageSource).toContain("emptyState={null}");
-  expect(pageSource).not.toContain("function PlannerActivityItem");
-  expect(pageSource).not.toContain("function PlannerToolPane");
-  expect(pageSource).not.toContain("buildAgentOutputActivity");
-  expect(pageSource).not.toContain("formatActivityStatus");
-  expect(pageSource).not.toContain('t("planning.agent.thinking")');
-  expect(pageSource).not.toContain('const summaryText = extractLatestPlainTextTurn({\n    outputEntries: agent?.outputEntries,\n    currentText: agent?.currentText,\n    lastText: agent?.lastText || message.content,\n  }) || message.content.trim();\n\n  return (\n    <MarkdownContent\n      content={summaryText}');
-  expect(pageSource).toContain('const isPlanningWorkerMessage = msg.role === "worker" && msg.kind === "planning";');
-  expect(pageSource).toContain(') || isPlanningWorkerMessage ? (');
-  expect(pageSource).not.toContain("<Cpu className=\"h-4 w-4\" /> CLI Agents");
-  expect(pageSource).not.toContain('{isImplementationConversation && conversationWorkerGroups.active.length > 0 && (');
-  expect(pageSource).not.toContain('{conversationWorkerGroups.active.map((worker) => {');
-  expect(pageSource).not.toContain('defaultOpen={false}');
-  expect(pageSource).toContain('defaultOpen={isFocusedWorker || activeTab === "active" || hasSingleVisibleWorker}');
-  expect(pageSource).not.toContain("<Cpu className=\"h-4 w-4\" /> Live CLI Agents");
-  expect(pageSource).not.toContain('{conversationWorkers.length > 0 && (');
-  expect(pageSource).not.toContain('{conversationWorkers.map((worker: any) => {');
-});
-
 test("terminal renderer owns reusable planning transcript behavior", () => {
   expect(terminalSource).toContain("activityFilter?: (activity: TerminalActivityItem) => boolean;");
   expect(terminalSource).toContain("thoughtsDefaultOpen?: boolean;");
@@ -745,32 +711,6 @@ test("worker cards collapse into one header summary and keep expanded-only statu
   expect(workerStatusBarIndex).toBeGreaterThan(workerPanelCloseIndex);
 });
 
-test("implementation worker messages show a compact latest turn with expandable full output", () => {
-  expect(pageSource).toContain("function WorkerOutputMessage");
-  expect(pageSource).toContain("extractLatestPlainTextTurn");
-  expect(pageSource).toContain("function WorkerOutputCopyAction");
-  expect(pageSource).toContain('aria-label={t("conversation.message.copyAria")}');
-  expect(pageSource).toContain('onClick={() => void onCopy(content, messageId)}');
-  expect(pageSource).toContain("copiedMessageId === messageId");
-  expect(pageSource).toContain("group-hover/worker-output-actions:opacity-100");
-  expect(pageSource).toContain('aria-label={fullOutputOpen ? "Hide full worker output" : "Show full worker output"}');
-  expect(pageSource).toContain('{fullOutputOpen ? "Hide full output" : "Show full output"}');
-  expect(pageSource).toContain("agent={fullOutputAgent}");
-  expect(pageSource).not.toContain('msg.role === "worker"\n                          ? "border-[#333] bg-[#1e1e1e] font-mono text-[12px] text-emerald-400 shadow-sm"');
-});
-
-test("worker output exposes copy from a bottom-right mobile actions menu", () => {
-  expect(pageSource).toContain("DropdownMenu");
-  expect(pageSource).toContain("DropdownMenuTrigger");
-  expect(pageSource).toContain("DropdownMenuItem");
-  expect(pageSource).toContain("MoreHorizontal");
-  expect(pageSource).toContain('aria-label={t("conversation.message.actionsAria")}');
-  expect(pageSource).toContain("md:hidden");
-  expect(pageSource).toContain("hidden h-6 w-6");
-  expect(pageSource).toContain("md:inline-flex");
-  expect(pageSource).toContain('t("conversation.message.copyAria")');
-});
-
 test("assistant message actions fall back to a tappable menu on touch devices", () => {
   expect(globalsCssSource).toContain("@custom-variant touch (@media (hover: none));");
   expect(terminalSource).toContain("function AssistantMessageTouchMenu");
@@ -816,14 +756,12 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).toContain('textSizeScope="conversation"');
   expect(pageSource).toContain('.filter((message) => message.role === "user")');
   expect(pageSource).not.toContain('message.role === "user" || (message.role === "worker" && message.content.trim())');
-  expect(pageSource).toContain('const isExpanded = expandedDirectMessageIds.has(msg.id);');
   expect(pageSource).toContain('className="flex justify-end"');
   expect(pageSource).toContain('flex-col items-end');
   expect(pageSource).toContain('const handleCopyDirectMessage = useCallback(async (content: string, messageId: string) => {');
   expect(pageSource).toContain('await navigator.clipboard.writeText(content);');
   expect(pageSource).toContain('select-text');
   expect(pageSource).toContain('aria-label={isExpanded ? "Show less message text" : "Show more message text"}');
-  expect(pageSource).toContain('onToggleExpanded={() => toggleDirectMessageExpansion(msg.id)}');
   expect(pageSource).toContain('maxHeight: isExpanded ? undefined : "calc(1.5rem * 6)"');
   expect(pageSource).toContain('const isLongMessage = content.length > 420 || content.split(/\\r\\n|\\r|\\n/).length > 6;');
   expect(pageSource).toContain('{isExpanded || isLongMessage ? (');
@@ -831,13 +769,12 @@ test("direct conversations render the user transcript next to the worker surface
   expect(pageSource).toContain("omni-user-message");
   expect(pageSource).toContain("omni-user-message-expand");
   expect(pageSource).toContain("conversation.message.copyAria");
-  expect(pageSource).toContain('label: t(isImplementationConversation ? "conversation.message.action.resumeFromHere" : "conversation.message.action.retryFromHere")');
+  expect(pageSource).toContain('label: t("conversation.message.action.retryFromHere")');
   expect(pageSource).toContain('aria-label={action.label}');
   expect(pageSource).toContain('onClick: () => handleRetryMessage(message.id)');
   expect(pageSource).toContain("rounded-2xl");
   expect(pageSource).toContain('px-5 py-3.5');
   expect(pageSource).toContain('text-sm leading-6');
-  expect(pageSource).toContain('createdAt={msg.createdAt}');
   expect(pageSource).not.toContain('text-[1.375rem]');
   expect(pageSource).toContain('cursor-pointer');
   expect(pageSource).toContain('overflow-hidden');
@@ -850,7 +787,7 @@ test("direct conversations render the user transcript next to the worker surface
 
 test("settings entry opens the reorganized settings dialog", () => {
   expect(pageSource).toContain('activeSettingsTab: "general"');
-  expect(readSource("src/shared/home-types.ts")).toContain('export type SettingsTab = "general" | "presets" | "models" | "credentials" | "agents" | "runtime" | "memory"');
+  expect(readSource("src/shared/home-types.ts")).toContain('export type SettingsTab = "general" | "presets" | "credentials" | "agents" | "runtime"');
   expect(pageSource).toContain('import("@/components/home/SettingsDialog")');
   expect(pageSource).toContain("settingsDraftManager");
 });
@@ -898,17 +835,15 @@ test("header syncs the active conversation path but only shows the cwd", () => {
 
 test("command input uses mode-aware helper placeholders instead of echoing the selected directory", () => {
   expect(pageSource).toContain("const composerPlaceholder = selectedRunId");
-  expect(pageSource).toContain('t("conversation.composer.placeholder.planning")');
   expect(pageSource).toContain('t("conversation.composer.placeholder.direct")');
-  expect(pageSource).toContain('t("conversation.composer.placeholder.implementation")');
   expect(pageSource).toContain('t("conversation.composer.placeholder.default")');
   expect(pageSource).toContain("placeholder={composerPlaceholder}");
   expect(pageSource).not.toContain('placeholder={draftProjectPath ? `${draftProjectPath}/...` : "e.g. vibes/test-plan.md or fix the login flow"}');
 });
 
 test("send button swaps to a spinner while a command submission is pending", () => {
-  expect(pageSource).toContain("const isComposerSendBusy = isStartingCurrentProjectConversation || isSendingSelectedConversationMessage || isSendingSelectedQueuedMessage || isPromotePlanningPendingForSelectedRun || isStopConversationPending;");
-  expect(pageSource).toContain("const isComposerSubmitBlocked = isStartingCurrentProjectConversation || isPromotePlanningPendingForSelectedRun || isStopConversationPending;");
+  expect(pageSource).toContain("const isComposerSendBusy = isStartingCurrentProjectConversation || isSendingSelectedConversationMessage || isSendingSelectedQueuedMessage || isStopConversationPending;");
+  expect(pageSource).toContain("const isComposerSubmitBlocked = isStartingCurrentProjectConversation || isStopConversationPending;");
   expect(pageSource).toContain("const isSendButtonBusy = isComposerSendBusy && !isStopButtonVisible;");
   expect(pageSource).toContain("const isStopButtonBusy = isStopButtonVisible && isStopConversationPending;");
   expect(pageSource).toContain('disabled={isSubmitButtonDisabled}');
@@ -980,83 +915,19 @@ test("project groups reveal sessions ten at a time and reset on project toggles"
 test("failed runs surface recovery UI in the header and conversation feed", () => {
   expect(pageSource).toContain('selectedRun?.status === "failed"');
   expect(pageSource).toContain("Resume worker");
-  expect(pageSource).toContain('const canRetryConversation = isDirectConversation || (isImplementationConversation && selectedRun?.status !== "failed");');
+  expect(pageSource).toContain('const canRetryConversation = isDirectConversation;');
   expect(pageSource).toContain("Unstick latest");
-  expect(pageSource).toContain('label: "Stuck"');
-  expect(pageSource).toContain('label: "Needs recovery"');
-  expect(pageSource).toContain('label: "Runtime error"');
-  expect(pageSource).toContain('msg.kind === "error"');
   expect(pageSource).toContain("Run failed");
-});
-
-test("running conversations render an in-thread execution indicator and timeline activity rows", () => {
-  expect(pageSource).toContain("function ConversationExecutionPanel");
-  expect(pageSource).not.toContain("function ConversationRunLog");
-  expect(pageSource).toContain("function SupervisorActivityMessage");
-  expect(pageSource).toContain("function renderSupervisorActivityText");
-  expect(pageSource).toContain("Starting (?:worker \\d+|planning agent)|Steering worker \\d+");
-  expect(pageSource).toContain('text.startsWith("Starting planning agent")');
-  expect(pageSource).toContain('text-[13px] leading-[1.45]');
-  expect(pageSource).toContain('<strong className="font-semibold text-foreground">{match[1]}</strong>');
-  expect(pageSource).toContain('aria-label="Supervisor action"');
-  expect(pageSource).toContain('aria-label="Run Log"');
-  expect(pageSource).toContain('Run Log');
-  expect(pageSource).toContain('runLogOpenByRunId');
-  expect(pageSource).toContain("const isConversationThinking =");
-  expect(pageSource).toContain("const isConversationThinking = isSupervisorRunning");
-  expect(pageSource).toContain("const liveThoughts = useMemo(() => {");
-  expect(pageSource).toContain("const selectedRunExecutionEvents = useMemo(() => (");
-  expect(pageSource).toContain("const conversationTimelineItems = useMemo(() => buildConversationTimelineItems");
-  expect(pageSource).toContain('const conversationTimelineActivityCount = conversationTimelineItems.filter((item) => item.type === "activity").length;');
-  expect(pageSource).toContain("const liveExecutionStatus =");
-  expect(pageSource).toContain("buildConversationTimelineItems");
-  expect(pageSource).toContain('item.type === "activity"');
-  expect(pageSource).toContain('statusText');
-  expect(pageSource).toContain("liveThoughts.map");
-  expect(pageSource).toContain("thought.text");
-  expect(pageSource).toContain("Working");
-  expect(pageSource).toContain("animate-pulse");
-  expect(pageSource).toContain("animationDelay:");
-  expect(pageSource).toContain("activity");
-  expect(pageSource).toContain("Awaiting permission");
-  expect(pageSource).toContain("Waiting ");
-  expect(pageSource).not.toContain(">System</span>");
-  expect(pageSource).not.toContain("Show supervisor activity");
-  expect(pageSource).not.toContain("Hide supervisor activity");
-  expect(pageSource).not.toContain("SupervisorActivityPresentationManager");
-  expect(pageSource).not.toContain("SupervisorActivityDrawer");
-  expect(pageSource).not.toContain("ClarificationPanel");
-  expect(pageSource).not.toContain("PlanProgress");
-  expect(pageSource).not.toContain("No execution details yet.");
-  expect(pageSource).not.toContain("Current status");
-  expect(pageSource).not.toContain("Last bridge error");
-  expect(pageSource).toContain("{isImplementationConversation && showConversationExecution ? (");
-  expect(pageSource).toContain("executionEventCount: conversationTimelineActivityCount");
-  expect(pageSource).toContain("executionEvents={selectedRunExecutionEvents}");
-  expect(pageSource).not.toContain('msg.role === "system"');
-  expect(pageSource).not.toContain('parseSpawnedWorkerMessage');
-});
-
-test("planning artifacts are shown as relative file links without card chrome", () => {
-  expect(planningArtifactsSource).toContain("function displayProjectPath");
-  expect(planningArtifactsSource).toContain("reference.relativePath");
-  expect(planningArtifactsSource).toContain("displayPath");
-  expect(planningArtifactsSource).toContain('role="note"');
-  expect(planningArtifactsSource).toContain('text-sm leading-relaxed text-foreground');
-  expect(planningArtifactsSource).not.toContain("rounded-xl border");
-  expect(planningArtifactsSource).not.toContain("shadow-sm");
-  expect(planningArtifactsSource).not.toContain(">{candidate.path}<");
 });
 
 test("new conversations expose only direct control and existing direct runs lock the worker type", () => {
   expect(fs.existsSync(path.resolve(process.cwd(), "src/components/ConversationModePicker.tsx"))).toBe(false);
   expect(pageSource).not.toContain("ConversationModePicker");
   expect(pageSource).not.toContain("conversation.mode.direct.label");
-  expect(pageSource).toContain('selectedConversationMode={activeComposerMode}');
-  expect(pageSource).toContain('const shouldLockDirectWorker = Boolean(selectedRunId) && activeComposerMode === "direct"');
+  expect(pageSource).toContain('const shouldLockDirectWorker = Boolean(selectedRunId);');
   expect(pageSource).not.toContain("Direct worker:");
   expect(pageSource).toContain("lockedWorkerLabel={shouldLockDirectWorker ? lockedDirectWorkerLabel : null}");
-  expect(pageSource).toContain('mode: payload.launch.conversationMode');
+  expect(pageSource).not.toContain('payload.launch.conversationMode');
 });
 
 test("starting a project-scoped conversation keeps the composer empty", () => {

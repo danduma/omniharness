@@ -10,17 +10,12 @@ import { buildAgentOutputActivity } from "@/lib/agent-output";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
 import { __resetNamedEventsForTests } from "@/server/events/named-events";
 
-const { mockEnsureSupervisorRuntimeStarted, mockStartSupervisorRun } = vi.hoisted(() => ({
-  mockEnsureSupervisorRuntimeStarted: vi.fn().mockResolvedValue(undefined),
-  mockStartSupervisorRun: vi.fn(),
+const { mockEnsureRuntimeWatchdogStarted } = vi.hoisted(() => ({
+  mockEnsureRuntimeWatchdogStarted: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("@/server/supervisor/runtime-watchdog", () => ({
-  ensureSupervisorRuntimeStarted: mockEnsureSupervisorRuntimeStarted,
-}));
-
-vi.mock("@/server/supervisor/start", () => ({
-  startSupervisorRun: mockStartSupervisorRun,
+vi.mock("@/server/runtime/watchdog", () => ({
+  ensureRuntimeWatchdogStarted: mockEnsureRuntimeWatchdogStarted,
 }));
 
 import { eventsRoute as GET } from "@/../tests/helpers/runtime-routes";
@@ -115,8 +110,7 @@ describe("GET /api/events", () => {
     __resetNamedEventsForTests();
     __clearEventPayloadCachesForTests();
     notifyEventStreamSubscribers();
-    mockEnsureSupervisorRuntimeStarted.mockClear();
-    mockStartSupervisorRun.mockClear();
+    mockEnsureRuntimeWatchdogStarted.mockClear();
     global.fetch = originalFetch;
     await db.delete(planningReviewFindings);
     await db.delete(planningReviewRounds);
@@ -307,7 +301,6 @@ describe("GET /api/events", () => {
     expect(payload.messages).toEqual([]);
     expect(payload.agents).toEqual([]);
     expect(payload.executionEvents).toEqual([]);
-    expect(payload.supervisorInterventions).toEqual([]);
   });
 
   it("keeps worker prompts scoped to the selected conversation", async () => {
@@ -632,12 +625,12 @@ describe("GET /api/events", () => {
     });
 
     global.fetch = vi.fn().mockRejectedValue(new Error("bridge should not be called"));
-    const ensureCallsBefore = mockEnsureSupervisorRuntimeStarted.mock.calls.length;
+    const ensureCallsBefore = mockEnsureRuntimeWatchdogStarted.mock.calls.length;
 
     const response = await GET(new Request(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
     const payload = await response.json();
 
-    expect(mockEnsureSupervisorRuntimeStarted).toHaveBeenCalledTimes(ensureCallsBefore);
+    expect(mockEnsureRuntimeWatchdogStarted).toHaveBeenCalledTimes(ensureCallsBefore);
     expect(global.fetch).not.toHaveBeenCalled();
     expect(payload.agents[0]).toEqual(expect.objectContaining({
       name: workerId,
@@ -647,89 +640,6 @@ describe("GET /api/events", () => {
     }));
     expect(payload.agents[0].outputEntries).toEqual([
       expect.objectContaining({ id: "entry-persisted", text: "Disk-backed worker entry" }),
-    ]);
-  });
-
-  it("includes the parent planning transcript when viewing a promoted implementation run", async () => {
-    const planningPlanId = randomUUID();
-    const implementationPlanId = randomUUID();
-    const planningRunId = randomUUID();
-    const implementationRunId = randomUUID();
-    const now = new Date("2026-05-11T05:52:18.000Z");
-
-    await db.insert(plans).values([
-      {
-        id: planningPlanId,
-        path: "vibes/ad-hoc/planning-session.md",
-        status: "done",
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        id: implementationPlanId,
-        path: "docs/superpowers/plans/intermediate-scene-assets.md",
-        status: "running",
-        createdAt: now,
-        updatedAt: now,
-      },
-    ]);
-    await db.insert(runs).values([
-      {
-        id: planningRunId,
-        planId: planningPlanId,
-        mode: "planning",
-        status: "promoted",
-        title: "Intermediate Asset Scene Search",
-        createdAt: new Date(now.getTime() - 60_000),
-        updatedAt: now,
-      },
-      {
-        id: implementationRunId,
-        planId: implementationPlanId,
-        mode: "implementation",
-        status: "running",
-        title: "Intermediate Asset Scene Search",
-        parentRunId: planningRunId,
-        createdAt: now,
-        updatedAt: now,
-      },
-    ]);
-    await db.insert(messages).values([
-      {
-        id: "planning-user-message",
-        runId: planningRunId,
-        role: "user",
-        kind: "checkpoint",
-        content: "Plan the intermediate scene assets section.",
-        createdAt: new Date(now.getTime() - 50_000),
-      },
-      {
-        id: "planning-worker-message",
-        runId: planningRunId,
-        role: "worker",
-        kind: "planning",
-        content: "Created the spec and implementation plan.",
-        createdAt: new Date(now.getTime() - 40_000),
-      },
-      {
-        id: "implementation-user-message",
-        runId: implementationRunId,
-        role: "user",
-        kind: "checkpoint",
-        content: "Plan the intermediate scene assets section.",
-        createdAt: now,
-      },
-    ]);
-
-    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
-
-    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&persisted=1&runId=${implementationRunId}`));
-    const payload = await response.json();
-
-    expect(payload.messages.map((message: { id: string }) => message.id)).toEqual([
-      "planning-user-message",
-      "planning-worker-message",
-      "implementation-user-message",
     ]);
   });
 
@@ -1457,84 +1367,6 @@ describe("GET /api/events", () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it("surfaces an invariant error when an awaiting-user snapshot has no supervisor question", async () => {
-    const planId = randomUUID();
-    const runId = randomUUID();
-    const now = new Date();
-
-    await db.insert(plans).values({
-      id: planId,
-      path: "vibes/ad-hoc/missing-awaiting-user-question.md",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      mode: "implementation",
-      status: "awaiting_user",
-      title: "Missing awaiting-user question",
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
-    const payload = await response.json();
-
-    expect(payload.frontendErrors).toEqual([
-      expect.objectContaining({
-        source: "Lifecycle",
-        action: "Load conversation state",
-        message: expect.stringContaining("awaiting user input but no supervisor question"),
-      }),
-    ]);
-  });
-
-  it("does not surface an invariant error when an awaiting-user snapshot has a pending clarification row", async () => {
-    const planId = randomUUID();
-    const runId = randomUUID();
-    const now = new Date();
-
-    await db.insert(plans).values({
-      id: planId,
-      path: "vibes/ad-hoc/pending-clarification-row.md",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      mode: "implementation",
-      status: "awaiting_user",
-      title: "Pending clarification row",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(clarifications).values({
-      id: randomUUID(),
-      runId,
-      question: "Which image directory should I use?",
-      answer: null,
-      status: "pending",
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&persisted=1&runId=${runId}`));
-    const payload = await response.json();
-
-    expect(payload.frontendErrors).toEqual([]);
-    expect(payload.clarifications).toEqual([
-      expect.objectContaining({
-        runId,
-        question: "Which image directory should I use?",
-        status: "pending",
-      }),
-    ]);
-  });
-
   it("does not require a supervisor question for direct worker awaiting-user snapshots", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -2113,71 +1945,6 @@ describe("GET /api/events", () => {
     expect(unrelatedWorker?.currentText).toBe("");
   });
 
-  it("streams supervisor interventions with the live conversation payload", async () => {
-    const planId = randomUUID();
-    const runId = randomUUID();
-    const workerId = randomUUID();
-    const now = new Date();
-
-    await db.insert(plans).values({
-      id: planId,
-      path: "vibes/ad-hoc/interventions.md",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      mode: "implementation",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(workers).values({
-      id: workerId,
-      runId,
-      type: "codex",
-      status: "idle",
-      cwd: "/workspace/app",
-      outputLog: "",
-      outputEntriesJson: "[]",
-      currentText: "",
-      lastText: "",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(supervisorInterventions).values({
-      id: randomUUID(),
-      runId,
-      workerId,
-      interventionType: "continue",
-      prompt: "Please continue from the stopping point.",
-      summary: "Sent follow-up to worker",
-      createdAt: now,
-    });
-
-    mockAgentRuntimeJson([], { status: 200 });
-
-    const controller = new AbortController();
-    const response = await GET(new Request(`http://localhost/api/events?runId=${runId}`, {
-      signal: controller.signal,
-    }));
-    const reader = response.body!.getReader();
-    const payload = await readUntilUpdateFrame(reader);
-    controller.abort();
-    await reader.cancel();
-
-    expect(payload.supervisorInterventions).toEqual([
-      expect.objectContaining({
-        runId,
-        workerId,
-        interventionType: "continue",
-        prompt: "Please continue from the stopping point.",
-      }),
-    ]);
-  });
-
   it("does not rewrite a cancelled direct conversation during session sync", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -2402,274 +2169,6 @@ describe("GET /api/events", () => {
     expect(persistedMessages.filter((message) => message.kind === "error")).toHaveLength(0);
   });
 
-  it("does not refresh planning artifacts while streaming a ready planning handoff", async () => {
-    const planId = randomUUID();
-    const runId = randomUUID();
-    const workerId = randomUUID();
-    const now = new Date();
-    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "omni-events-planning-ready-"));
-    const specPath = path.join(workspace, "docs/superpowers/specs/ready-spec.md");
-    const planPath = path.join(workspace, "docs/superpowers/plans/ready-plan.md");
-
-    fs.mkdirSync(path.dirname(specPath), { recursive: true });
-    fs.mkdirSync(path.dirname(planPath), { recursive: true });
-    fs.writeFileSync(specPath, "# Ready Spec\n");
-    fs.writeFileSync(planPath, "## Phase 1\n- [ ] Implement the thing\n");
-
-    await db.insert(plans).values({
-      id: planId,
-      path: "vibes/ad-hoc/planning-busy-recovered.md",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      mode: "planning",
-      projectPath: workspace,
-      status: "failed",
-      lastError: `Ask failed: Agent is busy: ${workerId}`,
-      failedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(workers).values({
-      id: workerId,
-      runId,
-      type: "codex",
-      status: "error",
-      cwd: workspace,
-      outputLog: "",
-      outputEntriesJson: "[]",
-      currentText: "Still planning.",
-      lastText: "Still planning.",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(messages).values({
-      id: randomUUID(),
-      runId,
-      role: "system",
-      kind: "error",
-      content: `Run failed: Ask failed: Agent is busy: ${workerId}`,
-      createdAt: now,
-    });
-
-    const handoff = `<omniharness-plan-handoff>
-spec_path: docs/superpowers/specs/ready-spec.md
-plan_path: docs/superpowers/plans/ready-plan.md
-ready: yes
-summary: Plan is ready.
-</omniharness-plan-handoff>`;
-
-    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([
-      {
-        name: workerId,
-        type: "codex",
-        cwd: workspace,
-        state: "idle",
-        currentText: "",
-        lastText: handoff,
-        outputEntries: [
-          {
-            id: "entry-1",
-            type: "message",
-            text: handoff,
-            timestamp: now.toISOString(),
-          },
-        ],
-        stderrBuffer: [],
-        stopReason: "end_turn",
-        lastError: null,
-      },
-    ]), { status: 200 }));
-
-    const controller = new AbortController();
-    const response = await GET(new Request("http://localhost/api/events", {
-      signal: controller.signal,
-    }));
-    const reader = response.body!.getReader();
-    const payload = await readUntilUpdateFrame(reader);
-    controller.abort();
-    await reader.cancel();
-
-    type RunSnap = { id: string; status: string };
-    type WorkerSnap = { id: string; status: string };
-    const runsList = payload.runs as RunSnap[];
-    const workersList = payload.workers as WorkerSnap[];
-    expect(runsList.find((r) => r.id === runId)?.status).toBe("failed");
-    expect(workersList.find((w) => w.id === workerId)?.status).toBe("idle");
-
-    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
-    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
-    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
-    expect(persistedRun?.status).toBe("failed");
-    expect(persistedRun?.lastError).toBe(`Ask failed: Agent is busy: ${workerId}`);
-    expect(persistedRun?.failedAt).not.toBeNull();
-    expect(persistedRun?.artifactPlanPath).toBeNull();
-    expect(persistedRun?.specPath).toBeNull();
-    expect(persistedWorker?.status).toBe("idle");
-    expect(persistedMessages.filter((message) => message.kind === "error")).toHaveLength(1);
-  });
-
-  it("recovers an implementation conversation when an old transient supervisor failure is followed by a clean live worker", async () => {
-    const planId = randomUUID();
-    const runId = randomUUID();
-    const workerId = `${runId}-worker-1`;
-    const now = new Date();
-    const errorMessage = "Supervisor model request failed: rate limit exceeded";
-
-    await db.insert(plans).values({
-      id: planId,
-      path: "vibes/ad-hoc/implementation-poll-reset.md",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      mode: "implementation",
-      status: "failed",
-      lastError: errorMessage,
-      failedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(workers).values({
-      id: workerId,
-      runId,
-      type: "codex",
-      status: "working",
-      cwd: "/workspace/app",
-      outputLog: "",
-      outputEntriesJson: "[]",
-      currentText: "Running validation.",
-      lastText: "Running validation.",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(messages).values({
-      id: randomUUID(),
-      runId,
-      role: "system",
-      kind: "error",
-      content: `Run failed: ${errorMessage}`,
-      createdAt: now,
-    });
-
-    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([
-      {
-        name: workerId,
-        type: "codex",
-        cwd: "/workspace/app",
-        state: "idle",
-        currentText: "",
-        lastText: "Implemented the feature and ran focused checks.",
-        outputEntries: [
-          {
-            id: "entry-1",
-            type: "message",
-            text: "Implemented the feature and ran focused checks.",
-            timestamp: now.toISOString(),
-          },
-        ],
-        stderrBuffer: [],
-        stopReason: "end_turn",
-        lastError: null,
-      },
-    ]), { status: 200 }));
-
-    const controller = new AbortController();
-    const response = await GET(new Request("http://localhost/api/events", {
-      signal: controller.signal,
-    }));
-    const reader = response.body!.getReader();
-    const payload = await readUntilUpdateFrame(reader);
-    controller.abort();
-    await reader.cancel();
-    expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("running");
-    expect(payload.workers.find((worker: { id: string }) => worker.id === workerId)?.status).toBe("idle");
-
-    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
-    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
-    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
-    expect(persistedRun?.status).toBe("running");
-    expect(persistedRun?.lastError).toBeNull();
-    expect(persistedRun?.failedAt).toBeNull();
-    expect(persistedWorker?.status).toBe("idle");
-    expect(persistedMessages.filter((message) => message.kind === "error")).toHaveLength(0);
-    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
-  });
-
-  it("resumes a failed implementation conversation with a saved bridge session when the live worker must be reloaded", async () => {
-    const planId = randomUUID();
-    const runId = randomUUID();
-    const workerId = `${runId}-worker-1`;
-    const now = new Date();
-    const errorMessage = "Get agent failed: fetch failed (caused by: getaddrinfo EAI_AGAIN api.openai.com)";
-
-    await db.insert(plans).values({
-      id: planId,
-      path: "vibes/ad-hoc/implementation-session-reconnect.md",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      mode: "implementation",
-      status: "failed",
-      lastError: errorMessage,
-      failedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(workers).values({
-      id: workerId,
-      runId,
-      type: "codex",
-      status: "working",
-      cwd: "/workspace/app",
-      outputLog: "",
-      outputEntriesJson: "[]",
-      currentText: "",
-      lastText: "Paused during provider reconnect.",
-      bridgeSessionId: "session-reconnect",
-      bridgeSessionMode: "full-access",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(messages).values({
-      id: randomUUID(),
-      runId,
-      role: "system",
-      kind: "error",
-      content: `Run failed: ${errorMessage}`,
-      createdAt: now,
-    });
-
-    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
-
-    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&runId=${runId}`));
-    const payload = await response.json();
-
-    const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();
-    const persistedWorker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
-    const persistedMessages = await db.select().from(messages).where(eq(messages.runId, runId));
-
-    expect(payload.runs.find((run: { id: string }) => run.id === runId)?.status).toBe("running");
-    expect(persistedRun?.status).toBe("running");
-    expect(persistedRun?.lastError).toBeNull();
-    expect(persistedRun?.failedAt).toBeNull();
-    expect(persistedWorker?.status).toBe("working");
-    expect(persistedWorker?.bridgeSessionId).toBe("session-reconnect");
-    expect(persistedMessages.filter((message) => message.kind === "error")).toHaveLength(0);
-    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
-  });
-
   it("marks a direct conversation done when a persisted idle worker has output but no live bridge agent", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -2789,79 +2288,5 @@ summary: Plan is ready.
     expect(persistedWorker?.status).toBe("error");
     expect(persistedWorker?.outputLog).toBe(diagnostic);
     expect(storedMessages.some((message) => message.kind === "error" && message.content.includes(diagnostic))).toBe(true);
-  });
-
-  it("includes planning review records in snapshots", async () => {
-    const planId = randomUUID();
-    const runId = randomUUID();
-    const reviewRunId = randomUUID();
-    const roundId = randomUUID();
-    const findingId = randomUUID();
-    const now = new Date();
-
-    await db.insert(plans).values({
-      id: planId,
-      path: "vibes/ad-hoc/reviewable-plan.md",
-      status: "done",
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      mode: "planning",
-      status: "ready",
-      title: "Reviewable plan",
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await db.insert(planningReviewRuns).values({
-      id: reviewRunId,
-      runId,
-      status: "completed",
-      agentSelection: "auto",
-      roundsRequested: 1,
-      roundsCompleted: 1,
-      startedAt: now,
-      completedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await db.insert(planningReviewRounds).values({
-      id: roundId,
-      reviewRunId,
-      runId,
-      roundNumber: 1,
-      status: "completed",
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await db.insert(planningReviewFindings).values({
-      id: findingId,
-      reviewRunId,
-      roundId,
-      runId,
-      severity: "major",
-      category: "testing",
-      title: "Missing unit tests",
-      details: "The plan should include unit tests for the new module.",
-      recommendation: "Add unit tests to the plan.",
-      createdAt: now,
-    });
-
-    const response = await GET(new Request(`http://localhost/api/events?snapshot=1&runId=${runId}`));
-    const payload = await response.json();
-
-    expect(payload.reviewRuns).toHaveLength(1);
-    expect(payload.reviewRuns[0].id).toBe(reviewRunId);
-    expect(payload.reviewRounds).toHaveLength(1);
-    expect(payload.reviewRounds[0].id).toBe(roundId);
-    expect(payload.reviewFindings).toHaveLength(1);
-    expect(payload.reviewFindings[0].id).toBe(findingId);
-    expect(payload.reviewFindings[0].title).toBe("Missing unit tests");
   });
 });

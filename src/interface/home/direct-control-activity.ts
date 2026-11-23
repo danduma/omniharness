@@ -177,15 +177,10 @@ export function resolvePendingConversationWorkerId(args: {
   isPending: boolean;
   mutationRunId: string | null | undefined;
   selectedRunId: string | null | undefined;
-  isImplementationConversation: boolean;
   selectedWorkerIds: readonly string[];
   pendingMessageId?: string | null;
   unacknowledgedMessageIds?: ReadonlySet<string>;
 }) {
-  if (args.isImplementationConversation) {
-    return null;
-  }
-
   if (!isMutationPendingForSelectedRun({
     isPending: args.isPending,
     mutationRunId: args.mutationRunId,

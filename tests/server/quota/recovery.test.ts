@@ -12,10 +12,9 @@ import {
   workers,
 } from "@/server/db/schema";
 import {
-  handleSupervisorQuotaExhaustion,
   handleWorkerQuotaExhaustion,
 } from "@/server/quota/recovery";
-import * as wakeSchedule from "@/server/supervisor/wake-schedule";
+import * as wakeSchedule from "@/server/quota/wake-schedule";
 import * as recoveryPolicy from "@/server/runs/recovery-policy";
 import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
 
@@ -69,7 +68,7 @@ describe("quota recovery handlers", () => {
   beforeEach(async () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
-    wakeSchedule.resetDurableSupervisorWakeSchedulerForTests();
+    wakeSchedule.resetQuotaWakeSchedulerForTests();
     await db.delete(supervisorScheduledWakes);
     await db.delete(recoveryIncidents);
     await db.delete(executionEvents);
@@ -81,27 +80,6 @@ describe("quota recovery handlers", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-  });
-
-  it("persists a schedulable supervisor quota wait without failing the run", async () => {
-    const runId = await insertRun();
-
-    const result = await handleSupervisorQuotaExhaustion({
-      runId,
-      error: Object.assign(new Error("quota exceeded until 2026-05-10T18:00:00+08:00"), { status: 429 }),
-      now,
-    });
-
-    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
-    const wake = await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get();
-
-    expect(result.state).toBe("quota_wait");
-    expect(run?.status).toBe("quota_waiting");
-    expect(run?.lastError).toBeNull();
-    expect(incident).toMatchObject({ kind: "quota_exhausted", status: "open" });
-    expect(wake?.wakeAt.toISOString()).toBe("2026-05-10T10:00:01.000Z");
-    expect(wake?.incidentId).toBe(incident?.id);
   });
 
   it("marks worker quota as cred-exhausted and preserves queued messages and sessions", async () => {
@@ -143,13 +121,13 @@ describe("quota recovery handlers", () => {
   it("serializes Stop behind an in-flight wake mutation and then removes the wake", async () => {
     const runId = await insertRun();
     const workerId = await insertWorker(runId);
-    const scheduleWake = wakeSchedule.scheduleDurableSupervisorWakeAt;
+    const scheduleWake = wakeSchedule.scheduleQuotaWakeAt;
     let stopMutation: Promise<void> | null = null;
-    vi.spyOn(wakeSchedule, "scheduleDurableSupervisorWakeAt").mockImplementationOnce(async (args) => {
+    vi.spyOn(wakeSchedule, "scheduleQuotaWakeAt").mockImplementationOnce(async (args) => {
       stopMutation = runQuotaRecoveryMutation(runId, async () => {
         await db.update(runs).set({ status: "cancelled", updatedAt: now }).where(eq(runs.id, runId));
         await db.update(workers).set({ status: "cancelled", updatedAt: now }).where(eq(workers.id, workerId));
-        await wakeSchedule.cancelDurableSupervisorWake(runId, "quota_wait");
+        await wakeSchedule.cancelQuotaWake(runId, "quota_wait");
         await db.update(recoveryIncidents).set({
           status: "resolved",
           resolvedAt: now,
@@ -287,24 +265,5 @@ describe("quota recovery handlers", () => {
     expect(wake?.wakeAt.getHours()).toBe(10);
     expect(wake?.wakeAt.getMinutes()).toBe(40);
     expect(wake?.wakeAt.getSeconds()).toBe(1);
-  });
-
-  it("moves quota without a parseable reset to needs_recovery instead of looping", async () => {
-    const runId = await insertRun();
-
-    const result = await handleSupervisorQuotaExhaustion({
-      runId,
-      error: new Error("quota exceeded for the account"),
-      now,
-    });
-
-    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
-    const wake = await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get();
-
-    expect(result.state).toBe("needs_recovery");
-    expect(run?.status).toBe("needs_recovery");
-    expect(incident).toMatchObject({ kind: "quota_exhausted", status: "needs_user" });
-    expect(wake).toBeUndefined();
   });
 });

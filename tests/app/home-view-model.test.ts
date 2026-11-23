@@ -22,10 +22,7 @@ function createState(overrides: Partial<EventStreamState> = {}): EventStreamStat
     accounts: [],
     agents: [],
     workers: [],
-    planItems: [],
-    clarifications: [],
     executionEvents: [],
-    supervisorInterventions: [],
     frontendErrors: [],
     queuedMessages: [],
     recoveryIncidents: [],
@@ -67,7 +64,6 @@ function useRenderViewModel(
   return useHomeViewModel({
     state,
     selectedRunId: "run-1",
-    selectedConversationMode: "direct",
     selectedCliAgent: "codex",
     selectedModel: "gpt-5",
     selectedEffort: "medium",
@@ -165,7 +161,7 @@ describe("useHomeViewModel", () => {
   it("does not show a manual-recovery run as thinking because of a stale recovering worker", () => {
     const viewModel = useRenderViewModel(createState({
       runs: [createRun({
-        mode: "implementation",
+        mode: "direct",
         status: "needs_recovery",
         lastError: "This run needs manual recovery before it can continue.",
       })],
@@ -199,7 +195,7 @@ describe("useHomeViewModel", () => {
   it("does not label permanent worker auth failures as reconnecting", () => {
     const state = createState({
       runs: [createRun({
-        mode: "implementation",
+        mode: "direct",
         status: "failed",
         failedAt: "2026-06-29T13:08:41.000Z",
         lastError: 'Spawn failed: failed to start gemini agent via gemini: {"code":-32000,"message":"Gemini API key is missing or not configured."}',
@@ -344,7 +340,7 @@ describe("useHomeViewModel", () => {
   it("does not show stale stuck-worker recovery once the supervisor is awaiting input", () => {
     const viewModel = useRenderViewModel(createState({
       runs: [createRun({
-        mode: "implementation",
+        mode: "direct",
         status: "awaiting_user",
       })],
       plans: [{ id: "plan-1", path: "/workspace/project" }],
@@ -387,43 +383,6 @@ describe("useHomeViewModel", () => {
     expect(viewModel.hasStuckWorker).toBe(false);
     expect(viewModel.showRecoverableRunningState).toBe(false);
     expect(viewModel.latestStuckEvent).toBeNull();
-  });
-
-  it("uses a pending clarification row as the awaiting-user question when the message row is absent", () => {
-    const viewModel = useRenderViewModel(createState({
-      runs: [createRun({
-        mode: "implementation",
-        status: "awaiting_user",
-      })],
-      plans: [{ id: "plan-1", path: "/workspace/project" }],
-      messages: [{
-        id: "message-1",
-        runId: "run-1",
-        role: "user",
-        kind: "checkpoint",
-        content: "I have the photos named already",
-        createdAt: "2026-05-13T00:00:00.000Z",
-      }],
-      clarifications: [{
-        id: "clarification-1",
-        runId: "run-1",
-        question: "Which folder contains the photos?",
-        answer: null,
-        status: "pending",
-      }],
-    }));
-
-    expect(viewModel.awaitingUserQuestionMessage).toMatchObject({
-      id: "clarification-1",
-      runId: "run-1",
-      role: "supervisor",
-      kind: "clarification",
-      content: "Which folder contains the photos?",
-    });
-    expect(viewModel.visibleMessages.map((message) => message.content)).toEqual([
-      "I have the photos named already",
-      "Which folder contains the photos?",
-    ]);
   });
 
   it("does not treat cached selected-run previews as authoritative conversation loads", () => {

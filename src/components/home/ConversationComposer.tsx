@@ -4,7 +4,6 @@ import { ArrowUp, FileText, LoaderCircle, Plus, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { WorkerLaunchControls } from "@/components/composer/WorkerLaunchControls";
 import { MobileComposerSettings } from "@/components/composer/MobileComposerSettings";
-import type { ComposerMode } from "@/interface/home/types";
 import { QueuedMessageDrawer } from "./QueuedMessageDrawer";
 import { BranchWorkspaceButton } from "./BranchWorkspaceButton";
 import { EFFORT_OPTIONS } from "@/interface/home/constants";
@@ -30,7 +29,6 @@ interface ConversationComposerProps {
   commandInputRef: React.RefObject<HTMLTextAreaElement | null>;
   handleSubmit: (event: React.FormEvent) => void;
   selectedRunId: string | null;
-  selectedConversationMode: ComposerMode;
   showMentionPicker: boolean;
   currentProjectScope: string | null;
   workspaceProjectPath: string | null;
@@ -100,7 +98,6 @@ function ConversationComposerInner({
   commandInputRef,
   handleSubmit,
   selectedRunId,
-  selectedConversationMode,
   showMentionPicker,
   currentProjectScope,
   workspaceProjectPath,
@@ -175,11 +172,7 @@ function ConversationComposerInner({
         ? sendButtonAriaLabel
         : t(`${composerBehavior.ariaLabelKey}Title`);
   const composerPlaceholder = selectedRunId
-    ? selectedConversationMode === "planning"
-      ? t("conversation.composer.placeholder.planning")
-      : selectedConversationMode === "direct"
-        ? t("conversation.composer.placeholder.direct")
-        : t("conversation.composer.placeholder.implementation")
+    ? t("conversation.composer.placeholder.direct")
     : t("conversation.composer.placeholder.default");
 
   useLayoutEffect(() => {

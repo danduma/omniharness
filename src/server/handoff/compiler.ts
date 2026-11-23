@@ -8,7 +8,7 @@ import {
   type HandoffVerification,
   type HybridHandoffPacketV1,
 } from "@/shared/handoff";
-import type { SupportedWorkerType } from "@/server/supervisor/worker-types";
+import type { SupportedWorkerType } from "@/shared/worker-types";
 import { redactHandoffList, redactHandoffText, sanitizeProjectRelativePath } from "./redaction";
 
 export type CompileHybridHandoffInput = {

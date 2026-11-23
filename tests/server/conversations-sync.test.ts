@@ -8,16 +8,11 @@ import { readWorkerOutputEntries } from "@/server/workers/output-store";
 import { runWorkerTurn, waitForConversationBackgroundTasksForTests } from "@/server/conversations/worker-turn-gate";
 import { annotateVerifiedDeadCredential } from "@/lib/provider-account-failures";
 
-const { mockAskAgent, mockGetAgent, mockRespondElicitation, mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
+const { mockAskAgent, mockGetAgent, mockRespondElicitation, mockSpawnAgent } = vi.hoisted(() => ({
   mockAskAgent: vi.fn(),
   mockGetAgent: vi.fn(),
   mockRespondElicitation: vi.fn(),
   mockSpawnAgent: vi.fn(),
-  mockStartSupervisorRun: vi.fn(),
-}));
-
-vi.mock("@/server/supervisor/start", () => ({
-  startSupervisorRun: mockStartSupervisorRun,
 }));
 
 vi.mock("@/server/bridge-client", async (importOriginal) => {
@@ -62,7 +57,6 @@ describe("syncConversationSessions", () => {
     mockRespondElicitation.mockReset();
     mockRespondElicitation.mockResolvedValue({ ok: true });
     mockSpawnAgent.mockReset();
-    mockStartSupervisorRun.mockReset();
     await db.delete(planningReviewFindings);
     await db.delete(planningReviewRounds);
     await db.delete(planningReviewRuns);
@@ -371,7 +365,6 @@ describe("syncConversationSessions", () => {
       workerId,
       expect.stringContaining("Resume the interrupted task now"),
     );
-    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -496,7 +489,6 @@ describe("syncConversationSessions", () => {
     expect(run?.lastError).toBeNull();
     expect(worker?.status).toBe("cred-exhausted");
     expect(worker?.currentText).toContain("session limit");
-    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
 
     // A missing runtime must not let the persisted-worker pass overwrite
     // the quota state that the first pass preserved.
@@ -681,69 +673,6 @@ describe("syncConversationSessions", () => {
       kind: "worker_lost",
       status: "needs_user",
     });
-  });
-
-  it("can sync a selected planning worker without refreshing planning artifact fields", async () => {
-    const planId = randomUUID();
-    const runId = randomUUID();
-    const workerId = `${runId}-worker-1`;
-    const old = new Date(0);
-
-    await db.insert(plans).values({
-      id: planId,
-      path: "vibes/ad-hoc/plan.md",
-      status: "running",
-      createdAt: old,
-      updatedAt: old,
-    });
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      mode: "planning",
-      status: "working",
-      title: "Planning snapshot",
-      createdAt: old,
-      updatedAt: old,
-    });
-    await db.insert(workers).values({
-      id: workerId,
-      runId,
-      type: "codex",
-      status: "working",
-      cwd: process.cwd(),
-      outputLog: "",
-      outputEntriesJson: "[]",
-      currentText: "",
-      lastText: "",
-      workerNumber: 1,
-      createdAt: old,
-      updatedAt: old,
-    });
-
-    await syncConversationSessions([
-      {
-        name: workerId,
-        type: "codex",
-        cwd: process.cwd(),
-        state: "working",
-        lastText: "Still planning.",
-        currentText: "Still planning.",
-        renderedOutput: "Still planning.",
-        outputEntries: [{ type: "message", text: "Still planning." }],
-        stderrBuffer: [],
-        stopReason: null,
-      },
-    ], { selectedRunId: runId, refreshPlanningArtifacts: false });
-
-    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
-
-    expect(run?.status).toBe("working");
-    expect(run?.updatedAt?.getTime()).toBe(old.getTime());
-    expect(run?.specPath).toBeNull();
-    expect(run?.artifactPlanPath).toBeNull();
-    expect(run?.plannerArtifactsJson).toBeNull();
-    expect(worker?.currentText).toBe("Still planning.");
   });
 
   it("recovers the latest non-cancelled direct worker instead of completing from an older cancelled worker", async () => {
@@ -2495,64 +2424,6 @@ describe("syncConversationSessions", () => {
     expect(queued?.deliveredAt).not.toBeNull();
   });
 
-  it("does not recover a running implementation worker from an incomplete runtime list", async () => {
-    const planId = randomUUID();
-    const runId = randomUUID();
-    const workerId = `${runId}-worker-1`;
-    const oldEnoughForRecoveryClassifier = new Date(Date.now() - 120_000);
-
-    await db.insert(plans).values({
-      id: planId,
-      path: "vibes/ad-hoc/implementation.md",
-      status: "running",
-      createdAt: oldEnoughForRecoveryClassifier,
-      updatedAt: oldEnoughForRecoveryClassifier,
-    });
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      mode: "implementation",
-      status: "running",
-      title: "Implementation recovery guard",
-      createdAt: oldEnoughForRecoveryClassifier,
-      updatedAt: oldEnoughForRecoveryClassifier,
-    });
-    await db.insert(messages).values({
-      id: randomUUID(),
-      runId,
-      role: "user",
-      kind: "clarification_answer",
-      content: "Yes, implement it",
-      createdAt: oldEnoughForRecoveryClassifier,
-    });
-    await db.insert(workers).values({
-      id: workerId,
-      runId,
-      type: "gemini",
-      status: "working",
-      cwd: process.cwd(),
-      outputLog: "",
-      outputEntriesJson: "[]",
-      currentText: "",
-      lastText: "",
-      workerNumber: 1,
-      createdAt: oldEnoughForRecoveryClassifier,
-      updatedAt: oldEnoughForRecoveryClassifier,
-    });
-
-    await syncConversationSessions([], { selectedRunId: runId });
-
-    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
-    const incidents = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
-
-    expect(run?.status).toBe("running");
-    expect(worker?.status).toBe("working");
-    expect(incidents).toEqual([]);
-    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
-    expect(mockSpawnAgent).not.toHaveBeenCalled();
-  });
-
   it("fails a running direct run when the live worker is idle with no output", async () => {
     const planId = randomUUID();
     const runId = randomUUID();
@@ -2727,68 +2598,6 @@ describe("syncConversationSessions", () => {
     expect(run?.status).toBe("done");
     expect(awaitingEvents.some((event) => event.eventType === "direct_worker_awaiting_user")).toBe(false);
     expect(mockSpawnAgent).not.toHaveBeenCalled();
-  });
-
-  it("does not resurrect a cancelled implementation worker from a late live bridge snapshot", async () => {
-    const planId = randomUUID();
-    const runId = randomUUID();
-    const workerId = `${runId}-worker-1`;
-    const now = new Date(0);
-
-    await db.insert(plans).values({
-      id: planId,
-      path: "vibes/ad-hoc/implementation.md",
-      status: "running",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(runs).values({
-      id: runId,
-      planId,
-      mode: "implementation",
-      status: "running",
-      title: "Implementation cancellation",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(workers).values({
-      id: workerId,
-      runId,
-      type: "gemini",
-      status: "cancelled",
-      cwd: process.cwd(),
-      outputLog: "",
-      outputEntriesJson: "[]",
-      currentText: "",
-      lastText: "",
-      bridgeSessionId: "cancelled-session",
-      workerNumber: 1,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await syncConversationSessions([
-      {
-        name: workerId,
-        type: "gemini",
-        cwd: process.cwd(),
-        state: "working",
-        sessionId: "cancelled-session",
-        sessionMode: "full-access",
-        lastText: "late bridge output",
-        currentText: "late bridge output",
-        renderedOutput: "late bridge output",
-        outputEntries: [],
-        stderrBuffer: [],
-        stopReason: null,
-      },
-    ], { selectedRunId: runId });
-
-    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
-
-    expect(worker?.status).toBe("cancelled");
-    expect(worker?.currentText).toBe("");
-    expect(mockStartSupervisorRun).not.toHaveBeenCalled();
   });
 
   it("clears stale direct currentText on terminal idle workers", async () => {

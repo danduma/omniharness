@@ -135,10 +135,10 @@ describe("persistRunFailure", () => {
     const { runId } = await seedRunningRun();
 
     await persistRunFailure(runId, new Error("provider billing cap exceeded"), {
-      surface: { code: "supervisor.gave_up" },
+      surface: { code: "worker.spawn.failed" },
     });
     await persistRunFailure(runId, new Error("provider billing cap exceeded"), {
-      surface: { code: "supervisor.gave_up" },
+      surface: { code: "worker.spawn.failed" },
     });
 
     const persistedRun = await db.select().from(runs).where(eq(runs.id, runId)).get();

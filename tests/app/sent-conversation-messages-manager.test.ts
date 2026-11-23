@@ -34,10 +34,7 @@ function buildState(overrides: Partial<EventStreamState> = {}): EventStreamState
     accounts: [],
     agents: [],
     workers: [],
-    planItems: [],
-    clarifications: [],
     executionEvents: [],
-    supervisorInterventions: [],
     messageScope: { runIds: ["run-1"], complete: true },
     ...overrides,
   };

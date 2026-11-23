@@ -173,8 +173,8 @@ async function markStaleWorkerNeedsUser(args: {
  * whose worker died while the user was reading a different one was never
  * reconciled at all — and nothing else closes that gap. `syncConversationSessions`
  * skips a worker the bridge has forgotten outright (`if (!agent) continue`), and
- * its persisted branch reaches no verdict either: it returns early for planning
- * runs, derives a status equal to the one already stored for the rest, and defers
+ * its persisted branch reaches no verdict either: it derives a status equal to
+ * the one already stored, and defers
  * the interesting case to `reconcileRunRecovery` — which is itself gated on the
  * run being selected.
  *
@@ -208,7 +208,7 @@ async function settleUnwatchedOrphanedWorkers(args: {
     ));
 
   for (const run of candidateRuns) {
-    if (run.id === args.selectedRunId || !isRunEligible(run.status) || run.mode === "implementation") {
+    if (run.id === args.selectedRunId || !isRunEligible(run.status)) {
       continue;
     }
 
@@ -310,7 +310,7 @@ export async function reconcilePersistedReloadZombies(args: {
   // the bridge sees: a "working" row with no live agent is the more
   // urgent failure (UI hangs forever) than a "starting" row past its
   // grace window.
-  const orphanedActiveWorker = args.bridgeAgentNames && run.mode !== "implementation"
+  const orphanedActiveWorker = args.bridgeAgentNames
     ? runWorkers.find((worker) => isOrphanedActiveWorker(worker, args.bridgeAgentNames!, nowMs))
     : undefined;
   const staleWorker = orphanedActiveWorker

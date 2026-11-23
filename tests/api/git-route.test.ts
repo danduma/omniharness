@@ -19,7 +19,6 @@ const {
   mockCancelAgent,
   mockGetAgent,
   mockSpawnAgent,
-  mockStartSupervisorRun,
 } = vi.hoisted(() => ({
   mockAskAgent: vi.fn().mockResolvedValue({
     response: "Forked run started.",
@@ -57,7 +56,6 @@ const {
     stderrBuffer: [],
     stopReason: null,
   }),
-  mockStartSupervisorRun: vi.fn(),
 }));
 
 vi.mock("@/server/bridge-client", () => ({
@@ -65,10 +63,6 @@ vi.mock("@/server/bridge-client", () => ({
   cancelAgent: mockCancelAgent,
   getAgent: mockGetAgent,
   spawnAgent: mockSpawnAgent,
-}));
-
-vi.mock("@/server/supervisor/start", () => ({
-  startSupervisorRun: mockStartSupervisorRun,
 }));
 
 import { gitRoute as POST } from "@/../tests/helpers/runtime-routes";
@@ -110,7 +104,6 @@ describe("/api/git", () => {
     mockCancelAgent.mockClear();
     mockGetAgent.mockClear();
     mockSpawnAgent.mockClear();
-    mockStartSupervisorRun.mockClear();
     await db.delete(executionEvents);
     await db.delete(messages);
     await db.delete(workers);

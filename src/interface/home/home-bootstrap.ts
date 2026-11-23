@@ -2,7 +2,6 @@ import type { HomeBootstrapPayload } from "@/shared/bootstrap";
 import { busyMessageQueueManager } from "./BusyMessageQueueManager";
 import { DEFAULT_SERVER_SETTINGS } from "./constants";
 import { homeUiStateManager } from "./HomeUiStateManager";
-import { planningReviewPreferencesManager } from "./PlanningReviewPreferencesManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
 import { parseBrowserConversationRoute, parseProjectList } from "./utils";
 import { normalizeProjectPath } from "@/lib/project-paths";
@@ -38,7 +37,6 @@ export function applyHomeBootstrap(
 
   if (bootstrap.initialQueries.settings || runnerChanged) {
     settingsDraftManager.hydrate(settingsValues, notify, runnerChanged ? "replace" : "refresh");
-    planningReviewPreferencesManager.hydrate(settingsValues);
   }
 
   // Switching servers keeps the browser URL, so a `?project=` left there by the

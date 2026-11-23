@@ -6,7 +6,6 @@ const readSource = (relativePath: string) => fs.readFileSync(path.resolve(proces
 const pageSource = [
   "src/interface/home/HomeApp.tsx",
   "src/interface/home/useAppErrors.ts",
-  "src/interface/home/useConversationExecutionStatus.ts",
   "src/interface/home/useHomeLifecycle.ts",
   "src/interface/home/useHomeMutations.ts",
   "src/interface/home/mutations/optimistic-state.ts",
@@ -28,7 +27,6 @@ const homeAppSource = [
   "src/interface/home/useConversationActions.ts",
   "src/interface/home/useHomeViewModel.ts",
 ].map(readSource).join("\n");
-const markdownContentSource = readSource("src/components/MarkdownContent.tsx");
 const terminalSource = [
   "src/components/Terminal.tsx",
   "src/components/terminal/UserMessageAttachments.tsx",
@@ -109,7 +107,6 @@ test("conversation rows expose archive in the overflow menu and commit rows expo
   expect(sidebarSource).toContain("Archive");
   expect(sidebarSource).toContain("isCommitConversation");
   expect(sidebarSource).toContain("const canArchiveConversation = !remote && isArchivableRunStatus(run.status);");
-  expect(sidebarSource).toContain('className: "border-[#c88b45]/30 bg-[#c88b45]/12 text-[#9e5f18] dark:border-[#f0b15d]/25 dark:bg-[#f0b15d]/10 dark:text-[#f0b15d]",');
   expect(sidebarSource).toContain('t("conversation.sidebar.archiveConversation", { title: run.title })');
   expect(sidebarSource).toContain("archiveRun(run)");
   expect(sidebarSource).toContain("{canArchiveConversation && isCommitConversation ? (");
@@ -270,21 +267,21 @@ test("stopping a conversation updates local worker state before the request reso
   const stopWorkerOnMutateIndex = pageSource.indexOf("onMutate:", stopWorkerMutationIndex);
   const stopWorkerRequestIndex = pageSource.indexOf('body: { action: "stop_worker", workerId }', stopWorkerMutationIndex);
   const stopWorkerOptimisticIndex = pageSource.indexOf("applyStopWorkerOptimisticUpdate(current, runId, workerId)", stopWorkerOnMutateIndex);
-  const stopSupervisorMutationIndex = pageSource.indexOf("const stopSupervisor = useMutation({");
-  const stopSupervisorOptimisticIndex = pageSource.indexOf("applyStopSupervisorOptimisticUpdate(current, runId)", stopSupervisorMutationIndex);
+  const stopConversationMutationIndex = pageSource.indexOf("const stopConversation = useMutation({");
+  const stopConversationOptimisticIndex = pageSource.indexOf("applyStopConversationOptimisticUpdate(current, runId)", stopConversationMutationIndex);
 
   expect(stopWorkerMutationIndex).toBeGreaterThanOrEqual(0);
   expect(stopWorkerOnMutateIndex).toBeGreaterThan(stopWorkerMutationIndex);
   expect(stopWorkerOnMutateIndex).toBeLessThan(stopWorkerRequestIndex);
   expect(stopWorkerOptimisticIndex).toBeGreaterThan(stopWorkerOnMutateIndex);
-  expect(stopSupervisorOptimisticIndex).toBeGreaterThan(stopSupervisorMutationIndex);
+  expect(stopConversationOptimisticIndex).toBeGreaterThan(stopConversationMutationIndex);
   expect(pageSource).toContain('status: "cancelled"');
 });
 
 test("direct control user messages expose retry and edit; assistant replies expose fork", () => {
   expect(pageSource).toContain("conversation.message.action.retryFromHere");
   expect(pageSource).toContain("conversation.message.action.editInPlace");
-  expect(pageSource).toContain("const canRecoverUserMessage = isDirectConversation || isImplementationConversation;");
+  expect(pageSource).toContain("const canRecoverUserMessage = isDirectConversation;");
   expect(pageSource).toContain("getUserMessageActions={getUserMessageActions}");
   expect(pageSource).toContain("getAssistantMessageActions={getAssistantMessageActions}");
   const userActionsStart = pageSource.indexOf("const getUserMessageActions = useCallback(");
@@ -293,21 +290,8 @@ test("direct control user messages expose retry and edit; assistant replies expo
   expect(assistantActionsStart).toBeGreaterThan(userActionsStart);
   expect(pageSource.slice(userActionsStart, assistantActionsStart)).not.toContain("conversation.message.action.forkFromHere");
   expect(pageSource.slice(assistantActionsStart)).toContain("conversation.message.action.forkFromHere");
-  expect(pageSource).toContain("actions={userMessageActions}");
   expect(pageSource).toContain('body: { action, targetMessageId, content, gitWorkspaceLaunch, manualRecovery }');
   expect(pageSource).toContain('manualRecovery: true');
-});
-
-test("implementation failures expose retry without direct-control edit and fork actions", () => {
-  expect(pageSource).toContain('const canRetryConversation = isDirectConversation || (isImplementationConversation && selectedRun?.status !== "failed");');
-  expect(pageSource).toContain("const canRecoverUserMessage = isDirectConversation || isImplementationConversation;");
-  expect(pageSource).toContain("if (!canRecoverUserMessage) {");
-  expect(pageSource).toContain("if (!isDirectConversation) {");
-  expect(pageSource).toContain("return retryActions;");
-  expect(homeAppSource).toContain("autoResumeStateRef");
-  expect(homeAppSource).toContain("failedWorkerAvailability?.availability.status !== \"ok\"");
-  expect(homeAppSource).toContain("recoverRun.mutate({");
-  expect(homeAppSource).toContain('action: "retry"');
 });
 
 test("user input messages share the direct-control bubble renderer", () => {
@@ -335,9 +319,6 @@ test("user input messages share the direct-control bubble renderer", () => {
   expect(userInputSource).toContain('role="status"');
   expect(userInputSource).toContain('aria-live="polite"');
   expect(conversationMainSource).toContain('from "./UserInputMessage";');
-  expect(conversationMainSource).toContain('<UserInputMessage');
-  expect(conversationMainSource).toContain('messageId={msg.id}');
-  expect(conversationMainSource).toContain('createdAt={msg.createdAt}');
   expect(conversationMainSource).not.toContain('rounded-[1.9rem] rounded-br-lg bg-[#242424]');
   expect(conversationMainSource).not.toContain('msg.role === "user"\n                      ? "border-transparent bg-muted/30 text-foreground"');
 });
@@ -460,10 +441,9 @@ test("direct-control terminal user messages can render the inline edit form", ()
 test("failed runs render a single persisted error in the conversation view", () => {
   expect(pageSource).not.toContain("Execution failed");
   expect(pageSource).toContain("function extractWorkerFailureDetail(messages: MessageRecord[])");
-  expect(pageSource).toContain("const visibleMessages = useMemo(() => {");
+  expect(pageSource).toContain("const visibleMessages = useMemo(");
   expect(pageSource).toContain("shouldRenderMessageInMainConversation");
   expect(pageSource).not.toContain('message.role === "system"');
-  expect(pageSource).toContain('conversationTimelineItems.map((item: ConversationTimelineItem) => {');
   expect(pageSource).toContain('action: workerFailureDetail');
   expect(pageSource).toContain(': staleFailure || looksLikeStaleSession');
   expect(pageSource).toContain('message: workerFailureDetail || (staleFailure');
@@ -474,53 +454,13 @@ test("failed runs render a single persisted error in the conversation view", () 
   expect(pageSource).toContain("Run failed");
 });
 
-test("clarification requests stay in the normal supervisor conversation", () => {
-  expect(pageSource).not.toContain("shouldHideMessageForClarificationPanel");
-  expect(pageSource).not.toContain("selectedClarifications");
-  expect(pageSource).not.toContain("ClarificationPanel");
-  expect(pageSource).toContain('return "Waiting for your reply";');
-  expect(pageSource).not.toContain("Waiting for your reply${summary");
-});
-
-test("preflight implementation confirmations expose remembered quick actions", () => {
-  const conversationMainSource = readSource("src/components/home/ConversationMain.tsx");
-  const homeAppSource = readSource("src/interface/home/HomeApp.tsx");
-  const managerSource = readSource("src/interface/home/PreflightConfirmationActionsManager.ts");
-  const localeSource = readSource("shared/locales/en.json");
-
-  expect(conversationMainSource).toContain("isPreflightConfirmationMessage");
-  expect(conversationMainSource).toContain('t("conversation.preflightConfirmation.yes")');
-  expect(conversationMainSource).toContain('t("conversation.preflightConfirmation.no")');
-  expect(conversationMainSource).toContain("preflightConfirmationActionsManager.rememberMessage(msg.id)");
-  expect(conversationMainSource).toContain("handlePreflightConfirmationAnswer");
-  expect(homeAppSource).toContain("preflightConfirmationActionsManager.hydrateFromBrowser()");
-  expect(homeAppSource).toContain("sendMessageToConversation({ runId: selectedRunId, content, clientMessageId: createSentConversationMessageId(), attachments: [] })");
-  expect(managerSource).toContain("omni.preflight-confirmation-actions.handled");
-  expect(localeSource).toContain('"conversation.preflightConfirmation.yes": "Yes, implement it"');
-  expect(localeSource).toContain('"conversation.preflightConfirmation.no": "No, let me clarify"');
-});
-
-test("supervisor conversation messages render markdown", () => {
-  expect(pageSource).toContain('msg.role === "supervisor"');
-  expect(pageSource).toContain("<MarkdownContent");
-  expect(pageSource).toContain("content={msg.content}");
-  expect(markdownContentSource).toContain("function renderInlineMarkdown");
-  // Memoized on both axes so a streaming sibling entry cannot force a
-  // re-parse of every message in the transcript.
-  expect(markdownContentSource).toContain("export const MarkdownContent = memo(");
-  expect(markdownContentSource).toContain("useMemo(\n    () => parseMarkdownBlocks(");
-  expect(markdownContentSource).not.toContain("dangerouslySetInnerHTML");
-});
-
 test("conversation error notices render below the thread content", () => {
-  const messagesIndex = pageSource.indexOf("conversationTimelineItems.length > 0 ? (");
-  const executionIndex = pageSource.indexOf("{isImplementationConversation && showConversationExecution ? (");
-  const appErrorsIndex = pageSource.indexOf("{appErrors.length > 0 ? (", executionIndex);
+  const messagesIndex = pageSource.indexOf("<DirectControlTerminalColumn>");
+  const appErrorsIndex = pageSource.indexOf("{appErrors.length > 0 ? (", messagesIndex);
   const failureNoticeIndex = pageSource.indexOf("{conversationFailure ? (", appErrorsIndex);
 
   expect(messagesIndex).toBeGreaterThanOrEqual(0);
-  expect(executionIndex).toBeGreaterThan(messagesIndex);
-  expect(appErrorsIndex).toBeGreaterThan(executionIndex);
+  expect(appErrorsIndex).toBeGreaterThan(messagesIndex);
   expect(failureNoticeIndex).toBeGreaterThan(appErrorsIndex);
 });
 
@@ -573,7 +513,7 @@ test("direct control conversations show a tiny animated working indicator while 
   expect(pageSource).toContain("const showPendingAssistantIndicator = shouldShowDirectControlWorkingIndicator({");
   expect(pageSource).toContain("renderedElicitationCount: pendingElicitations.length,");
   expect(pageSource).toContain("renderedPermissionCount: primaryConversationAgent?.pendingPermissions?.length ?? 0,");
-  expect(pageSource).toContain("const hasBusyConversation = isSupervisorRunning || Boolean(stoppableConversationWorkerId);");
+  expect(pageSource).toContain("const hasBusyConversation = Boolean(stoppableConversationWorkerId);");
   expect(pageSource).toContain("const directControlPendingAssistantStatus = resolveDirectControlPendingAssistantStatus({");
   expect(pageSource).toContain("const showDirectControlWorkingIndicator = directControlPendingAssistantStatus !== null && !isSelectedRunQuotaWaiting;");
   expect(pageSource).toContain("workerStatuses: selectedRunWorkersForDisplay.map((worker) => worker.status)");
@@ -638,7 +578,6 @@ test("mutation-created navigation is owner-guarded and keeps the route in sync",
   expect(pageSource).toContain("const ownsSelection = shouldSelectProjectMutationResult({");
   expect(pageSource).toContain("resultRunId: data.runId");
   expect(pageSource).toContain("replaceBrowserConversationPath(data.runId, null);");
-  expect(pageSource).toContain("sourceRunId: variables.runId");
 });
 
 test("frontend transport and mutation errors render as explicit notices", () => {

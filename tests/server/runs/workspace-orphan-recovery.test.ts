@@ -16,7 +16,6 @@ const {
   mockAskAgent,
   mockGetAgent,
   mockCancelAgent,
-  mockStartSupervisorRun,
 } = vi.hoisted(() => ({
   mockCreateAdHocPlan: vi.fn(),
   mockCreateBranchWorktree: vi.fn(),
@@ -24,7 +23,6 @@ const {
   mockAskAgent: vi.fn(),
   mockGetAgent: vi.fn(),
   mockCancelAgent: vi.fn().mockResolvedValue(undefined),
-  mockStartSupervisorRun: vi.fn(),
 }));
 
 vi.mock("@/server/runs/ad-hoc-plan", () => ({
@@ -52,10 +50,6 @@ vi.mock("@/server/bridge-client", () => ({
   askAgent: mockAskAgent,
   getAgent: mockGetAgent,
   cancelAgent: mockCancelAgent,
-}));
-
-vi.mock("@/server/supervisor/start", () => ({
-  startSupervisorRun: mockStartSupervisorRun,
 }));
 
 import { recoverRun } from "@/server/runs/recovery";
@@ -116,7 +110,6 @@ describe("run fork workspace orphan recovery", () => {
     mockAskAgent.mockReset();
     mockGetAgent.mockReset();
     mockCancelAgent.mockClear();
-    mockStartSupervisorRun.mockClear();
     await db.delete(executionEvents);
     await db.delete(messages);
     await db.delete(workers);

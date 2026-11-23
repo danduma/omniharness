@@ -6,7 +6,6 @@ import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { useRuntimeAPIs } from "@/runtime-api/provider";
 import { homeUiSetters } from "./HomeUiStateManager";
 import { settingsDraftManager } from "./SettingsDraftManager";
-import { planningReviewPreferencesManager } from "./PlanningReviewPreferencesManager";
 import type { AuthSessionResponse, ProjectFilesResponse, SettingsResponse, WorkerCatalogResponse } from "./types";
 
 export interface UseHomeQueriesParams {
@@ -37,7 +36,6 @@ export function useHomeQueries({
   const { setApiKeys, setSettingsDiagnostics } = homeUiSetters;
   const queryClient = useQueryClient();
   const runtimeApis = useRuntimeAPIs();
-  planningReviewPreferencesManager.configure(runtimeApis.settings.save);
   const primedBootstrapIdRef = useRef<string | null>(null);
 
   if (
@@ -76,7 +74,6 @@ export function useHomeQueries({
     queryFn: async () => {
       const data = await runtimeApis.settings.load() as SettingsResponse;
       settingsDraftManager.hydrate(data.values || {});
-      planningReviewPreferencesManager.hydrate(data.values || {});
       setApiKeys((prev) => ({ ...prev, ...settingsDraftManager.getSnapshot().draft }));
       setSettingsDiagnostics(data.diagnostics ?? []);
       return data;

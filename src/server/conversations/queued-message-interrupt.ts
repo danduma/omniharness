@@ -506,7 +506,7 @@ async function interruptAndDeliver(args: {
     updatedAt: startedAt,
   }).where(eq(queuedConversationMessages.id, record.id));
   await db.update(runs).set({
-    status: run.mode === "planning" ? "working" : "running",
+    status: "running",
     failedAt: null,
     lastError: null,
     updatedAt: startedAt,

@@ -7,7 +7,7 @@ import { handleWorkerQuotaExhaustion } from "@/server/quota/recovery";
 import { syncConversationSessions } from "@/server/conversations/sync";
 import { __resetNamedEventsForTests } from "@/server/events/named-events";
 import { resolveRecoveryIncidentsDisprovedByActiveWork, resolveRecoveryIncidentsAfterHealthyTurn } from "@/server/runs/recovery-incidents";
-import { resetDurableSupervisorWakeSchedulerForTests } from "@/server/supervisor/wake-schedule";
+import { resetQuotaWakeSchedulerForTests } from "@/server/quota/wake-schedule";
 import { eventsRouteModule as eventsRoute } from "@/../tests/helpers/runtime-routes";
 import { startLifecycleHarness, type LifecycleServer } from "../harness/server";
 import { LifecycleClient } from "../harness/client";
@@ -35,7 +35,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  resetDurableSupervisorWakeSchedulerForTests();
+  resetQuotaWakeSchedulerForTests();
   await client.close();
   await server.stop();
   await db.delete(supervisorScheduledWakes);

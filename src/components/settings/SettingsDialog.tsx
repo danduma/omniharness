@@ -7,7 +7,7 @@ import { requestBugDropOpen } from "@/components/BugDropBootstrap";
 import type { SettingsDraftState } from "@/interface/home/SettingsDraftManager";
 import type { AppErrorDescriptor } from "@/lib/app-errors";
 import { appErrorKey } from "@/lib/app-errors";
-import type { AccountRecord, LlmProfileTab, SettingsResponse, SettingsTab, WorkerAvailability, WorkerCatalogResponse } from "@/interface/home/types";
+import type { AccountRecord, SettingsResponse, SettingsTab, WorkerAvailability, WorkerCatalogResponse } from "@/interface/home/types";
 import { cn } from "@/lib/utils";
 import { ErrorNotice } from "@/components/home/ErrorNotice";
 import { buildInlineError } from "@/interface/home/utils";
@@ -15,22 +15,17 @@ import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { t, useI18nSnapshot } from "@/lib/i18n";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import { PresetCommandsSettings } from "./PresetCommandsSettings";
-import { ModelsSettingsPanel } from "./ModelsSettingsPanel";
 import { CredentialsSettingsPanel } from "./CredentialsSettingsPanel";
 import { AgentsSettingsPanel } from "./AgentsSettingsPanel";
 import { RuntimeSettingsPanel } from "./RuntimeSettingsPanel";
-import { ProjectMemorySettingsPanel } from "./ProjectMemorySettingsPanel";
-import { parseBooleanSetting } from "@/interface/home/utils";
 import type { ClaudeAccountAuthManager } from "@/interface/home/ClaudeAccountAuthManager";
 
 const SETTINGS_TABS: Array<{ value: SettingsTab; labelKey: string }> = [
   { value: "general", labelKey: "settings.tabs.general" },
   { value: "presets", labelKey: "settings.tabs.presets" },
-  { value: "models", labelKey: "settings.tabs.models" },
   { value: "credentials", labelKey: "settings.tabs.credentials" },
   { value: "agents", labelKey: "settings.tabs.agents" },
   { value: "runtime", labelKey: "settings.tabs.runtime" },
-  { value: "memory", labelKey: "settings.tabs.memory" },
 ];
 
 interface SettingsDialogProps {
@@ -38,8 +33,6 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void;
   activeSettingsTab: SettingsTab;
   setActiveSettingsTab: React.Dispatch<React.SetStateAction<SettingsTab>>;
-  activeLlmProfileTab: LlmProfileTab;
-  setActiveLlmProfileTab: React.Dispatch<React.SetStateAction<LlmProfileTab>>;
   settingsDraft: SettingsDraftState;
   setSetting: (key: string, value: string) => void;
   discardSettingsDraft: () => void;
@@ -63,7 +56,6 @@ interface SettingsDialogProps {
     isPending: boolean;
     mutate: () => void;
   };
-  activeProjectPath: string | null;
   claudeAccountAuthManager: ClaudeAccountAuthManager;
   themeMode: "day" | "night";
 }
@@ -73,8 +65,6 @@ export function SettingsDialog({
   onOpenChange,
   activeSettingsTab,
   setActiveSettingsTab,
-  activeLlmProfileTab,
-  setActiveLlmProfileTab,
   settingsDraft,
   setSetting,
   discardSettingsDraft,
@@ -89,7 +79,6 @@ export function SettingsDialog({
   settingsDiagnostics,
   resourceSnapshot,
   saveSettings,
-  activeProjectPath,
   claudeAccountAuthManager,
   themeMode,
 }: SettingsDialogProps) {
@@ -160,15 +149,6 @@ export function SettingsDialog({
                 />
               </div>
             ) : null}
-            {activeSettingsTab === "models" ? (
-              <ModelsSettingsPanel
-                activeLlmProfileTab={activeLlmProfileTab}
-                setActiveLlmProfileTab={setActiveLlmProfileTab}
-                settings={settingsDraft.draft}
-                setSetting={setSetting}
-                secretStates={secretStates}
-              />
-            ) : null}
             {activeSettingsTab === "credentials" ? (
               <CredentialsSettingsPanel
                 settings={settingsDraft.draft}
@@ -199,12 +179,6 @@ export function SettingsDialog({
                 settings={settingsDraft.draft}
                 setSetting={setSetting}
                 resourceSnapshot={resourceSnapshot}
-              />
-            ) : null}
-            {activeSettingsTab === "memory" ? (
-              <ProjectMemorySettingsPanel
-                projectPath={activeProjectPath}
-                globalMemoryEnabled={parseBooleanSetting(settingsDraft.draft.SUPERVISOR_MEMORY_ENABLED, true)}
               />
             ) : null}
 

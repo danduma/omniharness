@@ -45,9 +45,9 @@ Original command:
 ${quoteBlock(command)}
 ${formatAttachments(attachments)}
 
-## Supervisor Notes
+## Notes
 
-This file stores the original request and any attached context for the supervisor.
+This file stores the original request and any attached context.
 `;
 }
 

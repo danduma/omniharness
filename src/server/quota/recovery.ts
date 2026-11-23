@@ -6,9 +6,9 @@ import { emitNamedEvent } from "@/server/events/named-events";
 import { openRecoveryIncident, markRecoveryIncidentNeedsUser, markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
 import { getRecoveryPolicy } from "@/server/runs/recovery-policy";
 import { isTerminalRunStatus, normalizeRunStatus } from "@/server/runs/status";
-import { cancelDurableSupervisorWake, scheduleDurableSupervisorWakeAt } from "@/server/supervisor/wake-schedule";
+import { cancelQuotaWake, scheduleQuotaWakeAt } from "@/server/quota/wake-schedule";
 import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
-import { extractQuotaResetInfo, normalizeQuotaResumeAt, parseQuotaResetText, type QuotaResetInfo } from "./reset-parser";
+import { normalizeQuotaResumeAt, parseQuotaResetText, type QuotaResetInfo } from "./reset-parser";
 
 export type QuotaRecoveryResult =
   | { state: "quota_wait"; runId: string; incidentId: string; resumeAt: Date; quota: QuotaResetInfo }
@@ -251,7 +251,7 @@ async function computeResumeAt(quota: QuotaResetInfo, now: Date) {
  * actually transition the run.
  *
  * Optionally marks `details.failover_pending: true` on the incident so
- * the supervisor wake handler can detect that a failover attempt is
+ * a later quota wake can detect that a failover attempt is
  * still owed for this incident.
  */
 export async function recordWorkerQuotaBlock(args: {
@@ -369,7 +369,7 @@ export async function recordWorkerQuotaBlock(args: {
 /**
  * Step (b) of quota handling: transition the run into `quota_waiting`
  * (or `needs_recovery` if the reset cannot be scheduled) and schedule
- * the durable supervisor wake. Used after `recordWorkerQuotaBlock` when
+ * the durable quota wake. Used after `recordWorkerQuotaBlock` when
  * failover gave up, OR directly when there is no worker context.
  *
  * Clears `failover_pending` on the incident — by the time we park, we
@@ -459,7 +459,7 @@ export async function parkRunForQuotaWait(args: {
     return refused;
   }
 
-  await scheduleDurableSupervisorWakeAt({
+  await scheduleQuotaWakeAt({
     runId: args.runId,
     wakeAt: resumeAt,
     reason: "quota_wait",
@@ -481,12 +481,12 @@ export async function parkRunForQuotaWait(args: {
     now,
   });
   if (postScheduleRefusal) {
-    await cancelDurableSupervisorWake(args.runId, "quota_wait");
+    await cancelQuotaWake(args.runId, "quota_wait");
     return postScheduleRefusal;
   }
 
   await insertQuotaEvent(args.runId, args.workerId ?? null, "quota_wait_scheduled", {
-    summary: "Scheduled supervisor resume after quota reset.",
+    summary: "Scheduled resume after quota reset.",
     incidentId: args.incidentId,
     ...details,
     scheduledWakeAt: resumeAt.toISOString(),
@@ -499,61 +499,6 @@ export async function parkRunForQuotaWait(args: {
     resumeAt,
     quota: args.quota,
   };
-  });
-}
-
-async function handleSupervisorOnlyQuotaExhaustion(args: {
-  runId: string;
-  quota: QuotaResetInfo;
-  now?: Date;
-}) {
-  const now = args.now ?? new Date();
-  const { resumeAt } = await computeResumeAt(args.quota, now);
-  const details = quotaIncidentDetails({
-    quota: args.quota,
-    resetAt: args.quota.resetAt,
-    resumeAt,
-    sourceType: "supervisor",
-  });
-  const incident = await runQuotaRecoveryMutation(args.runId, async () => {
-    const refused = await refuseLateQuotaRecovery({ runId: args.runId, now });
-    if (refused) {
-      return refused;
-    }
-    return openRecoveryIncident({
-      runId: args.runId,
-      workerId: null,
-      kind: "quota_exhausted",
-      lastError: truncate(args.quota.rawText),
-      details,
-    });
-  });
-  if ("state" in incident) {
-    return incident;
-  }
-  return parkRunForQuotaWait({
-    runId: args.runId,
-    workerId: null,
-    incidentId: incident.id,
-    quota: args.quota,
-    now,
-  });
-}
-
-export async function handleSupervisorQuotaExhaustion(args: {
-  runId: string;
-  error: unknown;
-  provider?: string | null;
-  now?: Date;
-}) {
-  const quota = extractQuotaResetInfo(args.error, {
-    now: args.now,
-    provider: args.provider,
-  });
-  return handleSupervisorOnlyQuotaExhaustion({
-    runId: args.runId,
-    quota,
-    now: args.now,
   });
 }
 

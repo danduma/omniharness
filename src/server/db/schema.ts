@@ -12,10 +12,8 @@ export const runs = sqliteTable('runs', {
   id: text('id').primaryKey(),
   planId: text('plan_id').references(() => plans.id).notNull(),
   sessionType: text('session_type').notNull().default('omni'),
-  mode: text('mode').notNull().default('implementation'),
-  // For Omni runs (mode === 'implementation'): 'planning' = interactive
-  // planner phase with the supervisor dormant; 'implementing' (or null for
-  // legacy rows) = supervisor-driven implementation phase.
+  mode: text('mode').notNull().default('direct'),
+  // Written only by the removed supervisor modes; always null now.
   phase: text('phase'),
   projectPath: text('project_path'),
   title: text('title'),

@@ -5,17 +5,11 @@ import type { AgentOutputEntry } from "@/lib/agent-output";
 import type { WorkerEntry } from "@/shared/worker-entries";
 import type { GoalSnapshot } from "@/shared/goal-plan";
 
-export type ConversationModeOption = "omni" | "direct";
 export type BusyMessageAction = "queue" | "steer";
 
-// Stored run modes (runs.mode). Distinct from the picker's ConversationModeOption
-// ("omni" | "direct"): an Omni run is stored as "implementation" with a phase.
-export type RunMode = "implementation" | "planning" | "direct" | "commit";
-
-// The composer's effective mode. For a new conversation it mirrors the picker
-// (omni | direct); for an active run it reflects the run's stage so the
-// placeholder/steer behavior stays correct (planning | implementation | direct).
-export type ComposerMode = ConversationModeOption | "planning" | "implementation";
+// Stored run modes (runs.mode). `commit` is a direct conversation started from
+// a commit preset.
+export type RunMode = "direct" | "commit";
 
 export type SessionType = "omni" | "process";
 export type SessionCapability =
@@ -48,7 +42,6 @@ export type RunRecord = {
   planId: string;
   sessionType?: SessionType | null;
   mode?: RunMode | null;
-  phase?: "planning" | "implementing" | null;
   status: string;
   createdAt: string;
   updatedAt?: string | null;
@@ -80,16 +73,6 @@ export type RunRecord = {
   gitWorkspaceJson?: string | null;
   completionCommitSha?: string | null;
 };
-export type PlanItemRecord = { id: string; planId: string; title: string; phase: string | null; status: string };
-export type ClarificationRecord = {
-  id: string;
-  runId: string;
-  question: string;
-  answer: string | null;
-  status: string;
-  createdAt?: string | null;
-  updatedAt?: string | null;
-};
 export type MessageRecord = {
   id: string;
   runId: string;
@@ -109,15 +92,6 @@ export type ExecutionEventRecord = {
   planItemId?: string | null;
   eventType: string;
   details?: string | null;
-  createdAt: string;
-};
-export type SupervisorInterventionRecord = {
-  id: string;
-  runId: string;
-  workerId?: string | null;
-  interventionType: string;
-  prompt: string;
-  summary?: string | null;
   createdAt: string;
 };
 export type QueuedConversationMessageRecord = {
@@ -157,49 +131,6 @@ export type RecoveryIncidentRecord = {
   detectedAt: string;
   updatedAt: string;
   resolvedAt?: string | null;
-};
-export type PlanningReviewRunRecord = {
-  id: string;
-  runId: string;
-  status: string;
-  agentSelection: string;
-  resolvedWorkerType?: string | null;
-  roundsRequested: number;
-  roundsCompleted: number;
-  startedAt: string;
-  completedAt?: string | null;
-  lastError?: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-export type PlanningReviewRoundRecord = {
-  id: string;
-  reviewRunId: string;
-  runId: string;
-  roundNumber: number;
-  status: string;
-  workerId?: string | null;
-  resolvedWorkerType?: string | null;
-  selectionReason?: string | null;
-  findingsSummary?: string | null;
-  startedAt?: string | null;
-  completedAt?: string | null;
-  lastError?: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-export type PlanningReviewFindingRecord = {
-  id: string;
-  reviewRunId: string;
-  roundId: string;
-  runId: string;
-  severity: string;
-  category: string;
-  title: string;
-  details: string;
-  recommendation: string;
-  sourcePath?: string | null;
-  createdAt: string;
 };
 export type RunRecoveryState = {
   kind: string;
@@ -389,16 +320,10 @@ export type EventStreamState = {
   accounts: AccountRecord[];
   agents: AgentSnapshot[];
   workers: ConversationWorkerRecord[];
-  planItems: PlanItemRecord[];
-  clarifications: ClarificationRecord[];
   executionEvents: ExecutionEventRecord[];
-  supervisorInterventions: SupervisorInterventionRecord[];
   queuedMessages?: QueuedConversationMessageRecord[];
   recoveryIncidents?: RecoveryIncidentRecord[];
   recoveryState?: RunRecoveryState | null;
-  reviewRuns?: PlanningReviewRunRecord[];
-  reviewRounds?: PlanningReviewRoundRecord[];
-  reviewFindings?: PlanningReviewFindingRecord[];
   frontendErrors?: AppErrorDescriptor[];
   snapshotRunId?: string | null;
   snapshotChecksum?: string;
@@ -414,11 +339,6 @@ export type EventStreamState = {
       completeRunIds?: string[];
     };
     executionEvents?: {
-      limit: number;
-      complete: boolean;
-      oldestCreatedAt: string | null;
-    };
-    supervisorInterventions?: {
       limit: number;
       complete: boolean;
       oldestCreatedAt: string | null;
@@ -463,7 +383,7 @@ export type ClaudeAccountAuthResponse = {
 };
 export type AccountRemovalResponse = { ok: true; accountId: string; profileDataPreserved: true };
 export type AccountPurgeResponse = { ok: true; accountId: string; profileDataPurged: true };
-export type SettingsTab = "general" | "presets" | "models" | "credentials" | "agents" | "runtime" | "memory";
+export type SettingsTab = "general" | "presets" | "credentials" | "agents" | "runtime";
 
 export type ConversationSidebarTab = "projects" | "recent";
 
@@ -483,5 +403,3 @@ export type SidebarGroup = { path: string; name: string; runs: SidebarRun[] };
 export type NoticeTone = "error" | "warning" | "success" | "progress";
 export type NoticeDescriptor = AppErrorDescriptor & { tone?: NoticeTone };
 
-export type LlmProfileTab = "supervisor" | "fallback" | "memory";
-export type LlmFieldPrefix = "SUPERVISOR_LLM" | "SUPERVISOR_FALLBACK_LLM" | "SUPERVISOR_MEMORY_LLM";

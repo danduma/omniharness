@@ -174,8 +174,7 @@ and bridge-client subsystems revealed the structural gaps.
 
 `/api/events` emits exactly one named event: `update`, whose payload is the
 *entire* current state of the world for the selected run (messages, plans,
-runs, workers, planItems, clarifications, executionEvents, supervisor
-interventions, queued messages, recovery incidents, review runs/rounds/findings).
+runs, workers, executionEvents, queued messages, recovery incidents).
 
 There are no other named events. An observer cannot ask "did a worker spawn?"
 or "was a recovery attempted?" — only "is the state now different?" To answer
@@ -453,22 +452,17 @@ column and emit `artifact.payload_missing` so an operator can repair.
 
 ### Rule 10: `awaiting_user` implies a visible question
 
-A selected run with `status="awaiting_user"` must include a visible supervisor
-message with kind `clarification` or `implementation_confirmation`. The
-transition that creates this state must persist the clarification row, the
-supervisor message, the run status, and the lifecycle event before notifying
-SSE clients.
-
-If a snapshot violates this invariant, it surfaces a `Lifecycle` frontend
-error instead of leaving the UI stuck on "Loading Omni's question". The error
-is not a substitute for the invariant; it is the safety rail that makes any
-future violation observable.
+A selected run with `status="awaiting_user"` must be waiting on a question the
+worker itself asked: an open elicitation or permission request in its stream,
+recorded with a `direct_worker_awaiting_user` event. (The supervisor
+clarification rows that used to satisfy this rule went away with the
+supervisor.)
 
 ### Rule 11: terminal user actions retire recovery ownership first
 
 A user stop is not complete when only `runs.status` and `workers.status` are
 terminal. Before publishing the terminal run state, the server synchronously
-cancels volatile and durable wakes, clears wake leases, and resolves every open
+cancels the durable quota wake and resolves every open
 recovery incident with its normal named event. Otherwise a later sync or timer
 still owns permission to reactivate the run. Once cancelled, the run rejects
 late live-worker snapshots from the interrupted turn even when the provider
@@ -720,17 +714,9 @@ Walked every `} catch {` in `src/server/**` and `src/app/api/**`. Findings:
   state-mutating paths.
 
 Future audit passes should look at:
-- ~~Early-return sites in `supervisor/observer.ts` (decision branches).~~
-  **Done.** All 16 `stopRunObserver` call sites now pass a typed
-  `reason` (`run_terminated`, `run_failed`, `cwd_mismatch`,
-  `snapshot_invalid`, `quota_exhausted`, `fatal_bridge_error`,
-  `explicit`). `supervisor.stopped` is emitted from inside
-  `stopRunObserver` itself, guarded by `wasActive` so bare stop calls
-  on never-started runs don't spam the stream. Scenario:
-  `tests/lifecycle/scenarios/supervisor-stopped.test.ts`.
-- ~~Every `if (!latestRun)` short-circuit that stops the observer.~~
-  Covered by the above — those now emit `supervisor.stopped` with
-  reason `run_terminated`.
+- ~~Early-return sites in the supervisor observer.~~ Moot: the supervisor
+  (implementation and planning modes) was removed on 2026-11-23. Every
+  conversation is now a direct conversation with one CLI agent.
 
 ### Claude model gateway lifecycle
 
@@ -806,7 +792,6 @@ first prompt is persisted through the ordinary unified worker conversation strea
 | `cross-cli-handoff-with-concurrent-planning` | An unrelated planning run in the same checkout neither vetoes the handoff nor gets stopped |
 | `flaky-network` | Seeded HTTP flake: server stays consistent, deterministic across seed |
 | `worker-spawn-failure` | Bridge `spawnAgent` rejection now emits `error.surfaced(worker.spawn.failed)` instead of going silent |
-| `supervisor-stopped` | Every observer stop site emits `supervisor.stopped` with a typed reason (`run_terminated`, `run_failed`, `cwd_mismatch`, `snapshot_invalid`, `quota_exhausted`, `fatal_bridge_error`, `explicit`) |
 
 ### Real protocol bug found via the harness
 

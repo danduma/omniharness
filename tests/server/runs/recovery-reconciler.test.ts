@@ -6,21 +6,16 @@ import { accounts, executionEvents, messages, plans, queuedConversationMessages,
 import { __resetNamedEventsForTests, getNamedEventsSince } from "@/server/events/named-events";
 import { readWorkerOutputEntries, writeWorkerOutputEntries } from "@/server/workers/output-store";
 
-const { mockAskAgent, mockGetAgent, mockSpawnAgent, mockStartSupervisorRun } = vi.hoisted(() => ({
+const { mockAskAgent, mockGetAgent, mockSpawnAgent } = vi.hoisted(() => ({
   mockAskAgent: vi.fn(),
   mockGetAgent: vi.fn(),
   mockSpawnAgent: vi.fn(),
-  mockStartSupervisorRun: vi.fn(),
 }));
 
 vi.mock("@/server/bridge-client", () => ({
   askAgent: mockAskAgent,
   getAgent: mockGetAgent,
   spawnAgent: mockSpawnAgent,
-}));
-
-vi.mock("@/server/supervisor/start", () => ({
-  startSupervisorRun: mockStartSupervisorRun,
 }));
 
 import { reconcileRunRecovery } from "@/server/runs/recovery-reconciler";
@@ -124,7 +119,6 @@ describe("reconcileRunRecovery", () => {
     mockAskAgent.mockReset();
     mockGetAgent.mockReset();
     mockSpawnAgent.mockReset();
-    mockStartSupervisorRun.mockReset();
     await db.delete(recoveryIncidents);
     await db.delete(executionEvents);
     await db.delete(queuedConversationMessages);
@@ -225,100 +219,6 @@ describe("reconcileRunRecovery", () => {
     expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
       accountId,
       resumeSessionId: "session-direct-1",
-    }));
-  });
-
-  it("does not auto-resume a missing implementation worker while awaiting user input", async () => {
-    const { runId, workerId } = await createImplementationRun();
-    await db.update(runs).set({
-      status: "awaiting_user",
-    }).where(eq(runs.id, runId));
-    await db.update(workers).set({
-      bridgeSessionId: "session-paused-1",
-    }).where(eq(workers.id, workerId));
-
-    const result = await reconcileRunRecovery({ runId, liveAgents: [], source: "conversation-sync" });
-
-    expect(result.action).toBe("none");
-    expect(mockSpawnAgent).not.toHaveBeenCalled();
-    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
-    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
-    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
-    expect(run?.status).toBe("awaiting_user");
-    expect(worker?.status).toBe("working");
-    expect(incident).toBeUndefined();
-    expect(events.some((event) => event.eventType === "recovery_paused_for_user")).toBe(true);
-  });
-
-  it("restarts implementation runs when a saved session is rejected by the bridge", async () => {
-    const { runId, workerId } = await createImplementationRun();
-    await db.update(workers).set({
-      bridgeSessionId: "missing-session",
-    }).where(eq(workers.id, workerId));
-    mockSpawnAgent.mockRejectedValue(new Error('Spawn failed: failed to start gemini agent via gemini: {"code":-32603,"message":"Internal error","data":{"details":"Invalid session identifier \\"missing-session\\"."}}'));
-
-    const result = await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
-
-    expect(result.action).toBe("restart_from_checkpoint");
-    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
-    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
-    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
-    expect(run?.status).toBe("running");
-    expect(run?.lastError).toBeNull();
-    expect(worker?.status).toBe("lost");
-    expect(incident).toMatchObject({
-      kind: "session_missing",
-      status: "resolved",
-      autoAttemptCount: 2,
-    });
-  });
-
-  it("recreates the same implementation worker when Gemini cannot load the saved chat file", async () => {
-    const { runId, workerId } = await createImplementationRun();
-    await db.update(workers).set({
-      bridgeSessionId: "corrupt-session",
-      bridgeSessionMode: "full-access",
-      type: "gemini",
-    }).where(eq(workers.id, workerId));
-    mockSpawnAgent
-      .mockRejectedValueOnce(new Error('Spawn failed: failed to start gemini agent via gemini: {"code":-32603,"message":"Internal error","data":{"details":"Failed to initialize chat: Failed to load resumed session data from file"}}'))
-      .mockResolvedValueOnce({
-        name: workerId,
-        type: "gemini",
-        cwd: process.cwd(),
-        state: "working",
-        sessionId: "fresh-session",
-        sessionMode: "full-access",
-        lastText: "",
-        currentText: "",
-        stderrBuffer: [],
-        stopReason: null,
-      });
-
-    const result = await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
-
-    expect(result.action).toBe("resume_session");
-    expect(mockSpawnAgent).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      name: workerId,
-      resumeSessionId: "corrupt-session",
-    }));
-    expect(mockSpawnAgent).toHaveBeenNthCalledWith(2, expect.not.objectContaining({
-      resumeSessionId: expect.any(String),
-    }));
-    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
-    const events = await db.select().from(executionEvents).where(eq(executionEvents.runId, runId));
-    expect(worker?.status).toBe("working");
-    expect(worker?.bridgeSessionId).toBe("fresh-session");
-    expect(events.map((event) => event.eventType)).toEqual(expect.arrayContaining([
-      "worker_session_missing",
-      "worker_session_recreated",
-    ]));
-    expect(getNamedEventsSince(0, { runId }).events.map((entry) => entry.event)).toContainEqual(expect.objectContaining({
-      kind: "worker.recreated",
-      runId,
-      workerId,
     }));
   });
 
@@ -777,35 +677,6 @@ describe("reconcileRunRecovery", () => {
     // A reopened incident must not still carry a resolution stamp.
     expect(incident?.resolvedAt).toBeNull();
     expect(incident?.lastError).toContain("worker exploded");
-  });
-
-  it("restarts implementation runs from the latest checkpoint when no saved session exists", async () => {
-    const { runId, workerId } = await createImplementationRun();
-    await db.insert(queuedConversationMessages).values({
-      id: "queue-1",
-      runId,
-      targetWorkerId: workerId,
-      action: "steer",
-      content: "Also fix the padding",
-      status: "failed",
-      lastError: `Ask failed: Agent not found: ${workerId}`,
-      createdAt: new Date(1),
-      updatedAt: new Date(1),
-      deliveredAt: null,
-    });
-
-    const result = await reconcileRunRecovery({ runId, liveAgents: [], source: "test" });
-
-    expect(result.action).toBe("restart_from_checkpoint");
-    expect(mockStartSupervisorRun).toHaveBeenCalledWith(runId);
-    const worker = await db.select().from(workers).where(eq(workers.id, workerId)).get();
-    const runMessages = await db.select().from(messages).where(eq(messages.runId, runId));
-    const queued = await db.select().from(queuedConversationMessages).where(eq(queuedConversationMessages.id, "queue-1")).get();
-    const incident = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId)).get();
-    expect(worker?.status).toBe("lost");
-    expect(queued?.status).toBe("delivered");
-    expect(runMessages.some((message) => message.content === "Also fix the padding")).toBe(true);
-    expect(incident?.status).toBe("resolved");
   });
 
   // Regression (run fc8d9cb681ef): every sweep re-observed the incident and

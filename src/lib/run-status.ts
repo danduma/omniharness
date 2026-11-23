@@ -12,17 +12,3 @@ export function isTerminalRunStatus(status: string | null | undefined) {
 export function isArchivableRunStatus(status: string | null | undefined) {
   return ARCHIVABLE_RUN_STATUSES.has(normalizeRunStatus(status));
 }
-
-export function isPlanningPhaseRun(run: { phase?: string | null } | null | undefined) {
-  return run?.phase === "planning";
-}
-
-export function isActiveImplementationRun(run: { mode?: string | null; status?: string | null; phase?: string | null } | null | undefined) {
-  return Boolean(run && run.mode === "implementation" && !isTerminalRunStatus(run.status));
-}
-
-export function isRunnableImplementationRun(run: { mode?: string | null; status?: string | null; phase?: string | null } | null | undefined) {
-  return isActiveImplementationRun(run)
-    && !isPlanningPhaseRun(run)
-    && normalizeRunStatus(run?.status) !== "awaiting_user";
-}

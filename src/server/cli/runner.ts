@@ -3,7 +3,7 @@ import { db } from "@/server/db";
 import { messages, runs, workers } from "@/server/db/schema";
 import { listExecutionEventsForRun } from "@/server/events/execution-event-store";
 import { createConversation } from "@/server/conversations/create";
-import { ensureSupervisorRuntimeStarted } from "@/server/supervisor/runtime-watchdog";
+import { ensureRuntimeWatchdogStarted } from "@/server/runtime/watchdog";
 import { waitForEventStreamNotification } from "@/server/events/live-updates";
 import { getAgent, type AgentRecord } from "@/server/bridge-client";
 import { createOmniRuntime } from "@/runtime";
@@ -124,13 +124,6 @@ function shouldContinueWatching(snapshot: Awaited<ReturnType<typeof printRunUpda
   if (run.status === "done" || run.status === "failed") {
     return false;
   }
-  // Supervisor-driven runs (implementation mode, past any planning phase) keep
-  // streaming until terminal. Planning-phase Omni runs and direct/planning runs
-  // watch their single worker instead.
-  if (run.mode === "implementation" && run.phase !== "planning") {
-    return true;
-  }
-
   return snapshot.workers.some((worker) => ["starting", "working", "running"].includes(worker.status));
 }
 
@@ -203,7 +196,7 @@ export async function runOmniCli(argv: string[], io: OmniCliIo = process) {
     surface: "cli",
     label: "Omni CLI",
     hooks: {
-      onStart: ensureSupervisorRuntimeStarted,
+      onStart: ensureRuntimeWatchdogStarted,
     },
   });
 

@@ -1,0 +1,228 @@
+import { describe, expect, it, vi } from "vitest";
+import { isRecoverableBridgeConnectionError, isTransientBridgeError, retryBridgeRequest } from "@/server/bridge-client/retry";
+
+describe("isTransientBridgeError", () => {
+  it("treats fetch wrapper errors with retryable network causes as transient", () => {
+    const error = new TypeError(
+      "fetch failed",
+      { cause: Object.assign(new Error("connect ECONNREFUSED api.example.com:443"), { code: "ECONNREFUSED" }) },
+    );
+
+    expect(isTransientBridgeError(error)).toBe(true);
+  });
+
+  it("treats timed-out runtime list requests as transient", () => {
+    expect(isTransientBridgeError(new Error("Agent runtime list request timed out after 5000ms."))).toBe(true);
+  });
+
+  it("treats wrapped DNS lookup failures from model providers as transient", () => {
+    expect(isTransientBridgeError(new Error(
+      "Cannot connect to API: getaddrinfo ENOTFOUND generativelanguage.googleapis.com (caused by: getaddrinfo ENOTFOUND generativelanguage.googleapis.com)",
+    ))).toBe(true);
+  });
+
+  it("treats plain-text retryable bridge failures as transient", () => {
+    expect(isTransientBridgeError(new Error("Ask failed: Agent is busy: worker-1"))).toBe(true);
+    expect(isTransientBridgeError(new Error("Get agent failed: read ECONNRESET"))).toBe(true);
+    expect(isTransientBridgeError(new Error("Cannot connect to API: connect ETIMEDOUT api.example.com"))).toBe(true);
+  });
+
+  it("treats worker output lock contention as transient", () => {
+    expect(isTransientBridgeError(Object.assign(new Error("Timed out waiting for worker output lock: /tmp/worker.jsonl.lock"), {
+      code: "ELOCKED",
+    }))).toBe(true);
+    expect(isTransientBridgeError(new Error("Lock file is already being held"))).toBe(true);
+  });
+
+  it("identifies wrapped connection failures for unlimited connection recovery", () => {
+    const reset = new TypeError(
+      "fetch failed",
+      { cause: Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }) },
+    );
+    const timeout = Object.assign(new Error("connect ETIMEDOUT api.example.com:443"), { code: "ETIMEDOUT" });
+    const dns = new Error("getaddrinfo EAI_AGAIN api.example.com");
+
+    expect(isRecoverableBridgeConnectionError(reset)).toBe(true);
+    expect(isRecoverableBridgeConnectionError(timeout)).toBe(true);
+    expect(isRecoverableBridgeConnectionError(dns)).toBe(true);
+    expect(isRecoverableBridgeConnectionError(new Error("API key not valid"))).toBe(false);
+  });
+
+  it("does not retry clear configuration errors", () => {
+    expect(isTransientBridgeError(new Error("API key not valid"))).toBe(false);
+    expect(isTransientBridgeError(new Error(
+      'No spawnable worker is available. Requested "claude" failed because claude worker binary is not installed. Checked allowed workers: claude.',
+    ))).toBe(false);
+  });
+
+  it("does not retry permanent provider account failures hidden behind bridge wrappers", () => {
+    const billingError = Object.assign(
+      new Error("Internal error: API Error: 402 Runner billing required: cap_exceeded"),
+      { status: 500 },
+    );
+    const quotaError = Object.assign(
+      new Error("Model request failed: resource exhausted due to insufficient quota"),
+      { status: 500 },
+    );
+
+    expect(isTransientBridgeError(billingError)).toBe(false);
+    expect(isTransientBridgeError(quotaError)).toBe(false);
+  });
+
+  it("does not retry dead credentials the ACP adapter reports as internal errors", () => {
+    // The adapter answers a revoked token with a JSON-RPC internal error, which
+    // the bridge surfaces as HTTP 500 — a retryable status. Classifying that as
+    // transient made recovery spin on it instead of telling the user to
+    // re-authenticate.
+    const revoked = Object.assign(
+      new Error("Ask failed: Internal error: Failed to authenticate. API Error: 401 OAuth access token has been revoked."),
+      { status: 500 },
+    );
+    const refreshRevoked = Object.assign(
+      new Error("Ask failed: Internal error: refresh token was revoked"),
+      { status: 500 },
+    );
+    const authFailed = Object.assign(
+      new Error("Spawn failed: authentication_failed"),
+      { status: 500 },
+    );
+    const invalidKey = Object.assign(
+      new Error("Ask failed: Internal error: invalid_api_key"),
+      { status: 500 },
+    );
+
+    expect(isTransientBridgeError(revoked)).toBe(false);
+    expect(isTransientBridgeError(refreshRevoked)).toBe(false);
+    expect(isTransientBridgeError(authFailed)).toBe(false);
+    expect(isTransientBridgeError(invalidKey)).toBe(false);
+  });
+
+  it("does not retry incomplete ACP diagnostic results", () => {
+    const diagnostic = Object.assign(
+      new Error("Ask failed: Internal error: [ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"),
+      { status: 500 },
+    );
+
+    expect(isTransientBridgeError(diagnostic)).toBe(false);
+  });
+
+  it("still retries rate limits that mention authentication-adjacent wording", () => {
+    expect(isTransientBridgeError(Object.assign(
+      new Error("Ask failed: API Error: 429 rate limit reached for this account"),
+      { status: 429 },
+    ))).toBe(true);
+  });
+
+  it("honors an explicit retryable override on wrapped errors", () => {
+    expect(isTransientBridgeError(Object.assign(new Error("Spawn failed: failed to start agent"), {
+      status: 500,
+      retryable: false,
+    }))).toBe(false);
+  });
+});
+
+describe("retryBridgeRequest", () => {
+  it("logs retryable failures as one useful line without dumping the error stack", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const reset = Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
+    const operation = vi.fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed", { cause: reset }))
+      .mockResolvedValueOnce("ok");
+
+    await expect(retryBridgeRequest(operation, {
+      attempts: 3,
+      maxDelayMs: 15 * 60_000,
+      retryIndefinitelyWhen: isRecoverableBridgeConnectionError,
+      sleep,
+    })).resolves.toBe("ok");
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("attempt 1"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("retrying indefinitely"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("next delay 1000ms"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("max delay 900000ms"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("TypeError: fetch failed"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("ECONNRESET: read ECONNRESET"));
+
+    const warning = warnSpy.mock.calls[0]?.[0];
+    expect(typeof warning).toBe("string");
+    expect(warning).not.toContain("\n");
+    expect(warnSpy.mock.calls[0]).toHaveLength(1);
+    warnSpy.mockRestore();
+  });
+
+  it("retries a transient failure and returns the later success", async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const operation = vi.fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce("ok");
+
+    await expect(retryBridgeRequest(operation, { attempts: 3, initialDelayMs: 25, sleep })).resolves.toBe("ok");
+    expect(operation).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(25);
+  });
+
+  it("stops immediately for non-retryable failures", async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const operation = vi.fn().mockRejectedValue(new Error("API key not valid"));
+
+    await expect(retryBridgeRequest(operation, { attempts: 3, initialDelayMs: 25, sleep })).rejects.toThrow("API key not valid");
+    expect(operation).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("throws after exhausting retries for repeated transient failures", async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const operation = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+
+    await expect(retryBridgeRequest(operation, { attempts: 3, initialDelayMs: 25, sleep })).rejects.toThrow("fetch failed");
+    expect(operation).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenNthCalledWith(1, 25);
+    expect(sleep).toHaveBeenNthCalledWith(2, 50);
+  });
+
+  it("keeps retrying ECONNRESET failures beyond the attempt limit with capped exponential backoff", async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const reset = Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
+    const operation = vi.fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed", { cause: reset }))
+      .mockRejectedValueOnce(new TypeError("fetch failed", { cause: reset }))
+      .mockRejectedValueOnce(new TypeError("fetch failed", { cause: reset }))
+      .mockRejectedValueOnce(new TypeError("fetch failed", { cause: reset }))
+      .mockResolvedValueOnce("restored");
+
+    await expect(retryBridgeRequest(operation, {
+      attempts: 3,
+      initialDelayMs: 25,
+      maxDelayMs: 60,
+      retryIndefinitelyWhen: isRecoverableBridgeConnectionError,
+      sleep,
+    })).resolves.toBe("restored");
+
+    expect(operation).toHaveBeenCalledTimes(5);
+    expect(sleep).toHaveBeenNthCalledWith(1, 25);
+    expect(sleep).toHaveBeenNthCalledWith(2, 50);
+    expect(sleep).toHaveBeenNthCalledWith(3, 60);
+    expect(sleep).toHaveBeenNthCalledWith(4, 60);
+  });
+
+  it("times out an operation attempt so supervisor leases are not held indefinitely", async () => {
+    vi.useFakeTimers();
+    const operation = vi.fn(() => new Promise<string>(() => {
+      // Simulate a model/provider request that never resolves.
+    }));
+
+    const request = retryBridgeRequest(operation, {
+      attempts: 1,
+      operationTimeoutMs: 75,
+    });
+    const expectation = expect(request).rejects.toThrow("Bridge request timed out after 75ms");
+
+    await vi.advanceTimersByTimeAsync(75);
+
+    await expectation;
+    expect(operation).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+});

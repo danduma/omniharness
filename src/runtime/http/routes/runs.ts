@@ -1,4 +1,3 @@
-import { randomUUID } from "crypto";
 import fs from "fs";
 import { eq, lt, sql, type SQL } from "drizzle-orm";
 import { db } from "@/server/db";
@@ -6,10 +5,6 @@ import { cancelAgent, cancelAgentTerminalProcess } from "@/server/bridge-client"
 import { errorResponse } from "@/server/api-errors";
 import { recoverRun } from "@/server/runs/recovery";
 import { assertRunNotHandoffFenced } from "@/server/handoff/fence";
-import { stopRunObserver } from "@/server/supervisor/observer";
-import { cancelSupervisorWake } from "@/server/supervisor/wake";
-import { cancelDurableSupervisorWake } from "@/server/supervisor/wake-schedule";
-import { clearSupervisorWakeLease } from "@/server/supervisor/lease";
 import { getAppDataPath } from "@/server/app-root";
 import { requireApiSession } from "@/server/auth/guards";
 import { notifyEventStreamSubscribers } from "@/server/events/live-updates";
@@ -19,7 +14,6 @@ import { getRunLatestUnreadTimestamp } from "@/lib/conversation-state";
 import { isPermanentAccountFailure } from "@/lib/provider-account-failures";
 import { compactRunOutputs } from "@/server/workers/output-store";
 import { cleanupRunArtifacts } from "@/server/artifacts/cleanup";
-import { pauseForClarifications } from "@/server/clarifications/loop";
 import { isArchivableRunStatus, isTerminalRunStatus } from "@/server/runs/status";
 import { markRecoveryIncidentResolved } from "@/server/runs/recovery-incidents";
 import {
@@ -62,6 +56,7 @@ import {
   requestConversationDeletion,
   waitForConversationBackgroundTasks,
 } from "@/server/conversations/worker-turn-gate";
+import { cancelQuotaWake } from "@/server/quota/wake-schedule";
 import { runQuotaRecoveryMutation } from "@/server/quota/recovery-mutation";
 import { settleHandoffsForTargetDeletion } from "@/server/handoff/service";
 
@@ -89,19 +84,19 @@ function isActiveWorkerStatus(status: string | null | undefined) {
   return ["starting", "working", "idle", "stuck", "cred-exhausted"].includes(normalizeWorkerStatus(status));
 }
 
-function isSupervisorStopAlreadySettled(status: string | null | undefined) {
+function isStopAlreadySettled(status: string | null | undefined) {
   return isTerminalRunStatus(status) || normalizeWorkerStatus(status) === "canceled";
 }
 
 // Classification lives in @/lib/provider-account-failures so this route, the
-// supervisor retry gate and the frontend auto-resume gate cannot drift apart
+// worker retry gate and the frontend auto-resume gate cannot drift apart
 // again — they previously disagreed about whether "403 Account suspended"
 // was permanent.
 
 function actionLabelForPostAction(action: unknown) {
   switch (action) {
-    case "stop_supervisor":
-      return "Stop supervisor";
+    case "stop_conversation":
+      return "Stop conversation";
     case "stop_worker":
       return "Stop worker";
     case "stop_worker_terminal":
@@ -191,7 +186,6 @@ function readGitWorkspaceLaunch(value: unknown) {
   };
 }
 
-const USER_STOPPED_WORKER_QUESTION = "I paused the active workers after you stopped one. Is there anything you want to modify before I continue?";
 
 function requireRunId(context: OmniRequestContext) {
   const runId = context.params?.id?.trim();
@@ -258,10 +252,7 @@ async function cancelWorker(worker: typeof workers.$inferSelect) {
 }
 
 async function settleRunRecoveryAfterUserStop(runId: string) {
-  cancelSupervisorWake(runId);
-  await cancelDurableSupervisorWake(runId);
-  await clearSupervisorWakeLease(runId);
-
+  await cancelQuotaWake(runId);
   const incidents = await db.select().from(recoveryIncidents).where(eq(recoveryIncidents.runId, runId));
   const unresolvedIncidents = incidents.filter((incident) => (
     incident.status === "open"
@@ -277,36 +268,6 @@ async function settleRunRecoveryAfterUserStop(runId: string) {
       details: { reason: "user_stopped" },
     });
   }
-}
-
-async function pauseImplementationRunAfterWorkerStop(runId: string, stoppedWorkerId: string) {
-  cancelSupervisorWake(runId);
-  stopRunObserver(runId);
-  await clearSupervisorWakeLease(runId);
-
-  const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
-  const activeWorkers = runWorkers.filter((worker) => isActiveWorkerStatus(worker.status));
-  for (const worker of activeWorkers) {
-    await cancelWorker(worker);
-  }
-
-  await insertExecutionEvent(runId, "worker_stop_requested", {
-    summary: `Paused work because ${stoppedWorkerId} was stopped by the user.`,
-    reason: "User stopped a worker.",
-    userInitiated: true,
-    stoppedWorkerId,
-    cancelledWorkerIds: activeWorkers.map((worker) => worker.id),
-  }, stoppedWorkerId);
-
-  await db.insert(messages).values({
-    id: randomUUID(),
-    runId,
-    role: "supervisor",
-    kind: "clarification",
-    content: USER_STOPPED_WORKER_QUESTION,
-    createdAt: new Date(),
-  });
-  await pauseForClarifications(runId, [USER_STOPPED_WORKER_QUESTION]);
 }
 
 async function markRunRead(runId: string, run: typeof runs.$inferSelect) {
@@ -547,7 +508,7 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
 
     const sessionType = normalizeSessionType(actionRun.sessionType);
     if (sessionType === "process" && action !== "archive") {
-      if (action === "stop_supervisor" || action === "stop_worker") {
+      if (action === "stop_worker") {
         const provider = getSessionProvider("process");
         return Response.json(await provider.stop({ runId, reason: "user" }));
       }
@@ -592,53 +553,18 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
       return Response.json({ ok: true, runId, archivedAt });
     }
 
-    if (action === "stop_supervisor") {
-      return runQuotaRecoveryMutation(runId, async () => {
-        const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-        if (!run) {
-          return errorResponse("Run not found", {
-            status: 404,
-            source: "Runs",
-            action: "Stop supervisor",
-          });
-        }
-
-        if (isSupervisorStopAlreadySettled(run.status)) {
-          return Response.json({
-            ok: true,
-            runId,
-            alreadyStopped: true,
-            status: run.status,
-          });
-        }
-
-        stopRunObserver(runId);
-
-        // Persist the terminal ownership barrier while holding the same
-        // per-run mutation fence used by quota recovery. A recovery callback
-        // can finish before Stop or refuse after it, never interleave halfway.
-        await db.update(runs).set({
-          status: "cancelled",
-          updatedAt: new Date(),
-        }).where(eq(runs.id, runId));
-
-        const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
-        const activeWorkers = runWorkers.filter((worker) => isActiveWorkerStatus(worker.status));
-        for (const worker of activeWorkers) {
-          await cancelWorker(worker);
-        }
-
-        await settleRunRecoveryAfterUserStop(runId);
-        await insertExecutionEvent(runId, "supervisor_stopped", {
-          summary: "Stopped supervisor and cancelled active workers.",
-          reason: "User stopped the supervisor.",
-          userInitiated: true,
-          cancelledWorkerIds: activeWorkers.map((worker) => worker.id),
+    if (action === "stop_conversation") {
+      const result = await stopConversationForApi(runId, "user");
+      if (!result.ok) {
+        return errorResponse(result.error.message, {
+          status: result.status,
+          source: "Runs",
+          action: "Stop conversation",
         });
-        notifyEventStreamSubscribers();
-
-        return Response.json({ ok: true, runId });
-      });
+      }
+      return Response.json(result.alreadyStopped
+        ? { ok: true, runId, alreadyStopped: true, status: result.status }
+        : { ok: true, runId });
     }
 
     if (action === "stop_worker") {
@@ -659,14 +585,6 @@ export const handleRunPostRequest: OmniHttpHandler = async (request, context) =>
             source: "Runs",
             action: "Stop worker",
           });
-        }
-
-        const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-        if (run?.mode === "implementation") {
-          await pauseImplementationRunAfterWorkerStop(runId, workerId);
-          notifyEventStreamSubscribers();
-
-          return Response.json({ ok: true, runId, workerId, paused: true });
         }
 
         await cancelWorker(worker);
@@ -831,9 +749,6 @@ export async function deleteConversationForApi(runId: string): Promise<Conversat
     requestConversationDeletion(runId);
     deletionRequested = true;
 
-    cancelSupervisorWake(runId);
-    stopRunObserver(runId);
-
     const plan = await db.select().from(plans).where(eq(plans.id, run.planId)).get();
     const runWorkers = await db.select().from(workers).where(eq(workers.runId, runId));
     const workerIds = runWorkers.map((worker) => worker.id);
@@ -949,7 +864,10 @@ export type ConversationStopResult =
   | { ok: true; runId: string; status: string; alreadyStopped: boolean }
   | { ok: false; status: 404 | 409; error: Error };
 
-export async function stopConversationForApi(runId: string): Promise<ConversationStopResult> {
+export async function stopConversationForApi(
+  runId: string,
+  source: "public_api" | "user" = "public_api",
+): Promise<ConversationStopResult> {
   return runQuotaRecoveryMutation(runId, async () => {
     const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
     if (!run) {
@@ -958,11 +876,10 @@ export async function stopConversationForApi(runId: string): Promise<Conversatio
     if (normalizeSessionType(run.sessionType) === "process") {
       return { ok: false as const, status: 409 as const, error: new Error("Process sessions cannot be stopped through the public API") };
     }
-    if (isSupervisorStopAlreadySettled(run.status)) {
+    if (isStopAlreadySettled(run.status)) {
       return { ok: true as const, runId, status: run.status, alreadyStopped: true };
     }
 
-    stopRunObserver(runId);
     await db.update(runs).set({
       status: "cancelled",
       updatedAt: new Date(),
@@ -974,11 +891,13 @@ export async function stopConversationForApi(runId: string): Promise<Conversatio
       await cancelWorker(worker);
     }
     await settleRunRecoveryAfterUserStop(runId);
-    await insertExecutionEvent(runId, "supervisor_stopped", {
-      summary: "Stopped conversation and cancelled active workers through the public API.",
-      reason: "Public API request.",
+    await insertExecutionEvent(runId, "conversation_stopped", {
+      summary: source === "public_api"
+        ? "Stopped conversation and cancelled active workers through the public API."
+        : "Stopped conversation and cancelled active workers.",
+      reason: source === "public_api" ? "Public API request." : "User stopped the conversation.",
       userInitiated: true,
-      source: "public_api",
+      source,
       cancelledWorkerIds: activeWorkers.map((worker) => worker.id),
     });
     notifyEventStreamSubscribers();

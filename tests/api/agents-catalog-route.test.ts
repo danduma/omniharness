@@ -10,7 +10,7 @@ const { mockGetCatalogSnapshot, mockGetWorkerAuthenticationInfo, mockGetWorkerIn
   mockIsSpawnableWorkerType: vi.fn(),
 }));
 
-vi.mock("@/server/supervisor/worker-availability", () => ({
+vi.mock("@/server/workers/availability", () => ({
   getWorkerAuthenticationInfo: mockGetWorkerAuthenticationInfo,
   getWorkerInstallationInfo: mockGetWorkerInstallationInfo,
   getWorkerTokenQuotaInfo: mockGetWorkerTokenQuotaInfo,

@@ -18,28 +18,25 @@ import {
   workers,
 } from "@/server/db/schema";
 
-const { mockNotifyEventStreamSubscribers, mockResumeSupervisorRun } = vi.hoisted(() => ({
+const { mockNotifyEventStreamSubscribers, mockResumeRunManually } = vi.hoisted(() => ({
   mockNotifyEventStreamSubscribers: vi.fn(),
-  mockResumeSupervisorRun: vi.fn().mockResolvedValue({ action: "resume_session" }),
+  mockResumeRunManually: vi.fn().mockResolvedValue({ action: "resume_session" }),
 }));
 
 vi.mock("@/server/events/live-updates", () => ({
   notifyEventStreamSubscribers: mockNotifyEventStreamSubscribers,
 }));
 
-vi.mock("@/server/supervisor/resume", () => ({
-  resumeSupervisorRun: mockResumeSupervisorRun,
+vi.mock("@/server/runs/manual-resume", () => ({
+  resumeRunManually: mockResumeRunManually,
 }));
 
 import {
   readAccountsRoute as getAccounts,
   readFilesystemRoute as browseDirectories,
   readMessagesRoute as getMessages,
-  readPlansRoute as getPlans,
   readProjectFilesRoute as getProjectFiles,
-  readProjectMemoryRoute as getProjectMemory,
   runResumeRoute as resumeRun,
-  updateProjectMemoryRoute as updateProjectMemory,
 } from "@/../tests/helpers/runtime-routes";
 
 const tempPaths: string[] = [];
@@ -81,7 +78,7 @@ async function insertRun(projectPath?: string) {
 describe("supporting API read routes", () => {
   beforeEach(async () => {
     mockNotifyEventStreamSubscribers.mockClear();
-    mockResumeSupervisorRun.mockClear();
+    mockResumeRunManually.mockClear();
     await db.delete(executionEvents);
     await db.delete(recoveryIncidents);
     await db.delete(supervisorScheduledWakes);
@@ -126,31 +123,6 @@ describe("supporting API read routes", () => {
     expect(JSON.stringify(payload)).not.toContain("secret-ref");
     expect(payload[0]).not.toHaveProperty("authRef");
     expect(payload[0]).not.toHaveProperty("auth_ref");
-  });
-
-  it("returns plans in newest-first order at the route boundary", async () => {
-    await db.insert(plans).values([
-      {
-        id: "old-plan",
-        path: "vibes/ad-hoc/old.md",
-        status: "done",
-        createdAt: new Date("2026-05-12T09:00:00Z"),
-        updatedAt: new Date("2026-05-12T09:00:00Z"),
-      },
-      {
-        id: "new-plan",
-        path: "vibes/ad-hoc/new.md",
-        status: "running",
-        createdAt: new Date("2026-05-12T10:00:00Z"),
-        updatedAt: new Date("2026-05-12T10:00:00Z"),
-      },
-    ]);
-
-    const response = await getPlans(getRequest("http://localhost/api/plans"));
-    const payload = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(payload.map((plan: { id: string }) => plan.id)).toEqual(["new-plan", "old-plan"]);
   });
 
   it("serializes message timestamps and attachment metadata", async () => {
@@ -217,38 +189,6 @@ describe("supporting API read routes", () => {
     });
   });
 
-  it("updates project memory and bumps active run metadata after restart-readable persistence", async () => {
-    const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), "omni-memory-route-"));
-    tempPaths.push(projectPath);
-    const { runId } = await insertRun(projectPath);
-
-    const enableResponse = await updateProjectMemory(postRequest("http://localhost/api/projects/memory", {
-      projectPath,
-      enabled: true,
-    }));
-    const writeResponse = await updateProjectMemory(postRequest("http://localhost/api/projects/memory", {
-      projectPath,
-      path: "notes/session.md",
-      content: "Remember the operator preference.\n",
-    }));
-    const readResponse = await getProjectMemory(getRequest(
-      `http://localhost/api/projects/memory?projectPath=${encodeURIComponent(projectPath)}&path=${encodeURIComponent("notes/session.md")}`,
-    ));
-    const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
-
-    expect(enableResponse.status).toBe(200);
-    expect(writeResponse.status).toBe(200);
-    await expect(readResponse.json()).resolves.toMatchObject({
-      enabled: true,
-      file: {
-        path: "notes/session.md",
-        content: "Remember the operator preference.\n",
-        truncated: false,
-      },
-    });
-    expect(run?.memoryMetadataRevision).toBe(2);
-  });
-
   it("calls the durable resume boundary and notifies event stream subscribers", async () => {
     const runId = randomUUID();
     const response = await resumeRun(postRequest(`http://localhost/api/runs/${runId}/resume`, {}), {
@@ -261,7 +201,7 @@ describe("supporting API read routes", () => {
       runId,
       recovery: { action: "resume_session" },
     });
-    expect(mockResumeSupervisorRun).toHaveBeenCalledWith(runId);
+    expect(mockResumeRunManually).toHaveBeenCalledWith(runId);
     expect(mockNotifyEventStreamSubscribers).toHaveBeenCalledTimes(1);
   });
 });

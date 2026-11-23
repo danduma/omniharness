@@ -14,10 +14,10 @@ import { conversationHandoffs, runs, settings, supervisorScheduledWakes, workers
 import { emitNamedEvent } from "@/server/events/named-events";
 import { captureGitBaseline } from "@/server/git/auto-commit";
 import { waitForRunMilestoneAutoCommit } from "@/server/git/run-auto-commit";
-import { isSpawnableWorkerType } from "@/server/supervisor/worker-availability";
+import { isSpawnableWorkerType } from "@/server/workers/availability";
 import { validateExplicitWorkerAccount } from "@/server/accounts/account-allocator";
 import { isWorkerTypeQuotaBlocked } from "@/server/quota/type-blocking";
-import { normalizeWorkerType } from "@/server/supervisor/worker-types";
+import { normalizeWorkerType } from "@/shared/worker-types";
 import { readWorkerEntriesTail, readWorkerLatestSeq } from "@/server/workers/output-store";
 import {
   HANDOFF_READY_MAX_LIFETIME_MS,

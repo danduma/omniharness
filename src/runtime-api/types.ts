@@ -87,7 +87,6 @@ export interface RuntimeAPIs {
     update(input: { runId: string; patch: unknown }, options?: RuntimeCallOptions): Promise<unknown>;
     remove(input: { runId: string; body?: unknown }, options?: RuntimeCallOptions): Promise<unknown>;
     resume(input: { runId: string; body?: unknown }, options?: RuntimeCallOptions): Promise<unknown>;
-    answer(input: { runId: string; body: unknown }, options?: RuntimeCallOptions): Promise<unknown>;
   };
   handoffs: {
     getActive(input: { runId: string }, options?: RuntimeCallOptions): Promise<import("@/shared/handoff").ActiveHandoffResponse>;
@@ -198,27 +197,9 @@ export interface RuntimeAPIs {
   git: {
     execute(input: unknown, options?: RuntimeCallOptions): Promise<unknown>;
   };
-  planning: {
-    list(options?: RuntimeCallOptions): Promise<unknown>;
-    promote(input: {
-      runId: string;
-      body: unknown;
-    }, options?: RuntimeCallOptions): Promise<unknown>;
-    review(input: {
-      runId: string;
-      body: unknown;
-    }, options?: RuntimeCallOptions): Promise<unknown>;
-  };
   settings: {
     load(options?: RuntimeCallOptions): Promise<unknown>;
     save(input: unknown, options?: RuntimeCallOptions): Promise<unknown>;
-    projectMemory: {
-      load(input: {
-        projectPath: string;
-        path?: string | null;
-      }, options?: RuntimeCallOptions): Promise<unknown>;
-      save(input: unknown, options?: RuntimeCallOptions): Promise<unknown>;
-    };
     claudeGateway: {
       load(options?: RuntimeCallOptions): Promise<unknown>;
       execute(input: unknown, options?: RuntimeCallOptions): Promise<unknown>;
@@ -246,7 +227,6 @@ export interface RuntimeAPIs {
       accountId: string;
       confirmAccountId: string;
     }, options?: RuntimeCallOptions): Promise<import("@/shared/home-types").AccountPurgeResponse>;
-    codexStatus(options?: RuntimeCallOptions): Promise<unknown>;
   };
   notifications: {
     load(options?: RuntimeCallOptions): Promise<unknown>;

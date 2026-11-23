@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EventStreamSnapshotCacheManager } from "@/interface/home/EventStreamSnapshotCacheManager";
 import { EventStreamStateManager } from "@/interface/home/EventStreamStateManager";
-import { applyStopSupervisorOptimisticUpdate } from "@/interface/home/mutations/optimistic-state";
+import { applyStopConversationOptimisticUpdate } from "@/interface/home/mutations/optimistic-state";
 import { resolveSelectedRecoveryState } from "@/interface/home/useRunRecoveryState";
 import { buildConversationGroups } from "@/lib/conversations";
 import type { EventStreamState } from "@/interface/home/types";
@@ -30,10 +30,7 @@ function state(runId: string, message: string, checksum: string): EventStreamSta
     accounts: [],
     agents: [],
     workers: [],
-    planItems: [],
-    clarifications: [],
     executionEvents: [],
-    supervisorInterventions: [],
     frontendErrors: [],
     snapshotRunId: runId,
     snapshotChecksum: checksum,
@@ -68,15 +65,12 @@ function awaitingUserState(args: {
       updatedAt: new Date(1_000).toISOString(),
       projectPath: null,
       title: "Awaiting run",
-      mode: "implementation",
+      mode: "direct",
     }],
     accounts: [],
     agents: [],
     workers: [],
-    planItems: [],
-    clarifications: [],
     executionEvents: [],
-    supervisorInterventions: [],
     frontendErrors: [],
     snapshotRunId: "run-awaiting",
     snapshotChecksum: args.checksum,
@@ -106,10 +100,7 @@ function multiRunState(args: {
     accounts: [],
     agents: [],
     workers: [],
-    planItems: [],
-    clarifications: [],
     executionEvents: [],
-    supervisorInterventions: [],
     frontendErrors: [],
     snapshotRunId: args.messageRunId,
     snapshotChecksum: args.checksum,
@@ -411,7 +402,7 @@ describe("EventStreamStateManager", () => {
       initialSnapshotSource: "server",
     });
 
-    manager.updateLocal((current) => applyStopSupervisorOptimisticUpdate(current, "run-quota"));
+    manager.updateLocal((current) => applyStopConversationOptimisticUpdate(current, "run-quota"));
     expect(resolveSelectedRecoveryState(manager.getSnapshot(), "run-quota")).toBeNull();
 
     manager.updateFromServer({
@@ -473,7 +464,7 @@ describe("EventStreamStateManager", () => {
       initialSnapshotSource: "server",
     });
 
-    manager.updateLocal((current) => applyStopSupervisorOptimisticUpdate(current, "run-quota"));
+    manager.updateLocal((current) => applyStopConversationOptimisticUpdate(current, "run-quota"));
     manager.updateLocal(quotaWaiting);
     manager.updateFromServer({
       ...quotaWaiting,

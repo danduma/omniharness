@@ -4,7 +4,7 @@ import { db } from "@/server/db";
 import { executionEvents, recoveryIncidents, runs, supervisorScheduledWakes, workers } from "@/server/db/schema";
 import { syncConversationSessions } from "@/server/conversations/sync";
 import { __resetNamedEventsForTests } from "@/server/events/named-events";
-import { resetDurableSupervisorWakeSchedulerForTests } from "@/server/supervisor/wake-schedule";
+import { resetQuotaWakeSchedulerForTests } from "@/server/quota/wake-schedule";
 import { eventsRouteModule as eventsRoute } from "@/../tests/helpers/runtime-routes";
 import { startLifecycleHarness, type LifecycleServer } from "../harness/server";
 import { LifecycleClient } from "../harness/client";
@@ -32,7 +32,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  resetDurableSupervisorWakeSchedulerForTests();
+  resetQuotaWakeSchedulerForTests();
   await client.close();
   await server.stop();
   await db.delete(supervisorScheduledWakes);

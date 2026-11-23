@@ -30,7 +30,7 @@ import { sanitizeAcpStream } from "./acp-stream-sanitizer";
 import { applyCodexBridgeEnv, buildCodexAcpConfig, buildCodexConfigArgs, resolveCodexSessionMode, shouldSetRequestedMode } from "./codex";
 import { normalizeReasoningEffort } from "@/shared/reasoning-effort";
 import { buildGeminiArgs, isFullAccessAgentMode, resolveFullGeminiUuid } from "./gemini";
-import { isRecoverableConnectionSupervisorError, retrySupervisorRequest } from "@/server/supervisor/retry";
+import { isRecoverableBridgeConnectionError, retryBridgeRequest } from "@/server/bridge-client/retry";
 import { codexModelCatalogConfigArgs, commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, stripAmbientCodexSessionEnv, stripRunnerControlEnv, withCodexStandardTooling, withManagedPath } from "./tool-env";
 import {
   appendOutputEntry,
@@ -2526,7 +2526,7 @@ export class AgentRuntimeManager {
       } as Parameters<acp.ClientSideConnection["prompt"]>[0];
       const absorption = this.watchForAbsorbedPrompt(record);
       let abandoned = false;
-      const promptRequest = retrySupervisorRequest(
+      const promptRequest = retryBridgeRequest(
         () => {
           // A retry re-sends the prompt. Once absorbed, the model has already
           // answered it, so sending it again would deliver the message twice.
@@ -2535,7 +2535,7 @@ export class AgentRuntimeManager {
         },
         {
           maxDelayMs: WORKER_CONNECTION_RESET_MAX_BACKOFF_MS,
-          retryIndefinitelyWhen: isRecoverableConnectionSupervisorError,
+          retryIndefinitelyWhen: isRecoverableBridgeConnectionError,
         },
       );
       let response: unknown;

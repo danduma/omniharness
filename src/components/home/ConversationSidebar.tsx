@@ -153,11 +153,6 @@ const CONVERSATION_VISUAL_CONFIG: Record<ConversationVisualKind, {
   Icon: React.ComponentType<ConversationVisualIconProps>;
   className: string;
 }> = {
-  supervisor: {
-    label: "Supervisor",
-    Icon: OmniHarnessLogoGlyph,
-    className: "border-[#c88b45]/30 bg-[#c88b45]/12 text-[#9e5f18] dark:border-[#f0b15d]/25 dark:bg-[#f0b15d]/10 dark:text-[#f0b15d]",
-  },
   direct: {
     label: "Direct control",
     Icon: SquareTerminal,
@@ -169,27 +164,6 @@ const CONVERSATION_VISUAL_CONFIG: Record<ConversationVisualKind, {
     className: "border-[#ad8247]/30 bg-[#ad8247]/10 text-[#846233] dark:border-[#e2b36b]/25 dark:bg-[#e2b36b]/10 dark:text-[#e2b36b]",
   },
 };
-
-function OmniHarnessLogoGlyph({ className, ...props }: ConversationVisualIconProps) {
-  return (
-    <svg
-      viewBox="0 0 64 64"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-      className={className}
-      {...props}
-    >
-      <g fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="butt" strokeLinejoin="miter">
-        <path d="M6.5 28A25.8 25.8 0 0 1 57.5 28" />
-        <path d="M57.5 36A25.8 25.8 0 0 1 6.5 36" />
-        <path d="M23 24v16" />
-        <path d="M41 24v16" />
-        <path d="M26.417 32L37.466 32" />
-      </g>
-    </svg>
-  );
-}
 
 type PinnedMachine = {
   name: string;

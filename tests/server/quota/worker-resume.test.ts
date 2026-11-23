@@ -462,7 +462,7 @@ describe("resumeElapsedQuotaWaits", () => {
   });
 
   it("resumes a direct run whose quota wake was consumed without resuming it", async () => {
-    // Regression: the durable wake row is deleted by `claimDueDurableSupervisorWake`
+    // Regression: the durable wake row is deleted by `claimDueQuotaWake`
     // *before* the handler checks whether it can act. When conversation sync had
     // already rewritten `runs.status` from `quota_waiting` to `running`, the wake
     // handler bailed with `run_not_runnable` — the wake row was gone, nothing
@@ -575,33 +575,5 @@ describe("resumeElapsedQuotaWaits", () => {
 
     await expect(resumeElapsedQuotaWaits({ now })).resolves.toEqual({ sweptCount: 0, clearedCount: 0 });
     expect(mockSpawnAgent).not.toHaveBeenCalled();
-  });
-
-  it("re-arms a due wake for a stranded implementation run instead of resuming it directly", async () => {
-    // The watchdog loop skips `quota_waiting` implementation runs, so a lost
-    // wake strands them the same way. Hand them back to the normal wake
-    // handler rather than duplicating the resume logic here.
-    const { runId, incidentId } = await insertRunWithQuotaIncident();
-    await db.update(runs).set({ mode: "implementation", status: "quota_waiting" }).where(eq(runs.id, runId));
-    await setElapsedIncident(incidentId, new Date(now.getTime() - 60_000));
-
-    await expect(resumeElapsedQuotaWaits({ now })).resolves.toEqual({ sweptCount: 1, clearedCount: 0 });
-
-    expect(mockSpawnAgent).not.toHaveBeenCalled();
-    const wake = await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get();
-    expect(wake?.reason).toBe("quota_wait");
-    expect(wake?.wakeAt.getTime()).toBe(now.getTime());
-  });
-
-  it("leaves an implementation run alone once it is no longer parked on quota", async () => {
-    // Guards the convergence argument: after the wake handler runs, the run
-    // moves out of `quota_waiting`, so the sweep must stop re-arming it.
-    const { runId, incidentId } = await insertRunWithQuotaIncident();
-    await db.update(runs).set({ mode: "implementation", status: "running" }).where(eq(runs.id, runId));
-    await setElapsedIncident(incidentId, new Date(now.getTime() - 60_000));
-
-    await expect(resumeElapsedQuotaWaits({ now })).resolves.toEqual({ sweptCount: 0, clearedCount: 0 });
-    expect(await db.select().from(supervisorScheduledWakes).where(eq(supervisorScheduledWakes.runId, runId)).get())
-      .toBeUndefined();
   });
 });

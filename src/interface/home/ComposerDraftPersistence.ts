@@ -48,7 +48,6 @@ export type ComposerDraftSource = Pick<
   | "attachments"
   | "selectedRunId"
   | "composerDraftsByRun"
-  | "selectedConversationMode"
   | "selectedCliAgent"
   | "selectedWorkerAccountId"
   | "selectedModel"
@@ -91,15 +90,14 @@ function readPersistedDraft(value: unknown, now: number): PersistedComposerDraft
   const selection = record.selection;
   if (!selection || typeof selection !== "object") return null;
   if (
-    typeof selection.conversationMode !== "string"
-    || typeof selection.worker !== "string"
+    typeof selection.worker !== "string"
     || typeof selection.accountId !== "string"
     || typeof selection.model !== "string"
     || typeof selection.effort !== "string"
   ) return null;
   const dirtySelectionFields = Array.isArray(record.dirtySelectionFields)
     ? record.dirtySelectionFields.filter((field): field is ComposerSelectionField => (
-        field === "conversationMode" || field === "worker" || field === "accountId" || field === "model" || field === "effort"
+        field === "worker" || field === "accountId" || field === "model" || field === "effort"
       ))
     : [];
   const attachmentIds = Array.isArray(record.attachmentIds)
@@ -110,7 +108,14 @@ function readPersistedDraft(value: unknown, now: number): PersistedComposerDraft
   return {
     command: record.command,
     commandCursor: Math.min(Math.max(Math.trunc(cursor), 0), record.command.length),
-    selection: selection as ComposerSelection,
+    // Drafts saved before the Omni mode was removed also carry a
+    // `conversationMode`; rebuild the selection so it does not ride along.
+    selection: {
+      worker: selection.worker,
+      accountId: selection.accountId,
+      model: selection.model,
+      effort: selection.effort,
+    } as ComposerSelection,
     dirtySelectionFields,
     serverSelectionVersion: typeof record.serverSelectionVersion === "string" ? record.serverSelectionVersion : null,
     ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
@@ -216,7 +221,6 @@ export function collectComposerDrafts(
     state.command,
     state.commandCursor,
     {
-      conversationMode: state.selectedConversationMode,
       worker: state.selectedCliAgent,
       accountId: state.selectedWorkerAccountId,
       model: state.selectedModel,
@@ -399,7 +403,6 @@ export class ComposerDraftPersistence {
           ? {
               command: activeDraft.command,
               commandCursor: activeDraft.commandCursor,
-              selectedConversationMode: activeDraft.selection.conversationMode,
               selectedCliAgent: activeDraft.selection.worker,
               selectedWorkerAccountId: activeDraft.selection.accountId,
               selectedModel: activeDraft.selection.model,

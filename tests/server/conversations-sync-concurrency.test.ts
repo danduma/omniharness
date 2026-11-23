@@ -27,10 +27,6 @@ vi.mock("@/server/workers/output-store", () => ({
   }),
 }));
 
-vi.mock("@/server/supervisor/start", () => ({
-  startSupervisorRun: vi.fn(),
-}));
-
 import { __resetSyncConversationSessionsQueueForTests, syncConversationSessions } from "@/server/conversations/sync";
 
 describe("syncConversationSessions concurrency", () => {
