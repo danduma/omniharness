@@ -19,8 +19,10 @@ import { readAgentSessionTitleCandidateFromTranscript } from "@/server/conversat
 import { readCodexThreadTitle } from "@/server/conversations/agent-thread-title";
 import { claudeConfigDirCandidates } from "@/server/conversations/agent-cli-homes";
 import { emitNamedEvent } from "@/server/events/named-events";
+import { queueConversationTitleGeneration } from "@/server/conversation-title";
 
 type PersistableWorkerSnapshot = Pick<AgentRecord, "outputEntries" | "currentText" | "lastText"> & {
+  state?: string | null;
   sessionId?: string | null;
   sessionMode?: string | null;
   claudeConfigDir?: string | null;
@@ -125,7 +127,48 @@ function reportMissingTitleSources(args: {
     workerType: args.worker.type,
     streamCandidateStatus: args.streamCandidateStatus,
     transcriptCandidateStatus: args.storeCandidateStatus,
-    fallback: "initial_title",
+    fallback: "harness_llm",
+  });
+}
+
+/**
+ * Enough of the first assistant reply to title the conversation from, or null
+ * while the reply is still too thin to say what the conversation is about.
+ */
+const MIN_STREAMING_REPLY_CHARS_FOR_TITLE = 300;
+
+function firstAssistantReplyForTitle(snapshot: PersistableWorkerSnapshot) {
+  const reply = snapshot.outputEntries
+      ?.find((entry) => entry.type === "message" && entry.status !== "archived" && entry.text?.trim())
+      ?.text.trim()
+    || snapshot.lastText?.trim()
+    || snapshot.currentText?.trim()
+    || "";
+  if (!reply) return null;
+  const turnFinished = snapshot.state != null && snapshot.state !== "working";
+  return turnFinished || reply.length >= MIN_STREAMING_REPLY_CHARS_FOR_TITLE ? reply : null;
+}
+
+/**
+ * The provider never named this session (Codex almost never does), so ask the
+ * harness title model. Its rank sits below every provider source, so a title
+ * the CLI publishes later still replaces it.
+ */
+async function fallBackToHarnessTitle(args: {
+  worker: typeof workers.$inferSelect;
+  snapshot: PersistableWorkerSnapshot;
+  streamCandidateStatus: "missing" | "rejected";
+  storeCandidateStatus: TitleCandidateStatus;
+}) {
+  const assistantReply = firstAssistantReplyForTitle(args.snapshot);
+  if (!assistantReply) return;
+  await queueConversationTitleGeneration({
+    runId: args.worker.runId,
+    workerId: args.worker.id,
+    workerType: args.worker.type,
+    assistantReply,
+    streamCandidateStatus: args.streamCandidateStatus,
+    transcriptCandidateStatus: args.storeCandidateStatus,
   });
 }
 
@@ -168,8 +211,8 @@ async function providerStoreTitle(worker: typeof workers.$inferSelect, sessionId
  * none is guaranteed to hold anything. The provider store is checked first so
  * an explicit provider-side rename outranks a generated stream title. Claude
  * rarely sends `session_info_update`, and Codex often puts the prompt there.
- * When both come up empty the conversation keeps the first
- * line of what the user typed, and the miss is reported once — a source that
+ * When both come up empty the harness title model names the conversation from
+ * the opening exchange, and the miss is reported once — a source that
  * quietly stops producing (as Claude's transcript title did on 2026-08-16)
  * should show up in the event log rather than only in the sidebar.
  */
@@ -189,6 +232,7 @@ async function adoptAgentGeneratedTitle(
       streamCandidateStatus = "rejected";
     }
     reportMissingTitleSources({ worker, streamCandidateStatus, storeCandidateStatus: "not_applicable" });
+    await fallBackToHarnessTitle({ worker, snapshot, streamCandidateStatus, storeCandidateStatus: "not_applicable" });
     return;
   }
 
@@ -212,6 +256,7 @@ async function adoptAgentGeneratedTitle(
     streamCandidateStatus = "rejected";
   }
   reportMissingTitleSources({ worker, streamCandidateStatus, storeCandidateStatus });
+  await fallBackToHarnessTitle({ worker, snapshot, streamCandidateStatus, storeCandidateStatus });
 }
 
 export async function persistWorkerSnapshot(

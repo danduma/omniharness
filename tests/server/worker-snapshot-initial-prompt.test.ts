@@ -245,13 +245,14 @@ describe("persistWorkerSnapshot initial direct prompt ordering", () => {
     });
 
     await persistWorkerSnapshot(workerId, {
+      state: "working",
       currentText: "",
       lastText: "The provider title channels are empty, so I traced the fallback path.",
       outputEntries: [],
     });
 
-    // No model is asked to invent one: the conversation keeps the first line
-    // of what the user typed, which is what the sidebar already showed.
+    // The turn is still running and the reply is too short to title from, so
+    // the harness title model waits and the initial title stays.
     const run = await db.select({ title: runs.title }).from(runs).where(eq(runs.id, runId)).get();
     expect(run?.title).toBe(buildInitialConversationTitle(initialPrompt));
 
@@ -261,7 +262,7 @@ describe("persistWorkerSnapshot initial direct prompt ordering", () => {
         kind: "conversation.title_sources_missing",
         runId,
         workerId,
-        fallback: "initial_title",
+        fallback: "harness_llm",
       }),
     );
     expect(emitted).not.toContainEqual(

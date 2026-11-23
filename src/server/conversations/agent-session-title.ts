@@ -47,10 +47,12 @@ export type AgentSessionTitleSource =
 const TITLE_SOURCE_RANK: Record<string, number> = {
   initial: 0,
   harness_fallback: 1,
+  // Below every provider source: the harness only names a session the CLI
+  // left unnamed, and steps aside as soon as the CLI publishes its own title.
+  harness_llm: 1,
   agent_session: 2,
   provider_generated: 3,
   agent_transcript: 3,
-  harness_llm: 4,
   agent_thread_index: 5,
   provider_custom: 6,
   manual: 100,

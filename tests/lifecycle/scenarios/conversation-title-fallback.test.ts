@@ -100,13 +100,44 @@ async function seedTitledDirectWorker(args: { userMessage: string; sessionId?: s
 }
 
 describe("conversation title fallback lifecycle", () => {
-  it("keeps the initial title and delivers the missing-source event over the production SSE stream", async () => {
+  it("keeps the initial title while the first reply is still streaming and too thin to title", async () => {
     const userMessage = "Restore reliable conversation title generation";
     const { runId, workerId, now } = await seedTitledDirectWorker({ userMessage });
 
     await client.bootstrapSnapshot(runId);
     await client.subscribe({ runId });
     await persistWorkerSnapshot(workerId, {
+      state: "working",
+      currentText: "",
+      lastText: "Looking.",
+      outputEntries: [{
+        id: "assistant-reply",
+        type: "message",
+        text: "Looking.",
+        timestamp: new Date(now.getTime() + 1_000).toISOString(),
+      }],
+    });
+
+    const missing = await client.waitFor("conversation.title_sources_missing", { timeoutMs: 10_000 });
+    expect(missing.payload).toMatchObject({
+      kind: "conversation.title_sources_missing",
+      runId,
+      workerId,
+      fallback: "harness_llm",
+    });
+    expect(client.events.filterByEvent("conversation.title_updated")).toHaveLength(0);
+    const run = await db.select({ title: runs.title }).from(runs).where(eq(runs.id, runId)).get();
+    expect(run?.title).toBe(buildInitialConversationTitle(userMessage));
+  });
+
+  it("names an unnamed session with the harness title model once the first turn ends", async () => {
+    const userMessage = "Restore reliable conversation title generation please";
+    const { runId, workerId, now } = await seedTitledDirectWorker({ userMessage });
+
+    await client.bootstrapSnapshot(runId);
+    await client.subscribe({ runId });
+    await persistWorkerSnapshot(workerId, {
+      state: "idle",
       currentText: "",
       lastText: "Both provider metadata sources are empty.",
       outputEntries: [{
@@ -117,18 +148,16 @@ describe("conversation title fallback lifecycle", () => {
       }],
     });
 
-    const missing = await client.waitFor("conversation.title_sources_missing", { timeoutMs: 10_000 });
-    expect(missing.payload).toMatchObject({
-      kind: "conversation.title_sources_missing",
+    const updated = await client.waitFor("conversation.title_updated", { timeoutMs: 10_000 });
+    expect(updated.payload).toMatchObject({
+      kind: "conversation.title_updated",
       runId,
-      workerId,
-      fallback: "initial_title",
+      source: "harness_llm",
     });
-
-    // Nothing invents a title in the CLI's place.
-    expect(client.events.filterByEvent("conversation.title_updated")).toHaveLength(0);
-    const run = await db.select({ title: runs.title }).from(runs).where(eq(runs.id, runId)).get();
-    expect(run?.title).toBe(buildInitialConversationTitle(userMessage));
+    const run = await db.select({ title: runs.title, titleSource: runs.titleSource })
+      .from(runs).where(eq(runs.id, runId)).get();
+    expect(run?.titleSource).toBe("harness_llm");
+    expect(run?.title).not.toBe(buildInitialConversationTitle(userMessage));
   });
 
   it("adopts the name Codex gave its own thread", async () => {

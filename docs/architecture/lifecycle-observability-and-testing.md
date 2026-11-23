@@ -778,16 +778,14 @@ first prompt is persisted through the ordinary unified worker conversation strea
 | `sse-resume` | `Last-Event-ID` replays the gap after a mid-stream drop |
 | `restart-resync` | `stream.resync_required` fires after a server restart |
 | `chaos-reconnect-storm` | Seeded high-drop-rate chaos doesn't lose events |
-| `plan-review-blocked` | Leftover-state throws → 409 + named events on the wire |
 | `delete-conversation-fk` | FK fail → 409 + named events, not a raw 500 |
 | `recovery-exhaustion` | Cap reached → `recovery.gave_up` + `error.surfaced` in order |
-| `worker-reattach` | Observer revival closes orphaned human-input requests, emits `worker.human_input_reconciled`, then emits `worker.reattached` |
 | `session-types` | Direct / planning / implementation conversation creation |
 | `conversation-continuation` | Mid-conversation SSE drop + reconnect; nothing lost |
-| `conversation-title-fallback` | A CLI-named session is adopted; a prompt echo is not; exhausted sources emit `conversation.title_sources_missing` and the conversation keeps its initial title |
-| `plan-improvement-flow` | Review start + worker spawn + restart-resync end-to-end |
+| `conversation-title-fallback` | A CLI-named session is adopted; a prompt echo is not; exhausted sources emit `conversation.title_sources_missing`, and the harness title model names the conversation once the first reply is substantial or the turn ends |
 | `real-restart` | **Real subprocess** kill+respawn: sqlite persists, ring resets, client gets `stream.resync_required` |
 | `direct-mode-rerun` | User pressing "re-run" — same content sent twice persists as two rows in order |
+| `direct-in-turn-steer` | A steer reaches a running Claude turn through `_session/steering` with no cancel and an ordered transcript; an unsupported, failing or hung steer still delivers by cancel-and-replace |
 | `direct-retry-steer-preemption` | An HTTP steer aborts a mutex-holding retry, returns promptly, and delivers the replacement without failing the run |
 | `cross-cli-handoff-with-concurrent-planning` | An unrelated planning run in the same checkout neither vetoes the handoff nor gets stopped |
 | `flaky-network` | Seeded HTTP flake: server stays consistent, deterministic across seed |
