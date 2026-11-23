@@ -15,24 +15,34 @@ const OPEN_INCIDENT_STATUSES = new Set(["open", "recovering", "needs_user"]);
 type AutoCommitOperation = Promise<Awaited<ReturnType<typeof runMilestoneAutoCommitInternal>>>;
 const inFlightAutoCommits = new Map<string, Set<AutoCommitOperation>>();
 
-function sanitizeCommitSubject(value: string | null | undefined) {
-  const normalized = (value ?? "")
-    .replace(/\s+/g, " ")
-    .replace(/[\r\n]/g, " ")
-    .trim();
-  const title = normalized || "completed implementation run";
-  return title.length > 72 ? `${title.slice(0, 69).trimEnd()}...` : title;
+// Titles from these sources are the user's raw prompt (or a truncation of
+// it), not a description of the change, so they never become a subject.
+const UNTRUSTED_TITLE_SOURCES = new Set(["initial", "harness_fallback"]);
+
+function subjectFromFiles(files: string[]) {
+  if (files.length === 1) return `Update ${files[0]}`;
+  const dirs = new Set(files.map((file) => path.posix.dirname(file.replace(/\\/g, "/"))));
+  if (dirs.size === 1) {
+    const [dir] = [...dirs];
+    if (dir && dir !== ".") return `Update ${files.length} files in ${dir}`;
+  }
+  return `Update ${files.length} files`;
 }
 
-function buildCommitBody(run: RunRecord, summary: string) {
-  return [
-    summary.trim() ? summary.trim() : "Implementation run completed.",
-    "",
-    `Run: ${run.id}`,
-    `Plan: ${run.planId}`,
-    "Created by milestone auto-commit.",
-    "No branch or worktree was created by this workflow.",
-  ].join("\n");
+/**
+ * Commit messages are a single plain subject line. The worker transcript,
+ * the user's prompt and harness bookkeeping never go into git history.
+ */
+export function buildMilestoneCommitSubject(run: Pick<RunRecord, "title" | "titleSource" | "projectPath">, files: string[]) {
+  let title = UNTRUSTED_TITLE_SOURCES.has(run.titleSource ?? "initial")
+    ? ""
+    : (run.title ?? "").replace(/\s+/g, " ").trim();
+  const project = run.projectPath ? path.basename(run.projectPath) : "";
+  if (project && title.toLowerCase().startsWith(`${project.toLowerCase()}:`)) {
+    title = title.slice(project.length + 1).trim();
+  }
+  if (!title || title.length > 72) return subjectFromFiles(files);
+  return title;
 }
 
 async function insertCommitEvent(runId: string, eventType: string, details: Record<string, unknown>) {
@@ -113,7 +123,7 @@ function resultSummary(result: AutoCommitResult) {
   return `Auto-commit failed: ${result.reason}`;
 }
 
-async function runMilestoneAutoCommitInternal(runId: string, summary: string) {
+async function runMilestoneAutoCommitInternal(runId: string) {
   const run = await db.select().from(runs).where(eq(runs.id, runId)).get();
   if (!run || run.mode !== "direct" || !run.projectPath) {
     return null;
@@ -159,8 +169,7 @@ async function runMilestoneAutoCommitInternal(runId: string, summary: string) {
     baseline: parseGitBaselineJson(run.gitBaselineJson),
     autoCommitMilestones: Boolean(run.autoCommitMilestones),
     pushOnCommit: Boolean(run.pushOnCommit),
-    subject: sanitizeCommitSubject(run.title),
-    body: buildCommitBody(run, summary),
+    subject: (files) => buildMilestoneCommitSubject(run, files),
   });
 
   if (result.status === "created") {
@@ -209,8 +218,8 @@ async function runMilestoneAutoCommitInternal(runId: string, summary: string) {
   });
 }
 
-export function runMilestoneAutoCommit(runId: string, summary: string) {
-  const operation = runMilestoneAutoCommitInternal(runId, summary);
+export function runMilestoneAutoCommit(runId: string) {
+  const operation = runMilestoneAutoCommitInternal(runId);
   const operations = inFlightAutoCommits.get(runId) ?? new Set<AutoCommitOperation>();
   operations.add(operation);
   inFlightAutoCommits.set(runId, operations);

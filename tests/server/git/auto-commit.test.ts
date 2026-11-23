@@ -42,7 +42,6 @@ describe("autoCommitMilestone", () => {
       autoCommitMilestones: true,
       pushOnCommit: false,
       subject: "OmniHarness: test milestone",
-      body: "run id: test-run",
     });
 
     expect(result.status).toBe("created");
@@ -71,7 +70,6 @@ describe("autoCommitMilestone", () => {
       autoCommitMilestones: true,
       pushOnCommit: false,
       subject: "OmniHarness: test milestone",
-      body: "run id: test-run",
     });
 
     expect(result.status).toBe("created");
@@ -97,7 +95,6 @@ describe("autoCommitMilestone", () => {
       autoCommitMilestones: true,
       pushOnCommit: false,
       subject: "OmniHarness: test milestone",
-      body: "run id: test-run",
     });
 
     expect(result.status).toBe("created");
@@ -122,7 +119,6 @@ describe("autoCommitMilestone", () => {
       autoCommitMilestones: true,
       pushOnCommit: false,
       subject: "OmniHarness: test milestone",
-      body: "run id: test-run",
     });
 
     expect(result.status).toBe("skipped");
@@ -148,7 +144,6 @@ describe("autoCommitMilestone", () => {
       autoCommitMilestones: true,
       pushOnCommit: true,
       subject: "OmniHarness: pushed milestone",
-      body: "run id: test-run",
     });
 
     expect(result.status).toBe("created");
@@ -170,7 +165,6 @@ describe("autoCommitMilestone", () => {
       autoCommitMilestones: true,
       pushOnCommit: true,
       subject: "OmniHarness: unpushed milestone",
-      body: "run id: test-run",
     });
 
     expect(result.status).toBe("created");

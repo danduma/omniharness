@@ -319,15 +319,7 @@ export async function updateDirectRunStatusFromWorkerOutput(args: WorkerOutputSo
       createdAt: now,
     });
   } else if (run.mode === "direct" && nextStatus === "done" && run.status !== "done") {
-    await runMilestoneAutoCommit(args.runId, firstNonEmptyText([
-      args.responseText,
-      args.currentText,
-      args.lastText,
-      latestVisibleEntryText(args.outputEntries),
-      latestVisibleEntryText(parseOutputEntriesJson(args.outputEntriesJson)),
-      args.renderedOutput,
-      args.outputLog,
-    ]));
+    await runMilestoneAutoCommit(args.runId);
     notifyEventStreamSubscribers();
   } else if (nextStatus !== run.status || run.failedAt || run.lastError) {
     notifyEventStreamSubscribers();

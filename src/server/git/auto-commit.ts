@@ -150,15 +150,13 @@ export function autoCommitMilestone({
   baseline,
   autoCommitMilestones,
   pushOnCommit,
-  subject,
-  body,
+  subject: subjectInput,
 }: {
   cwd: string;
   baseline: GitBaseline | null;
   autoCommitMilestones: boolean;
   pushOnCommit: boolean;
-  subject: string;
-  body: string;
+  subject: string | ((touchedFiles: string[]) => string);
 }): AutoCommitResult {
   if (!autoCommitMilestones) {
     return { status: "skipped", reason: "disabled" };
@@ -230,7 +228,8 @@ export function autoCommitMilestone({
     return { status: "failed", reason: "add_failed", stderr: formatGitFailure("add", add) };
   }
 
-  const commit = runGit(current.repoRoot, ["commit", "-m", subject, "-m", body]);
+  const subject = typeof subjectInput === "function" ? subjectInput(touchedFiles) : subjectInput;
+  const commit = runGit(current.repoRoot, ["commit", "-m", subject]);
   if (!commit.ok) {
     return { status: "failed", reason: "commit_failed", stderr: formatGitFailure("commit", commit) };
   }

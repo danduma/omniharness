@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/server/db";
 import { executionEvents, plans, recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { captureGitBaseline } from "@/server/git/auto-commit";
-import { runMilestoneAutoCommit } from "@/server/git/run-auto-commit";
+import { buildMilestoneCommitSubject, runMilestoneAutoCommit } from "@/server/git/run-auto-commit";
 
 function git(cwd: string, args: string[]) {
   return execFileSync("git", args, {
@@ -104,7 +104,7 @@ describe("runMilestoneAutoCommit", () => {
       workerStatus: "error",
     });
 
-    const result = await runMilestoneAutoCommit("run-auth-failed", "Looks finished.");
+    const result = await runMilestoneAutoCommit("run-auth-failed");
 
     expect(result?.status).toBe("skipped");
     expect(git(repo, ["rev-parse", "HEAD"])).toBe(headBefore);
@@ -132,7 +132,7 @@ describe("runMilestoneAutoCommit", () => {
       updatedAt: now,
     });
 
-    const result = await runMilestoneAutoCommit("run-recovering", "Looks finished.");
+    const result = await runMilestoneAutoCommit("run-recovering");
 
     expect(result?.status).toBe("skipped");
     expect(git(repo, ["rev-parse", "HEAD"])).toBe(headBefore);
@@ -145,7 +145,7 @@ describe("runMilestoneAutoCommit", () => {
     const headBefore = git(repo, ["rev-parse", "HEAD"]);
     await seedRun({ id: "run-no-worker", repo, baseline, workerStatus: "cancelled" });
 
-    const result = await runMilestoneAutoCommit("run-no-worker", "Looks finished.");
+    const result = await runMilestoneAutoCommit("run-no-worker");
 
     expect(result?.status).toBe("skipped");
     expect(git(repo, ["rev-parse", "HEAD"])).toBe(headBefore);
@@ -157,7 +157,7 @@ describe("runMilestoneAutoCommit", () => {
     writeFileSync(path.join(repo, "feature.txt"), "implemented\n");
     await seedRun({ id: "run-healthy", repo, baseline, workerStatus: "idle" });
 
-    const result = await runMilestoneAutoCommit("run-healthy", "Direct run completed.");
+    const result = await runMilestoneAutoCommit("run-healthy");
 
     expect(result?.status).toBe("created");
     const events = await db.select().from(executionEvents);
@@ -176,7 +176,7 @@ describe("runMilestoneAutoCommit", () => {
       workerStatus: "idle",
     });
 
-    const result = await runMilestoneAutoCommit("run-transient", "Direct run completed.");
+    const result = await runMilestoneAutoCommit("run-transient");
 
     expect(result?.status).toBe("created");
   });
@@ -199,6 +199,7 @@ describe("runMilestoneAutoCommit", () => {
       mode: "direct",
       projectPath: repo,
       title: "Direct implementation",
+      titleSource: "harness_llm",
       status: "done",
       autoCommitMilestones: true,
       pushOnCommit: false,
@@ -207,11 +208,11 @@ describe("runMilestoneAutoCommit", () => {
       updatedAt: now,
     });
 
-    const result = await runMilestoneAutoCommit("run-direct-commit", "Direct run completed.");
+    const result = await runMilestoneAutoCommit("run-direct-commit");
 
     expect(result?.status).toBe("created");
     expect(git(repo, ["log", "-1", "--pretty=%s"])).toBe("Direct implementation");
-    expect(git(repo, ["log", "-1", "--pretty=%B"])).not.toContain("OmniHarness");
+    expect(git(repo, ["log", "-1", "--pretty=%B"])).toBe("Direct implementation");
     const event = await db.select().from(executionEvents).get();
     expect(event?.eventType).toBe("auto_commit_created");
   });
@@ -247,7 +248,7 @@ describe("runMilestoneAutoCommit", () => {
       updatedAt: now,
     });
 
-    const result = await runMilestoneAutoCommit("run-direct-src-path", "Direct run completed.");
+    const result = await runMilestoneAutoCommit("run-direct-src-path");
 
     expect(result?.status).toBe("created");
     expect(git(repo, ["show", "--name-only", "--pretty=format:", "HEAD"]).split("\n").filter(Boolean)).toEqual([
@@ -255,5 +256,20 @@ describe("runMilestoneAutoCommit", () => {
     ]);
     const events = await db.select().from(executionEvents);
     expect(events.map((event) => event.eventType)).toEqual(["auto_commit_created"]);
+  });
+
+  it("never uses a raw user prompt as the subject", () => {
+    expect(buildMilestoneCommitSubject(
+      { title: "why the hell is this broken!!!", titleSource: "initial", projectPath: "/x/app" },
+      ["src/a.ts", "src/b.ts"],
+    )).toBe("Update 2 files in src");
+    expect(buildMilestoneCommitSubject(
+      { title: "App: Fix icon size", titleSource: "harness_llm", projectPath: "/x/app" },
+      ["src/a.ts"],
+    )).toBe("Fix icon size");
+    expect(buildMilestoneCommitSubject(
+      { title: "", titleSource: "harness_llm", projectPath: null },
+      ["README.md"],
+    )).toBe("Update README.md");
   });
 });

@@ -173,7 +173,7 @@ describe("directWorkerOutputHasPendingHumanInput", () => {
       responseText: "Done.",
     });
 
-    expect(mockRunMilestoneAutoCommit).toHaveBeenCalledWith("run-direct-auto-commit", "Done.");
+    expect(mockRunMilestoneAutoCommit).toHaveBeenCalledWith("run-direct-auto-commit");
   });
 
   it("preserves the run activity timestamp when repeated input observations do not change state", async () => {
