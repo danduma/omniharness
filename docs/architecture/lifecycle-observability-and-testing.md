@@ -69,6 +69,26 @@ wait for the mutex and acknowledge the replacement without awaiting the new
 provider turn. Otherwise the request inherits provider-turn latency and can
 expire at an HTTP proxy even though the user's intent was to interrupt it.
 
+A steer to a direct worker whose adapter advertises
+`initialize._meta.steering.supported` (claude-agent-acp) is first delivered
+into the running turn with ACP `_session/steering`, the way Claude Code
+delivers a message typed while it works. Nothing is cancelled and the turn
+fence does not advance: the request that owns the turn keeps it and persists
+the reply, because the adapter holds the turn open until the steer is
+answered. Before the steer's `user_input` entry is appended, the runtime's
+output up to `outputBoundaryEntryId` is persisted, so the steer renders after
+the text it interrupted. Only an `injected` outcome counts as delivered
+(`queue.interrupt_injected`); every other outcome, error or timeout emits
+`queue.interrupt_inject_fallback` and continues as cancel-and-replace, so an
+unavailable in-turn path can never make a steer fail.
+
+A steer during a foreground tool makes claude-agent-acp move that tool to the
+background. Claude may then end the prompted turn and later start a turn of
+its own when the command finishes. Such a turn can begin and end between two
+bridge sweeps, so the sweep cannot rely on seeing the agent `working`: a `done`
+direct run whose idle agent's `lastText` differs from the persisted worker's is
+synced once more, which persists the finished turn and clears the difference.
+
 ## Provider identity and startup ownership invariant
 
 A requested provider model id and the provider's reported session value are

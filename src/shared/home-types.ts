@@ -138,7 +138,8 @@ export type QueuedMessageInterruptResponse = {
   message?: MessageRecord;
   queuedMessage: QueuedConversationMessageRecord;
   interruption: {
-    status: "delivering" | "deferred";
+    /** `injected`: delivered into the running turn, which was not cancelled. */
+    status: "delivering" | "deferred" | "injected";
     workerId: string;
     cancelDurationMs: number;
   };

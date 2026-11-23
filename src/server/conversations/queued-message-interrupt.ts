@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
-import { askAgent, cancelAgentTurn, getAgent } from "@/server/bridge-client";
+import { askAgent, cancelAgentTurn, getAgent, steerAgentTurn } from "@/server/bridge-client";
 import { db } from "@/server/db";
 import { messages, queuedConversationMessages, recoveryIncidents, runs, workers } from "@/server/db/schema";
 import { recordExecutionEvent } from "@/server/events/execution-event-store";
@@ -10,6 +10,7 @@ import { appendAttachmentContext, normalizeChatAttachments, resolveImageAttachme
 import { getAppDataPath } from "@/server/app-root";
 import { appendUserInputOnDelivery } from "@/server/workers/stream-writer";
 import { persistRunFailure } from "@/server/runs/failures";
+import { persistWorkerSnapshot } from "@/server/workers/snapshots";
 import { serializeMessageRecord } from "./message-records";
 import { serializeQueuedConversationMessage } from "./queued-message-records";
 import {
@@ -29,9 +30,11 @@ import {
   advanceWorkerTurnGeneration,
   beginConversationRecoveryPreemption,
   finishConversationRecoveryPreemption,
+  hasLiveWorkerTurn,
   isWorkerTurnAbortedError,
   isWorkerTurnSupersededError,
   isWorkerTurnGenerationCurrent,
+  readWorkerTurnGeneration,
   runConversationMutation,
   runWorkerTurn,
   trackConversationBackgroundTask,
@@ -55,7 +58,8 @@ export interface InterruptResult {
   message?: ReturnType<typeof serializeMessageRecord>;
   queuedMessage: ReturnType<typeof serializeQueuedConversationMessage>;
   interruption: {
-    status: "delivering" | "deferred";
+    /** `injected`: delivered into the running turn, which was not cancelled. */
+    status: "delivering" | "deferred" | "injected";
     workerId: string;
     cancelDurationMs: number;
   };
@@ -176,6 +180,195 @@ async function resolveInterruptWorker(run: RunRecord, record: QueuedRecord): Pro
   return null;
 }
 
+function isDirectRunMode(mode: string | null | undefined) {
+  return mode === "direct" || mode === "commit";
+}
+
+async function persistOutputBeforeSteer(args: {
+  workerId: string;
+  boundaryEntryId: string | null;
+  generation: number;
+}) {
+  if (!args.boundaryEntryId) {
+    return;
+  }
+  const snapshot = await getAgent(args.workerId);
+  const entries = snapshot.outputEntries ?? [];
+  const boundaryIndex = entries.findIndex((entry) => entry.id === args.boundaryEntryId);
+  if (boundaryIndex < 0) {
+    return;
+  }
+  await persistWorkerSnapshot(
+    args.workerId,
+    { ...snapshot, outputEntries: entries.slice(0, boundaryIndex + 1) },
+    { expectedTurnGeneration: args.generation },
+  );
+}
+
+/**
+ * Deliver a steer into the worker's running turn via ACP `_session/steering`.
+ *
+ * The turn is not cancelled, so the provider never records an interruption the
+ * model would read as the user rejecting its work. The turn's owner (the
+ * request that started it) keeps waiting and persists the reply when the turn
+ * settles; the adapter holds that turn open until the steer is answered.
+ *
+ * Returns null whenever the message did not reach the agent, and the caller
+ * falls back to cancel-and-replace.
+ */
+async function tryInjectSteer(args: {
+  run: RunRecord;
+  worker: WorkerRecord;
+  record: QueuedRecord;
+  source: InterruptSource;
+  requestedAt: number;
+}): Promise<InterruptResult | null> {
+  const { run, worker, record, source, requestedAt } = args;
+  const runId = run.id;
+  const normalizedAttachments = normalizeChatAttachments(
+    record.attachmentsJson ? JSON.parse(record.attachmentsJson) : [],
+  );
+  const workerContent = appendAttachmentContext(record.content, normalizedAttachments, {
+    resolvePath: (storagePath) => getAppDataPath(storagePath),
+    imagesInlined: true,
+  });
+  const imageAttachments = resolveImageAttachments(normalizedAttachments, getAppDataPath);
+  const generation = await readWorkerTurnGeneration(worker.id);
+
+  const fallback = async (reason: string) => {
+    emitNamedEvent({
+      kind: "queue.interrupt_inject_fallback",
+      runId,
+      workerId: worker.id,
+      queuedMessageId: record.id,
+      reason,
+      source,
+    });
+    await recordExecutionEvent({
+      runId,
+      workerId: worker.id,
+      eventType: "queued_message_interrupt_inject_fallback",
+      details: {
+        summary: `Could not steer ${worker.id}'s running turn; interrupting it instead.`,
+        queuedMessageId: record.id,
+        reason,
+        source,
+      },
+    });
+    return null;
+  };
+
+  let outcome: Awaited<ReturnType<typeof steerAgentTurn>>;
+  try {
+    outcome = await steerAgentTurn(worker.id, workerContent, imageAttachments.length ? imageAttachments : undefined);
+  } catch (error) {
+    emitNamedEvent({ kind: "error.surfaced", code: "worker.steer.failed", runId, workerId: worker.id, surface: "log", message: errorMessage(error), cause: null });
+    return fallback(`request_failed: ${errorMessage(error)}`);
+  }
+  if (outcome.outcome !== "injected") {
+    return fallback(outcome.outcome === "promptRequired" ? outcome.reason : `failed: ${outcome.reason}`);
+  }
+
+  // The agent has the message. From here on nothing may fall back: a
+  // cancel-and-replace would deliver it a second time. Persistence problems
+  // are surfaced, but the steer itself succeeded.
+  const deliveredAt = new Date();
+  const userMessage = {
+    id: record.id,
+    runId,
+    role: "user" as const,
+    kind: "checkpoint" as const,
+    content: record.content,
+    attachmentsJson: record.attachmentsJson,
+    createdAt: deliveredAt,
+  };
+  try {
+    // The worker stream is append-only, so output the agent wrote before the
+    // steer must be persisted before the steer's entry; otherwise the steer
+    // renders above the text it interrupted.
+    await persistOutputBeforeSteer({
+      workerId: worker.id,
+      boundaryEntryId: outcome.outputBoundaryEntryId ?? null,
+      generation,
+    });
+    await appendUserInputOnDelivery({
+      id: userMessage.id,
+      runId,
+      workerId: worker.id,
+      text: record.content,
+      deliveredAt,
+      attachments: normalizedAttachments.map((attachment) => ({
+        id: attachment.id,
+        filename: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.size,
+        storagePath: attachment.storagePath,
+      })),
+      expectedTurnGeneration: generation,
+    });
+    await db.insert(messages).values(userMessage).onConflictDoNothing();
+  } catch (error) {
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "queue.interrupt.delivery_failed",
+      message: `Steer reached the worker but its transcript entry could not be saved: ${errorMessage(error)}`,
+      surface: "log",
+      runId,
+      workerId: worker.id,
+      cause: null,
+    });
+  }
+  await db.update(queuedConversationMessages).set({
+    action: "steer",
+    targetWorkerId: worker.id,
+    status: "delivered",
+    lastError: null,
+    updatedAt: deliveredAt,
+    deliveredAt,
+  }).where(eq(queuedConversationMessages.id, record.id));
+
+  const totalInterruptLatencyMs = Date.now() - requestedAt;
+  emitNamedEvent({
+    kind: "queue.interrupt_injected",
+    runId,
+    workerId: worker.id,
+    queuedMessageId: record.id,
+    totalInterruptLatencyMs,
+    source,
+  });
+  await recordExecutionEvent({
+    runId,
+    workerId: worker.id,
+    eventType: "queued_message_interrupt_injected",
+    details: {
+      summary: `Steered ${worker.id}'s running turn without interrupting it.`,
+      queuedMessageId: record.id,
+      totalInterruptLatencyMs,
+      source,
+    },
+  });
+  notifyEventStreamSubscribers();
+
+  return {
+    ok: true,
+    message: serializeMessageRecord(userMessage),
+    queuedMessage: serializeQueuedConversationMessage({
+      ...record,
+      action: "steer",
+      targetWorkerId: worker.id,
+      status: "delivered",
+      lastError: null,
+      updatedAt: deliveredAt,
+      deliveredAt,
+    }),
+    interruption: {
+      status: "injected",
+      workerId: worker.id,
+      cancelDurationMs: 0,
+    },
+  };
+}
+
 /**
  * Core control-plane flow shared by every interrupt entry point:
  * cancel the active turn, advance the worker turn fence into a delivery-safe
@@ -229,7 +422,18 @@ async function interruptAndDeliver(args: {
     throw refusal(409, "No active worker is available to interrupt");
   }
 
-  // Steer is cancel-and-replace, and it must be instant. Two rules make it so:
+  // Prefer delivering the steer into the running turn, the way Claude Code
+  // does. Only a confirmed injection returns here; every other outcome falls
+  // through to cancel-and-replace below, so a steer never fails because the
+  // in-turn path was unavailable.
+  if (isDirectRunMode(run.mode) && hasLiveWorkerTurn(worker.id)) {
+    const injected = await tryInjectSteer({ run, worker, record, source, requestedAt });
+    if (injected) {
+      return injected;
+    }
+  }
+
+  // Fallback: steer is cancel-and-replace, and it must be instant. Two rules make it so:
   //
   //   1. The local abort releases the runner request. Tripping the turn's signal
   //      tears down its in-flight request here and now; it needs no cooperation

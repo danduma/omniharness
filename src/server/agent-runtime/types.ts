@@ -87,6 +87,10 @@ export type AgentRecord = {
   stderrBuffer: string[];
   protocolVersion: string | number | null;
   agentCapabilities: Record<string, unknown> | null;
+  /** claude-agent-acp advertises `_meta.steering.supported` at initialize:
+   *  it accepts `_session/steering`, which injects a message into the running
+   *  turn instead of requiring cancel-and-replace. */
+  steeringSupported?: boolean;
   authMethods: unknown[];
   requestedModel: string | null;
   pendingModel: string | null;

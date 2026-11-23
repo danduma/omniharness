@@ -121,6 +121,15 @@ async function handleRuntimeEventDrain(url: URL, res: ServerResponse) {
   });
 }
 
+function readImageAttachments(value: unknown): Array<{ path: string; mimeType: string }> | undefined {
+  return Array.isArray(value)
+    ? value.filter(
+        (a: unknown): a is { path: string; mimeType: string } =>
+          typeof a === "object" && a !== null && typeof (a as Record<string, unknown>).path === "string" && typeof (a as Record<string, unknown>).mimeType === "string",
+      )
+    : undefined;
+}
+
 export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOptions = {}) {
   const manager = new AgentRuntimeManager(options);
 
@@ -301,18 +310,23 @@ export function createAgentRuntimeServer(options: CreateAgentRuntimeServerOption
         return;
       }
 
+      if (parts.length === 3 && parts[0] === "agents" && method === "POST" && parts[2] === "steer") {
+        const body = await readJson(req);
+        if (typeof body.prompt !== "string" || body.prompt.length === 0) {
+          writeJson(res, 400, { error: "prompt is required" });
+          return;
+        }
+        writeJson(res, 200, await manager.steerAgent(parts[1], body.prompt, readImageAttachments(body.imageAttachments)));
+        return;
+      }
+
       if (parts.length === 3 && parts[0] === "agents" && method === "POST" && parts[2] === "ask") {
         const body = await readJson(req);
         if (typeof body.prompt !== "string" || body.prompt.length === 0) {
           writeJson(res, 400, { error: "prompt is required" });
           return;
         }
-        const imageAttachments = Array.isArray(body.imageAttachments)
-          ? body.imageAttachments.filter(
-              (a: unknown): a is { path: string; mimeType: string } =>
-                typeof a === "object" && a !== null && typeof (a as Record<string, unknown>).path === "string" && typeof (a as Record<string, unknown>).mimeType === "string",
-            )
-          : undefined;
+        const imageAttachments = readImageAttachments(body.imageAttachments);
         const stream = requestUrl(req).searchParams.get("stream") === "true";
         if (!stream) {
           writeJson(res, 200, await manager.askAgent(parts[1], body.prompt, imageAttachments));

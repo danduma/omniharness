@@ -128,6 +128,7 @@ export type SurfacedErrorCode =
   | "worker.plan.binding_hydration_failed"
   | "worker.prompt.image_attachment_unreadable"
   | "worker.cancel.failed"
+  | "worker.steer.failed"
   | "worker.output_content_unavailable"
   | "worker.model.version_unavailable"
   // The requested model's *family* is not offered at all. Substituting another
@@ -905,6 +906,25 @@ export type ConversationEvent =
       sessionId: string;
       reason: string;
     }
+  // The steer went into the worker's running turn (no cancel); the turn's
+  // owner persists the reply when the turn settles.
+  | {
+      kind: "queue.interrupt_injected";
+      runId: string;
+      workerId: string;
+      queuedMessageId: string;
+      totalInterruptLatencyMs: number;
+      source: string;
+    }
+  // An in-turn steer was not possible; the steer continues as cancel-and-replace.
+  | {
+      kind: "queue.interrupt_inject_fallback";
+      runId: string;
+      workerId: string;
+      queuedMessageId: string;
+      reason: string;
+      source: string;
+    }
   | {
       kind: "queue.drain_decision";
       runId: string;
@@ -1129,7 +1149,12 @@ export type AcpEvent =
   // claude-agent-acp folded a prompt into a turn Claude was already running
   // and never settled the prompt, so the runtime settled it after `quietMs`
   // with no new turn starting.
-  | { kind: "acp.prompt_absorbed"; workerId: string; quietMs: number };
+  | { kind: "acp.prompt_absorbed"; workerId: string; quietMs: number }
+  // A steer was delivered into the running turn via `_session/steering`.
+  | { kind: "acp.steer_injected"; workerId: string }
+  // The runtime did not attempt or complete an in-turn steer; the control
+  // plane falls back to cancel-and-replace.
+  | { kind: "acp.steer_skipped"; workerId: string; reason: "unsupported" | "no_prompt_in_flight" | "adapter_idle" };
 
 export type ClaudeModelGatewayEvent =
   | { kind: "claude_gateway.install_started"; operationId: string }

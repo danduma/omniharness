@@ -847,6 +847,34 @@ export async function cancelAgentTurn(name: string) {
   );
 }
 
+export type SteerAgentTurnResult =
+  | { name: string; outcome: "injected"; outputBoundaryEntryId?: string | null }
+  | { name: string; outcome: "promptRequired"; reason: "unsupported" | "no_prompt_in_flight" | "adapter_idle" }
+  | { name: string; outcome: "failed"; reason: string };
+
+/**
+ * Deliver a message into the worker's running turn without cancelling it
+ * (ACP `_session/steering`). Only `injected` means the agent received it; every
+ * other outcome leaves delivery to the caller. Not retried: a retry after an
+ * ambiguous failure could inject the same message twice.
+ */
+export async function steerAgentTurn(
+  name: string,
+  prompt: string,
+  imageAttachments?: Array<{ path: string; mimeType: string }>,
+) {
+  return requestBridge<SteerAgentTurnResult>(
+    `/agents/${name}/steer`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, ...(imageAttachments?.length ? { imageAttachments } : {}) }),
+    },
+    "Steer turn",
+    { retryIndefinitely: false },
+  );
+}
+
 export async function cancelAgentTerminalProcess(name: string, processId: string, toolCallId?: string | null) {
   return requestBridge<unknown>(
     `/agents/${name}/terminals/${encodeURIComponent(processId)}/cancel`,
