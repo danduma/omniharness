@@ -15,6 +15,8 @@ import {
   getEventStreamNotificationVersion,
   waitForEventStreamNotification,
 } from "@/server/events/live-updates";
+import { normalizeWorkerType, parseAllowedWorkerTypes, SUPPORTED_WORKER_TYPES } from "@/shared/worker-types";
+import { normalizeReasoningEffort } from "@/shared/reasoning-effort";
 import type { OmniHttpHandler } from "@/runtime/http/registry";
 import { stopConversationForApi } from "./runs";
 
@@ -154,6 +156,22 @@ function messageFromBody(body: unknown) {
   return message && message.length <= MAX_MESSAGE_LENGTH ? message : null;
 }
 
+function launchFromBody(body: unknown) {
+  if (!body || typeof body !== "object" || !("launch" in body)) return undefined;
+  const launch = body.launch;
+  if (!launch || typeof launch !== "object" || !("workerType" in launch)
+    || typeof launch.workerType !== "string") return null;
+  const normalized = normalizeWorkerType(launch.workerType);
+  const workerType = SUPPORTED_WORKER_TYPES.find(type => type === normalized);
+  const model = "model" in launch ? launch.model : undefined;
+  const effort = "effort" in launch ? launch.effort : undefined;
+  if (!workerType || (model !== undefined && (typeof model !== "string" || !/^[\w][\w./:@+-]{0,159}$/.test(model)))
+    || (effort !== undefined && typeof effort !== "string")) return null;
+  const normalizedEffort = normalizeReasoningEffort(effort);
+  if (effort !== undefined && !["low", "medium", "high", "xhigh", "max"].includes(normalizedEffort ?? "")) return null;
+  return { workerType, model, effort: normalizedEffort };
+}
+
 function titleFromBody(body: unknown) {
   const title = typeof (body as { title?: unknown } | null)?.title === "string"
     ? (body as { title: string }).title.trim().replace(/\s+/g, " ")
@@ -196,13 +214,24 @@ function publicUrls(request: Request, projectId: string, runId: string) {
   return { pollUrl: `${origin}${path}`, streamUrl: `${origin}${path}/stream` };
 }
 
-async function createChat(request: Request, project: PublicProject, message: string) {
+async function createChat(request: Request, project: PublicProject, message: string, launch?: NonNullable<ReturnType<typeof launchFromBody>>) {
+  const workerSettings = await db.select().from(settings).where(inArray(settings.key, [
+    "WORKER_DEFAULT_TYPE",
+    "WORKER_ALLOWED_TYPES",
+  ]));
+  const allowedWorkerTypes = parseAllowedWorkerTypes(workerSettings.find(row => row.key === "WORKER_ALLOWED_TYPES")?.value);
+  const defaultType = normalizeWorkerType(workerSettings.find(row => row.key === "WORKER_DEFAULT_TYPE")?.value ?? "");
+  if (launch && !allowedWorkerTypes.includes(launch.workerType)) {
+    return apiError(400, "public_api.invalid_launch", "The requested worker is disabled on this runner.");
+  }
+  const preferredWorkerType = launch?.workerType ?? allowedWorkerTypes.find(type => type === defaultType) ?? allowedWorkerTypes[0];
   const created = await createConversation({
     mode: "direct",
     command: message,
     projectPath: project.path,
-    preferredWorkerType: "codex",
-    allowedWorkerTypes: ["codex"],
+    preferredWorkerType,
+    ...(launch ? { preferredWorkerModel: launch.model, preferredWorkerEffort: launch.effort } : {}),
+    allowedWorkerTypes: launch ? [launch.workerType] : allowedWorkerTypes,
   });
   return Response.json({ ok: true, conversationId: created.runId, status: "accepted", ...publicUrls(request, project.id, created.runId) }, { status: 202 });
 }
@@ -210,7 +239,7 @@ async function createChat(request: Request, project: PublicProject, message: str
 async function sendChatMessage(request: Request, project: PublicProject, runId: string, message: string) {
   const run = await getPublicRun(runId, project.path);
   if (!run) return apiError(404, "public_api.conversation_not_found", "Conversation not found for the selected project.");
-  await sendConversationMessage({ runId: run.id, content: message, preferredWorkerType: "codex", allowedWorkerTypes: ["codex"] });
+  await sendConversationMessage({ runId: run.id, content: message });
   return Response.json({ ok: true, conversationId: run.id, status: "accepted", ...publicUrls(request, project.id, run.id) }, { status: 202 });
 }
 
@@ -296,7 +325,10 @@ export const handlePublicProjectChatsRequest: OmniHttpHandler = async (request, 
   const project = projectForRequest(auth.config, context.params?.projectId);
   if (!project) return apiError(404, "public_api.project_not_found", "Project is not available through the public API.");
   if (request.method === "POST") {
-    const message = messageFromBody(await request.json().catch(() => null));
+    const body = await request.json().catch(() => null);
+    const message = messageFromBody(body);
+    const launch = launchFromBody(body);
+    if (launch === null) return apiError(400, "public_api.invalid_launch", "Invalid worker, model, or effort.");
     if (!message) {
       return apiError(400, "public_api.invalid_message", `message must contain 1 to ${MAX_MESSAGE_LENGTH} characters.`);
     }
@@ -307,7 +339,7 @@ export const handlePublicProjectChatsRequest: OmniHttpHandler = async (request, 
         headers: { "retry-after": String(Math.max(1, Math.ceil(rateLimit.retryAfterMs / 1_000))) },
       });
     }
-    return createChat(request, project, message);
+    return createChat(request, project, message, launch);
   }
   if (request.method !== "GET") return apiError(405, "method_not_allowed", "Method not allowed.");
   const url = new URL(request.url);

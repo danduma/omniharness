@@ -58,7 +58,11 @@ To continue a conversation, include its `conversationId`:
 ```
 
 The API returns `202 Accepted` with a conversation id and polling and SSE URLs.
-The worker is fixed to Codex and can edit the configured project.
+New chats inherit the runner’s default worker and allowed worker types. A project
+chat request can optionally include `"launch": {"workerType":"claude","model":"claude-opus-5-5","effort":"medium"}`
+to choose an enabled worker for that one new chat. Model and effort
+use the selected CLI’s defaults. A follow-up keeps its conversation’s worker. The
+worker can edit the configured project.
 
 ## Read an answer
 

@@ -25,6 +25,8 @@ describe("public chat API", () => {
       "OMNIHARNESS_PUBLIC_API_KEY",
       "OMNIHARNESS_PUBLIC_API_PROJECTS",
       "OMNIHARNESS_PUBLIC_API_PROJECT_PATH",
+      "WORKER_DEFAULT_TYPE",
+      "WORKER_ALLOWED_TYPES",
     ]));
     process.env.OMNIHARNESS_PUBLIC_API_KEY = "public-test-key";
     process.env.OMNIHARNESS_PUBLIC_API_PROJECTS = JSON.stringify([{ id: "project", path: projectPath }]);
@@ -41,6 +43,8 @@ describe("public chat API", () => {
       "OMNIHARNESS_PUBLIC_API_KEY",
       "OMNIHARNESS_PUBLIC_API_PROJECTS",
       "OMNIHARNESS_PUBLIC_API_PROJECT_PATH",
+      "WORKER_DEFAULT_TYPE",
+      "WORKER_ALLOWED_TYPES",
     ]));
     delete process.env.OMNIHARNESS_PUBLIC_API_KEY;
     delete process.env.OMNIHARNESS_PUBLIC_API_PROJECTS;
@@ -100,6 +104,54 @@ describe("public chat API", () => {
         revision: 4,
       }),
     }));
+  });
+
+  it("inherits the server worker defaults and ignores project and caller overrides", async () => {
+    process.env.OMNIHARNESS_PUBLIC_API_PROJECTS = JSON.stringify([
+      { id: "project", path: projectPath, worker: { type: "codex" } },
+      { id: "other", path: otherProjectPath },
+    ]);
+    const savedDefaults = [
+      { key: "WORKER_DEFAULT_TYPE", value: "claude", updatedAt: new Date() },
+      { key: "WORKER_ALLOWED_TYPES", value: JSON.stringify(["codex", "claude"]), updatedAt: new Date() },
+    ];
+    await db.insert(settings).values(savedDefaults);
+    for (const projectId of ["project", "other"]) {
+      const response = await handlePublicProjectChatsRequest(
+        request(`/api/public/v1/projects/${projectId}/chats`, { method: "POST", body: JSON.stringify({
+          message: "Start a test conversation", worker: { type: "codex", model: "caller-override" },
+        }) }),
+        { surface: "test", params: { projectId } },
+      );
+      expect(response.status).toBe(202);
+    }
+    for (const path of [projectPath, otherProjectPath]) {
+      expect(createConversation).toHaveBeenCalledWith({
+        mode: "direct", command: "Start a test conversation", projectPath: path,
+        preferredWorkerType: "claude", allowedWorkerTypes: ["codex", "claude"],
+      });
+    }
+  });
+
+  it("allows an authenticated caller to choose launch preferences for one new chat", async () => {
+    const path = "/api/public/v1/projects/project/chats";
+    const context = { surface: "test" as const, params: { projectId: "project" } };
+    const response = await handlePublicProjectChatsRequest(request(path, { method: "POST", body: JSON.stringify({
+      message: "Start a test conversation",
+      launch: { workerType: "claude", model: "claude-opus-5-5", effort: "medium" },
+    }) }), context);
+    expect(response.status).toBe(202);
+    expect(createConversation).toHaveBeenCalledWith({
+      mode: "direct", command: "Start a test conversation", projectPath,
+      preferredWorkerType: "claude", preferredWorkerModel: "claude-opus-5-5",
+      preferredWorkerEffort: "medium", allowedWorkerTypes: ["claude"],
+    });
+
+    const invalid = await handlePublicProjectChatsRequest(request(path, { method: "POST", body: JSON.stringify({
+      message: "Start a test conversation", launch: { workerType: "bogus" },
+    }) }), context);
+    expect(invalid.status).toBe(400);
+    expect(createConversation).toHaveBeenCalledTimes(1);
   });
 
   it("rate limits chat creation per project", async () => {
