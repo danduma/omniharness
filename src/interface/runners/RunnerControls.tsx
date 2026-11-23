@@ -160,10 +160,14 @@ function ConnectedRunnerControls({
     const strip = stripRef.current;
     const selected = strip?.querySelector('[data-active-server="true"]');
     if (!strip || !selected) return;
-    const edge = getComputedStyle(strip).direction === "rtl" ? "right" : "left";
+    const rtl = getComputedStyle(strip).direction === "rtl";
+    const edge = rtl ? "right" : "left";
     // HomeApp remounts on a server switch. Start the strip at the selected
     // server without reordering the buttons or scrolling the rest of the sidebar.
-    strip.scrollLeft += selected.getBoundingClientRect()[edge] - strip.getBoundingClientRect()[edge];
+    const offset = selected.getBoundingClientRect()[edge] - strip.getBoundingClientRect()[edge];
+    // Keep the selected server clear of the overlaid back chevron.
+    const chevronInset = rtl ? -12 : 12;
+    strip.scrollLeft += offset - chevronInset;
   }, [activeProfileId, desktopServerStrip]);
   const scrollServerStrip = (direction: "start" | "end") => {
     const strip = stripRef.current;
@@ -511,14 +515,13 @@ function ConnectedRunnerControls({
     <>
       {desktopServerStrip ? (
         <ScrollArea.Root
-          className="group/server-strip -mx-2 flex min-w-0 items-center"
-          overflowEdgeThreshold={1}
+          className="group/server-strip relative -me-2 flex min-w-0 items-center pt-[3px]"
         >
           <Button
             type="button"
             variant="ghost"
             size="icon-xs"
-            className="invisible h-7 w-5 text-muted-foreground group-data-[overflow-x-start]/server-strip:visible"
+            className="absolute -start-2 top-[3px] z-10 hidden h-7 w-5 text-muted-foreground group-data-[overflow-x-start]/server-strip:inline-flex"
             aria-label={t("runner.switcher.scrollBack")}
             aria-controls={stripId}
             onClick={() => scrollServerStrip("start")}
@@ -530,7 +533,7 @@ function ConnectedRunnerControls({
             ref={stripRef}
             role="group"
             aria-label={t("runner.switcher.label")}
-            className="min-w-0 flex-1 rounded-md focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+            className="min-w-0 flex-1 rounded-md focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring group-data-[overflow-x-start]/server-strip:[clip-path:inset(0_0_0_0.75rem)] rtl:group-data-[overflow-x-start]/server-strip:[clip-path:inset(0_0.75rem_0_0)]"
           >
             <ScrollArea.Content className="flex gap-0.5">
               {connections.map((connection) => {
