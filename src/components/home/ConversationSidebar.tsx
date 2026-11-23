@@ -1119,10 +1119,13 @@ const ConversationSidebar = memo(function ConversationSidebar({
     const rows: PinnedSessionRowItem[] = [];
     for (const entry of pinSnapshot.sessions) {
       // The active server's runs come from local state, which search has
-      // already filtered; another server's run is matched here.
-      const run = entry.active
-        ? localRunsById.get(entry.runId)
-        : entry.run && matchesSidebarSearch(entry.run as SidebarRun, searchQuery) ? entry.run as SidebarRun : undefined;
+      // already filtered. Right after a server switch that state still holds
+      // nothing for the new server, so the row falls back to the server's own
+      // live snapshot instead of vanishing until local state loads.
+      const snapshotRun = entry.run && matchesSidebarSearch(entry.run as SidebarRun, searchQuery)
+        ? entry.run as SidebarRun
+        : undefined;
+      const run = (entry.active ? localRunsById.get(entry.runId) : undefined) ?? snapshotRun;
       if (!run) continue;
       rows.push({
         key: entry.key,
@@ -1156,8 +1159,12 @@ const ConversationSidebar = memo(function ConversationSidebar({
       const pinnedRunIds = pinnedRunIdsByProfile.get(entry.profileId) ?? NO_PINNED_RUN_IDS;
       if (entry.active) {
         // A pinned project with nothing left on this server still shows, so the
-        // pin stays visible and removable rather than silently lingering.
+        // pin stays visible and removable rather than silently lingering. Until
+        // local state loads after a server switch, the server's live snapshot
+        // keeps the project's runs on screen.
+        const [snapshotGroup] = entry.group ? filterConversationGroupsBySearch([entry.group], searchQuery) : [];
         const group = filteredProjects.find((candidate) => candidate.path === entry.path)
+          ?? (snapshotGroup as SidebarGroup | undefined)
           ?? (searchQuery ? null : { path: entry.path, name: entry.path.split(/[/\\]/).pop() || entry.path, runs: [] });
         if (group) {
           items.push({
