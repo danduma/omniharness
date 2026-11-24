@@ -74,6 +74,7 @@ export const handleConversationMessagesRequest: OmniHttpHandler = async (request
     preferencePatch.model = readStringPatch("preferredWorkerModel");
     preferencePatch.effort = readStringPatch("preferredWorkerEffort");
     preferencePatch.accountId = readStringPatch("preferredWorkerAccountId");
+    preferencePatch.permissionMode = readStringPatch("preferredWorkerPermissionMode");
     if (body && Object.prototype.hasOwnProperty.call(body, "allowedWorkerTypes")) {
       preferencePatch.allowedWorkerTypes = Array.isArray(body.allowedWorkerTypes) || typeof body.allowedWorkerTypes === "string"
         ? { operation: "set", value: body.allowedWorkerTypes }

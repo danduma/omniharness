@@ -3,8 +3,10 @@ import { homedir } from "os";
 import { join } from "path";
 import { readdir, open } from "fs/promises";
 
+import { isFullAccessPermissionMode } from "@/shared/worker-permission-modes";
+
 export function isFullAccessAgentMode(mode: string | null | undefined) {
-  return mode === "full-access" || mode === "danger-full-access";
+  return isFullAccessPermissionMode(mode);
 }
 
 export function buildGeminiArgs(input: {

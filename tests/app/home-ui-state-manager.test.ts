@@ -88,13 +88,13 @@ describe("HomeUiStateManager", () => {
     manager.selectRun("run-a");
     manager.hydrateComposerSelection({
       runId: "run-a",
-      selection: { worker: "codex", accountId: "auto", model: "old", effort: "High" },
+      selection: { worker: "codex", accountId: "auto", model: "old", effort: "High", permissionMode: "" },
       serverVersion: "1",
     });
     manager.setComposerSelectionField("effort", "Max");
     manager.hydrateComposerSelection({
       runId: "run-a",
-      selection: { worker: "claude", accountId: "auto", model: "new", effort: "Low" },
+      selection: { worker: "claude", accountId: "auto", model: "new", effort: "Low", permissionMode: "" },
       serverVersion: "2",
     });
 
@@ -110,13 +110,13 @@ describe("HomeUiStateManager", () => {
     manager.selectRun("run-a");
     manager.hydrateComposerSelection({
       runId: "run-a",
-      selection: { worker: "codex", accountId: "auto", model: "model-a", effort: "High" },
+      selection: { worker: "codex", accountId: "auto", model: "model-a", effort: "High", permissionMode: "" },
       serverVersion: "1",
     });
     manager.selectRun("run-b");
     manager.hydrateComposerSelection({
       runId: "run-b",
-      selection: { worker: "claude", accountId: "account-b", model: "model-b", effort: "Low" },
+      selection: { worker: "claude", accountId: "account-b", model: "model-b", effort: "Low", permissionMode: "" },
       serverVersion: "1",
     });
 
@@ -133,7 +133,7 @@ describe("HomeUiStateManager", () => {
 
   it("clears a dirty selection that returns to the unchanged server value", () => {
     const manager = new HomeUiStateManager();
-    const baseline = { worker: "codex", accountId: "auto", model: "model-a", effort: "High" } as const;
+    const baseline = { worker: "codex", accountId: "auto", model: "model-a", effort: "High", permissionMode: "" } as const;
     manager.selectRun("run-a");
     manager.hydrateComposerSelection({ runId: "run-a", selection: baseline, serverVersion: "1" });
     manager.setComposerSelectionField("model", "model-b");
@@ -228,7 +228,7 @@ it("a new conversation opened from an existing one starts on the last launched w
   manager.selectRun("run-1");
   manager.hydrateComposerSelection({
     runId: "run-1",
-    selection: { worker: "codex", accountId: "auto", model: "gpt-5.6-sol", effort: "High" },
+    selection: { worker: "codex", accountId: "auto", model: "gpt-5.6-sol", effort: "High", permissionMode: "" },
     serverVersion: "v1",
   });
 

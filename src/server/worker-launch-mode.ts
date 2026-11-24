@@ -17,7 +17,21 @@ function normalizeRequestedMode(requestedMode: unknown) {
   return normalized;
 }
 
-export function resolveWorkerLaunchMode(requestedMode: unknown, yoloModeEnabled: boolean) {
+/**
+ * The mode a worker launches or resumes in. A permission mode the user picked
+ * for the conversation wins outright (including `auto`, which is a real Claude
+ * and Codex mode there). Otherwise the worker keeps the mode its session last
+ * reported, and a worker with no recorded mode follows the YOLO setting.
+ */
+export function resolveWorkerLaunchMode(
+  requestedMode: unknown,
+  yoloModeEnabled: boolean,
+  preferredPermissionMode?: string | null,
+) {
+  const preferred = preferredPermissionMode?.trim();
+  if (preferred) {
+    return preferred;
+  }
   return normalizeRequestedMode(requestedMode) ?? (yoloModeEnabled ? "full-access" : undefined);
 }
 

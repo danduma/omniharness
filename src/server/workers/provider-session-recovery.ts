@@ -57,7 +57,7 @@ export async function recreateWorkerFromTranscript(args: {
   }
 
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
-  const workerMode = resolveWorkerLaunchMode(args.worker.bridgeSessionMode, yoloModeEnabled);
+  const workerMode = resolveWorkerLaunchMode(args.worker.bridgeSessionMode, yoloModeEnabled, args.run.preferredWorkerPermissionMode);
   const { env: envParams } = await readRuntimeEnvFromSettings();
   const launchSelection = args.selection
     ?? resolveWorkerLaunchSelection(args.worker, args.run, {

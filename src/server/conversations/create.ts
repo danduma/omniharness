@@ -797,6 +797,8 @@ export async function createConversation(args: {
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
   preferredWorkerAccountId?: string | null;
+  /** CLI permission mode (see `WORKER_PERMISSION_MODES`); null follows the YOLO setting. */
+  preferredWorkerPermissionMode?: string | null;
   allowedWorkerTypes?: string[] | string | null;
   requestedRunId?: string | null;
   attachments?: ChatAttachment[];
@@ -831,6 +833,7 @@ export async function createConversation(args: {
   const effectivePreferredWorkerModel = presetCommand?.model ?? args.preferredWorkerModel;
   const effectivePreferredWorkerEffort = presetCommand?.effort ?? args.preferredWorkerEffort;
   const effectivePreferredWorkerAccountId = presetCommand ? presetCommand.accountId : args.preferredWorkerAccountId;
+  const effectivePreferredWorkerPermissionMode = presetCommand ? null : args.preferredWorkerPermissionMode?.trim() || null;
   const effectiveAllowedWorkerTypes = presetCommand
     ? [presetCommand.workerType]
     : args.allowedWorkerTypes;
@@ -932,6 +935,7 @@ export async function createConversation(args: {
       preferredWorkerModel: effectivePreferredWorkerModel?.trim() || null,
       preferredWorkerEffort: normalizeReasoningEffort(effectivePreferredWorkerEffort),
       preferredWorkerAccountId: effectivePreferredWorkerAccountId?.trim() || null,
+      preferredWorkerPermissionMode: effectivePreferredWorkerPermissionMode,
       allowedWorkerTypes: JSON.stringify(allowedWorkerTypes),
       parentRunId: args.parentRunId ?? null,
       forkedFromMessageId: args.forkedFromMessageId ?? null,
@@ -996,7 +1000,7 @@ export async function createConversation(args: {
       const cwd = projectPath || process.cwd();
       const workerType = preferredWorkerType || allowedWorkerTypes[0] || "codex";
       const yoloModeEnabled = await readWorkerYoloModeEnabled();
-      const workerMode = resolveWorkerLaunchMode(undefined, yoloModeEnabled);
+      const workerMode = resolveWorkerLaunchMode(undefined, yoloModeEnabled, effectivePreferredWorkerPermissionMode);
 
       await db.insert(workers).values({
         id: workerId,

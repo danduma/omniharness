@@ -65,6 +65,9 @@ export interface ComposerContainerProps {
   activeWorkerModelOptions: WorkerModelOption[];
   selectedEffort: string;
   setSelectedEffort: (value: string) => void;
+  permissionModeWorkerType: string | null;
+  selectedPermissionMode: string;
+  setSelectedPermissionMode: (value: string) => void;
   isComposerSendBusy: boolean;
   isComposerSubmitBlocked: boolean;
   isStopConversationPending: boolean;
@@ -109,6 +112,9 @@ function ComposerContainerInner({
   activeWorkerModelOptions,
   selectedEffort,
   setSelectedEffort,
+  permissionModeWorkerType,
+  selectedPermissionMode,
+  setSelectedPermissionMode,
   isComposerSendBusy,
   isComposerSubmitBlocked,
   isStopConversationPending,
@@ -293,6 +299,9 @@ function ComposerContainerInner({
       activeWorkerModelOptions={activeWorkerModelOptions}
       selectedEffort={selectedEffort}
       setSelectedEffort={setSelectedEffort}
+      permissionModeWorkerType={permissionModeWorkerType}
+      selectedPermissionMode={selectedPermissionMode}
+      setSelectedPermissionMode={setSelectedPermissionMode}
       isComposerSendBusy={isComposerSendBusy}
       isComposerSubmitBlocked={isComposerSubmitBlocked}
       isStopConversationPending={isStopConversationPending}

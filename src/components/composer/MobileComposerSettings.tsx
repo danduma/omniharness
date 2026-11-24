@@ -32,7 +32,7 @@ export type MobileComposerSettingDescriptor =
     value: string;
   }
   | {
-    key: "account" | "effort";
+    key: "account" | "effort" | "permissionMode";
     kind: "select";
     label: string;
     ariaLabel: string;
@@ -66,6 +66,7 @@ export interface MobileComposerSettingDescriptorArgs {
   activeWorkerModelOptions: WorkerModelOption[];
   selectedEffort: string;
   setSelectedEffort: (value: string) => void;
+  permissionMode?: { value: string; options: MobileComposerSelectOption[]; onChange: (value: string) => void };
   disabled: boolean;
 }
 
@@ -83,6 +84,7 @@ export function getMobileComposerSettingDescriptors({
   activeWorkerModelOptions,
   selectedEffort,
   setSelectedEffort,
+  permissionMode,
   disabled,
 }: MobileComposerSettingDescriptorArgs): MobileComposerSettingDescriptor[] {
   return [
@@ -123,6 +125,16 @@ export function getMobileComposerSettingDescriptors({
       disabled,
       onChange: setSelectedEffort,
     },
+    ...(permissionMode && permissionMode.options.length > 1 ? [{
+      key: "permissionMode" as const,
+      kind: "select" as const,
+      label: t("conversation.composer.permissionMode.label"),
+      ariaLabel: t("conversation.composer.permissionMode.ariaLabel"),
+      value: permissionMode.value,
+      options: permissionMode.options,
+      disabled,
+      onChange: permissionMode.onChange,
+    }] : []),
     {
       key: "account",
       kind: "select",

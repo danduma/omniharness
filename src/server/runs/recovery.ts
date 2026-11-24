@@ -312,7 +312,7 @@ async function startDirectRerun(
     : allowedWorkerTypes[0] || "codex";
   const now = new Date();
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
-  const workerMode = resolveWorkerLaunchMode(undefined, yoloModeEnabled);
+  const workerMode = resolveWorkerLaunchMode(undefined, yoloModeEnabled, run.preferredWorkerPermissionMode);
   const { env: envParams } = await readRuntimeEnvFromSettings();
   const launchSelection = resolveWorkerLaunchSelection({}, run);
 
@@ -733,7 +733,7 @@ async function resumeDirectRunFromSavedSession(
 
   const sessionMode = worker.bridgeSessionMode?.trim();
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
-  const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
+  const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled, run.preferredWorkerPermissionMode);
   const { env: envParams } = await readRuntimeEnvFromSettings();
   const launchSelection = resolveWorkerLaunchSelection(worker, run, {
     accountId: await refreshWorkerAllocatedAccountId({

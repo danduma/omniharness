@@ -399,7 +399,7 @@ async function resumeSavedWorkerSession(args: {
     throw new Error("No saved worker session is available");
   }
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
-  const workerMode = resolveWorkerLaunchMode(args.worker.bridgeSessionMode, yoloModeEnabled);
+  const workerMode = resolveWorkerLaunchMode(args.worker.bridgeSessionMode, yoloModeEnabled, args.run.preferredWorkerPermissionMode);
   const { env: envParams } = await readRuntimeEnvFromSettings();
   const launchSelection = resolveWorkerLaunchSelection(args.worker, args.run, {
     accountId: await readWorkerAllocatedAccountId(args.worker.id),
@@ -586,7 +586,7 @@ async function restartDirectWorker(args: {
   });
 
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
-  const workerMode = resolveWorkerLaunchMode(args.worker.bridgeSessionMode, yoloModeEnabled);
+  const workerMode = resolveWorkerLaunchMode(args.worker.bridgeSessionMode, yoloModeEnabled, args.run.preferredWorkerPermissionMode);
   const { env: envParams } = await readRuntimeEnvFromSettings();
   const launchSelection = resolveWorkerLaunchSelection(args.worker, args.run, {
     accountId: await readWorkerAllocatedAccountId(args.worker.id),

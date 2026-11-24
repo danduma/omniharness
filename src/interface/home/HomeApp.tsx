@@ -254,6 +254,7 @@ export function HomeApp({
     selectedWorkerAccountId,
     selectedModel,
     selectedEffort,
+    selectedPermissionMode,
     hydratedRunSelectionId,
     pairTokenFromUrl,
     authError,
@@ -301,6 +302,7 @@ export function HomeApp({
     setSelectedWorkerAccountId,
     setSelectedModel,
     setSelectedEffort,
+    setSelectedPermissionMode,
     setHydratedRunSelectionId,
     setPairTokenFromUrl,
     setAuthError,
@@ -692,6 +694,7 @@ export function HomeApp({
     selectedWorkerAccountId: effectiveSelectedWorkerAccountId,
     selectedModel,
     selectedEffort,
+    selectedPermissionMode,
     autoSelectedWorkerType,
     activeAllowedWorkerTypes,
     activeWorkerModelValues,
@@ -1304,6 +1307,9 @@ export function HomeApp({
       activeWorkerModelOptions={composerModelOptions}
       selectedEffort={selectedEffort}
       setSelectedEffort={setSelectedEffort}
+      permissionModeWorkerType={effectiveComposerWorkerType ?? null}
+      selectedPermissionMode={selectedPermissionMode}
+      setSelectedPermissionMode={setSelectedPermissionMode}
       isComposerSendBusy={isComposerSendBusy}
       isComposerSubmitBlocked={isComposerSubmitBlocked}
       isStopConversationPending={isStopConversationPending}

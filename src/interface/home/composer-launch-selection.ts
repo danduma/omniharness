@@ -1,5 +1,6 @@
 import type { ComposerWorkerOption, WorkerType } from "./types";
 import { resolveComposerEffortValue, resolveSelectedWorkerModel } from "./utils";
+import { isPermissionModeForWorker } from "@/shared/worker-permission-modes";
 
 /**
  * The worker identity a send is launched with, frozen at the moment the user
@@ -21,6 +22,12 @@ export type ComposerLaunchSelection = {
   model: string | null;
   effort: string;
   accountId: string | null;
+  /**
+   * CLI permission mode. `""` asks the server to follow the YOLO default;
+   * `null` leaves the conversation's mode alone (the picked mode does not
+   * exist on the worker "auto" resolved to).
+   */
+  permissionMode: string | null;
   allowedWorkerTypes: WorkerType[];
 };
 
@@ -29,6 +36,7 @@ export function resolveComposerLaunchSelection(args: {
   selectedModel: string;
   selectedEffort: string;
   selectedWorkerAccountId: string;
+  selectedPermissionMode?: string;
   autoSelectedWorkerType: WorkerType | null;
   activeAllowedWorkerTypes: WorkerType[];
   activeWorkerModelValues: string[];
@@ -53,12 +61,19 @@ export function resolveComposerLaunchSelection(args: {
     model,
     effort: resolveComposerEffortValue(args.selectedEffort),
     accountId: args.selectedWorkerAccountId === "auto" ? null : args.selectedWorkerAccountId,
+    permissionMode: resolveLaunchPermissionMode(workerType, args.selectedPermissionMode ?? ""),
     allowedWorkerTypes: isAutoWorkerSelection
       ? args.activeAllowedWorkerTypes
       : workerType
         ? [workerType]
         : args.activeAllowedWorkerTypes,
   };
+}
+
+function resolveLaunchPermissionMode(workerType: WorkerType | null, selected: string) {
+  const mode = selected.trim();
+  if (!mode) return "";
+  return isPermissionModeForWorker(workerType, mode) ? mode : null;
 }
 
 /**
@@ -76,5 +91,6 @@ export function buildLaunchPreferenceBody(selection: ComposerLaunchSelection) {
     preferredWorkerAccountId: selection.accountId,
     allowedWorkerTypes: selection.allowedWorkerTypes,
     ...(selection.model ? { preferredWorkerModel: selection.model } : {}),
+    ...(selection.permissionMode !== null ? { preferredWorkerPermissionMode: selection.permissionMode } : {}),
   };
 }

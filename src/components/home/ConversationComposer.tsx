@@ -13,6 +13,8 @@ import type { ComposerWorkerOption, QueuedConversationMessageRecord, WorkerModel
 import { formatBytes, type PendingChatAttachment } from "@/lib/chat-attachments";
 import { resizeComposerTextarea, restoreKeyboardAfterSpellcheckReplacement } from "@/lib/composer-textarea";
 import { t, useI18nSnapshot } from "@/lib/i18n";
+import { isPermissionModeForWorker, permissionModesForWorker } from "@/shared/worker-permission-modes";
+import { normalizeWorkerType } from "@/shared/worker-types";
 import { StateManager } from "@/lib/state-manager";
 import { useManagerSnapshot } from "@/lib/use-manager-snapshot";
 import { cn } from "@/lib/utils";
@@ -55,6 +57,9 @@ interface ConversationComposerProps {
   activeWorkerModelOptions: WorkerModelOption[];
   selectedEffort: string;
   setSelectedEffort: (value: string) => void;
+  permissionModeWorkerType: string | null;
+  selectedPermissionMode: string;
+  setSelectedPermissionMode: (value: string) => void;
   isComposerSendBusy: boolean;
   isComposerSubmitBlocked: boolean;
   isStopConversationPending: boolean;
@@ -90,6 +95,28 @@ class ComposerUiManager extends StateManager<{ fileDragDepth: number; mobileSett
 const composerUiManager = new ComposerUiManager();
 const COMPOSER_EFFORT_OPTIONS = EFFORT_OPTIONS.map((effort) => ({ value: effort, label: effort }));
 
+/**
+ * The permission-mode picker for the CLI the composer will launch. A mode left
+ * over from another CLI is shown as the default, which is also what the send
+ * path falls back to for it.
+ */
+function buildPermissionModeControl(args: {
+  workerType: string | null;
+  selected: string;
+  onChange: (value: string) => void;
+}) {
+  const workerType = args.workerType ? normalizeWorkerType(args.workerType) : null;
+  const modes = permissionModesForWorker(workerType);
+  return {
+    value: isPermissionModeForWorker(workerType, args.selected) ? args.selected : "",
+    options: [
+      { value: "", label: t("conversation.composer.permissionMode.default") },
+      ...modes.map((mode) => ({ value: mode, label: t(`conversation.composer.permissionMode.${workerType}.${mode}`) })),
+    ],
+    onChange: args.onChange,
+  };
+}
+
 function ConversationComposerInner({
   className,
   command,
@@ -124,6 +151,9 @@ function ConversationComposerInner({
   activeWorkerModelOptions,
   selectedEffort,
   setSelectedEffort,
+  permissionModeWorkerType,
+  selectedPermissionMode,
+  setSelectedPermissionMode,
   isComposerSendBusy,
   isComposerSubmitBlocked,
   isStopConversationPending,
@@ -145,6 +175,11 @@ function ConversationComposerInner({
   onOpenGoalPlanArtifact,
 }: ConversationComposerProps) {
   useI18nSnapshot();
+  const permissionModeControl = buildPermissionModeControl({
+    workerType: permissionModeWorkerType,
+    selected: selectedPermissionMode,
+    onChange: setSelectedPermissionMode,
+  });
   const trimmedCommand = command.trim();
   const hasAttachments = attachments.length > 0;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -554,6 +589,7 @@ function ConversationComposerInner({
             activeWorkerModelOptions={activeWorkerModelOptions}
             selectedEffort={selectedEffort}
             setSelectedEffort={setSelectedEffort}
+            permissionMode={permissionModeControl}
             disabled={isComposerSubmitBlocked}
             settingsOpen={mobileSettingsOpen}
             onSettingsOpenChange={composerUiManager.setMobileSettingsOpen}
@@ -572,6 +608,7 @@ function ConversationComposerInner({
               account={{ value: selectedWorkerAccountId, options: composerAccountOptions, onChange: setSelectedWorkerAccountId }}
               model={{ value: selectedModel, options: activeWorkerModelOptions, onChange: setSelectedModel }}
               effort={{ value: selectedEffort, options: COMPOSER_EFFORT_OPTIONS, onChange: setSelectedEffort }}
+              permissionMode={permissionModeControl}
             />
           </div>
 

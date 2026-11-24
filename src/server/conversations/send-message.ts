@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "crypto";
 import { and, asc, eq } from "drizzle-orm";
-import { askAgent, cancelAgent, getAgent, respondElicitation, spawnAgent } from "@/server/bridge-client";
+import { askAgent, cancelAgent, getAgent, respondElicitation, setWorkerMode, spawnAgent } from "@/server/bridge-client";
+import { canonicalPermissionMode, isPermissionModeForWorker } from "@/shared/worker-permission-modes";
 import { db } from "@/server/db";
 import {
   messages,
@@ -299,6 +300,76 @@ async function reconcileDirectWorkerSelection(args: {
   }
 }
 
+/**
+ * Switches a live direct worker to the conversation's chosen permission mode
+ * before the next prompt. Modes change in place through ACP `session/set_mode`
+ * rather than by relaunching, so the session and its context survive. A
+ * worker that is not live picks the mode up from the run when it respawns.
+ */
+async function applyDirectWorkerPermissionMode(run: RunRecord, worker: WorkerRecord) {
+  const requested = run.preferredWorkerPermissionMode?.trim();
+  if (!requested) return;
+  if (!isPermissionModeForWorker(worker.type, requested)) {
+    emitNamedEvent({
+      kind: "worker.permission_mode_skipped",
+      runId: run.id,
+      workerId: worker.id,
+      mode: requested,
+      reason: "unsupported_by_worker",
+    });
+    return;
+  }
+  const snapshot = await Promise.resolve(getAgent(worker.id)).catch(() => null);
+  if (!snapshot) {
+    emitNamedEvent({
+      kind: "worker.permission_mode_skipped",
+      runId: run.id,
+      workerId: worker.id,
+      mode: requested,
+      reason: "worker_not_live",
+    });
+    return;
+  }
+  const previousMode = snapshot.sessionMode ?? null;
+  if (canonicalPermissionMode(previousMode) === canonicalPermissionMode(requested)) {
+    emitNamedEvent({
+      kind: "worker.permission_mode_skipped",
+      runId: run.id,
+      workerId: worker.id,
+      mode: requested,
+      reason: "already_active",
+    });
+    return;
+  }
+  try {
+    await setWorkerMode(worker.id, requested);
+  } catch (error) {
+    // The prompt still goes out in the worker's current mode; the banner tells
+    // the user their mode choice did not take.
+    emitNamedEvent({
+      kind: "error.surfaced",
+      code: "worker.permission_mode.failed",
+      message: `Could not switch ${worker.id} to the ${requested} permission mode: ${formatErrorMessage(error)}`,
+      surface: "banner",
+      runId: run.id,
+      workerId: worker.id,
+      cause: error instanceof Error ? { name: error.name, message: error.message } : null,
+    });
+    return;
+  }
+  await db.update(workers).set({
+    bridgeSessionMode: requested,
+    updatedAt: new Date(),
+  }).where(eq(workers.id, worker.id));
+  emitNamedEvent({
+    kind: "worker.permission_mode_applied",
+    runId: run.id,
+    workerId: worker.id,
+    previousMode,
+    mode: requested,
+  });
+}
+
 function elicitationAnswerContent(text: string, requestedSchema: ElicitationSchema | null | undefined): ElicitationContent {
   const properties = requestedSchema?.properties ?? {};
   const propertyNames = Object.keys(properties);
@@ -548,7 +619,7 @@ export async function resumeMissingDirectWorker(
   }
 
   const yoloModeEnabled = await readWorkerYoloModeEnabled();
-  const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled);
+  const workerMode = resolveWorkerLaunchMode(sessionMode, yoloModeEnabled, run.preferredWorkerPermissionMode);
   const { env: envParams } = await readRuntimeEnvFromSettings();
   const initialSelection = resolveWorkerLaunchSelection(worker, run);
   const forkAccount = unstartedFork && initialSelection.credentialSource === "account"
@@ -1141,6 +1212,7 @@ export type WorkerPreferencePatch = {
   model?: WorkerPreferencePatchValue<string>;
   effort?: WorkerPreferencePatchValue<string>;
   accountId?: WorkerPreferencePatchValue<string>;
+  permissionMode?: WorkerPreferencePatchValue<string>;
   allowedWorkerTypes?: WorkerPreferencePatchValue<string[] | string>;
 };
 
@@ -1352,6 +1424,7 @@ async function applyWorkerPreferenceForMessage(args: {
       : normalizeReasoningEffort(args.patch.effort.value)
     : normalizeReasoningEffort(args.run.preferredWorkerEffort);
   const nextPreferredWorkerAccountId = patchValue(args.patch.accountId, args.run.preferredWorkerAccountId);
+  const nextPreferredWorkerPermissionMode = patchValue(args.patch.permissionMode, args.run.preferredWorkerPermissionMode);
   const allowedPatch = args.patch.allowedWorkerTypes;
   let nextAllowedWorkerTypes: string[] | null;
   if (allowedPatch?.operation === "reset") {
@@ -1395,6 +1468,7 @@ async function applyWorkerPreferenceForMessage(args: {
     && canonicalProviderModelAlias(nextPreferredWorkerModel) === canonicalProviderModelAlias(args.run.preferredWorkerModel)
     && nextPreferredWorkerEffort === normalizeReasoningEffort(args.run.preferredWorkerEffort)
     && nextPreferredWorkerAccountId === args.run.preferredWorkerAccountId
+    && nextPreferredWorkerPermissionMode === args.run.preferredWorkerPermissionMode
     && nextAllowedWorkerTypesJson === args.run.allowedWorkerTypes
   ) {
     return { run: args.run, previousRun: null };
@@ -1406,7 +1480,9 @@ async function applyWorkerPreferenceForMessage(args: {
     || nextPreferredWorkerEffort !== normalizeReasoningEffort(args.run.preferredWorkerEffort)
     || nextPreferredWorkerAccountId !== args.run.preferredWorkerAccountId;
   // Allowed-worker policy affects future automatic selection, not the launch
-  // identity of the direct worker already running this conversation.
+  // identity of the direct worker already running this conversation. A
+  // permission mode change is applied to the live session in place
+  // (`applyDirectWorkerPermissionMode`), so it does not force a relaunch.
   const nextRevision = args.run.preferredWorkerRevision + 1;
   const nextLaunchRevision = launchSelectionChanged
     ? args.run.preferredWorkerLaunchRevision + 1
@@ -1417,6 +1493,7 @@ async function applyWorkerPreferenceForMessage(args: {
     preferredWorkerModel: nextPreferredWorkerModel,
     preferredWorkerEffort: nextPreferredWorkerEffort,
     preferredWorkerAccountId: nextPreferredWorkerAccountId,
+    preferredWorkerPermissionMode: nextPreferredWorkerPermissionMode,
     allowedWorkerTypes: nextAllowedWorkerTypesJson,
     preferredWorkerRevision: nextRevision,
     preferredWorkerLaunchRevision: nextLaunchRevision,
@@ -1428,6 +1505,7 @@ async function applyWorkerPreferenceForMessage(args: {
       preferredWorkerModel: nextPreferredWorkerModel,
       preferredWorkerEffort: nextPreferredWorkerEffort,
       preferredWorkerAccountId: nextPreferredWorkerAccountId,
+      preferredWorkerPermissionMode: nextPreferredWorkerPermissionMode,
       allowedWorkerTypes: nextAllowedWorkerTypesJson,
       preferredWorkerRevision: nextRevision,
       preferredWorkerLaunchRevision: nextLaunchRevision,
@@ -1454,6 +1532,7 @@ async function applyWorkerPreferenceForMessage(args: {
         preferredWorkerModel: nextPreferredWorkerModel,
         preferredWorkerEffort: nextPreferredWorkerEffort,
         preferredWorkerAccountId: nextPreferredWorkerAccountId,
+        preferredWorkerPermissionMode: nextPreferredWorkerPermissionMode,
         allowedWorkerTypes: nextAllowedWorkerTypes,
         preferenceRevision: nextRevision,
         source: selectionSource,
@@ -1501,6 +1580,7 @@ async function rollbackUnacceptedWorkerPreference(args: {
     preferredWorkerModel: args.previousRun.preferredWorkerModel,
     preferredWorkerEffort: args.previousRun.preferredWorkerEffort,
     preferredWorkerAccountId: args.previousRun.preferredWorkerAccountId,
+    preferredWorkerPermissionMode: args.previousRun.preferredWorkerPermissionMode,
     allowedWorkerTypes: args.previousRun.allowedWorkerTypes,
     preferredWorkerRevision: args.previousRun.preferredWorkerRevision,
     preferredWorkerLaunchRevision: args.previousRun.preferredWorkerLaunchRevision,
@@ -2023,6 +2103,7 @@ async function sendConversationMessageUnlocked(args: SendConversationMessageArgs
   if (selectedWorker) {
     worker = selectedWorker.worker;
   }
+  await applyDirectWorkerPermissionMode(run, worker);
   notifyEventStreamSubscribers();
   const expectedTurnGeneration = worker.turnGeneration;
   await setMessageDeliveryStatus(userMessage.id, "delivering");

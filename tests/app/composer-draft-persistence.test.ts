@@ -16,6 +16,7 @@ const SELECTION = {
   accountId: "auto",
   model: "gpt-5.6-sol",
   effort: "High",
+  permissionMode: "",
 };
 
 function composerDraft(command: string, commandCursor: number) {
@@ -130,6 +131,7 @@ describe("collectComposerDrafts", () => {
       selectedWorkerAccountId: "auto",
       selectedModel: "gpt-5.6-sol",
       selectedEffort: "High",
+      selectedPermissionMode: "",
       attachments: [],
       composerDraftsByRun: {
         "run-a": composerDraft("parked", 6),
@@ -151,6 +153,7 @@ describe("collectComposerDrafts", () => {
       selectedWorkerAccountId: "auto",
       selectedModel: "gpt-5.6-sol",
       selectedEffort: "High",
+      selectedPermissionMode: "",
       attachments: [],
       composerDraftsByRun: {},
     }, NOW);
@@ -168,6 +171,7 @@ describe("collectComposerDrafts", () => {
       selectedWorkerAccountId: "auto",
       selectedModel: "gpt-5.6-sol",
       selectedEffort: "High",
+      selectedPermissionMode: "",
       attachments: [],
       composerDraftsByRun: {
         "run-a": composerDraft("parked", 6),

@@ -82,6 +82,7 @@ export interface UseHomeMutationsParams {
   selectedWorkerAccountId: string;
   selectedModel: string;
   selectedEffort: string;
+  selectedPermissionMode: string;
   autoSelectedWorkerType: string | null;
   activeAllowedWorkerTypes: string[];
   activeWorkerModelValues: string[];
@@ -101,6 +102,7 @@ export function useHomeMutations({
   selectedWorkerAccountId,
   selectedModel,
   selectedEffort,
+  selectedPermissionMode,
   autoSelectedWorkerType,
   activeAllowedWorkerTypes,
   activeWorkerModelValues,
@@ -136,6 +138,7 @@ export function useHomeMutations({
     selectedModel,
     selectedEffort,
     selectedWorkerAccountId,
+    selectedPermissionMode: selectedPermissionMode,
     autoSelectedWorkerType: autoSelectedWorkerType as WorkerType | null,
     activeAllowedWorkerTypes: activeAllowedWorkerTypes as WorkerType[],
     activeWorkerModelValues,
@@ -147,6 +150,7 @@ export function useHomeMutations({
     selectedEffort,
     selectedModel,
     selectedWorkerAccountId,
+    selectedPermissionMode,
   ]);
 
   // Worker-scoped failures still belong to a conversation, so resolve the

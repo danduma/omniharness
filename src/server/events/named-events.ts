@@ -118,6 +118,7 @@ export type SurfacedErrorCode =
   | "worker.observer.failed"
   | "worker.poll.failed"
   | "worker.resume.failed"
+  | "worker.permission_mode.failed"
   | "worker.snapshot.invalid"
   | "worker.plan.boundary_append_failed"
   | "worker.plan.append_failed"
@@ -451,6 +452,20 @@ export type WorkerEvent =
     }
   | { kind: "worker.delete_race_cancelled"; runId: string; workerId: string }
   | { kind: "worker.session_metadata_repaired"; runId: string; workerId: string }
+  | {
+      kind: "worker.permission_mode_applied";
+      runId: string;
+      workerId: string;
+      previousMode: string | null;
+      mode: string;
+    }
+  | {
+      kind: "worker.permission_mode_skipped";
+      runId: string;
+      workerId: string;
+      mode: string;
+      reason: "unsupported_by_worker" | "worker_not_live" | "already_active";
+    }
   // A retry/edit rewound the conversation past output this worker already
   // wrote; those seqs stay on disk but drop out of the conversation view.
   | {

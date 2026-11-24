@@ -22,11 +22,13 @@ export type WorkerLaunchControlsProps = {
   account: Control<ComposerSelectOption>;
   model: Control<WorkerModelOption>;
   effort: Control<ComposerSelectOption>;
+  /** CLI permission mode; omitted where a surface does not launch workers. */
+  permissionMode?: Control<ComposerSelectOption>;
   disabled?: boolean;
 };
 
 /**
- * The CLI · account · model · effort row. The composer and every other place
+ * The CLI · account · model · effort · permission mode row. The composer and every other place
  * that picks a worker render this so the choice looks and reads the same.
  */
 export function WorkerLaunchControls({
@@ -36,6 +38,7 @@ export function WorkerLaunchControls({
   account,
   model,
   effort,
+  permissionMode,
   disabled = false,
 }: WorkerLaunchControlsProps) {
   return (
@@ -87,6 +90,17 @@ export function WorkerLaunchControls({
         themeMode={themeMode}
         disabled={disabled}
       />
+
+      {permissionMode && permissionMode.options.length > 1 ? (
+        <ComposerSelect
+          ariaLabel={t("conversation.composer.permissionMode.ariaLabel")}
+          value={permissionMode.value}
+          options={permissionMode.options}
+          onChange={permissionMode.onChange}
+          themeMode={themeMode}
+          disabled={disabled}
+        />
+      ) : null}
     </>
   );
 }

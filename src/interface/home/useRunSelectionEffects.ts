@@ -175,6 +175,7 @@ export function resolveRunComposerSelection(args: {
       ?? "",
     effort: resolveComposerEffortLabel(args.run.preferredWorkerEffort) ?? DEFAULT_COMPOSER_EFFORT,
     accountId: args.run.preferredWorkerAccountId?.trim() || "auto",
+    permissionMode: args.run.preferredWorkerPermissionMode?.trim() || "",
   };
 }
 
@@ -245,11 +246,13 @@ export function runComposerSelectionVersion(run: RunRecord, selection: ComposerS
     run.preferredWorkerModel ?? null,
     run.preferredWorkerEffort ?? null,
     run.preferredWorkerAccountId ?? null,
+    run.preferredWorkerPermissionMode ?? null,
     run.mode,
     selection.worker,
     selection.accountId,
     selection.model,
     selection.effort,
+    selection.permissionMode,
   ]);
 }
 

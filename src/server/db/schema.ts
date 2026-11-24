@@ -25,6 +25,7 @@ export const runs = sqliteTable('runs', {
   preferredWorkerModel: text('preferred_worker_model'),
   preferredWorkerEffort: text('preferred_worker_effort'),
   preferredWorkerAccountId: text('preferred_worker_account_id'),
+  preferredWorkerPermissionMode: text('preferred_worker_permission_mode'),
   preferredWorkerRevision: integer('preferred_worker_revision').notNull().default(0),
   preferredWorkerLaunchRevision: integer('preferred_worker_launch_revision').notNull().default(0),
   allowedWorkerTypes: text('allowed_worker_types'),

@@ -64,7 +64,34 @@ describe("composer launch selection", () => {
       "preferredWorkerEffort",
       "preferredWorkerAccountId",
       "allowedWorkerTypes",
+      "preferredWorkerPermissionMode",
     ]);
+  });
+
+  it("sends a permission mode only when the launching CLI offers it", () => {
+    const claudeBypass = buildLaunchPreferenceBody(resolve({
+      selectedCliAgent: "claude",
+      selectedModel: "claude-opus-5-5",
+      selectedPermissionMode: "full-access",
+    }));
+    expect(claudeBypass.preferredWorkerPermissionMode).toBe("full-access");
+
+    const followDefault = buildLaunchPreferenceBody(resolve({
+      selectedCliAgent: "claude",
+      selectedModel: "claude-opus-5-5",
+      selectedPermissionMode: "",
+    }));
+    expect(followDefault.preferredWorkerPermissionMode).toBe("");
+
+    // A Claude-only mode left over when "auto" resolves to Codex is not sent,
+    // so it neither applies nor clears the conversation's mode.
+    const leftover = buildLaunchPreferenceBody(resolve({
+      selectedCliAgent: "auto",
+      selectedModel: "gpt-5.6-sol",
+      autoSelectedWorkerType: "codex",
+      selectedPermissionMode: "acceptEdits",
+    }));
+    expect(leftover).not.toHaveProperty("preferredWorkerPermissionMode");
   });
 
   it("sends the selected model when there is one to assert", () => {

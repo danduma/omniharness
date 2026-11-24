@@ -136,6 +136,7 @@ describe("applyHomeBootstrap runner scoping", () => {
       accountId: "codex-account",
       model: "gpt-5.6-sol",
       effort: "High",
+      permissionMode: "",
     };
     const secondSelection = {
       conversationMode: "direct" as const,
@@ -143,6 +144,7 @@ describe("applyHomeBootstrap runner scoping", () => {
       accountId: "claude-account",
       model: "claude-fable-5-1",
       effort: "Low",
+      permissionMode: "",
     };
 
     applyHomeBootstrap(first, false);

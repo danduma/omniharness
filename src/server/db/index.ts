@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS runs (
 	  preferred_worker_model text,
 	  preferred_worker_effort text,
 	  preferred_worker_account_id text,
+	  preferred_worker_permission_mode text,
 	  preferred_worker_revision integer NOT NULL DEFAULT 0,
 	  preferred_worker_launch_revision integer NOT NULL DEFAULT 0,
 	  allowed_worker_types text,
@@ -702,6 +703,10 @@ if (!runColumnNames.has("preferred_worker_model")) {
 
 if (!runColumnNames.has("preferred_worker_effort")) {
   await client.execute("ALTER TABLE runs ADD COLUMN preferred_worker_effort text;");
+}
+
+if (!runColumnNames.has("preferred_worker_permission_mode")) {
+  await client.execute("ALTER TABLE runs ADD COLUMN preferred_worker_permission_mode text;");
 }
 
 if (!runColumnNames.has("preferred_worker_account_id")) {

@@ -61,6 +61,7 @@ export type RunRecord = {
   preferredWorkerModel?: string | null;
   preferredWorkerEffort?: string | null;
   preferredWorkerAccountId?: string | null;
+  preferredWorkerPermissionMode?: string | null;
   preferredWorkerRevision?: number | null;
   preferredWorkerLaunchRevision?: number | null;
   allowedWorkerTypes?: string | null;

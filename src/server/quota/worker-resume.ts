@@ -280,7 +280,7 @@ export async function resumeQuotaExhaustedWorkers(args: {
     }
     if ("state" in incident) return incident;
 
-    const workerMode = resolveWorkerLaunchMode(worker.bridgeSessionMode, yoloModeEnabled);
+    const workerMode = resolveWorkerLaunchMode(worker.bridgeSessionMode, yoloModeEnabled, args.run.preferredWorkerPermissionMode);
     const launchSelection = resolveWorkerLaunchSelection(worker, args.run, {
       accountId: await readWorkerAllocatedAccountId(worker.id),
     });

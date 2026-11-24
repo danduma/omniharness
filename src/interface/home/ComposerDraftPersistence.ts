@@ -52,6 +52,7 @@ export type ComposerDraftSource = Pick<
   | "selectedWorkerAccountId"
   | "selectedModel"
   | "selectedEffort"
+  | "selectedPermissionMode"
 >;
 
 const DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -98,6 +99,7 @@ function readPersistedDraft(value: unknown, now: number): PersistedComposerDraft
   const dirtySelectionFields = Array.isArray(record.dirtySelectionFields)
     ? record.dirtySelectionFields.filter((field): field is ComposerSelectionField => (
         field === "worker" || field === "accountId" || field === "model" || field === "effort"
+        || field === "permissionMode"
       ))
     : [];
   const attachmentIds = Array.isArray(record.attachmentIds)
@@ -115,6 +117,7 @@ function readPersistedDraft(value: unknown, now: number): PersistedComposerDraft
       accountId: selection.accountId,
       model: selection.model,
       effort: selection.effort,
+      permissionMode: typeof selection.permissionMode === "string" ? selection.permissionMode : "",
     } as ComposerSelection,
     dirtySelectionFields,
     serverSelectionVersion: typeof record.serverSelectionVersion === "string" ? record.serverSelectionVersion : null,
@@ -225,6 +228,7 @@ export function collectComposerDrafts(
       accountId: state.selectedWorkerAccountId,
       model: state.selectedModel,
       effort: state.selectedEffort,
+      permissionMode: state.selectedPermissionMode,
     },
     activeStored?.dirtySelectionFields ?? [],
     activeStored?.serverSelectionVersion ?? null,
@@ -407,6 +411,7 @@ export class ComposerDraftPersistence {
               selectedWorkerAccountId: activeDraft.selection.accountId,
               selectedModel: activeDraft.selection.model,
               selectedEffort: activeDraft.selection.effort,
+              selectedPermissionMode: activeDraft.selection.permissionMode,
             }
           : {}),
       };

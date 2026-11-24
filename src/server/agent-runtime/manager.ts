@@ -30,6 +30,7 @@ import { sanitizeAcpStream } from "./acp-stream-sanitizer";
 import { applyCodexBridgeEnv, buildCodexAcpConfig, buildCodexConfigArgs, resolveCodexSessionMode, shouldSetRequestedMode } from "./codex";
 import { normalizeReasoningEffort } from "@/shared/reasoning-effort";
 import { buildGeminiArgs, isFullAccessAgentMode, resolveFullGeminiUuid } from "./gemini";
+import { resolveNativeSessionMode } from "@/shared/worker-permission-modes";
 import { isRecoverableBridgeConnectionError, retryBridgeRequest } from "@/server/bridge-client/retry";
 import { codexModelCatalogConfigArgs, commandAvailable, createToolDiagnostics, refreshCachedLoginShellPath, stripAmbientCodexSessionEnv, stripRunnerControlEnv, withCodexStandardTooling, withManagedPath } from "./tool-env";
 import {
@@ -1867,7 +1868,7 @@ export class AgentRuntimeManager {
     const currentModeId = asNonEmptyString(modesRecord?.currentModeId);
     const requestedSessionMode = type === "codex"
       ? resolveCodexSessionMode(requestedMode, modesRecord?.availableModes)
-      : requestedMode;
+      : resolveNativeSessionMode(type, requestedMode);
     if (connection && shouldSetRequestedMode(requestedSessionMode, currentModeId, modesRecord?.availableModes)) {
       try {
         const setModeParams = {
@@ -2720,12 +2721,18 @@ export class AgentRuntimeManager {
       throw new RuntimeHttpError(404, "not_found");
     }
     assertAgentCanReceiveRequest(record);
-    const requestedSessionMode = record.type === "codex" ? resolveCodexSessionMode(mode) : mode;
-    const setModeParams = {
-      sessionId: record.sessionId,
-      modeId: requestedSessionMode,
-    } as Parameters<acp.ClientSideConnection["setSessionMode"]>[0];
-    await this.runAgentRequest(record, () => record.connection.setSessionMode(setModeParams));
+    const requestedSessionMode = record.type === "codex"
+      ? resolveCodexSessionMode(mode)
+      : resolveNativeSessionMode(record.type, mode);
+    // A null native mode means the CLI has no equivalent (OpenCode full
+    // access); the runtime enforces it by auto-approving permission requests.
+    if (requestedSessionMode) {
+      const setModeParams = {
+        sessionId: record.sessionId,
+        modeId: requestedSessionMode,
+      } as Parameters<acp.ClientSideConnection["setSessionMode"]>[0];
+      await this.runAgentRequest(record, () => record.connection.setSessionMode(setModeParams));
+    }
     record.sessionMode = mode;
     record.updatedAt = nowIso();
     appendOutputEntry(record, {

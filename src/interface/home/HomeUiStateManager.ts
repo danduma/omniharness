@@ -40,6 +40,8 @@ export type ComposerSelection = {
   accountId: string;
   model: string;
   effort: string;
+  /** CLI permission mode id; "" follows the YOLO default from settings. */
+  permissionMode: string;
 };
 
 export type ComposerSelectionField = keyof ComposerSelection;
@@ -56,6 +58,7 @@ const EMPTY_COMPOSER_DRAFT: ComposerDraft = {
     accountId: "auto",
     model: "gpt-5.6-sol",
     effort: "High",
+    permissionMode: "",
   },
   dirtySelectionFields: [],
   serverSelectionVersion: null,
@@ -107,6 +110,7 @@ export type HomeUiState = {
   selectedWorkerAccountId: string;
   selectedModel: string;
   selectedEffort: string;
+  selectedPermissionMode: string;
   hydratedRunSelectionId: string | null;
   attachments: PendingChatAttachment[];
   pairTokenFromUrl: string | null;
@@ -166,6 +170,7 @@ const initialHomeUiState: HomeUiState = {
   selectedWorkerAccountId: "auto",
   selectedModel: "gpt-5.6-sol",
   selectedEffort: "High",
+  selectedPermissionMode: "",
   hydratedRunSelectionId: null,
   attachments: [],
   pairTokenFromUrl: null,
@@ -295,6 +300,7 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
       accountId: state.selectedWorkerAccountId,
       model: state.selectedModel,
       effort: state.selectedEffort,
+      permissionMode: state.selectedPermissionMode,
     };
   }
 
@@ -340,7 +346,9 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
           ? { selectedWorkerAccountId: nextValue as string }
           : field === "model"
             ? { selectedModel: nextValue as string }
-            : { selectedEffort: nextValue as string };
+            : field === "permissionMode"
+              ? { selectedPermissionMode: nextValue as string }
+              : { selectedEffort: nextValue as string };
 
       return {
         ...current,
@@ -457,6 +465,7 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
           selectedWorkerAccountId: nextSelection.accountId,
           selectedModel: nextSelection.model,
           selectedEffort: nextSelection.effort,
+          selectedPermissionMode: nextSelection.permissionMode,
           hydratedRunSelectionId: args.runId,
         } : {}),
         composerDraftsByRun: { ...current.composerDraftsByRun, [key]: draft },
@@ -475,13 +484,18 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
    * message went out on Opus 5. Seeding the new run's draft keeps the launch
    * selection attached to the conversation it launched.
    */
-  setNewConversationDefaults(patch: Partial<Pick<ComposerSelection, "worker" | "model" | "effort">>) {
+  setNewConversationDefaults(patch: Partial<Pick<ComposerSelection, "worker" | "model" | "effort" | "permissionMode">>) {
     this.newConversationSelection = { ...this.newConversationSelection, ...patch };
   }
 
   adoptSelectionForCreatedRun(runId: string) {
     const launched = this.activeSelection(this.getSnapshot());
-    this.setNewConversationDefaults({ worker: launched.worker, model: launched.model, effort: launched.effort });
+    this.setNewConversationDefaults({
+      worker: launched.worker,
+      model: launched.model,
+      effort: launched.effort,
+      permissionMode: launched.permissionMode,
+    });
     const storage = getBrowserLocalStorage();
     safeSetBrowserStorageItem(storage, COMPOSER_WORKER_STORAGE_KEY, launched.worker);
     safeSetBrowserStorageItem(storage, COMPOSER_MODEL_STORAGE_KEY, launched.model);
@@ -554,6 +568,7 @@ export class HomeUiStateManager extends StateManager<HomeUiState> {
         selectedWorkerAccountId: nextDraft.selection.accountId,
         selectedModel: nextDraft.selection.model,
         selectedEffort: nextDraft.selection.effort,
+        selectedPermissionMode: nextDraft.selection.permissionMode ?? "",
         hydratedRunSelectionId: nextRunId && nextDraft.serverSelectionVersion ? nextRunId : null,
       };
     }, notify);
@@ -693,6 +708,7 @@ export const homeUiSetters = {
   setSelectedWorkerAccountId: (value: StateUpdate<string>) => homeUiStateManager.setComposerSelectionField("accountId", value),
   setSelectedModel: (value: StateUpdate<string>) => homeUiStateManager.setComposerSelectionField("model", value),
   setSelectedEffort: (value: StateUpdate<string>) => homeUiStateManager.setComposerSelectionField("effort", value),
+  setSelectedPermissionMode: (value: StateUpdate<string>) => homeUiStateManager.setComposerSelectionField("permissionMode", value),
   initializeComposerSelection: <TKey extends ComposerSelectionField>(field: TKey, value: StateUpdate<ComposerSelection[TKey]>) => homeUiStateManager.setComposerSelectionField(field, value, { userEdited: false }),
   hydrateComposerSelection: (args: Parameters<HomeUiStateManager["hydrateComposerSelection"]>[0]) => homeUiStateManager.hydrateComposerSelection(args),
   setHydratedRunSelectionId: homeUiStateManager.createSetter("hydratedRunSelectionId"),
